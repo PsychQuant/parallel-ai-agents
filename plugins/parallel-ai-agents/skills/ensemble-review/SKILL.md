@@ -80,6 +80,8 @@ Arguments:
 
 **CRITICAL: 所有 tool calls（TeamCreate + Codex Bash）必須在同一個 message 送出。不可分步驟。**
 
+**CRITICAL: Teammates 必須用 `subagent_type: "general-purpose"`。不可用 `Explore`（Explore 不會主動 SendMessage 回報結果，會直接 idle）。**
+
 #### 2a. Claude Team（4 reviewers）
 
 用 TeamCreate 建立 team，然後用 Agent 啟動 4 個 teammates：
@@ -96,6 +98,7 @@ TeamCreate:
 ```
 Agent:
   name: "architecture"
+  subagent_type: "general-purpose"
   team_name: "ensemble-review-{timestamp}"
   subagent_type: "general-purpose"
   prompt: |
@@ -121,6 +124,7 @@ Agent:
 ```
 Agent:
   name: "correctness"
+  subagent_type: "general-purpose"
   team_name: "ensemble-review-{timestamp}"
   subagent_type: "general-purpose"
   prompt: |
@@ -146,6 +150,7 @@ Agent:
 ```
 Agent:
   name: "security"
+  subagent_type: "general-purpose"
   team_name: "ensemble-review-{timestamp}"
   subagent_type: "general-purpose"
   prompt: |
@@ -171,6 +176,7 @@ Agent:
 ```
 Agent:
   name: "devils-advocate"
+  subagent_type: "general-purpose"
   team_name: "ensemble-review-{timestamp}"
   subagent_type: "general-purpose"
   prompt: |
