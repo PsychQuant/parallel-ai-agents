@@ -1,10 +1,10 @@
 ---
-name: ensemble-review
+name: ensemble-code-review
 description: |
-  Claude + Codex 雙 AI 獨立審閱，交叉比對找共識和盲點。
-  4 Claude teammates（orchestrated team）+ Codex GPT-5.4 獨立審一遍，最後合成比較表。
-  Use when: 重要文件（blog、設計文件、PR、程式碼）發布前需要嚴格審閱。
-argument-hint: "FILE_OR_DIR [--focus 'review focus'] e.g. 'src/blog/post.md', 'packages/ocr-swift/ --focus API正確性'"
+  Claude + Codex 雙 AI 獨立審閱程式碼，交叉比對找共識和盲點。
+  4 Claude teammates（architecture, correctness, security, devils-advocate）+ Codex GPT-5.4 獨立審一遍，最後合成比較表。
+  Use when: 程式碼、技術文件、設計文件發布前需要嚴格審閱。
+argument-hint: "FILE_OR_DIR [--focus 'review focus'] e.g. 'src/auth/', 'packages/ocr-swift/ --focus API正確性'"
 allowed-tools:
   - Read
   - Write
