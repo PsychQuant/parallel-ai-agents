@@ -1,7 +1,7 @@
 {
   "name": "parallel-ai-agents",
   "description": "平行派發任務給多個 AI agent（Claude + Codex），獨立執行後交叉比對結果",
-  "version": "1.3.0",
+  "version": "2.0.0",
   "author": {
     "name": "Che Cheng"
   }
