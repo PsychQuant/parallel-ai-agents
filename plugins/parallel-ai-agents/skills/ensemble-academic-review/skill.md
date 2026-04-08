@@ -3,8 +3,9 @@ name: ensemble-academic-review
 description: |
   學術論文 ensemble 審閱：methodology、writing、reference verification、devils-advocate。
   用 che-zotero-mcp 驗證文獻真實性（抓幻覺文獻），用 perspective-writer 審查寫作風格。
+  兩種模式：independent（全新獨立審閱）、additional（基於前一輪找新問題）。
   Use when: 碩博論文、期刊投稿、學術報告需要嚴格審閱。
-argument-hint: "FILE [--focus 'review focus'] e.g. 'thesis.md', 'paper.md --focus methodology'"
+argument-hint: "FILE [--mode independent|additional] [--prior summary.md] [--focus 'topic']"
 allowed-tools:
   - Read
   - Write
@@ -35,20 +36,39 @@ allowed-tools:
 
 > **原理同 Ensemble OCR**：不同角色的錯誤模式不重疊。4 個 Claude 以不同學術審閱角度審閱且互相挑戰，Codex 提供跨模型盲驗。
 
+## 兩種模式
+
+| 模式 | 說明 | 適用情境 |
+|------|------|---------|
+| **independent**（預設） | 所有審閱者從零開始，不知道任何前輪結果 | 第一輪審閱、或想要完全獨立的第二意見 |
+| **additional** | 混合式：3 reviewer + Codex 仍獨立審閱，但 **devil's advocate 看得到前輪結果**，專門找前輪的盲點 | 想在前一輪基礎上挖更深 |
+
+### additional 模式的設計原理
+
+- **methodology、writing、Codex 不看前輪結果** → 避免 anchoring bias，保持獨立發現新問題和修正舊結論的能力
+- **reference-verifier 收到前輪的「重點檢查清單」** → 對前輪標記的可疑文獻做驗證，但核心任務仍是逐一查核所有文獻
+- **devil's advocate 拿到前輪完整結果** → 專門挑戰「前輪認為 OK 的地方」和「前輪發現但可能低估嚴重性的問題」
+
+這樣的混合設計同時保留了：
+1. 獨立審閱的去偏價值（3 reviewer + Codex 不受汙染）
+2. 累積式深挖的效率（devil's advocate 不重複已知問題，專攻盲點）
+3. 前輪結論的驗證（reference-verifier 重新查核，可能修正前輪的不精確估計）
+
 ## 審閱架構
 
 ```
-/ensemble-academic-review FILE
+/ensemble-academic-review FILE [--mode independent|additional] [--prior summary.md]
 │
-├── Claude Team（4 teammates，互相挑戰）
-│   ├── methodology — 研究設計、統計方法、樣本、效果量、推論邏輯
-│   ├── writing — 論述結構、學術語氣、APA 格式、段落邏輯（借助 perspective-writer）
-│   ├── reference-verifier — 逐一查文獻是否存在、DOI 正確性、幻覺文獻偵測（借助 che-zotero-mcp）
-│   └── devils-advocate — 讀前 3 人結論，反駁「通過」判斷
+├── Claude Team（4 teammates）
+│   ├── methodology — 研究設計、統計方法（永遠獨立，不看前輪）
+│   ├── writing — 論述結構、學術語氣、APA（永遠獨立，不看前輪）
+│   ├── reference-verifier — 逐一查文獻（additional 模式下收到前輪的 watch list）
+│   └── devils-advocate — 反駁（additional 模式下看得到前輪完整結果）
 │
-└── Codex（gpt-5.4，完全獨立 process，跨模型盲驗）
+└── Codex（gpt-5.4，永遠獨立，不看前輪）
 
 → 5 份 findings 合併去重 → 比較表
+→ additional 模式額外輸出：「新發現 vs 前輪已知」差異表
 ```
 
 ## 執行流程
@@ -58,12 +78,23 @@ allowed-tools:
 ```
 Arguments:
   FILE — 要審閱的學術論文檔案（.md, .tex, .docx, .pdf）
+  --mode — independent（預設）或 additional
+  --prior — 前一輪審閱摘要檔案（additional 模式必須提供，如 review-summary.md）
   --focus — 審閱重點（可選，如「methodology」「references」「writing」「統計方法」）
 
 如果沒有 FILE，問使用者。
+如果 --mode additional 但沒有 --prior，自動搜尋同目錄下的 review-summary.md。
+如果找不到，問使用者。
 如果是 .docx，用 che-word-mcp 的 get_document_text 讀取。
 如果是 .pdf，用 macdoc convert --to md 轉換後讀取。
 ```
+
+#### additional 模式的前輪資料準備
+
+讀取 `--prior` 檔案，提取：
+1. `prior_findings` — 前輪發現的所有問題（含嚴重性）
+2. `prior_ref_issues` — 前輪標記的可疑/幻覺文獻清單（給 reference-verifier 的 watch list）
+3. `prior_full_report` — 完整報告內容（只給 devil's advocate）
 
 ### Phase 1: 讀取文件 + 準備 context
 
@@ -154,6 +185,8 @@ Agent:
 
     你的核心任務：**偵測幻覺文獻**（hallucinated references）。
 
+    {additional_mode_ref_verifier_instruction}
+
     步驟：
     1. 從論文中提取所有引用文獻（作者、年份、標題、期刊）
     2. 對每一筆文獻，使用 che-zotero-mcp 工具驗證：
@@ -202,18 +235,54 @@ Agent:
     你的任務：等其他 3 個 reviewer（methodology、writing、reference-verifier）完成後，
     用 SendMessage 詢問他們的結論，然後**試著反駁每一個「通過」或「LOW」的判斷**。
 
+    {additional_mode_devils_advocate_instruction}
+
     步驟：
-    1. 用 SendMessage 分別問 methodology、writing、reference-verifier 他們的 findings
-    2. 對每個「通過」的判斷，找理由說它其實有問題
-    3. 對每個「LOW」的判斷，論證為什麼應該是 MEDIUM 或 HIGH
-    4. 特別挑戰：
+    1. 先用 Read 工具讀取論文，形成自己的理解
+    2. 用 SendMessage 分別問 methodology、writing、reference-verifier 他們的 findings
+    3. 對每個「通過」的判斷，找理由說它其實有問題
+    4. 對每個「LOW」的判斷，論證為什麼應該是 MEDIUM 或 HIGH
+    5. 特別挑戰：
        - methodology 說統計方法 OK → 找 alternative interpretation
        - writing 說邏輯清晰 → 找隱含的邏輯跳躍
        - reference-verifier 說文獻 OK → 質疑文獻的相關性和時效性
-    5. 如果你找不到反駁的理由，才承認確實通過
+    6. 如果你找不到反駁的理由，才承認確實通過
 
     這是對抗性驗證 — 你的存在是為了防止群體盲點。
     用中文輸出你的反駁結果。
+```
+
+#### Mode-specific prompt injections
+
+以下變數在 independent 模式下為空字串，在 additional 模式下注入內容：
+
+**`{additional_mode_ref_verifier_instruction}`** — 給 reference-verifier：
+```
+（additional 模式時注入）
+前一輪審閱標記了以下可疑文獻，請特別留意：
+{prior_ref_issues}
+但你的核心任務仍然是逐一查核所有文獻，不要只看這份清單。
+前輪的判斷可能有誤，你需要獨立驗證。
+```
+
+**`{additional_mode_devils_advocate_instruction}`** — 給 devil's advocate：
+```
+（additional 模式時注入）
+## 前一輪審閱結果
+
+以下是前一輪 ensemble 審閱的完整結果：
+{prior_full_report}
+
+你的額外任務（除了反駁本輪 reviewer 的判斷之外）：
+1. **挑戰前輪「通過」的判斷** — 前輪認為 OK 或只給 LOW 的項目，是否有被低估的問題？
+2. **找出前輪的盲點** — 有什麼問題是前輪所有審閱者都沒想到的？
+3. **驗證前輪的結論** — 前輪的 HIGH 判斷是否真的那麼嚴重？有沒有過度反應的？
+4. **不要重複已知問題** — 前輪已經充分討論的問題不需要重新論述，除非你有新的反駁角度
+
+在輸出中，明確區分：
+- 「前輪已知 + 本輪確認」的問題
+- 「前輪已知但需要升級/降級」的問題
+- 「前輪完全未發現」的新問題 🆕
 ```
 
 #### 2b. Codex（背景執行）
@@ -250,6 +319,14 @@ Codex prompt 應包含：
 2. **severity 以最高為準**
 3. **Devil's Advocate 的反駁如果成立** → 升級 severity
 4. **幻覺文獻特別標示** — reference-verifier 的 ❌ 結果優先級最高
+
+#### additional 模式額外步驟
+
+5. **與前輪交叉比對**：讀取 `--prior` 檔案，將本輪發現分為三類：
+   - **前輪已知 + 本輪確認**：前輪已發現且本輪獨立確認的問題（增加可信度）
+   - **前輪已知但本輪修正**：前輪的判斷不夠精確，本輪提供了修正（如 ref list 缺漏數量）
+   - **本輪新發現 🆕**：前輪所有審閱者都未發現的問題
+6. **前輪結論驗證**：如果本輪的獨立審閱者（不知道前輪結果）得出了與前輪不同的結論，標記為「衝突」供使用者判斷
 
 輸出格式：
 
@@ -301,6 +378,12 @@ Codex prompt 應包含：
 1. ❌ 幻覺文獻（最優先修正）
 2. HIGH severity 共識問題
 3. ...
+
+### （additional 模式限定）與前輪比較
+- 前輪已知 + 本輪確認：X 項
+- 前輪已知但本輪修正：Y 項（列出差異）
+- 本輪新發現 🆕：Z 項（逐一列出）
+- 前輪結論本輪未確認：W 項（可能是 false positive 或角度不同）
 ```
 
 ### Phase 5: 詢問下一步
@@ -323,3 +406,11 @@ Codex prompt 應包含：
 - **共識問題 > 單方問題**：多個來源都指出的問題最需要修。
 - **衝突不自動裁決**：呈現給使用者判斷。
 - **Devil's Advocate 是必要的**。防止群體盲點。
+
+### additional 模式專屬鐵律
+
+- **methodology、writing、Codex 絕對不看前輪結果**。這是防止 anchoring bias 的核心設計。
+- **只有 devil's advocate 拿到前輪完整結果**。它的任務是找盲點，不是確認已知問題。
+- **reference-verifier 只拿到 watch list（可疑文獻清單）**，不是前輪的完整判斷。它仍須獨立查核所有文獻。
+- **合併時必須明確標記 🆕 新發現**。這是 additional 模式的核心價值——如果沒有新發現，這一輪就沒有意義。
+- **前輪結論可以被推翻**。如果本輪獨立審閱者得出不同結論，以本輪為準（因為它有更充分的查核）。
