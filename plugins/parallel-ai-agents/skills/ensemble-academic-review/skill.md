@@ -327,14 +327,9 @@ Agent:
 #### 2b. Codex（背景執行）
 
 ```bash
-CODEX_SCRIPT="$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs"
-
-if [ ! -f "$CODEX_SCRIPT" ]; then
-  CODEX_SCRIPT="$HOME/.claude/plugins/cache/openai-codex/codex/1.0.1/scripts/codex-companion.mjs"
-fi
-
-node "$CODEX_SCRIPT" task \
-  --effort high \
+codex exec --full-auto \
+  -c 'model_reasoning_effort="high"' \
+  -o "{output_file}" \
   "{codex_prompt}"
 ```
 

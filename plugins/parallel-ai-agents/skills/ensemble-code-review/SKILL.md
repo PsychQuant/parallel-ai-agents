@@ -200,15 +200,9 @@ Agent:
 #### 2b. Codex（背景執行）
 
 ```bash
-CODEX_SCRIPT="$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs"
-
-# 也可以用 cache 路徑作為 fallback
-if [ ! -f "$CODEX_SCRIPT" ]; then
-  CODEX_SCRIPT="$HOME/.claude/plugins/cache/openai-codex/codex/1.0.1/scripts/codex-companion.mjs"
-fi
-
-node "$CODEX_SCRIPT" task \
-  --effort high \
+codex exec --full-auto \
+  -c 'model_reasoning_effort="high"' \
+  -o "{output_file}" \
   "{codex_prompt}"
 ```
 
@@ -224,10 +218,7 @@ Codex prompt 應包含：
 2. 等待 Codex 完成（輪詢 status）
 3. 如果 Codex 失敗或超時（>10 分鐘），跳過，標注「Codex 不可用」
 
-```bash
-node "$CODEX_SCRIPT" status --all
-node "$CODEX_SCRIPT" result $JOB_ID
-```
+Codex `exec` 完成後輸出會寫入 `-o` 指定的檔案，直接用 Read 讀取即可。
 
 ### Phase 4: 合併去重 + 交叉比對
 
