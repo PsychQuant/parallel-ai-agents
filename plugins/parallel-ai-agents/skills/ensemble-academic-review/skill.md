@@ -329,9 +329,12 @@ Agent:
 ```bash
 codex exec --full-auto \
   -c 'model_reasoning_effort="high"' \
+  -c 'service_tier="fast"' \
   -o "{output_file}" \
   "{codex_prompt}"
 ```
+
+> **Fast mode**: `service_tier="fast"` 預設開啟以加速回應。
 
 Codex prompt 應包含：
 - 論文全文（或摘要 + 關鍵段落，視長度而定）
