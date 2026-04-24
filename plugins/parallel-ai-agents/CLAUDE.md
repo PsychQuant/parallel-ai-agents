@@ -19,7 +19,7 @@ ensemble-review
 │   ├── correctness — 邏輯、bug、edge case
 │   ├── security — 攻擊者視角
 │   └── devils-advocate — 反駁前 3 人
-└── Codex（gpt-5.4，跨模型盲驗）
+└── Codex（gpt-5.5，跨模型盲驗）
 ```
 
 ## 依賴

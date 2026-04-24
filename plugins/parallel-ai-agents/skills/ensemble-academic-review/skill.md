@@ -32,7 +32,7 @@ allowed-tools:
 
 # /ensemble-academic-review — 學術論文 Ensemble 審閱
 
-4 個 Claude teammates（學術審閱角色）+ 1 個 Codex（gpt-5.4）各自獨立審閱，合成比較表找共識和盲點。
+4 個 Claude teammates（學術審閱角色）+ 1 個 Codex（gpt-5.5）各自獨立審閱，合成比較表找共識和盲點。
 
 > **原理同 Ensemble OCR**：不同角色的錯誤模式不重疊。4 個 Claude 以不同學術審閱角度審閱且互相挑戰，Codex 提供跨模型盲驗。
 
@@ -93,7 +93,7 @@ mix 4 thesis.md
 │   ├── reference-verifier — 逐一查文獻（hybrid 時收到 watch list）
 │   └── devils-advocate — 反駁（hybrid 時看得到所有前輪結果）
 │
-└── Codex（gpt-5.4，永遠獨立）
+└── Codex（gpt-5.5，永遠獨立）
 
 → 每輪產出獨立的 review-round-{N}.md
 → mix 模式最後合併所有輪次 → review-summary.md
@@ -328,7 +328,8 @@ Agent:
 
 ```bash
 codex exec --full-auto \
-  -c 'model_reasoning_effort="high"' \
+  -c 'model="gpt-5.5"' \
+  -c 'model_reasoning_effort="xhigh"' \
   -c 'service_tier="fast"' \
   -o "{output_file}" \
   "{codex_prompt}"
