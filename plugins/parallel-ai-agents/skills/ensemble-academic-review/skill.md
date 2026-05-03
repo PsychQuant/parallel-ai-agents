@@ -1,11 +1,11 @@
 ---
 name: ensemble-academic-review
 description: |
-  學術論文 ensemble 審閱：methodology、writing、reference verification、devils-advocate。
-  用 che-zotero-mcp 驗證文獻真實性（抓幻覺文獻），用 perspective-writer 審查寫作風格。
+  學術論文 ensemble 審閱：methodology、writing、reference verification、number-verification、devils-advocate。
+  用 che-zotero-mcp 驗證文獻真實性（抓幻覺文獻）、用 R/Python 重跑 ground-truth 抓幻覺數字，用 perspective-writer 審查寫作風格。
   三種模式：independent（獨立單輪）、hybrid（DA 看前輪的單輪）、mix N（交替 N 輪）。
-  Use when: 碩博論文、期刊投稿、學術報告需要嚴格審閱。
-argument-hint: "FILE [--mode independent|hybrid|mix] [--rounds N] [--prior summary.md] [--focus 'topic']"
+  Use when: 碩博論文、期刊投稿、學術報告、計量／實證作業需要嚴格審閱。
+argument-hint: "FILE [--mode independent|hybrid|mix] [--rounds N] [--prior summary.md] [--focus 'topic'] [--no-numeric|--no-references]"
 allowed-tools:
   - Read
   - Write
@@ -32,9 +32,24 @@ allowed-tools:
 
 # /ensemble-academic-review — 學術論文 Ensemble 審閱
 
-4 個 Claude teammates（學術審閱角色）+ 1 個 Codex（gpt-5.5）各自獨立審閱，合成比較表找共識和盲點。
+5 個 Claude teammates（學術審閱角色）+ 1 個 Codex（gpt-5.5）各自獨立審閱，合成比較表找共識和盲點。
 
-> **原理同 Ensemble OCR**：不同角色的錯誤模式不重疊。4 個 Claude 以不同學術審閱角度審閱且互相挑戰，Codex 提供跨模型盲驗。
+> **原理同 Ensemble OCR**：不同角色的錯誤模式不重疊。5 個 Claude 以不同學術審閱角度審閱且互相挑戰，Codex 提供跨模型盲驗。
+
+## 五個 reviewer 角色
+
+| 角色 | 任務 | 預設啟用 |
+|------|------|---------|
+| **methodology** | 研究設計、統計方法、推論邏輯 | ✅ 永遠 |
+| **writing** | 論述結構、學術語氣、APA、文法 | ✅ 永遠 |
+| **reference-verifier** | 用 zotero-mcp 逐一驗證引用文獻，抓幻覺文獻 | ✅ doc 內偵測到 References / Bibliography 區塊；可 `--no-references` 關閉 |
+| **number-verifier** | 用 R/Python 重跑原始計算 artifact，逐位驗證 doc 中每個數字 vs ground truth，抓幻覺數字 | ✅ 偵測到 `analysis/`、`data/`、`notebooks/`、`.ipynb`、`.Rmd` 或 doc 路徑旁有 `*.rds` / `*.csv`；可 `--no-numeric` 關閉 |
+| **devils-advocate** | 對抗性驗證；hybrid 輪看所有前輪結果，挑戰其他 reviewer 的 PASS/LOW 判決 | ✅ 永遠 |
+
+**何時可關掉 reference-verifier**：純技術筆記、計量作業、無學術引用之文件 → `--no-references`
+**何時可關掉 number-verifier**：純理論論文、無實證計算結果之文件 → `--no-numeric`
+
+兩者皆關 = 退化為 3 reviewer + Codex（保留核心 4 角色 + Codex）。
 
 ## 三種模式
 
@@ -80,17 +95,19 @@ mix 4 thesis.md
 | writing | 什麼都不看 | 同上 |
 | Codex | 什麼都不看 | 跨模型盲驗必須獨立 |
 | reference-verifier | 前輪的可疑文獻 watch list | 重點檢查 + 獨立全面查核 |
+| number-verifier | 什麼都不看（每輪都要從 ground-truth 重跑）| 防止前輪錯數抄來抄去 |
 | **devil's advocate** | **所有前輪的完整結果** | 專攻盲點、升/降級前輪判斷 |
 
 ## 審閱架構
 
 ```
-/ensemble-academic-review FILE [--mode independent|hybrid|mix] [--rounds N]
+/ensemble-academic-review FILE [--mode independent|hybrid|mix] [--rounds N] [--no-numeric|--no-references]
 │
-├── Claude Team（4 teammates）
+├── Claude Team（最多 5 teammates）
 │   ├── methodology — 研究設計、統計方法（永遠獨立）
 │   ├── writing — 論述結構、學術語氣、APA（永遠獨立）
-│   ├── reference-verifier — 逐一查文獻（hybrid 時收到 watch list）
+│   ├── reference-verifier — 逐一查文獻（hybrid 時收到 watch list）— 可關
+│   ├── number-verifier — 逐一驗證數字 vs 原始計算 artifact（永遠獨立）— 可關
 │   └── devils-advocate — 反駁（hybrid 時看得到所有前輪結果）
 │
 └── Codex（gpt-5.5，永遠獨立）
@@ -105,16 +122,27 @@ mix 4 thesis.md
 
 ```
 Arguments:
-  FILE — 要審閱的學術論文檔案（.md, .tex, .docx, .pdf）
+  FILE — 要審閱的學術論文檔案（.md, .tex, .docx, .pdf, .ipynb, .Rmd）
   --mode — independent（預設）、hybrid、mix
-  --rounds — mix 模式的輪數（預設 2，即 independent + hybrid 各一輪）
-  --prior — hybrid 模式的前輪摘要檔案（mix 模式自動管理，不需手動指定）
+  --rounds — mix 模式的輪數（預設 2）
+  --prior — hybrid 模式的前輪摘要檔案（mix 模式自動管理）
   --focus — 審閱重點（可選）
+  --no-numeric — 關閉 number-verifier（純理論論文、無實證計算）
+  --no-references — 關閉 reference-verifier（純技術筆記、無學術引用）
 
 如果沒有 FILE，問使用者。
-如果 --mode hybrid 但沒有 --prior，自動搜尋同目錄下的 review-round-*.md 或 review-summary.md。
+如果 --mode hybrid 但沒有 --prior，自動搜尋同目錄下的 review-round-*.md。
 如果是 .docx，用 che-word-mcp 的 get_document_text 讀取。
 如果是 .pdf，用 macdoc convert --to md 轉換後讀取。
+
+#### Auto-detect reviewer 啟用
+
+掃 FILE 同層及上層 1-2 級目錄：
+- 找到 `analysis/*.rds`、`data/*.csv`、`*.ipynb`、`output/*.npz`、`scripts/*.{R,py}` → number-verifier ON
+- doc 內含 `\bibliography{}`、`References` / `参考文献` 標題下 5+ 條引用 → reference-verifier ON
+- 兩者都沒：fallback 到 methodology+writing+devils-advocate（3 reviewer + Codex）
+
+使用者可用 `--no-numeric` / `--no-references` 強制關閉。
 ```
 
 ### Phase 0.5: Mix 模式的 Task 建立（僅 mix 模式）
@@ -136,14 +164,17 @@ TaskCreate: "Final: merge all rounds"
 
 1. 讀取論文全文
 2. 提取所有引用文獻（References / Bibliography 區塊）
-3. 準備 context 字串，包含：檔案路徑、全文內容、文獻列表、focus 指示
+3. 準備 context 字串，包含：檔案路徑、全文內容、文獻列表、ground-truth artifact 清單、focus 指示
 4. （hybrid 模式）讀取前輪結果，提取：
    - `prior_ref_issues` — 可疑/幻覺文獻清單（給 reference-verifier）
+   - `prior_number_issues` — 可疑/幻覺數字清單（給 number-verifier）
    - `prior_full_report` — 所有前輪的完整結果（只給 devil's advocate）
 
 ### Phase 2: 平行啟動 Claude Team + Codex
 
 **CRITICAL: 所有 tool calls（TeamCreate + Codex Bash）必須在同一個 message 送出。不可分步驟。**
+
+**啟用的 reviewer 數依設定變動**：預設 5（含 number+reference verifier），加 `--no-numeric` 變 4，再加 `--no-references` 變 3。Codex 永遠跑。一個 message 內 = (啟用 reviewer 數) Agent + 1 Bash。
 
 **CRITICAL: Teammates 必須用 `subagent_type: "general-purpose"`。不可用 `Explore`。**
 
@@ -260,7 +291,64 @@ Agent:
     用中文輸出結果。
 ```
 
-**Agent 4: devils-advocate**
+**Agent 4: number-verifier**（如未 `--no-numeric`）
+```
+Agent:
+  name: "number-verifier"
+  subagent_type: "general-purpose"
+  team_name: "academic-review-{timestamp}-round{N}"
+  prompt: |
+    你是 Number Verifier，專門驗證學術／實證文件中每一個數字 vs ground truth artifact。
+    審閱論文：{FILE}
+    {context}
+
+    你的核心任務：**偵測幻覺數字**（hallucinated numbers）— tex/docx/md 中與原始計算不符的數值。
+
+    {hybrid_mode_number_verifier_instruction}
+
+    步驟：
+    1. 識別 ground-truth 來源：
+       - R 專案：`analysis/*.rds`、`*.RData`、`*.R` 腳本
+       - Python 專案：`*.npz`、`*.csv`、`*.ipynb`、`*.py`
+       - Excel/csv 原始資料：`*.xlsx`、`*.csv`
+    2. 從 doc 中提取每個數值（test stat、coef、p-value、AIC/BIC、forecast、平均、sd、t-stat、F、χ²、CI 等）
+    3. 對每個數字，找對應 ground-truth：
+       - 直接讀 .rds：`Rscript -e 'x <- readRDS("..."); print(x$path$to$value)'`
+       - 直接讀 .npz：`python -c 'import numpy as np; print(np.load("...")["k"])'`
+       - 重跑腳本：`Rscript analysis/q1.R` 或 `python scripts/main.py`
+       - 從原始資料重算：必要時自己跑 ADF / ARIMA / VAR / OLS
+    4. 分類每個數字：
+       - ✅ 已驗證（與 ground truth 完全相符）
+       - ⚠️ rounding（最後一位 ±1 可接受）
+       - ❌ 幻覺數字（差量超過 rounding 容差）
+    5. 跨檔一致性：若有多版本（EN tex、ZH tex、DOCX），每個數字三檔一致嗎？
+    6. 內部一致性：tex 表格中的 forecast 是否真的等於 last_obs + cumulative diff？
+
+    輸出格式：
+    ```
+    ## 數字驗證結果
+
+    ### ✅ 已驗證
+    - ARIMA(1,1,0) coef 0.5564 — matches q1c.rds$fit$coef ✅
+
+    ### ⚠️ rounding 偏差（last digit ±1）
+    - log s_q[1] = -0.04723 vs rds -0.04724 (rounding) ⚠️
+
+    ### ❌ 幻覺數字（必修）
+    - tex line 52 寫 y_T=890569 — 實際 RGDPCAN.xlsx 末值 836072 ❌
+    - tex line 200 寫 1-step σ̂=0.0207 — 實際 fc_se=0.0181（標籤錯）❌
+
+    ### 三檔一致性（EN tex / ZH tex / DOCX）
+    - 13 個 spot-check 全綠 ✅
+    - 或：EN/ZH 一致但 DOCX 不同步 ❌
+    ```
+
+    每個出現在 tex 中的數字都要查。不可只抽樣。
+    HIGH count = 幻覺數字總數。MEDIUM = rounding-only。
+    用中文輸出結果，最後給一段 verdict。
+```
+
+**Agent 5: devils-advocate**
 ```
 Agent:
   name: "devils-advocate"
@@ -302,6 +390,15 @@ Agent:
 {prior_ref_issues}
 但你的核心任務仍然是逐一查核所有文獻，不要只看這份清單。
 前輪的判斷可能有誤，你需要獨立驗證。
+```
+
+**`{hybrid_mode_number_verifier_instruction}`** — 給 number-verifier：
+```
+（hybrid 輪時注入）
+注意：本作業已跑過至少一輪驗證；前輪 number-verifier 標記過的可疑數字：
+{prior_number_issues}
+但你的核心任務仍是逐一從 ground truth 重跑驗證所有數字，**不要只看這份清單**。
+前輪可能漏掉新出現或剛修進去的數字（修正常引入新錯）。
 ```
 
 **`{hybrid_mode_devils_advocate_instruction}`** — 給 devil's advocate：
@@ -442,11 +539,12 @@ TaskUpdate: "Final: merge all rounds" → in_progress
 
 ### 所有模式共用
 
-- **5 個 tool calls 在同一個 message 送出**（4 Agent + 1 Bash codex）。不可分步驟。
+- **所有 tool calls 在同一個 message 送出**（N Agent + 1 Bash codex；N ∈ {3,4,5} 視啟用設定）。不可分步驟。
 - **Codex 看不到 Claude Team 的討論**。完全獨立的盲驗。
 - **Codex 的審稿結果原封不動呈現**，不要修改或摘要。
 - **reference-verifier 必須逐一查每筆文獻**。不可跳過或抽樣。
-- **幻覺文獻是最高優先級**。任何 ❌ 結果都是 HIGH severity。
+- **number-verifier 必須對每個出現在 doc 中的數字查 ground truth**。不可只抽樣。
+- **幻覺文獻、幻覺數字皆最高優先級**。任何 ❌ 結果都是 HIGH severity。
 - **共識問題 > 單方問題**：多個來源都指出的問題最需要修。
 - **衝突不自動裁決**：呈現給使用者判斷。
 - **Devil's Advocate 是必要的**。防止群體盲點。
@@ -455,7 +553,7 @@ TaskUpdate: "Final: merge all rounds" → in_progress
 
 - **methodology、writing、Codex 絕對不看前輪結果**。防止 anchoring bias。
 - **只有 devil's advocate 拿到所有前輪完整結果**。
-- **reference-verifier 只拿到 watch list**，不是完整判斷。仍須獨立全面查核。
+- **reference-verifier 與 number-verifier 只拿到 watch list**，不是完整判斷。仍須獨立全面查核（從 ground truth 重跑）。
 - **合併時必須標記 🆕 新發現**。
 
 ### mix 模式專屬
