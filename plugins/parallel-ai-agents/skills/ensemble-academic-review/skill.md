@@ -51,13 +51,14 @@ allowed-tools:
 
 兩者皆關 = 退化為 3 reviewer + Codex（保留核心 4 角色 + Codex）。
 
-## 三種模式
+## 四種模式
 
 | 模式 | 說明 | 適用情境 |
 |------|------|---------|
 | **independent**（預設） | 所有審閱者從零開始，不知道前輪結果 | 第一輪審閱、或想要完全獨立的第二意見 |
 | **hybrid** | 3 reviewer + Codex 獨立審閱，**只有 devil's advocate 看得到前輪結果** | 在前一輪基礎上挖更深，同時避免 anchoring bias |
 | **mix N** | 自動交替 independent → hybrid → independent → hybrid... 共 N 輪 | 最完整的審閱，每輪都是完整 ensemble，用 tasks 追蹤進度 |
+| **`--auto-iterate`**(v2.3.0+,#34) | round → fix → round 自治收斂迴圈,直到 Codex 標 `<verdict>PERMANENT_CONVERGENCE</verdict>` 或 `--max-rounds` 到上限 | 反覆審閱 + 修正直至 reviewer 全綠;適用稿件最終 polish |
 
 ### mix N 的運作邏輯
 
@@ -101,7 +102,7 @@ mix 4 thesis.md
 ## 審閱架構
 
 ```
-/ensemble-academic-review FILE [--mode independent|hybrid|mix] [--rounds N] [--no-numeric|--no-references]
+/ensemble-academic-review FILE [--mode independent|hybrid|mix] [--rounds N] [--no-numeric|--no-references] [--auto-iterate [--max-rounds N] [--converge-on VERDICT]]
 │
 ├── Claude Team（最多 5 teammates）
 │   ├── methodology — 研究設計、統計方法（永遠獨立）
@@ -129,6 +130,10 @@ Arguments:
   --focus — 審閱重點（可選）
   --no-numeric — 關閉 number-verifier（純理論論文、無實證計算）
   --no-references — 關閉 reference-verifier（純技術筆記、無學術引用）
+  --auto-iterate — v2.3.0+,啟動自治 round → fix → round 收斂迴圈(見下方 § auto-iterate 模式)
+  --max-rounds N — `--auto-iterate` 的上限,default 12,clamp [1, 30]
+  --converge-on VERDICT — `--auto-iterate` 的停止條件,default `PERMANENT_CONVERGENCE`,
+                           其他可選: `CONVERGED` (寬鬆 — 任一輪 Codex 給就停)
 
 如果沒有 FILE，問使用者。
 如果 --mode hybrid 但沒有 --prior，自動搜尋同目錄下的 review-round-*.md。
@@ -483,6 +488,119 @@ for round in 1..N:
 TaskUpdate: "Final: merge all rounds" → in_progress
 ```
 
+### Phase 5b: `--auto-iterate` 模式的自治收斂迴圈(v2.3.0+, #34)
+
+`--auto-iterate` 是 `mix N` 的擴展,加上「每輪結束讀 Codex verdict + 自動 apply HIGH-severity fix + 自動 commit per round」的 round → fix → round 收斂迴圈。
+
+#### 啟動條件
+
+- User 傳 `--auto-iterate` flag
+- 不可與 `--mode independent` 或 `--mode hybrid` 同時使用 (auto-iterate 自含 mode 邏輯,內部沿用 mix 的 alternating independent/hybrid pattern)
+
+#### 主迴圈
+
+```
+N=1
+verdict=NEEDS_ITER_1
+focus_history=[]
+
+while N <= max_rounds:
+    # 1. Run round (alternating: odd=independent, even=hybrid)
+    mode = 'independent' if N is odd else 'hybrid'
+    run Phase 1-4 with mode  → review-round-{N}.md
+
+    # 2. Parse Codex verdict
+    verdict = extract_verdict(codex_output)
+    # Look for <verdict>PERMANENT_CONVERGENCE</verdict>, <verdict>CONVERGED</verdict>, etc.
+
+    # 3. Halt check
+    if verdict == converge_on:
+        break
+
+    # 4. Apply HIGH-severity fixes
+    high_findings = parse_findings(review-round-{N}.md, severity='HIGH')
+    apply_fixes(high_findings)  → working tree modified
+
+    # 5. Auto-commit checkpoint
+    git add -A
+    git commit -m "iter-{N}: apply HIGH fixes from ensemble round {N}"
+
+    # 6. Rotate focus heuristic (after K=3 same-focus CONVERGED)
+    focus_history.append((current_focus, verdict))
+    if last_3_verdicts_all_CONVERGED_with_same_focus(focus_history):
+        current_focus = next_focus_in_pool()
+        # focus pool: method-section, proofs, typography, cross-references, boundary-cases
+
+    N += 1
+
+if N > max_rounds:
+    log("Halted at max_rounds without reaching {converge_on}")
+```
+
+#### Verdict 解析 protocol
+
+Codex prompt 結尾必須含明確 instruction:
+
+```
+At the very end of your review, output exactly one structured verdict tag:
+
+  <verdict>NEEDS_ITER_{N}</verdict>     — issues remain, iterate again
+  <verdict>CONVERGED</verdict>          — review converged within current focus
+  <verdict>PERMANENT_CONVERGENCE</verdict> — converged across all foci, paper-level done
+
+Choose conservatively. If unsure, NEEDS_ITER_{N}.
+```
+
+Skill 用 regex `<verdict>([A-Z_0-9]+)</verdict>` 從 Codex output 抓 tag。Robust 對 phrasing 變異;regex 容易 miss 「basically converged」近義詞,因此採結構化 tag。
+
+#### Apply-fixes protocol
+
+從 `review-round-{N}.md` 解出 HIGH-severity findings(MEDIUM/LOW 累積到最後一輪一次處理):
+
+```
+For each finding with severity=HIGH:
+    parse 「file:line — issue description — suggested fix」
+    Apply via Edit tool;若 fix 模糊或 suggestion 帶推測,skip + log to {SESSION}/skipped_fixes.log
+```
+
+跳過 ambiguous fix 而非硬套,避免 reviewer suggestion 自身錯誤被放大。
+
+#### Backup / rollback
+
+每輪結束 auto-commit `iter-{N}: apply HIGH fixes from ensemble round {N}`。User 可隨時:
+
+```bash
+git log --oneline | grep 'iter-'    # 列所有迭代 checkpoint
+git revert iter-{N}                  # 回退某輪
+git reset --hard iter-{N-1}          # hard reset 到前一輪
+```
+
+#### Rotate-focus heuristic
+
+如連續 K=3 輪同一 focus 都 CONVERGED 但未 PERMANENT_CONVERGENCE → 自動 switch focus 避免 local optimum。Focus pool:
+
+| Focus | 描述 |
+|-------|------|
+| `method-section` | 統計方法、研究設計 |
+| `proofs` | 數學證明、推導 |
+| `typography` | 排版、引用、bibliography |
+| `cross-references` | 交叉引用、ToC、bookmarks |
+| `boundary-cases` | edge case、退化情境 |
+
+Default 起始 focus = (none) — 不設,讓 reviewer 自主探;同一 focus 重複 CONVERGED 才強制 rotate。
+
+#### 與 ralph-loop 的差別
+
+`--auto-iterate` 是 **self-contained Bash while + state machine**,不依賴 ralph-loop 的 Stop-hook re-feed。Mode boundary 明確,可隨時中止 (`Ctrl+C` 在 round 之間生效);ralph-loop 把整個 session 鎖進迴圈,容易意外干擾其他 skill。
+
+若 user 同時跑 `ralph-loop` + `--auto-iterate`,skill 偵測 ralph-loop active 會印警告。
+
+#### Default 上限與 cost 警示
+
+- `--max-rounds` default 12,max 30
+- 每輪約 5 reviewer + Codex ≈ 6 LLM call;30 rounds × 6 ≈ 180 call
+- Skill prompt 會提示預估 token cost 並要求 confirm 才開跑
+
 ### Phase 6: 最終合併（mix 模式）
 
 讀取所有 `review-round-*.md`，產出最終的 `review-summary.md`：
@@ -561,5 +679,29 @@ TaskUpdate: "Final: merge all rounds" → in_progress
 - **每一輪都是完整的 Phase 1-4**。不可偷工減料、跳過 Codex、或減少 reviewer。
 - **用 TaskCreate/TaskUpdate 追蹤每輪進度**。讓使用者看到即時狀態。
 - **每輪結果獨立寫入 `review-round-{N}.md`**。不可覆蓋前輪。
-- **最終合併必須包含「收斂判斷」**：新發現數是否遞減。如果最後一輪仍有大量新發現，建議使用者再跑一輪。
-- **前輪結論可以被後輪推翻**。independent 輪的獨立審閱者如果得出不同結論，標記衝突供使用者判斷。
+- **最終合併必須包含「收斂判斷」**:新發現數是否遞減。如果最後一輪仍有大量新發現,建議使用者再跑一輪。
+- **前輪結論可以被後輪推翻**。independent 輪的獨立審閱者如果得出不同結論,標記衝突供使用者判斷。
+
+### `--auto-iterate` 模式專屬(v2.3.0+)
+
+- **不可在 `--mode independent|hybrid` 上同時開**;mode 自含 alternating logic
+- **每輪 auto-commit `iter-{N}` checkpoint**,user 可隨時 git revert 回退
+- **HIGH-only fix application**;MEDIUM/LOW 累積到最後一輪一次處理(降低 round-to-round 雜訊)
+- **Ambiguous fix 一律 skip + log to `skipped_fixes.log`**,寧少做不錯做
+- **`<verdict>...</verdict>` tag 必填**;Codex prompt 結尾強制要求,parsing 用結構化 regex 不靠語意
+- **rotate-focus 在 K=3 同 focus CONVERGED 才觸發**;新 focus 從 pool 順序輪換
+- **`max_rounds` 上限 30**;達上限 halt 並報告未達 verdict 條件
+- **同時跑 ralph-loop + `--auto-iterate` 時 skill 警告**(雙 Stop-hook 衝突風險)
+
+## 8 個 cumulative methodological lessons (v2.3.0+, from real 23-round campaign)
+
+來源:`PsychQuantHsu/psychophysic_representations_manuscript/docs/rounds/INDEX.md`。可作 `--auto-iterate` 模式 review 中的「常踩坑」清單,Codex prompt 可選擇性 inject 部分 lessons 加強 detection。
+
+1. **Light-weight spot-check 容易 false-positive CONVERGED** — 至少跑滿 3 reviewer + Codex 才能 trust verdict
+2. **Theorem counter shared across `\newtheorem{lemma}[theorem]` = printing off-by-one** — 必查 LaTeX counter 結構
+3. **Hypothesis silently inherited across theorems** — 在某 theorem 加的 condition 可能影響後續 theorem,需明示「not inherited by Theorem N」
+4. **Stress-test on rare-audited sections (§Notation, §Discussion) 抓得到 11+ NEW HIGH** — 建議 rotate-focus 時主動進這些區
+5. **Codex `gpt-5.5 xhigh` 比 4-Claude consensus 嚴格** — 4-Claude 全 PASS 不等於 Codex 也 PASS
+6. **PDF Token warnings (hyperref) 是真 bug 不是 cosmetic** — silent 不 fix 會在 ToC/bookmarks 失敗
+7. **degenerate counter-example 必查** — 「u≡0」「g(z)=z²-1」這類 counter 應在 case-taxonomy 之內排除
+8. **CONVERGED ≠ PERMANENT_CONVERGENCE** — 前者是 scope-limited 的「目前 focus 沒抓到新東西」,後者是 cross-focus 全綠;只接受後者作 halt verdict 是 default 設計
