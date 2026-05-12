@@ -1,0 +1,375 @@
+#!/usr/bin/env swift
+
+// codex-call — direct HTTP wrapper for chatgpt.com/backend-api
+//
+// Replaces `codex exec --full-auto -o output "prompt"` with a clean HTTP call
+// that bypasses the codex CLI subprocess (which can hang on stdin/stdout pipes).
+//
+// Usage:
+//   codex-call --output FILE [--model gpt-5.5] [--effort xhigh]
+//              [--service-tier ""] [--max-time 600]
+//              [--instructions TEXT] [--prompt-file FILE | PROMPT]
+//
+// Reads OAuth token from ~/.codex/auth.json (codex CLI's token store).
+// Auto-refreshes access_token if within 5 min of expiry. Refresh uses a file
+// lock to prevent concurrent races during parallel ensemble runs.
+
+import Foundation
+#if canImport(Darwin)
+import Darwin
+#endif
+
+// MARK: - Configuration
+
+let HOME_DIR = FileManager.default.homeDirectoryForCurrentUser
+let AUTH_FILE = HOME_DIR.appendingPathComponent(".codex/auth.json").path
+let LOCK_FILE = HOME_DIR.appendingPathComponent(".codex/.token-refresh.lock").path
+let TOKEN_URL = URL(string: "https://auth.openai.com/oauth/token")!
+let CODEX_URL = URL(string: "https://chatgpt.com/backend-api/codex/responses")!
+let CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
+let REFRESH_THRESHOLD_SEC: Int = 300
+
+// MARK: - Helpers
+
+func die(_ msg: String, code: Int32 = 1) -> Never {
+    FileHandle.standardError.write(Data("error: \(msg)\n".utf8))
+    exit(code)
+}
+
+func log(_ msg: String) {
+    FileHandle.standardError.write(Data("[codex-call] \(msg)\n".utf8))
+}
+
+// MARK: - JWT exp
+
+func jwtExp(_ token: String) -> Int {
+    let parts = token.split(separator: ".")
+    guard parts.count >= 2 else { return 0 }
+    var payload = String(parts[1])
+        .replacingOccurrences(of: "-", with: "+")
+        .replacingOccurrences(of: "_", with: "/")
+    while payload.count % 4 != 0 { payload += "=" }
+    guard let data = Data(base64Encoded: payload),
+          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let exp = json["exp"] as? Int
+    else { return 0 }
+    return exp
+}
+
+// MARK: - Auth file
+
+func loadAuthRaw() throws -> [String: Any] {
+    let data = try Data(contentsOf: URL(fileURLWithPath: AUTH_FILE))
+    guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+    else { throw NSError(domain: "codex-call", code: 1,
+                         userInfo: [NSLocalizedDescriptionKey: "auth.json is not an object"]) }
+    return obj
+}
+
+func saveAuthRaw(_ auth: [String: Any]) throws {
+    let data = try JSONSerialization.data(withJSONObject: auth, options: [.prettyPrinted, .sortedKeys])
+    let tmp = AUTH_FILE + ".tmp"
+    try data.write(to: URL(fileURLWithPath: tmp), options: .atomic)
+    _ = chmod(tmp, 0o600)
+    if rename(tmp, AUTH_FILE) != 0 {
+        throw NSError(domain: "codex-call", code: 2,
+                      userInfo: [NSLocalizedDescriptionKey: "rename failed: \(String(cString: strerror(errno)))"])
+    }
+}
+
+// MARK: - OAuth refresh
+
+func httpFormPost(url: URL, fields: [String: String], timeout: TimeInterval = 30) throws -> Data {
+    var req = URLRequest(url: url, timeoutInterval: timeout)
+    req.httpMethod = "POST"
+    req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+    let body = fields.map { (k, v) in
+        let ek = k.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? k
+        let ev = v.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? v
+        return "\(ek)=\(ev)"
+    }.joined(separator: "&")
+    req.httpBody = body.data(using: .utf8)
+
+    let sem = DispatchSemaphore(value: 0)
+    var result: Data?
+    var error: Error?
+    var status: Int = 0
+    URLSession.shared.dataTask(with: req) { data, resp, err in
+        status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        result = data
+        error = err
+        sem.signal()
+    }.resume()
+    sem.wait()
+
+    if let err = error { throw err }
+    guard status == 200, let data = result else {
+        let body = result.flatMap { String(data: $0, encoding: .utf8) } ?? "(no body)"
+        throw NSError(domain: "codex-call", code: status,
+                      userInfo: [NSLocalizedDescriptionKey: "HTTP \(status): \(body.prefix(500))"])
+    }
+    return data
+}
+
+func refreshIfNeeded(_ auth: inout [String: Any]) throws {
+    guard var tokens = auth["tokens"] as? [String: Any],
+          let access = tokens["access_token"] as? String,
+          let refresh = tokens["refresh_token"] as? String
+    else { throw NSError(domain: "codex-call", code: 3,
+                          userInfo: [NSLocalizedDescriptionKey: "auth.json missing tokens.access_token/refresh_token"]) }
+
+    let now = Int(Date().timeIntervalSince1970)
+    if jwtExp(access) - now > REFRESH_THRESHOLD_SEC { return }
+
+    // file lock
+    try FileManager.default.createDirectory(
+        at: URL(fileURLWithPath: LOCK_FILE).deletingLastPathComponent(),
+        withIntermediateDirectories: true)
+    let fd = open(LOCK_FILE, O_CREAT | O_WRONLY, 0o600)
+    if fd < 0 {
+        throw NSError(domain: "codex-call", code: 4,
+                      userInfo: [NSLocalizedDescriptionKey: "open lock failed: \(String(cString: strerror(errno)))"])
+    }
+    defer { close(fd) }
+    if flock(fd, LOCK_EX) != 0 {
+        throw NSError(domain: "codex-call", code: 5,
+                      userInfo: [NSLocalizedDescriptionKey: "flock failed: \(String(cString: strerror(errno)))"])
+    }
+    defer { _ = flock(fd, LOCK_UN) }
+
+    // Re-read after acquiring lock — another process may have refreshed
+    auth = try loadAuthRaw()
+    if let t = auth["tokens"] as? [String: Any],
+       let a = t["access_token"] as? String,
+       jwtExp(a) - now > REFRESH_THRESHOLD_SEC {
+        return
+    }
+    tokens = auth["tokens"] as? [String: Any] ?? tokens
+
+    let respData = try httpFormPost(url: TOKEN_URL, fields: [
+        "grant_type": "refresh_token",
+        "refresh_token": refresh,
+        "client_id": CLIENT_ID,
+    ])
+    guard let json = try JSONSerialization.jsonObject(with: respData) as? [String: Any],
+          let newAccess = json["access_token"] as? String
+    else { throw NSError(domain: "codex-call", code: 6,
+                          userInfo: [NSLocalizedDescriptionKey: "refresh response missing access_token"]) }
+
+    tokens["access_token"] = newAccess
+    if let newRefresh = json["refresh_token"] as? String { tokens["refresh_token"] = newRefresh }
+    if let newId = json["id_token"] as? String { tokens["id_token"] = newId }
+    auth["tokens"] = tokens
+
+    let fmt = ISO8601DateFormatter()
+    fmt.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    auth["last_refresh"] = fmt.string(from: Date())
+
+    try saveAuthRaw(auth)
+    log("token refreshed")
+}
+
+// MARK: - SSE streaming
+
+final class StreamCollector: NSObject, URLSessionDataDelegate {
+    var accumulated = ""
+    var buffer = ""
+    var statusCode: Int = 0
+    var streamError: Error?
+    let done = DispatchSemaphore(value: 0)
+    var firstBytes: Data?
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask,
+                    didReceive response: URLResponse,
+                    completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+        statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        completionHandler(.allow)
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        if statusCode != 200 {
+            // Buffer error body for reporting
+            firstBytes = (firstBytes ?? Data()) + data
+            return
+        }
+        guard let chunk = String(data: data, encoding: .utf8) else { return }
+        buffer += chunk
+        while let range = buffer.range(of: "\n\n") {
+            let event = String(buffer[buffer.startIndex..<range.lowerBound])
+            buffer.removeSubrange(buffer.startIndex..<range.upperBound)
+            processEvent(event)
+            if streamError != nil { return }
+        }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        if statusCode != 200 {
+            let body = firstBytes.flatMap { String(data: $0, encoding: .utf8) } ?? "(no body)"
+            streamError = NSError(domain: "codex-call", code: statusCode,
+                                  userInfo: [NSLocalizedDescriptionKey: "HTTP \(statusCode): \(body.prefix(500))"])
+        } else if let err = error, streamError == nil {
+            streamError = err
+        }
+        done.signal()
+    }
+
+    func processEvent(_ event: String) {
+        let dataLines = event.split(separator: "\n", omittingEmptySubsequences: false)
+            .compactMap { line -> String? in
+                guard line.hasPrefix("data:") else { return nil }
+                return String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces.subtracting(.newlines))
+            }
+        let payload = dataLines.joined()
+        if payload.isEmpty || payload == "[DONE]" { return }
+        guard let data = payload.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let type = json["type"] as? String
+        else { return }
+
+        switch type {
+        case "response.output_text.delta":
+            if let delta = json["delta"] as? String { accumulated += delta }
+        case "error", "response.failed":
+            let msg = (json["message"] as? String)
+                ?? ((json["response"] as? [String: Any])?["error"] as? [String: Any])?["message"] as? String
+                ?? "Codex error"
+            streamError = NSError(domain: "codex-call", code: -1,
+                                   userInfo: [NSLocalizedDescriptionKey: msg])
+        default:
+            break
+        }
+    }
+}
+
+func streamCodex(prompt: String, outputFile: String, model: String, effort: String,
+                 serviceTier: String, maxTime: Int, instructions: String) throws {
+    var auth = try loadAuthRaw()
+    try refreshIfNeeded(&auth)
+    guard let tokens = auth["tokens"] as? [String: Any],
+          let access = tokens["access_token"] as? String
+    else { throw NSError(domain: "codex-call", code: 7,
+                          userInfo: [NSLocalizedDescriptionKey: "post-refresh: tokens missing"]) }
+    let accountId = (tokens["account_id"] as? String) ?? ""
+
+    var body: [String: Any] = [
+        "model": model,
+        "store": false,
+        "stream": true,
+        "instructions": instructions,
+        "input": [["role": "user", "content": [["type": "input_text", "text": prompt]]]],
+        "text": ["verbosity": "medium"],
+        "include": ["reasoning.encrypted_content"],
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": ["effort": effort, "summary": "auto"],
+    ]
+    if !serviceTier.isEmpty { body["service_tier"] = serviceTier }
+
+    var req = URLRequest(url: CODEX_URL, timeoutInterval: TimeInterval(maxTime))
+    req.httpMethod = "POST"
+    req.setValue("Bearer \(access)", forHTTPHeaderField: "Authorization")
+    req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    req.setValue("responses=experimental", forHTTPHeaderField: "OpenAI-Beta")
+    req.setValue("codex_cli_rs", forHTTPHeaderField: "originator")
+    req.setValue(accountId, forHTTPHeaderField: "chatgpt-account-id")
+    req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+    req.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+    let collector = StreamCollector()
+    let config = URLSessionConfiguration.default
+    config.timeoutIntervalForRequest = TimeInterval(maxTime)
+    config.timeoutIntervalForResource = TimeInterval(maxTime)
+    let session = URLSession(configuration: config, delegate: collector, delegateQueue: nil)
+
+    session.dataTask(with: req).resume()
+    let waitResult = collector.done.wait(timeout: .now() + .seconds(maxTime + 5))
+    session.invalidateAndCancel()
+
+    if waitResult == .timedOut {
+        throw NSError(domain: "codex-call", code: 408,
+                      userInfo: [NSLocalizedDescriptionKey: "Hard timeout after \(maxTime)s"])
+    }
+    if let err = collector.streamError { throw err }
+
+    try collector.accumulated.write(toFile: outputFile, atomically: true, encoding: .utf8)
+    log("wrote \(collector.accumulated.count) chars to \(outputFile)")
+}
+
+// MARK: - Argument parsing
+
+struct Args {
+    var output: String?
+    var model: String = "gpt-5.5"
+    var effort: String = "xhigh"
+    var serviceTier: String = ""
+    var maxTime: Int = 600
+    var instructions: String = "You are a careful, rigorous reviewer. Respond in the user's language."
+    var promptFile: String?
+    var prompt: String?
+}
+
+func parseArgs() -> Args {
+    var a = Args()
+    var args = Array(CommandLine.arguments.dropFirst())
+    while !args.isEmpty {
+        let head = args.removeFirst()
+        func next() -> String {
+            guard !args.isEmpty else { die("missing value for \(head)") }
+            return args.removeFirst()
+        }
+        switch head {
+        case "--output", "-o": a.output = next()
+        case "--model": a.model = next()
+        case "--effort": a.effort = next()
+        case "--service-tier": a.serviceTier = next()
+        case "--max-time": a.maxTime = Int(next()) ?? a.maxTime
+        case "--instructions": a.instructions = next()
+        case "--prompt-file": a.promptFile = next()
+        case "--help", "-h":
+            print("""
+            codex-call — direct HTTP wrapper for chatgpt.com/backend-api
+
+            Usage:
+              codex-call --output FILE [--model gpt-5.5] [--effort xhigh]
+                         [--service-tier ""] [--max-time 600]
+                         [--instructions TEXT]
+                         [--prompt-file FILE | PROMPT]
+
+            If no PROMPT and no --prompt-file is given, reads prompt from stdin.
+
+            Auth: reads ~/.codex/auth.json (auto-refreshes if expired).
+            """)
+            exit(0)
+        default:
+            if a.prompt == nil { a.prompt = head }
+            else { die("unexpected positional argument: \(head)") }
+        }
+    }
+    return a
+}
+
+// MARK: - Main
+
+let a = parseArgs()
+guard let output = a.output else { die("--output is required") }
+
+let prompt: String
+if let pf = a.promptFile {
+    do { prompt = try String(contentsOfFile: pf, encoding: .utf8) }
+    catch { die("cannot read prompt file: \(error.localizedDescription)") }
+} else if let p = a.prompt {
+    prompt = p
+} else {
+    let stdinData = FileHandle.standardInput.readDataToEndOfFile()
+    prompt = String(data: stdinData, encoding: .utf8) ?? ""
+}
+if prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+    die("empty prompt")
+}
+
+do {
+    try streamCodex(prompt: prompt, outputFile: output, model: a.model, effort: a.effort,
+                    serviceTier: a.serviceTier, maxTime: a.maxTime, instructions: a.instructions)
+} catch {
+    die(error.localizedDescription)
+}

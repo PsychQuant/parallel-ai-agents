@@ -1,7 +1,7 @@
 {
   "name": "parallel-ai-agents",
-  "description": "平行派發任務給多個 AI agent（Claude + Codex），獨立執行後交叉比對結果。Codex 改走直接 HTTP wrapper（bin/codex-call.py）取代 codex exec subprocess，解決 hang 問題",
-  "version": "2.4.0",
+  "description": "平行派發任務給多個 AI agent（Claude + Codex），獨立執行後交叉比對結果。Codex 改走直接 HTTP wrapper（bin/codex-call，Swift script）取代 codex exec subprocess，解決 hang 問題且避開 Python 版本飄移",
+  "version": "2.5.0",
   "author": {
     "name": "Che Cheng"
   }
