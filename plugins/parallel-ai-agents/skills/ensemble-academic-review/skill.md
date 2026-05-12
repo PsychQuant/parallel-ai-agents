@@ -426,18 +426,24 @@ Agent:
 - 「前輪完全未發現」的新問題 🆕
 ```
 
-#### 2b. Codex（背景執行）
+#### 2b. Codex（背景執行 — 直接 HTTP，繞過 codex CLI subprocess）
 
 ```bash
-codex exec --full-auto \
-  -c 'model="gpt-5.5"' \
-  -c 'model_reasoning_effort="xhigh"' \
-  -c 'service_tier="fast"' \
-  -o "{output_file}" \
-  "{codex_prompt}"
+codex-call.py \
+  --output "{output_file}" \
+  --model gpt-5.5 \
+  --effort xhigh \
+  --max-time 900 \
+  --instructions "你是嚴謹的學術論文審閱者，從 methodology、writing、reference 三個角度審閱。用中文輸出。" << 'EOF'
+{codex_prompt}
+EOF
 ```
 
-> **Fast mode**: `service_tier="fast"` 預設開啟以加速回應。
+> **為什麼不用 `codex exec`**：subprocess 偶爾會 hang（stdin/stdout pipe 互鎖、tty 問題），等 10 分鐘 timeout 才能繼續。`codex-call.py` 是 plugin 自帶 wrapper（`bin/codex-call.py`，安裝時自動加入 PATH），直接 HTTP POST 到 `chatgpt.com/backend-api/codex/responses`，仍走你的 ChatGPT 訂閱 OAuth — 但 `--max-time` 是硬性保證，不會 hang。
+>
+> **論文審閱用 max-time 900s**（15 分鐘），因為輸入長、reasoning 比 code review 重。Backend 已不接受 `service_tier="fast"`；wrapper 預設不送。
+>
+> **OAuth token**：wrapper 自動讀 `~/.codex/auth.json`（codex CLI 的同一份），到期前 5 分鐘自動 refresh，用 file lock 避免 ensemble 平行 race。
 
 Codex prompt 應包含：
 - 論文全文（或摘要 + 關鍵段落，視長度而定）

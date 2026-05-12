@@ -25,8 +25,40 @@ ensemble-review
 ## 依賴
 
 - Claude Code orchestrated teams（TeamCreate、SendMessage）
-- Codex CLI（`codex` 命令）
-- Codex companion script（openai-codex plugin 提供）
+- **Codex OAuth token**（`~/.codex/auth.json`）— 由 codex CLI 在首次登入時建立。本 plugin 自帶 wrapper `bin/codex-call.py` 直接讀這個檔案、走 OAuth refresh + HTTP 直連 `chatgpt.com/backend-api`，不再 spawn `codex exec` subprocess（避免 stdin/stdout pipe 互鎖造成的 hang）
+- Python 3（macOS 12+ 內建）
+
+## bin/codex-call.py
+
+直接 HTTP wrapper，取代原本的 `codex exec --full-auto`。設計目的：
+
+| 問題 | `codex exec` | `codex-call.py` |
+|------|-------------|-----------------|
+| Subprocess hang | 偶發 | ✗ 純 HTTP，無 subprocess |
+| Hard timeout | 不可靠 | ✓ `--max-time` socket-level abort |
+| OAuth refresh | CLI 自動 | 自帶 refresh + file lock |
+| 計費 | ChatGPT 訂閱 | ChatGPT 訂閱（同一條 OAuth）|
+| service_tier=fast | CLI 接受（似乎降級為 default）| backend 拒絕，預設不送 |
+
+範例：
+
+```bash
+codex-call.py \
+  --output result.md \
+  --model gpt-5.5 \
+  --effort xhigh \
+  --max-time 600 \
+  --instructions "你是嚴謹 reviewer。" \
+  --prompt-file prompt.txt
+```
+
+或 stdin：
+
+```bash
+echo "..." | codex-call.py --output out.md --model gpt-5.5 --effort xhigh
+```
+
+Wrapper 在 plugin 安裝時自動加入 PATH（透過 `bin/`），所以直接呼叫名字即可，不需要絕對路徑。
 
 ## Development
 
