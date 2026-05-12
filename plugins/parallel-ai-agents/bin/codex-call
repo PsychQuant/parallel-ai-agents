@@ -263,7 +263,18 @@ func streamCodex(prompt: String, outputFile: String, model: String, effort: Stri
         "parallel_tool_calls": true,
         "reasoning": ["effort": effort, "summary": "auto"],
     ]
-    if !serviceTier.isEmpty { body["service_tier"] = serviceTier }
+    // Translate legacy/friendly names to backend wire values.
+    // Mirrors codex-rs ServiceTier::request_value(): Fast→priority, Flex→flex.
+    // Backend rejects "fast" with HTTP 400; codex CLI does this translation internally.
+    let wireTier: String = {
+        switch serviceTier.lowercased() {
+        case "fast", "priority": return "priority"
+        case "flex":             return "flex"
+        case "":                 return ""
+        default:                 return serviceTier  // pass through unknown values
+        }
+    }()
+    if !wireTier.isEmpty { body["service_tier"] = wireTier }
 
     var req = URLRequest(url: CODEX_URL, timeoutInterval: TimeInterval(maxTime))
     req.httpMethod = "POST"

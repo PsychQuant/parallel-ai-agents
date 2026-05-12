@@ -204,6 +204,7 @@ codex-call \
   --output "{output_file}" \
   --model gpt-5.5 \
   --effort xhigh \
+  --service-tier fast \
   --max-time 600 \
   --instructions "你是嚴謹的程式碼審閱者，用中文輸出。" << 'EOF'
 {codex_prompt}
@@ -212,7 +213,7 @@ EOF
 
 > **為什麼不用 `codex exec`**：subprocess 偶爾會 hang（stdin/stdout pipe 互鎖、tty 問題），等 10 分鐘 timeout 才能繼續。`codex-call` 是 plugin 自帶 wrapper（`bin/codex-call`，Swift script，安裝時自動加入 PATH），直接 HTTP POST 到 `chatgpt.com/backend-api/codex/responses`，仍走你的 ChatGPT 訂閱 OAuth — 但 `--max-time` 是硬性保證，不會 hang。
 >
-> **注意**：backend 已不接受 `service_tier="fast"`；wrapper 預設不送，但 `xhigh` effort 一般 5-15s 就完成。
+> **Fast mode**：傳 `--service-tier fast`，wrapper 內部會翻譯成 backend 接受的 `priority`（codex CLI 內部也是這樣翻譯）。Fast = 1.5× 速度、2.5× credit（gpt-5.5）；ensemble 場景值得，因為 user 在等。
 >
 > **OAuth token**：wrapper 自動讀 `~/.codex/auth.json`（codex CLI 的同一份），到期前 5 分鐘自動 refresh，用 file lock 避免 ensemble 平行 race。
 
