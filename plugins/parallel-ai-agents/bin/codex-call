@@ -49,9 +49,13 @@ func jwtExp(_ token: String) -> Int {
         .replacingOccurrences(of: "-", with: "+")
         .replacingOccurrences(of: "_", with: "/")
     while payload.count % 4 != 0 { payload += "=" }
+    // `exp` is a JSON NumericDate; JSONSerialization may surface it as Int OR Double (large/fractional).
+    // `as? Int` fails on the Double case → a perfectly valid token reads exp=0 → forced refresh every
+    // call. Parse via NSNumber so both encodings work. A genuine parse failure still returns 0, which
+    // conservatively forces a refresh (safe direction: refresh-when-unsure beats using a dead token).
     guard let data = Data(base64Encoded: payload),
           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-          let exp = json["exp"] as? Int
+          let exp = (json["exp"] as? NSNumber)?.intValue
     else { return 0 }
     return exp
 }
@@ -69,6 +73,11 @@ func loadAuthRaw() throws -> [String: Any] {
 func saveAuthRaw(_ auth: [String: Any]) throws {
     let data = try JSONSerialization.data(withJSONObject: auth, options: [.prettyPrinted, .sortedKeys])
     let tmp = AUTH_FILE + ".tmp"
+    // The temp holds live OAuth secrets (access/refresh/id tokens). chmod-AFTER-write leaves a window
+    // where Data.write(.atomic)'s own staging file exists at umask-default (often 0644 — group/other
+    // readable). Tighten umask to 0o077 around the write so every file created here is ≤0600 from birth.
+    let oldMask = umask(0o077)
+    defer { umask(oldMask) }
     try data.write(to: URL(fileURLWithPath: tmp), options: .atomic)
     _ = chmod(tmp, 0o600)
     if rename(tmp, AUTH_FILE) != 0 {
@@ -83,9 +92,16 @@ func httpFormPost(url: URL, fields: [String: String], timeout: TimeInterval = 30
     var req = URLRequest(url: url, timeoutInterval: timeout)
     req.httpMethod = "POST"
     req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+    // x-www-form-urlencoded must escape everything except RFC 3986 unreserved chars. `.urlQueryAllowed`
+    // is WRONG here: it intentionally leaves + & = / unescaped (legal in a query component), but in a
+    // form body `+` decodes to space server-side and a literal `&`/`=` inside a value breaks the field
+    // boundary. An opaque refresh_token containing any of these would be silently corrupted (failed
+    // refresh) or inject extra fields (parameter pollution).
+    let formUnreserved = CharacterSet(charactersIn:
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
     let body = fields.map { (k, v) in
-        let ek = k.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? k
-        let ev = v.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? v
+        let ek = k.addingPercentEncoding(withAllowedCharacters: formUnreserved) ?? k
+        let ev = v.addingPercentEncoding(withAllowedCharacters: formUnreserved) ?? v
         return "\(ek)=\(ev)"
     }.joined(separator: "&")
     req.httpBody = body.data(using: .utf8)
@@ -137,18 +153,25 @@ func refreshIfNeeded(_ auth: inout [String: Any]) throws {
     }
     defer { _ = flock(fd, LOCK_UN) }
 
-    // Re-read after acquiring lock — another process may have refreshed
+    // Re-read after acquiring lock — another process may have refreshed during the flock wait (which
+    // can be tens of seconds under parallel-ensemble contention). Re-sample `now` AND re-extract the
+    // refresh_token from the re-read file: reusing the pre-lock `now` skews the freshness recheck
+    // optimistic (may skip a needed refresh), and reusing the pre-lock `refresh` POSTs a refresh_token
+    // that a concurrent process may have already rotated — OAuth refresh tokens are single-use, so a
+    // consumed one fails the whole refresh.
     auth = try loadAuthRaw()
+    let nowLocked = Int(Date().timeIntervalSince1970)
     if let t = auth["tokens"] as? [String: Any],
        let a = t["access_token"] as? String,
-       jwtExp(a) - now > REFRESH_THRESHOLD_SEC {
+       jwtExp(a) - nowLocked > REFRESH_THRESHOLD_SEC {
         return
     }
     tokens = auth["tokens"] as? [String: Any] ?? tokens
+    let refreshNow = (tokens["refresh_token"] as? String) ?? refresh
 
     let respData = try httpFormPost(url: TOKEN_URL, fields: [
         "grant_type": "refresh_token",
-        "refresh_token": refresh,
+        "refresh_token": refreshNow,
         "client_id": CLIENT_ID,
     ])
     guard let json = try JSONSerialization.jsonObject(with: respData) as? [String: Any],
