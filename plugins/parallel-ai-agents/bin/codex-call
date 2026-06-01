@@ -1,4 +1,4 @@
-#!/usr/bin/env swift
+#!/usr/bin/swift
 
 // codex-call — direct HTTP wrapper for chatgpt.com/backend-api
 //
@@ -301,6 +301,15 @@ func streamCodex(prompt: String, outputFile: String, model: String, effort: Stri
                       userInfo: [NSLocalizedDescriptionKey: "Hard timeout after \(maxTime)s"])
     }
     if let err = collector.streamError { throw err }
+
+    // Fail-closed on empty output: a 200 stream with no text deltas (model emitted only reasoning,
+    // an aborted stream before the first delta, etc.) would otherwise write an empty file and exit 0.
+    // In an ensemble that reads exit code + file, a blank result is misread as "this reviewer passed
+    // with no findings" — a forged vote. Treat empty output as a non-zero failure instead.
+    if collector.accumulated.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        throw NSError(domain: "codex-call", code: 422,
+                      userInfo: [NSLocalizedDescriptionKey: "Codex stream completed with no text output — refusing to write an empty result (an empty file would be misread as a passing review)."])
+    }
 
     try collector.accumulated.write(toFile: outputFile, atomically: true, encoding: .utf8)
     log("wrote \(collector.accumulated.count) chars to \(outputFile)")
