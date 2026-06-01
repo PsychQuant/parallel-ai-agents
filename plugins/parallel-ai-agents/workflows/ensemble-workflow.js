@@ -159,7 +159,10 @@ const DATA_GUARD =
 // Sentinel-wrap inline untrusted text. A ``` fence can be closed by ``` in the content; these
 // sentinels can't be — every known sentinel token (any label's BEGIN/END/STRIPPED) is neutralized
 // before wrapping, so content cannot forge this block's OR a sibling block's boundary.
-const SENTINEL_RE = /<<<PAI_ENSEMBLE_[A-Z_]*?(?:BEGIN|END|STRIPPED)>>>/g
+// Label class is [^>]*? (not [A-Z_]) so digit/space/lowercase sentinel-shaped look-alikes are ALSO
+// neutralized — matching the stated intent "every known sentinel token is neutralized" (the narrow
+// [A-Z_] left forge-shaped variants surviving; caught by the harness's own security-lens self-review).
+const SENTINEL_RE = /<<<PAI_ENSEMBLE_[^>]*?(?:BEGIN|END|STRIPPED)>>>/g
 function dataBlock(label, text) {
   const BEGIN = `<<<PAI_ENSEMBLE_${label}_BEGIN>>>`
   const END = `<<<PAI_ENSEMBLE_${label}_END>>>`
@@ -286,19 +289,20 @@ try {
   A = {}
 }
 
+// Guard BOTH an unknown profile AND a known-but-malformed profile with no lenses. The empty-lenses
+// case is not academic: without it, `budgetForLenses / profile.lenses.length` divides by 0 →
+// maxReplicas = Infinity (MAX_AGENTS cap silently defeated), the fan-out loop produces zero
+// reviewers, and the fail-closed loop iterates nothing → a false PASS with no reviewer having run.
+// (Caught by the harness's own code-profile self-review.) Bail with a HIGH integrity finding here so
+// the division never happens and the skill never renders a false PASS.
 const profile = PROFILES[A.profile]
-if (!profile) {
-  // Fail loud-but-safe: a HIGH integrity finding so the skill never renders a false PASS.
+if (!profile || !Array.isArray(profile.lenses) || profile.lenses.length === 0) {
+  const title = !profile ? `unknown ensemble profile "${A.profile}"` : `profile "${A.profile}" has no lenses`
+  const body = !profile
+    ? `pai-ensemble was invoked with no matching PROFILES entry; available: ${Object.keys(PROFILES).join(', ')}. The skill must fall back to the legacy backend.`
+    : `the "${A.profile}" profile defines no lenses — cannot fan out reviewers. The skill must fall back to the legacy backend.`
   return {
-    findings: [
-      {
-        lens: 'harness',
-        severity: 'HIGH',
-        title: `unknown ensemble profile "${A.profile}"`,
-        file: null,
-        body: `pai-ensemble was invoked with no matching PROFILES entry; available: ${Object.keys(PROFILES).join(', ')}. The skill must fall back to the legacy backend.`,
-      },
-    ],
+    findings: [{ lens: 'harness', severity: 'HIGH', title, file: null, body }],
     verdict: 'FINDINGS',
     stats: { profile: A.profile || null, agents: 0 },
   }
