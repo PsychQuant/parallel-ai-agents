@@ -27,6 +27,7 @@
  *   diffFile     : string | null                     — diff path (code profile; read by agents)
  *   replicas     : integer                           — independent instances per base lens (default 1)
  *   codexEnabled : boolean                           — run the cross-model Codex lens (code/academic)
+ *   codexCallPath: string | null                     — absolute path to bin/codex-call (skill: ${CLAUDE_PLUGIN_ROOT}/bin/codex-call); avoids PATH fragility
  *   priorBlock   : string | null                     — pre-sliced prior-round context (academic; skill-side loop)
  *
  * Returns: { findings: Finding[], verdict: 'PASS' | 'FINDINGS', stats: {...} }
@@ -117,7 +118,34 @@ const PROFILES = {
       '(4)「重點整理」是否真是重點，還是只是把小標題抄一遍；(5) 表格是否真幫助理解，還是增加認知負擔；' +
       '(6) 課後作業是否可執行，學生知不知道具體要做什麼。找不到反駁的理由，才承認確實通過。',
   },
-  // code:     { ... }  ← Phase 2 (adds Codex barrier member via bin/codex-call)
+  code: {
+    title: '程式碼/技術文件',
+    codexDefault: true,
+    codexInstructions: '你是嚴謹的程式碼審閱者，用繁體中文輸出，逐點列出問題並標注嚴重性。',
+    lenses: [
+      {
+        key: 'architecture',
+        focus:
+          '設計與全局合理性。檢查：(1) 設計模式是否正確（protocol/介面使用、抽象層級）；(2) API 用法是否符合上游框架推薦方式；' +
+          '(3) 依賴關係是否合理（有無多餘或缺少）；(4) 檔案組織是否清晰；(5) 有無死碼或重複實作。用 Read/Grep/Glob 實際看相關檔案確認。',
+      },
+      {
+        key: 'correctness',
+        focus:
+          '邏輯正確性。檢查：(1) 有無 bug；(2) edge cases（null、empty、boundary values）；(3) 型別安全（隱式轉換、optional handling）；' +
+          '(4) 控制流程（if/else 覆蓋、switch fall-through）；(5) 錯誤處理（有無漏接的 error）。用 Read 看完整函數上下文。',
+      },
+      {
+        key: 'security',
+        focus:
+          '攻擊者視角的安全性。檢查：(1) injection（SQL、command、path traversal）；(2) hardcoded secrets（API keys、passwords、tokens）；' +
+          '(3) 權限檢查（有無繞過可能）；(4) 輸入驗證（external data 是否被信任）；(5) 敏感資訊洩漏（error message、log）。用 Grep 搜可疑模式。',
+      },
+    ],
+    daFocus:
+      '反駁前三個 reviewer（architecture / correctness / security）的「通過」或「LOW」判斷：對每個「通過」找理由說它其實有問題；' +
+      '對每個「LOW」論證為何應升為 MEDIUM 或 HIGH。這是對抗性驗證，存在目的是防止三人群體盲點。找不到反駁的理由，才承認確實通過。',
+  },
   // academic: { ... }  ← Phase 3 (single round only; multi-round loop stays skill-side)
 }
 
@@ -204,19 +232,26 @@ function daPrompt(profile, reviewerResults, A) {
 // Cross-model Codex lens. UNLIKE idd-verify (which shells `codex exec`), parallel-ai-agents ships
 // bin/codex-call — a wrapper that does direct HTTPS to the Codex backend, NEVER spawning the
 // hang-prone `codex exec` subprocess (the v2.4.0 rewrite). The agent MUST use codex-call.
+//
+// PATH is FRAGILE: the install-time bin/ PATH entry is version-pinned and may be stale/absent in a
+// workflow agent's shell. So the skill resolves `${CLAUDE_PLUGIN_ROOT}/bin/codex-call` and passes it
+// as `args.codexCallPath`; the agent runs that absolute path. Bare `codex-call` is only the fallback.
 function codexPrompt(profile, A) {
+  const wrapper = A.codexCallPath || 'codex-call'
+  const instr = profile.codexInstructions || '你是嚴謹的審閱者，用繁體中文輸出，逐點標注嚴重性。'
   return [
-    `You are the cross-model verifier in a ${profile.title} ensemble. Use Codex (a different model family) as a BLIND reviewer of the artifact below, then convert its output into findings. Do NOT mention the Claude reviewers or feed Codex their findings — Codex stays a blind cross-model vote.`,
+    `You are the cross-model verifier in a ${profile.title} ensemble. Use Codex (gpt-5.5, a different model family) as a BLIND reviewer, then convert its output into findings. Do NOT mention the Claude reviewers or feed Codex their findings — Codex stays a blind cross-model vote.`,
     DATA_GUARD,
     A.contextBlock ? `Context:\n${dataBlock('CONTEXT', A.contextBlock)}` : '',
     artifactInstruction(A),
     `Steps:`,
-    `1. Write a review prompt (your instructions to Codex + a pointer to read the artifact path above) to a temp file with your file-write tool. Do NOT echo/printf/heredoc artifact bytes into any shell command — that is a command-injection sink on untrusted input.`,
-    `2. Run the plugin's wrapper (NEVER \`codex exec\` — it hangs; codex-call is on PATH after install). Bound it with --max-time:`,
+    `1. Read the artifact path(s) above with your file-read tool to get the content under review (Codex receives only the prompt text — it cannot open files itself).`,
+    `2. Build a review prompt = brief review instructions (繁中、逐點、針對${profile.title}、標 CRITICAL/HIGH/MEDIUM/LOW/INFO、引用具體位置) FOLLOWED BY the artifact content. Write the whole thing to a temp file with your file-write tool. Do NOT echo/printf/heredoc artifact bytes into any shell command — that is a command-injection sink on untrusted content.`,
+    `3. Run the plugin wrapper (NEVER \`codex exec\` — it hangs). Bound it with --max-time:`,
     '```bash',
-    `codex-call --output "$OUT_FILE" --model gpt-5.5 --effort xhigh --service-tier fast --max-time 600 --instructions "你是嚴謹的審閱者，用繁體中文。" --prompt-file "$PROMPT_FILE"`,
+    `${wrapper} --output "$OUT_FILE" --model gpt-5.5 --effort xhigh --service-tier fast --max-time 600 --instructions ${JSON.stringify(instr)} --prompt-file "$PROMPT_FILE"`,
     '```',
-    `3. Read "$OUT_FILE" back and map Codex's reported issues into the schema. Present Codex's text faithfully in each finding's body. If the run times out / errors / produces nothing useful, return EXACTLY one finding: {severity:"INFO", title:"cross-model pass incomplete", file:null, body:"codex-call exceeded its lifetime bound or errored; cross-model lens did not complete"} — never silently drop it.`,
+    `4. Read "$OUT_FILE" back and map Codex's reported issues into the schema. Present Codex's findings faithfully in each finding's body. If the run times out / errors / produces nothing useful, return EXACTLY one finding: {severity:"INFO", title:"cross-model pass incomplete", file:null, body:"codex-call exceeded its lifetime bound or errored; cross-model lens did not complete"} — never silently drop it.`,
   ]
     .filter(Boolean)
     .join('\n\n')
