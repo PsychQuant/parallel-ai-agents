@@ -3,8 +3,9 @@ name: ensemble-code-review
 description: |
   Claude + Codex 雙 AI 獨立審閱程式碼，交叉比對找共識和盲點。
   4 Claude teammates（architecture, correctness, security, devils-advocate）+ Codex GPT-5.5 獨立審一遍，最後合成比較表。
-  Use when: 程式碼、技術文件、設計文件發布前需要嚴格審閱。
-argument-hint: "FILE_OR_DIR [--focus 'review focus'] e.g. 'src/auth/', 'packages/ocr-swift/ --focus API正確性'"
+  可審：檔案/目錄現狀、uncommitted diff（--diff）、分支比較（--base <ref>）、最近 N 個 commit（--commits N）、--since <ref>、PR（--pr N）。
+  Use when: 程式碼、技術文件、設計文件發布前需要嚴格審閱；或 commit / PR 前審變更。
+argument-hint: "[FILE_OR_DIR | --diff | --base <ref> | --commits <N> | --since <ref> | --pr <N>] [--focus '...'] [--replicas N] e.g. 'src/auth/', '--diff', '--base main', '--pr 123'"
 allowed-tools:
   - Read
   - Write
@@ -51,30 +52,83 @@ allowed-tools:
 
 ## 執行流程
 
-### Phase 0: 解析輸入
+### Phase 0: 解析輸入（target 擇一）
 
+審閱 target 分兩類，**擇一**：
+
+**A. 路徑**（審檔案/目錄現狀）
 ```
-Arguments:
-  FILE_OR_DIR — 要審閱的檔案或目錄路徑
-  --focus — 審閱重點（可選，如「API正確性」「技術準確性」「安全性」）
-
-如果沒有 FILE_OR_DIR，問使用者。
-如果 FILE_OR_DIR 是目錄，讀取所有原始碼檔案作為審閱範圍。
+  FILE_OR_DIR — 檔案或目錄路徑（目錄 = 讀所有原始碼檔當審閱範圍）
 ```
 
-### Phase 1: 讀取文件 + 準備 context
+**B. diff**（審變更）— 擇一 flag：
+```
+  --diff           審 uncommitted 變更        → git diff HEAD
+  --base <ref>     審本分支相對 <ref> 的變更   → git diff <ref>...HEAD（merge-base diff）
+  --commits <N>    審最近 N 個 commit          → git diff HEAD~N..HEAD
+  --since <ref>    審 <ref> 之後的變更         → git diff <ref>..HEAD
+  --pr <N>         審 PR                      → gh pr diff <N>
+```
 
-1. 讀取目標文件（如果是目錄，列出所有檔案路徑和內容摘要）
-2. 自動判斷審閱類型：
+共用 flag：
+```
+  --focus '...'    審閱重點（可選）
+  --replicas N     每個 lens 複製 N 份（可選，預設 1；harness 封頂 MAX_AGENTS=16）
+```
 
-| 檔案類型 | 審閱重點 |
-|---------|---------|
+**解析規則**：
+- 給了 path → 路徑模式。給了 B 類任一 flag → diff 模式。**path 與 diff flag 互斥**（同時給則問使用者）。
+- **都沒給**：在 git repo 內 → 預設 `--diff`（審 uncommitted）；**不在 git repo、或工作區乾淨無變更** → 問使用者要審哪個路徑或 ref（不要落入無 path 又無 diff 的死路）。
+- **安全前提（鐵律，見下）**：使用者給的 `<ref>` 一律先 `git rev-parse --verify` 驗證、`<N>` 一律驗證為正整數，**絕不把未驗證的 token 內插進指令**；所有 git/gh 命令**檢查 exit code**，非 0 報 stderr 並停。
+
+### Phase 1: 取得審閱內容 + 準備 context
+
+**路徑模式**：讀取目標（目錄則列所有原始碼檔路徑 + 內容摘要）。
+
+**diff 模式**：依 Phase 0 的來源取 diff，**寫到 temp 檔**（大 diff 不塞 inline args —— Workflow 會把 args JSON-stringify；reviewer 用 file-read tool 讀，避開 escape 地獄 + prompt 膨脹）：
+
+```bash
+# 0) 鎖定 repo root（順帶當 git-repo guard：非 git repo 這行非 0 退出 → 停、改路徑模式）
+REPO="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "不在 git repo 內 → 改用路徑模式或 cd 進 repo"; exit 1; }
+GIT() { git -C "$REPO" --no-pager "$@"; }   # --no-pager + 後續 --no-color 杜絕 ANSI 污染 DIFF_FILE
+DIFF_FILE="$(mktemp -t pai-codereview-diff.XXXXXX)"
+
+# 1) ref/N 驗證（防 command/argument injection + dashed-ref + 越界）— REF/N 來自使用者，先驗才用
+#    ref: 必須解析得到 commit；N: 必須正整數
+validate_ref() { GIT rev-parse --verify --quiet "$1^{commit}" >/dev/null || { echo "ref 不存在或非法: $1"; exit 1; }; }
+validate_int() { [[ "$1" =~ ^[0-9]+$ ]] || { echo "需正整數，得到: $1"; exit 1; }; }
+
+# 2) 依來源取 diff（每條都檢查 exit code；用 -- / 驗證過的值，不裸內插）
+case "$MODE" in
+  --diff)
+    GIT diff --no-color HEAD > "$DIFF_FILE" || { echo "git diff 失敗"; exit 1; }
+    # untracked（新檔還沒 git add）也要審 —— 各自當「新增檔」append（--no-index 對 /dev/null）
+    GIT ls-files --others --exclude-standard -z | while IFS= read -r -d '' f; do
+      GIT diff --no-color --no-index -- /dev/null "$REPO/$f" >> "$DIFF_FILE" 2>/dev/null || true
+    done ;;
+  --base)    validate_ref "$REF"; GIT diff --no-color "$REF"...HEAD > "$DIFF_FILE" || exit 1 ;;  # 三點=相對 merge-base
+  --since)   validate_ref "$REF"; GIT diff --no-color "$REF"..HEAD  > "$DIFF_FILE" || exit 1 ;;
+  --commits) validate_int "$N"; TOT="$(GIT rev-list --count HEAD)"; ((N>TOT)) && N=$TOT      # clamp 越界
+             GIT diff --no-color "HEAD~$N..HEAD" > "$DIFF_FILE" || exit 1 ;;
+  --pr)      validate_int "$N"; gh pr diff "$N" > "$DIFF_FILE" || { echo "gh pr diff 失敗"; exit 1; } ;;
+esac
+
+# 3) 空判定：只有「命令成功(exit 0) 且檔案空」才是真『無變更』；上面已用 exit code 把 git 報錯擋掉
+[ -s "$DIFF_FILE" ] || { echo "無變更可審"; exit 1; }
+```
+
+> **PR mode 的 context 陷阱**：`gh pr diff` 取的是**遠端 PR** 的 diff，但 reviewer 用 Read 讀到的「周邊原始碼」是**本地工作樹**（可能停在別的分支）。所以 `--pr` 模式下，contextBlock 要明示「周邊以 diff 內 hunk context 為準，本地 Read 未必對應 PR 的版本」；要精確就先 `gh pr checkout <N>`（會動工作樹，多數情況不值得）。
+
+自動判斷審閱重點（兩模式共用）：
+
+| 內容 | 審閱重點 |
+|------|---------|
 | `.md` blog/文章 | 技術準確性、邏輯一致性、聲明可驗證性 |
 | `.md` 設計文件 | 架構合理性、邊界情況、可行性、遺漏 |
-| `.swift` / `.py` / `.ts` 程式碼 | bug、安全漏洞、效能、API 用法、edge case |
-| 目錄（整個 package） | 架構、死碼、API 一致性、依賴管理 |
+| 程式碼（`.swift`/`.py`/`.ts`…） | bug、安全漏洞、效能、API 用法、edge case |
+| 目錄 / diff | 架構、死碼、API 一致性、依賴管理、**變更的影響面與回歸風險** |
 
-3. 準備 context 字串，包含：檔案路徑、內容、focus 指示
+準備 `contextBlock`：focus 指示 + 內容類型 emphasis +（diff 模式時）一句「以下是 diff；需要時用 Read 工具看周邊檔案補 context」。
 
 ### Phase 2: 派發審閱（雙 backend）
 
@@ -94,13 +148,16 @@ Arguments:
    ```json
    {
      "profile": "code",
-     "file": "<FILE_OR_DIR 絕對路徑>",
-     "contextBlock": "<focus 指示 + 檔案類型 emphasis（見 Phase 1 表）>",
+     "file": "<路徑模式：FILE_OR_DIR 絕對路徑>",
+     "diffFile": "<diff 模式：Phase 1 的 $DIFF_FILE 絕對路徑>",
+     "contextBlock": "<focus + 內容類型 emphasis（見 Phase 1 表）>",
      "codexEnabled": true,
      "codexCallPath": "${CLAUDE_PLUGIN_ROOT}/bin/codex-call",
      "replicas": 1
    }
    ```
+
+   - **path 模式傳 `file`、diff 模式傳 `diffFile`（擇一，不要兩個都傳）**。harness 的 `code` lens 與 Codex 都會用 file-read tool 讀 `diffFile` 並當 diff 審；`--replicas` 帶入時覆蓋預設 1。
 
    - `codexEnabled: true` → Codex（gpt-5.5）作為 barrier 內第 4 個 agent，shell 出去呼 `codexCallPath`（**絕不** `codex exec`），fail-soft：timeout/error 只回 1 個 INFO finding（不阻擋 Claude-lens verdict）。
    - `replicas` 預設 1（3 Claude lens + Codex + DA = 5，與 legacy 等價）。調高即大量 fan-out；harness 封頂 `MAX_AGENTS=16`（建議 Codex replica ≤2，fast = 2.5× credit）。
@@ -109,6 +166,8 @@ Arguments:
 > 跨模型獨立性由 harness 保證：codexPrompt **不**提及 Claude reviewers、**不**餵 Codex 他們的 findings；DA 則**會**讀 Claude reviewers 的完稿 findings（兩者 prompt builder 分開）。DA 為 downstream node（讀完稿，非 live SendMessage）。
 
 #### Backend B — Legacy TeamCreate + Codex Bash（fallback）
+
+> **diff 模式時**（不只換路徑字串）：① 把下方 prompt 的 `審閱範圍：{FILE_OR_DIR}` 換成 `審閱範圍（diff）：$DIFF_FILE`；② **在每個 reviewer prompt 開頭加一句框架引導**：「以下是一份 diff，只審變更行、評估**變更的影響面與回歸風險**；需要時自行 Read 周邊原始碼補 context」——否則 teammate 會用『審整棵原始碼樹』的 mental model 看 diff（如 architecture 的『檔案組織/死碼』對著一份 diff 語意走樣）；③ TeamCreate 的 `description` 不要塞 temp 檔路徑，用「diff review」之類描述。devil's-advocate 走 SendMessage 不受影響。
 
 **CRITICAL: 所有 tool calls（TeamCreate + Codex Bash）必須在同一個 message 送出。不可分步驟。**
 
@@ -346,8 +405,24 @@ node "$CODEX_SCRIPT" status --all
 node "$CODEX_SCRIPT" result $JOB_ID
 ```
 
+## 範例
+
+```bash
+/ensemble-code-review src/auth/              # 路徑：審目錄現狀
+/ensemble-code-review --diff                 # uncommitted 變更
+/ensemble-code-review --base main            # 本分支相對 main 的變更
+/ensemble-code-review --commits 3            # 最近 3 個 commit
+/ensemble-code-review --pr 123 --focus 安全性 # 審 PR #123、聚焦安全
+```
+
 ## 鐵律
 
+- **target 擇一**：path 與 diff flag 互斥；都沒給預設 `--diff`（uncommitted），工作區乾淨則問使用者。
+- **diff 一律寫 temp 檔傳 `diffFile`**，不 inline 進 args（大 diff 會撐爆 + escape 地獄）。diff 為空就停，不空跑 ensemble。
+- **ref/N 一律先驗證再用**：`<ref>` 經 `git rev-parse --verify`、`<N>` 驗正整數；**絕不把未驗證的使用者 token 內插進 git/gh 指令**（防 command injection + dashed-ref 被當 option）。
+- **所有 git/gh 命令檢查 exit code**：非 0（壞 ref / `HEAD~N` 越界 / pre-first-commit / 非 repo）報 stderr 並停 —— **不可把 git 報錯的空輸出當「無變更、乾淨通過」**（假綠燈）。
+- **`--diff` 要含 untracked 新檔**（`git ls-files --others --exclude-standard`），別讓「還沒 git add 的新檔」被靜默漏審。
+- **`git -C "$REPO"` 的 `$REPO` 先定義**（`git rev-parse --show-toplevel`），不可裸用未定義變數。
 - **（Backend B legacy）5 個 tool calls 在同一個 message 送出**（4 Agent + 1 Bash codex）。不可分步驟。（Backend A workflow 由 harness 處理平行 + Codex barrier，不適用此條。）
 - **Codex 看不到 Claude Team 的討論**。它是完全獨立的盲驗。
 - **Codex 的審稿結果原封不動呈現**，不要修改或摘要。
