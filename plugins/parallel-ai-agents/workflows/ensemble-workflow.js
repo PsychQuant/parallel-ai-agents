@@ -28,7 +28,10 @@
  *   replicas     : integer                           — independent instances per base lens (default 1)
  *   codexEnabled : boolean                           — run the cross-model Codex lens (code/academic)
  *   codexCallPath: string | null                     — absolute path to bin/codex-call (skill: ${CLAUDE_PLUGIN_ROOT}/bin/codex-call); avoids PATH fragility
- *   priorBlock   : string | null                     — pre-sliced prior-round context (academic; skill-side loop)
+ *   priors       : { [lensKey]: string, da?: string } — per-lens pre-sliced prior-round context (academic hybrid;
+ *                                                       skill controls the asymmetry by WHICH lenses it includes —
+ *                                                       e.g. only reference-verifier + da, never methodology/writing/codex)
+ *   disableLenses: [string]                           — lens keys to skip this run (academic --no-numeric → ['number-verifier'])
  *
  * Returns: { findings: Finding[], verdict: 'PASS' | 'FINDINGS', stats: {...} }
  * conforming to references/ensemble-findings-schema.json.
@@ -146,7 +149,51 @@ const PROFILES = {
       '反駁前三個 reviewer（architecture / correctness / security）的「通過」或「LOW」判斷：對每個「通過」找理由說它其實有問題；' +
       '對每個「LOW」論證為何應升為 MEDIUM 或 HIGH。這是對抗性驗證，存在目的是防止三人群體盲點。找不到反駁的理由，才承認確實通過。',
   },
-  // academic: { ... }  ← Phase 3 (single round only; multi-round loop stays skill-side)
+  academic: {
+    title: '學術論文',
+    codexDefault: true,
+    codexInstructions: '你是嚴謹的學術論文審閱者，從 methodology、writing、reference 三個角度審閱，用繁體中文輸出、逐點標注嚴重性。',
+    codexMaxTime: 900, // papers: longer input + heavier reasoning than code review
+    lenses: [
+      {
+        key: 'methodology',
+        focus:
+          '研究方法。檢查：(1) 研究設計是否合理（實驗設計、對照組、隨機化）；(2) 統計方法是否正確（假設檢定、效果量、信賴區間）；' +
+          '(3) 樣本量是否足夠（power analysis）；(4) 推論邏輯是否成立（因果 vs 相關、過度推論）；(5) 研究限制是否充分討論；(6) 分析流程是否可重現。',
+      },
+      {
+        key: 'writing',
+        focus:
+          '學術寫作品質。檢查：(1) 論述邏輯（章節銜接）；(2) 段落結構（topic sentence + supporting evidence）；' +
+          '(3) 學術語氣（hedging language、避免過度武斷）；(4) APA 格式（引用、標題層級、圖表標註）；(5) 文法與用詞精確度與一致性；(6) Abstract 品質（background/method/results/conclusion）。' +
+          '可用 Skill tool 呼叫 perspective-writer 分析特定段落寫作風格。',
+      },
+      {
+        key: 'reference-verifier',
+        focus:
+          '逐一驗證引用文獻的真實性、**偵測幻覺文獻**（hallucinated references）。' +
+          '**用 ToolSearch 找 che-zotero-mcp 工具**（query 如 "zotero academic_search lookup_doi"）後逐筆查核：' +
+          '(1) 提取每筆文獻（作者/年份/標題/期刊）；(2) 用 academic_search 搜標題或作者+年份、有 DOI 用 academic_lookup_doi、用 zotero_search 查 Zotero 庫；' +
+          '(3) 分類：✅已驗證 / ⚠️存疑 / ❌疑似幻覺（查無或作者-標題-年份不匹配）；(4) 檢查 in-text citation 與 reference list 一致性。' +
+          '每筆都要查、不可抽樣。任何 ❌ 幻覺文獻一律 HIGH。',
+      },
+      {
+        key: 'number-verifier',
+        focus:
+          '逐一驗證 doc 中每個數字 vs ground-truth artifact、**偵測幻覺數字**（hallucinated numbers）。' +
+          '**用 Bash 跑 Rscript / python 從原始計算 artifact 重算**：' +
+          '(1) 識別 ground-truth（analysis/*.rds、*.RData、*.R、*.npz、*.csv、*.ipynb、*.py、*.xlsx）；' +
+          '(2) 提取 doc 每個數值（test stat、coef、p-value、AIC/BIC、forecast、平均、sd、t、F、χ²、CI）；' +
+          '(3) 對每個數字找對應 ground-truth（直接讀 .rds：`Rscript -e \'print(readRDS("..."))\'`；讀 .npz：`python -c \'import numpy as np;print(np.load("...")["k"])\'`；或重跑腳本）；' +
+          '(4) 分類：✅相符 / ⚠️rounding（末位±1）/ ❌幻覺（超容差）；(5) 跨檔（EN/ZH/DOCX）與內部一致性。' +
+          '每個 doc 中的數字都要查、不可抽樣。任何 ❌ 幻覺數字一律 HIGH。',
+      },
+    ],
+    daFocus:
+      '反駁前述 reviewer（methodology / writing / reference-verifier / number-verifier）的「通過」或「LOW」判斷：' +
+      '(1) methodology 說統計 OK → 找 alternative interpretation；(2) writing 說邏輯清晰 → 找隱含邏輯跳躍；' +
+      '(3) reference-verifier 說文獻 OK → 質疑相關性與時效性；(4) 對每個 LOW 論證為何應 MEDIUM/HIGH。找不到反駁才承認通過。',
+  },
 }
 
 // Guard prepended to every prompt that embeds untrusted content (matters for the `code` profile
@@ -200,7 +247,7 @@ function reviewPrompt(profile, lens, A, replicaIdx, replicaTotal) {
     replicaNote,
     DATA_GUARD,
     A.contextBlock ? `Context:\n${dataBlock('CONTEXT', A.contextBlock)}` : '',
-    A.priorBlock ? `Prior-round context (only what your role is permitted to see):\n${dataBlock('PRIOR', A.priorBlock)}` : '',
+    A.priors && A.priors[lens.key] ? `前輪線索（你的角色被允許看到的 watch-list；仍須獨立全面查核，前輪可能有誤）：\n${dataBlock('PRIOR', A.priors[lens.key])}` : '',
     artifactInstruction(A),
     srtInstruction(lens, A),
     `逐點列出問題，每點標嚴重性（CRITICAL/HIGH/MEDIUM/LOW/INFO）、引用具體段落/句子/位置。` +
@@ -223,6 +270,9 @@ function daPrompt(profile, reviewerResults, A) {
     `You are the **devil's-advocate** in a parallel-ai-agents ${profile.title} ensemble. The other reviewers reported:`,
     summary,
     `Your job: ${profile.daFocus}`,
+    A.priors && A.priors.da
+      ? `所有前輪的完整 ensemble 結果（你被允許看到全部前輪。額外任務：挑戰前輪「通過」/「LOW」判斷、找出前輪所有 reviewer 都漏的盲點、驗證前輪 HIGH 是否過度反應；明確標記哪些是「前輪已知+本輪確認」、哪些是「🆕 前輪未發現」）：\n${dataBlock('PRIOR', A.priors.da)}`
+      : '',
     `Default to skepticism — a survived pass is more trustworthy than an unchallenged one.`,
     DATA_GUARD,
     artifactInstruction(A),
@@ -242,6 +292,7 @@ function daPrompt(profile, reviewerResults, A) {
 function codexPrompt(profile, A) {
   const wrapper = A.codexCallPath || 'codex-call'
   const instr = profile.codexInstructions || '你是嚴謹的審閱者，用繁體中文輸出，逐點標注嚴重性。'
+  const maxTime = profile.codexMaxTime || 600 // academic papers need longer (input length + heavier reasoning)
   return [
     `You are the cross-model verifier in a ${profile.title} ensemble. Use Codex (gpt-5.5, a different model family) as a BLIND reviewer, then convert its output into findings. Do NOT mention the Claude reviewers or feed Codex their findings — Codex stays a blind cross-model vote.`,
     DATA_GUARD,
@@ -252,7 +303,7 @@ function codexPrompt(profile, A) {
     `2. Build a review prompt = brief review instructions (繁中、逐點、針對${profile.title}、標 CRITICAL/HIGH/MEDIUM/LOW/INFO、引用具體位置) FOLLOWED BY the artifact content. Write the whole thing to a temp file with your file-write tool. Do NOT echo/printf/heredoc artifact bytes into any shell command — that is a command-injection sink on untrusted content.`,
     `3. Run the plugin wrapper (NEVER \`codex exec\` — it hangs). Bound it with --max-time:`,
     '```bash',
-    `${wrapper} --output "$OUT_FILE" --model gpt-5.5 --effort xhigh --service-tier fast --max-time 600 --instructions ${JSON.stringify(instr)} --prompt-file "$PROMPT_FILE"`,
+    `${wrapper} --output "$OUT_FILE" --model gpt-5.5 --effort xhigh --service-tier fast --max-time ${maxTime} --instructions ${JSON.stringify(instr)} --prompt-file "$PROMPT_FILE"`,
     '```',
     `4. Read "$OUT_FILE" back and map Codex's reported issues into the schema. Present Codex's findings faithfully in each finding's body. If the run times out / errors / produces nothing useful, return EXACTLY one finding: {severity:"INFO", title:"cross-model pass incomplete", file:null, body:"codex-call exceeded its lifetime bound or errored; cross-model lens did not complete"} — never silently drop it.`,
   ]
@@ -308,14 +359,21 @@ if (!profile || !Array.isArray(profile.lenses) || profile.lenses.length === 0) {
   }
 }
 
+// Optional per-run lens disabling (academic --no-numeric / --no-references). The skill passes
+// args.disableLenses = ['number-verifier', ...]; methodology/writing etc. stay. If a malformed call
+// disables everything, fall back to the full set so we never fan out zero reviewers (fail-safe).
+const disabled = Array.isArray(A.disableLenses) ? A.disableLenses : []
+const filtered = profile.lenses.filter((l) => !disabled.includes(l.key))
+const activeLenses = filtered.length ? filtered : profile.lenses
+
 // Clamp replicas so total agents ≤ MAX_AGENTS (the "大量 agents" cost ceiling).
 const codexOn = A.codexEnabled != null ? !!A.codexEnabled : !!profile.codexDefault
 const requested = Math.max(1, Math.floor(Number(A.replicas) || 1))
 const budgetForLenses = MAX_AGENTS - (codexOn ? 1 : 0) - 1 // reserve Codex + DA
-const maxReplicas = Math.max(1, Math.floor(budgetForLenses / profile.lenses.length))
+const maxReplicas = Math.max(1, Math.floor(budgetForLenses / activeLenses.length))
 const replicas = Math.min(requested, maxReplicas)
 if (replicas < requested) {
-  log(`pai-ensemble: replicas clamped ${requested} → ${replicas} (MAX_AGENTS=${MAX_AGENTS}, ${profile.lenses.length} lenses, codex=${codexOn})`)
+  log(`pai-ensemble: replicas clamped ${requested} → ${replicas} (MAX_AGENTS=${MAX_AGENTS}, ${activeLenses.length} lenses, codex=${codexOn})`)
 }
 
 // Phase 1 (barrier): every base lens × replicas + optional Codex run concurrently and
@@ -325,7 +383,7 @@ if (replicas < requested) {
 // the assigned key so an agent cannot mislabel its attribution.
 phase('review')
 const reviewThunks = []
-for (const l of profile.lenses) {
+for (const l of activeLenses) {
   for (let k = 0; k < replicas; k++) {
     reviewThunks.push(() =>
       agent(reviewPrompt(profile, l, A, k, replicas), {
@@ -361,7 +419,7 @@ const da = await agent(daPrompt(profile, reviewerResults, A), { schema: FINDINGS
 phase('merge')
 const okLenses = new Set(round1.filter((r) => r.ok).map((r) => r.lens))
 const integrity = []
-for (const l of profile.lenses) {
+for (const l of activeLenses) {
   if (!okLenses.has(l.key)) {
     integrity.push({ lens: l.key, severity: 'HIGH', title: `${l.key} lens did not complete`, file: null, body: 'all replicas of this core reviewer errored — the verdict cannot be PASS without it (fail-closed).' })
   }
