@@ -26,7 +26,7 @@ ensemble-review
 
 - Claude Code orchestrated teams（TeamCreate、SendMessage）
 - **Codex OAuth token**（`~/.codex/auth.json`）— 由 codex CLI 在首次登入時建立。本 plugin 自帶 wrapper `bin/codex-call` 直接讀這個檔案、走 OAuth refresh + HTTP 直連 `chatgpt.com/backend-api`，不再 spawn `codex exec` subprocess（避免 stdin/stdout pipe 互鎖造成的 hang）
-- Swift toolchain（Xcode CLT 內建；用 `#!/usr/bin/env swift` shebang，第一次跑會 compile cache）
+- Swift toolchain（Xcode CLT 內建；用 `#!/usr/bin/swift` shebang **釘 CLT swift**，第一次跑會 compile cache）。⚠️ 不用 `#!/usr/bin/env swift` —— env 會解到 PATH 上第一個 swift（如 swiftly / Homebrew 安裝的版本），破壞「就用內建 CLT swift」的確定性假設。
 
 ## bin/codex-call
 
