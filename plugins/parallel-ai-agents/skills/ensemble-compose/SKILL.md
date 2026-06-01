@@ -3,7 +3,7 @@ name: ensemble-compose
 description: |
   自由組合 ensemble 審閱：跨 profile 挑既有 reviewer lens、或自訂任意 reviewer 角色，再用 Workflow 大量 fan-out。
   當用戶要「自己挑審閱角度」「混搭 code/academic/lecture 的 reviewer」「自訂 reviewer 角色」「compose ensemble」「自由組合 agents」時使用。
-argument-hint: "FILE_OR_DIR [--include profile.lens]... [--lens 'key: focus']... [--base profile] [--replicas N] [--max-agents N] [--codex] [--focus '...']"
+argument-hint: "FILE_OR_DIR [--lens-file pack.csv] [--include profile.lens]... [--lens 'key: focus']... [--base profile] [--replicas N] [--max-agents N] [--codex] [--focus '...']"
 allowed-tools:
   - Read
   - Write
@@ -42,12 +42,49 @@ allowed-tools:
 | `lecture.student-readability` | 零基礎學生可讀性 |
 | `lecture.completeness` | 逐字稿覆蓋率 + 結構完整性 |
 
+## CSV lens 包（`--lens-file`）
+
+把可重用的自訂 reviewer 角色維護成 CSV，一個檔一包（如 `frontend-lenses.csv`、`security-audit.csv`、`stats-paper.csv`）。每列 = 一個自訂 lens，等同一個 `--lens`。**這是把 reviewer 「做成 CSV」的正確位置 —— 使用者擴充包，不是把內建 lens 搬出去**（內建 lens 穩定、且 harness runtime 讀不到 FS）。
+
+**格式**（UTF-8、第一列 header）：
+
+```csv
+key,focus,needsSrt
+perf,"檢查每個 hot path 的時間複雜度、N+1 query、不必要的重算、記憶體配置",false
+a11y,"檢查 ARIA 標籤、鍵盤導航、色彩對比、focus 順序",false
+i18n,"檢查硬編字串、日期/數字/貨幣格式、RTL、複數規則",false
+```
+
+- `key`：短名（lens 標識；與其他來源同名時 first-wins）。
+- `focus`：給 agent 的**具體**檢查清單（像內建 lens 那樣逐點，太空泛審閱品質差）。**含逗號/中文標點必用 `"..."` 包住。**
+- `needsSrt`（可選欄）：`true` 時該 lens 收到 `srtFile`（lecture 場景）；省略/`false` 即一般。
+
+**解析（skill 必照做）**：用 python3 `csv` 模組（**絕不** naive `split(",")` —— focus 含逗號會被切爛）：
+
+```bash
+python3 - "$LENS_FILE" <<'PY'
+import csv, json, sys
+out=[]
+with open(sys.argv[1], newline='', encoding='utf-8') as f:
+    for r in csv.DictReader(f):
+        k=(r.get('key') or '').strip(); foc=(r.get('focus') or '').strip()
+        if not k or not foc: continue
+        row={"key": k, "focus": foc}
+        if str(r.get('needsSrt','')).strip().lower() in ('1','true','yes'): row["needsSrt"]=True
+        out.append(row)
+print(json.dumps(out, ensure_ascii=False))
+PY
+```
+
+把輸出 array append 進 `customLenses`（與 `--lens` 合併）。範本見 `references/example-lenses.csv`。
+
 ## 執行流程
 
 ### Phase 0: 解析輸入
 
 ```
 FILE_OR_DIR      — 審閱對象（缺則問使用者）
+--lens-file pack.csv — 從 CSV 載入一整包可重用的自訂 lens（見下方 § CSV lens 包）
 --include p.lens — 從某 profile 拉一個內建 lens（可重複）
 --lens 'key: focus 檢查清單' — 自訂 reviewer 角色（可重複）；key 是短名、focus 是給 agent 的具體檢查指示
 --base profile   — 基底 profile（預設 custom = 無內建 lens）；給 code/academic/lecture 則先帶入該 profile 全部 lens 再加 include/custom
@@ -70,6 +107,7 @@ FILE_OR_DIR      — 審閱對象（缺則問使用者）
    - `--base` → `profile`（預設 `"custom"`）
    - `--include code.security` → `includeLenses: ["code.security", ...]`
    - `--lens 'perf: 檢查每個迴圈的時間複雜度...'` → `customLenses: [{key:"perf", focus:"檢查每個迴圈的時間複雜度..."}]`
+   - `--lens-file pack.csv` → **用 python3 csv 模組解析**（見 § CSV lens 包；focus 含逗號/中文標點，**不可** naive split）→ 每列轉 `{key, focus, needsSrt?}` append 到 `customLenses`（與 `--lens` 合併；同 key first-wins）
    - `--replicas` / `--max-agents` / `--codex` → `replicas` / `maxAgents` / `codexEnabled`
 3. 呼叫 `Workflow` tool，傳 `scriptPath` + `args`：
 
@@ -105,3 +143,4 @@ FILE_OR_DIR      — 審閱對象（缺則問使用者）
 - **maxAgents 硬上限 30**；成本由 `lens 數 × replicas + codex + DA` 決定。
 - **跨 profile 同名 lens**：first-wins（base 先、include 次、custom 後），不會疊兩份。
 - **findings/報表契約與其他 ensemble skill 一致** —— 下游消費方式相同。
+- **`--lens-file` 必用 python3 csv 解析**，不可 naive split —— focus 是長 prose，逗號/中文標點會把欄位切爛。CSV 由 skill（主 session，有 Read）讀，**不是** harness（runtime 無 FS）。

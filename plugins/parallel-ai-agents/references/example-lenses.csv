@@ -1,0 +1,6 @@
+key,focus,needsSrt
+perf,"檢查每個 hot path 的時間複雜度、N+1 query、不必要的重算與配置、是否該快取／批次化",false
+a11y,"檢查 ARIA 標籤、鍵盤可達性與 focus 順序、色彩對比、語意化標籤、螢幕報讀器體驗",false
+i18n,"檢查硬編使用者字串、日期／數字／貨幣格式、RTL 版面、複數與性別規則、時區處理",false
+deps-and-portability,"檢查依賴是否鎖版本、有無未使用或可更輕量替代的依賴、跨平台／跨版本假設、硬編路徑",false
+observability,"檢查 log 是否足以重建故障、有無洩漏祕密、error 是否帶足夠 context、關鍵路徑有無 metric／trace",false
