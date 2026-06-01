@@ -42,6 +42,8 @@ allowed-tools:
 | `lecture.student-readability` | 零基礎學生可讀性 |
 | `lecture.completeness` | 逐字稿覆蓋率 + 結構完整性 |
 
+> 完整 focus 文字見 [`references/builtin-lenses.csv`](../../references/builtin-lenses.csv)（從 harness `PROFILES` 自動產生的 reference）。⚠️ 這是**唯讀 reference** —— 編它**不會**改 harness（內建 lens 的真源是 code，且 workflow runtime 無 FS 讀不到）。要客製請用下方 `--lens-file` 自己的 CSV、或 `--lens`。改了 `PROFILES` 後重生此檔：`bash references/regen-builtin-lenses.sh`。
+
 ## CSV lens 包（`--lens-file`）
 
 把可重用的自訂 reviewer 角色維護成 CSV，一個檔一包（如 `frontend-lenses.csv`、`security-audit.csv`、`stats-paper.csv`）。每列 = 一個自訂 lens，等同一個 `--lens`。**這是把 reviewer 「做成 CSV」的正確位置 —— 使用者擴充包，不是把內建 lens 搬出去**（內建 lens 穩定、且 harness runtime 讀不到 FS）。
