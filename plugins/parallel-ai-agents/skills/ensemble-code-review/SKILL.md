@@ -96,13 +96,15 @@ REPO="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "不在 git repo �
 GIT() { git -C "$REPO" --no-pager "$@"; }             # --no-pager + --no-color：杜絕 ANSI 污染 DIFF_FILE
 DIFF_FILE="$(mktemp -t pai-codereview-diff.XXXXXX)"   # ⚠ ensemble 跑完後要 rm（含 changed-line 祕密，見鐵律）
 
-# ref/N 驗證（防 injection + dashed-ref）：ref 必解析成 commit；N 必正整數（排除 0 與 leading-zero）
+# ref/N 驗證（防 injection + dashed-ref）：ref 必解析成 commit；N 必正整數（排 0/leading-zero，且 ≤9 位防算術溢位）
 validate_ref() { GIT rev-parse --verify --quiet "$1^{commit}" >/dev/null || { echo "ref 非法: $1"; exit 1; }; }
-validate_int() { [[ "$1" =~ ^[1-9][0-9]*$ ]] || { echo "需正整數(≥1): $1"; exit 1; }; }
-# untracked/新檔 append：超 64KB 轉 path-only，避免單檔撐爆 prompt（對齊 codex-pro 的 cap）；用 repo-relative path
-append_new() { local f="$1" sz; sz=$(wc -c <"$REPO/$f" 2>/dev/null||echo 0)
-  if (( sz > 65536 )); then printf 'diff --git a/%s b/%s\nnew file %d bytes — 過大，僅列路徑\n' "$f" "$f" "$sz" >>"$DIFF_FILE"
-  else GIT diff --no-color --no-index -- /dev/null "$f" >>"$DIFF_FILE" 2>/dev/null||true; fi; }
+validate_int() { [[ "$1" =~ ^[1-9][0-9]*$ ]] && (( ${#1} <= 9 )) || { echo "需正整數(1..9 位): $1"; exit 1; }; }
+# untracked/新檔 append：只處理一般檔 —— symlink/FIFO/dir 只列路徑不讀內容（避免 wc-c follow-symlink 量錯、避免 FIFO
+# 把 read 卡死、避免洩 symlink 目標路徑）。內容走 git diff（git 自動 C-quote 檔名，防含換行檔名偽造假 diff 行），
+# 再 head -c 截 64KB 上限避免單檔撐爆 prompt（用 %q 寫 path-only 檔名，中和控制字元）。
+append_new() { local f="$1"
+  if [ -L "$REPO/$f" ] || [ ! -f "$REPO/$f" ]; then printf 'new file（symlink/特殊檔，僅列路徑）: %q\n' "$f" >>"$DIFF_FILE"; return; fi
+  GIT diff --no-color --no-index -- /dev/null "$f" 2>/dev/null | head -c 65536 >>"$DIFF_FILE" || true; }
 
 # 取 diff（每條檢查 exit code；只用驗證過的值，不裸內插）
 case "$MODE" in
@@ -386,6 +388,16 @@ Codex prompt 應包含：
 1. {highest priority fix}
 2. ...
 ```
+
+### Phase 4.5: 清理 temp 檔（diff 模式）
+
+Phase 4 報表 render 完、確定所有 reviewer/Codex/DA 都已讀過 diff 之後，刪掉 temp 檔（含 changed-line 祕密，別累積在 `/tmp`）：
+
+```bash
+[ -n "${DIFF_FILE:-}" ] && rm -f "$DIFF_FILE"   # 路徑模式沒這個變數 → 條件自動跳過
+```
+
+> 為何不在 Phase 1 用 `trap … EXIT` 提前刪：workflow / teammate agent 是**非同步**讀 `$DIFF_FILE`，Phase 1 的 shell 一結束 trap 就觸發，會在 agent 還沒讀到前刪掉檔案。所以刪除排在「報表 render 完」這個確定下游都讀完的時點。
 
 ### Phase 5: 詢問下一步
 
