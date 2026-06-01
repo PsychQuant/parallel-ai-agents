@@ -175,7 +175,45 @@ TaskCreate: "Final: merge all rounds"
    - `prior_number_issues` — 可疑/幻覺數字清單（給 number-verifier）
    - `prior_full_report` — 所有前輪的完整結果（只給 devil's advocate）
 
-### Phase 2: 平行啟動 Claude Team + Codex
+### Phase 2: 派發審閱（雙 backend）
+
+本 skill 的「一輪 ensemble」（Phase 1-4）可走兩個 backend：
+
+- **`Workflow` tool 可用（預設、推薦）** → Backend A（workflow）。多輪模式（mix / hybrid / auto-iterate）的**每一輪都呼叫 Backend A 一次**。
+- **`Workflow` tool 不存在**（舊版 Claude Code）→ fallback 到 Backend B（legacy）。
+
+兩 backend findings 形狀相同、Phase 4 報表一致。**多輪迴圈、verdict parse、apply-fix、git commit per round、prior-slicing 全留 skill 側**（見 Phase 5/5b）—— workflow 只是「一輪」的 inner primitive，不含任何跨輪狀態。
+
+#### Backend A — Workflow（預設）
+
+每一輪這樣呼叫：
+
+1. 解析 harness 絕對路徑 `${CLAUDE_PLUGIN_ROOT}/workflows/ensemble-workflow.js`；wrapper 絕對路徑 `${CLAUDE_PLUGIN_ROOT}/bin/codex-call`。
+2. 呼叫 `Workflow` tool，傳 `scriptPath` + `args`：
+
+   ```json
+   {
+     "profile": "academic",
+     "file": "<FILE 絕對路徑>",
+     "contextBlock": "<全文/文獻列表/ground-truth artifact 清單/focus>",
+     "codexEnabled": true,
+     "codexCallPath": "${CLAUDE_PLUGIN_ROOT}/bin/codex-call",
+     "replicas": 1,
+     "disableLenses": [],
+     "priors": {}
+   }
+   ```
+
+   - **`disableLenses`**（對應 reviewer 開關）：`--no-numeric` → `["number-verifier"]`；`--no-references` → `["reference-verifier"]`；兩者皆給 → 退化為 methodology + writing + DA + Codex。methodology/writing 永遠在。
+   - **`priors`（hybrid 輪才填 —— 這是資訊不對稱的控制點）**：`{"reference-verifier": "<前輪可疑文獻 watch-list>", "da": "<所有前輪完整結果>"}`。**methodology / writing / number-verifier / codex 一律不放進 map** → 它們看不到前輪（避免 anchoring bias；number-verifier 每輪必從 ground-truth 重跑）。**independent 輪 `priors: {}`**。
+   - harness 內部：reference-verifier 用 **ToolSearch 取 che-zotero-mcp 工具**逐筆查文獻；number-verifier 用 **Bash 跑 Rscript / python** 從 ground-truth 重算；Codex `--max-time 900`（論文較長）。
+3. Workflow 回 `{ findings, verdict, stats }`，findings 已 merge+dedup（幻覺文獻/數字為 HIGH）。把本輪 findings 寫進 `review-round-{N}.md`，進 Phase 4/5 流程。
+
+> 跨模型獨立性 + DA 資訊不對稱由 harness 保證：codexPrompt 不提及 Claude reviewers；DA 收 `priors.da`（全部前輪完整結果），ref-verifier 只收自己的 watch-list，其餘 lens 收不到任何前輪。DA 為 downstream node（讀完稿，非 live SendMessage）。
+
+> ⚠️ **`--auto-iterate` 的 `<verdict>` tag**：Backend A 的 Codex finding body 內仍含 Codex 原始輸出；auto-iterate 迴圈照常用 regex `<verdict>([A-Z_0-9]+)</verdict>` 從該 body 抓 tag（Phase 5b 不變）。
+
+#### Backend B — Legacy TeamCreate + Codex Bash（fallback）
 
 **CRITICAL: 所有 tool calls（TeamCreate + Codex Bash）必須在同一個 message 送出。不可分步驟。**
 
@@ -460,7 +498,10 @@ Codex prompt 應包含：
 
 ### Phase 4: 合併去重 + 寫入本輪結果
 
-由主 session 的 Claude 讀取所有結果，產出本輪比較表：
+- **Backend A（workflow）**：本輪 `findings` 已由 harness merge+dedup（幻覺文獻/數字已是 HIGH、severity 高者勝）。主 session 依 `lens` 分組 render 本輪比較表，**不要**再 dedup。
+- **Backend B（legacy）**：主 session Claude 讀取所有 teammate + Codex 結果，手動合併去重。
+
+產出本輪比較表：
 
 1. **去重**：相同問題 → 合併，標註來源
 2. **severity 以最高為準**
@@ -664,7 +705,7 @@ Default 起始 focus = (none) — 不設,讓 reviewer 自主探;同一 focus 重
 
 ### 所有模式共用
 
-- **所有 tool calls 在同一個 message 送出**（N Agent + 1 Bash codex；N ∈ {3,4,5} 視啟用設定）。不可分步驟。
+- **（Backend B legacy）所有 tool calls 在同一個 message 送出**（N Agent + 1 Bash codex；N ∈ {3,4,5} 視啟用設定）。不可分步驟。（Backend A workflow 由 harness 處理平行 + Codex barrier + DA-downstream，不適用此條。）
 - **Codex 看不到 Claude Team 的討論**。完全獨立的盲驗。
 - **Codex 的審稿結果原封不動呈現**，不要修改或摘要。
 - **reference-verifier 必須逐一查每筆文獻**。不可跳過或抽樣。
