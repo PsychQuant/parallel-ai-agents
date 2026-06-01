@@ -46,7 +46,37 @@ Arguments:
 3. 讀取 teaching.json（了解學生背景）
 4. 準備 context 字串
 
-### Phase 2: 平行啟動 4 個 Claude Teammates
+### Phase 2: 派發審閱（雙 backend）
+
+先選 backend：
+
+- **`Workflow` tool 可用（預設、推薦）** → Backend A（workflow）。可大量 agent fan-out。
+- **`Workflow` tool 不存在**（舊版 Claude Code）→ fallback 到 Backend B（legacy TeamCreate fan-out）。
+
+兩個 backend 產出**相同的 findings 形狀**，Phase 4 報表完全一致。
+
+#### Backend A — Workflow（預設）
+
+1. 解析 harness 絕對路徑：`${CLAUDE_PLUGIN_ROOT}/workflows/ensemble-workflow.js`。
+2. 呼叫 `Workflow` tool，傳 `scriptPath`（上述絕對路徑）+ `args`：
+
+   ```json
+   {
+     "profile": "lecture",
+     "file": "<講義 HTML 絕對路徑>",
+     "srtFile": "<SRT 絕對路徑或 null>",
+     "contextBlock": "<student_info + teaching context 組成的字串>",
+     "replicas": 1,
+     "codexEnabled": false
+   }
+   ```
+
+   - `replicas` 預設 `1`（= 3 reviewer + DA = 4 agents，與 legacy 等價）。要「大量 agents」就調高：每個 base lens 複製 K 份獨立實例，harness 自動封頂 `MAX_AGENTS=16`，跨 replica 由 mergeDedup 去重 → 共識訊號更強。
+3. Workflow 回 `{ findings, verdict, stats }`。`findings` 已 merge+dedup（severity 高者勝）。直接進 Phase 4 render，**不要**自己再跑一次 dedup。
+
+> harness 把三個 reviewer（content-accuracy / student-readability / completeness）的角色 checklist 內建在 `PROFILES.lecture`；devil's-advocate 是 downstream node（讀同儕**完稿** findings，非 live SendMessage）。這是相對 legacy 唯一的行為差異 —— 更穩（無 idle-teammate / SendMessage 不觸發失敗），但 DA 看的是定稿而非即時對話。
+
+#### Backend B — Legacy TeamCreate fan-out（fallback）
 
 **CRITICAL: 所有 4 個 Agent tool calls 必須在同一個 message 送出。**
 
@@ -165,7 +195,10 @@ SRT instruction（有 SRT 時注入）：
 
 ### Phase 4: 合併去重
 
-由主 session 的 Claude 讀取所有結果，產出比較表：
+- **Backend A（workflow）**：`findings` 已由 harness merge+dedup（severity 高者勝、跨 lens 不誤併），直接把 array render 成下表（一 finding 一列：嚴重性 / title—body / lens·file:line）。**不要**再跑一次 dedup。
+- **Backend B（legacy）**：主 session Claude 讀取 4 個 teammate 結果，手動合併去重。
+
+產出比較表：
 
 ```markdown
 ## Ensemble Lecture Review: {FILE}
@@ -202,7 +235,7 @@ SRT instruction（有 SRT 時注入）：
 
 ## 鐵律
 
-- **4 個 tool calls 在同一個 message 送出**。不可分步驟。
+- **（Backend B legacy）4 個 tool calls 在同一個 message 送出**。不可分步驟。（Backend A workflow 由 harness 處理平行，不適用此條。）
 - **completeness reviewer 必須讀逐字稿**（如果有提供）。不可跳過。
 - **共識問題 > 單方問題**：多個 reviewer 都指出的問題最需要修。
 - **Devil's Advocate 是必要的**。防止群體盲點。

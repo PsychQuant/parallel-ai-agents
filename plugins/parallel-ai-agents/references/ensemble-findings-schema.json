@@ -1,0 +1,28 @@
+{
+  "$comment": "Canonical mirror of the FINDINGS_SCHEMA literal embedded in workflows/ensemble-workflow.js. The workflow runtime has no filesystem access, so the schema MUST live as an in-file literal there; this file is the human-readable source of truth. Keep the two in sync by hand (see CHANGELOG / the drift note in the harness header).",
+  "type": "object",
+  "required": ["findings"],
+  "additionalProperties": false,
+  "properties": {
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["severity", "title", "body"],
+        "additionalProperties": false,
+        "properties": {
+          "lens": {
+            "type": ["string", "null"],
+            "$comment": "Reviewer key. Free string (varies per profile); the harness overrides it with the assigned lens after the agent returns, so a mislabel cannot corrupt attribution."
+          },
+          "severity": { "type": "string", "enum": ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"] },
+          "title": { "type": "string", "minLength": 1 },
+          "file": { "type": ["string", "null"] },
+          "line": { "type": ["integer", "null"] },
+          "body": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "verdict": { "type": "string", "enum": ["PASS", "FINDINGS"] }
+  }
+}
