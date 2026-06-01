@@ -14,3 +14,4 @@ general,a11y,"無障礙。檢查 ARIA 標籤、鍵盤可達性與 focus 順序�
 general,i18n,"國際化。檢查硬編使用者字串、日期／數字／貨幣格式、RTL 版面、複數與性別規則、時區處理。",false
 general,deps-and-portability,"依賴與可攜性。檢查依賴是否鎖版本、有無未使用或可更輕量替代的依賴、跨平台／跨版本假設、硬編路徑。",false
 general,observability,"可觀測性。檢查 log 是否足以重建故障、有無洩漏祕密、error 是否帶足夠 context、關鍵路徑有無 metric／trace。",false
+general,security-review,"LLM 應用安全。檢查：(1) prompt injection（使用者輸入、或 RAG／工具回傳的不可信內容，能否覆寫 system 指令、誘導越權呼叫工具、外洩 system prompt）；(2) secret 洩漏（API key／token 寫死、寫進 log／error／回應、誤進 git）；(3) 不可信內容邊界（外部文件／工具輸出是否被當指令執行）；(4) 工具呼叫的授權範圍、以及輸出對下游的注入面。",false

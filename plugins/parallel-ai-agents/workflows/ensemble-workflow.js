@@ -207,6 +207,7 @@ const PROFILES = {
       { key: 'i18n', focus: '國際化。檢查硬編使用者字串、日期／數字／貨幣格式、RTL 版面、複數與性別規則、時區處理。' },
       { key: 'deps-and-portability', focus: '依賴與可攜性。檢查依賴是否鎖版本、有無未使用或可更輕量替代的依賴、跨平台／跨版本假設、硬編路徑。' },
       { key: 'observability', focus: '可觀測性。檢查 log 是否足以重建故障、有無洩漏祕密、error 是否帶足夠 context、關鍵路徑有無 metric／trace。' },
+      { key: 'security-review', focus: 'LLM 應用安全。檢查：(1) prompt injection（使用者輸入、或 RAG／工具回傳的不可信內容，能否覆寫 system 指令、誘導越權呼叫工具、外洩 system prompt）；(2) secret 洩漏（API key／token 寫死、寫進 log／error／回應、誤進 git）；(3) 不可信內容邊界（外部文件／工具輸出是否被當指令執行）；(4) 工具呼叫的授權範圍、以及輸出對下游的注入面。' },
     ],
     daFocus:
       '反駁前述各 reviewer 的「通過」或「LOW」判斷：對每個「通過」找理由說它其實有問題、對每個「LOW」論證為何應升級。對抗性驗證、防群體盲點。找不到反駁的理由才承認通過。',

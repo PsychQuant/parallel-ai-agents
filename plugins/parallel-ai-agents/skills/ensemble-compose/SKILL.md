@@ -46,6 +46,9 @@ allowed-tools:
 | `general.i18n` | 國際化：硬編字串、日期/數字/貨幣格式、RTL、時區 |
 | `general.deps-and-portability` | 依賴鎖版本、跨平台/版本假設、硬編路徑 |
 | `general.observability` | log/error context、secret 洩漏、metric/trace |
+| `general.security-review` | LLM app 安全：prompt injection、secret 洩漏、不可信內容邊界、工具授權 |
+
+> **devil's-advocate 與 Codex 不在上表（也不在 CSV）**：每個 ensemble 都會**自動**加一個 devil's-advocate（讀同儕完稿反駁、fail-closed），`--codex` 則加跨模型 Codex 盲驗。兩者由 harness 管理、**不可 `--include`**（上表只列可挑/可仿照的 reviewer lens）。所以你不用、也不該把 `devils-advocate` 放進 lens 清單或 CSV —— 它本來就在每次 run 裡。
 
 > 完整 focus 文字見 [`references/builtin-lenses.csv`](../../references/builtin-lenses.csv)（從 harness `PROFILES` 自動產生的 reference）。⚠️ 這是**唯讀 reference** —— 編它**不會**改 harness（內建 lens 的真源是 code，且 workflow runtime 無 FS 讀不到）。要客製請用下方 `--lens-file` 自己的 CSV、或 `--lens`。改了 `PROFILES` 後重生此檔：`bash references/regen-builtin-lenses.sh`。
 
