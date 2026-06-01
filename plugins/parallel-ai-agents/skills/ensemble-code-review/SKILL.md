@@ -76,7 +76,39 @@ Arguments:
 
 3. 準備 context 字串，包含：檔案路徑、內容、focus 指示
 
-### Phase 2: 平行啟動 Claude Team + Codex
+### Phase 2: 派發審閱（雙 backend）
+
+先選 backend：
+
+- **`Workflow` tool 可用（預設、推薦）** → Backend A（workflow）。可大量 agent fan-out，Codex 是 barrier 內一個成員。
+- **`Workflow` tool 不存在**（舊版 Claude Code）→ fallback 到 Backend B（legacy TeamCreate + Codex Bash，下方 2a/2b）。
+
+兩個 backend 產出**相同的 findings 形狀**，Phase 4 報表完全一致。
+
+#### Backend A — Workflow（預設）
+
+1. 解析 harness 絕對路徑：`${CLAUDE_PLUGIN_ROOT}/workflows/ensemble-workflow.js`。
+2. 解析 wrapper 絕對路徑：`${CLAUDE_PLUGIN_ROOT}/bin/codex-call`（**用絕對路徑**，不賭 workflow agent shell 的 PATH —— install-time PATH 注入是 version-pinned、可能 stale/不存在）。
+3. 呼叫 `Workflow` tool，傳 `scriptPath`（harness 絕對路徑）+ `args`：
+
+   ```json
+   {
+     "profile": "code",
+     "file": "<FILE_OR_DIR 絕對路徑>",
+     "contextBlock": "<focus 指示 + 檔案類型 emphasis（見 Phase 1 表）>",
+     "codexEnabled": true,
+     "codexCallPath": "${CLAUDE_PLUGIN_ROOT}/bin/codex-call",
+     "replicas": 1
+   }
+   ```
+
+   - `codexEnabled: true` → Codex（gpt-5.5）作為 barrier 內第 4 個 agent，shell 出去呼 `codexCallPath`（**絕不** `codex exec`），fail-soft：timeout/error 只回 1 個 INFO finding（不阻擋 Claude-lens verdict）。
+   - `replicas` 預設 1（3 Claude lens + Codex + DA = 5，與 legacy 等價）。調高即大量 fan-out；harness 封頂 `MAX_AGENTS=16`（建議 Codex replica ≤2，fast = 2.5× credit）。
+4. Workflow 回 `{ findings, verdict, stats }`，`findings` 已 merge+dedup（severity 高者勝、跨 lens 不誤併）。Codex 的 finding `lens="codex"`、DA 的 `lens="devils-advocate"`。直接進 Phase 4 render，**不要**自己再 dedup。
+
+> 跨模型獨立性由 harness 保證：codexPrompt **不**提及 Claude reviewers、**不**餵 Codex 他們的 findings；DA 則**會**讀 Claude reviewers 的完稿 findings（兩者 prompt builder 分開）。DA 為 downstream node（讀完稿，非 live SendMessage）。
+
+#### Backend B — Legacy TeamCreate + Codex Bash（fallback）
 
 **CRITICAL: 所有 tool calls（TeamCreate + Codex Bash）必須在同一個 message 送出。不可分步驟。**
 
@@ -233,7 +265,10 @@ Codex prompt 應包含：
 
 ### Phase 4: 合併去重 + 交叉比對
 
-由主 session 的 Claude 讀取所有結果，產出比較表：
+- **Backend A（workflow）**：`findings` 已由 harness merge+dedup（severity 高者勝）。主 session 依 `lens` 欄分組 render 下方各表（共識 = 同一問題多 lens／含 codex；僅 Codex = `lens="codex"`；DA = `lens="devils-advocate"`）。**不要**再跑一次 dedup。
+- **Backend B（legacy）**：主 session Claude 讀取 4 teammate + Codex 結果，手動去重交叉比對。
+
+產出比較表：
 
 1. **去重**：相同檔案 + 相似描述 → 合併，標註來源 `[team:architecture+codex]`
 2. **severity 以最高為準**：如果 correctness 說 MEDIUM 但 codex 說 HIGH → HIGH
@@ -313,7 +348,7 @@ node "$CODEX_SCRIPT" result $JOB_ID
 
 ## 鐵律
 
-- **5 個 tool calls 在同一個 message 送出**（4 Agent + 1 Bash codex）。不可分步驟。
+- **（Backend B legacy）5 個 tool calls 在同一個 message 送出**（4 Agent + 1 Bash codex）。不可分步驟。（Backend A workflow 由 harness 處理平行 + Codex barrier，不適用此條。）
 - **Codex 看不到 Claude Team 的討論**。它是完全獨立的盲驗。
 - **Codex 的審稿結果原封不動呈現**，不要修改或摘要。
 - **交叉比對由主 session 的 Claude 做**，因為主 session 有完整 context。
