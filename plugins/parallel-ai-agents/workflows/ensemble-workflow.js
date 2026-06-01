@@ -198,6 +198,19 @@ const PROFILES = {
       '(1) methodology 說統計 OK → 找 alternative interpretation；(2) writing 說邏輯清晰 → 找隱含邏輯跳躍；' +
       '(3) reference-verifier 說文獻 OK → 質疑相關性與時效性；(4) 對每個 LOW 論證為何應 MEDIUM/HIGH。找不到反駁才承認通過。',
   },
+  general: {
+    title: '通用軟體品質',
+    codexDefault: false,
+    lenses: [
+      { key: 'perf', focus: '效能。檢查每個 hot path 的時間複雜度、N+1 query、不必要的重算與配置、是否該快取／批次化。' },
+      { key: 'a11y', focus: '無障礙。檢查 ARIA 標籤、鍵盤可達性與 focus 順序、色彩對比、語意化標籤、螢幕報讀器體驗。' },
+      { key: 'i18n', focus: '國際化。檢查硬編使用者字串、日期／數字／貨幣格式、RTL 版面、複數與性別規則、時區處理。' },
+      { key: 'deps-and-portability', focus: '依賴與可攜性。檢查依賴是否鎖版本、有無未使用或可更輕量替代的依賴、跨平台／跨版本假設、硬編路徑。' },
+      { key: 'observability', focus: '可觀測性。檢查 log 是否足以重建故障、有無洩漏祕密、error 是否帶足夠 context、關鍵路徑有無 metric／trace。' },
+    ],
+    daFocus:
+      '反駁前述各 reviewer 的「通過」或「LOW」判斷：對每個「通過」找理由說它其實有問題、對每個「LOW」論證為何應升級。對抗性驗證、防群體盲點。找不到反駁的理由才承認通過。',
+  },
   // custom: no built-in lenses — the entire ensemble is composed at call time from args.includeLenses
   // (cross-profile pulls) + args.customLenses (caller-defined {key, focus}). daFocus / codexInstructions
   // are generic defaults, overridable via args.daFocus / args.codexInstructions. This is the "自由組合" entry.

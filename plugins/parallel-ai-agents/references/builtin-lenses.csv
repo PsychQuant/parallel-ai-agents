@@ -9,3 +9,8 @@ academic,methodology,"研究方法。檢查：(1) 研究設計是否合理（實
 academic,writing,"學術寫作品質。檢查：(1) 論述邏輯（章節銜接）；(2) 段落結構（topic sentence + supporting evidence）；(3) 學術語氣（hedging language、避免過度武斷）；(4) APA 格式（引用、標題層級、圖表標註）；(5) 文法與用詞精確度與一致性；(6) Abstract 品質（background/method/results/conclusion）。可用 Skill tool 呼叫 perspective-writer 分析特定段落寫作風格。",false
 academic,reference-verifier,"逐一驗證引用文獻的真實性、**偵測幻覺文獻**（hallucinated references）。**用 ToolSearch 找 che-zotero-mcp 工具**（query 如 ""zotero academic_search lookup_doi""）後逐筆查核：(1) 提取每筆文獻（作者/年份/標題/期刊）；(2) 用 academic_search 搜標題或作者+年份、有 DOI 用 academic_lookup_doi、用 zotero_search 查 Zotero 庫；(3) 分類：✅已驗證 / ⚠️存疑 / ❌疑似幻覺（查無或作者-標題-年份不匹配）；(4) 檢查 in-text citation 與 reference list 一致性。每筆都要查、不可抽樣。任何 ❌ 幻覺文獻一律 HIGH。",false
 academic,number-verifier,"逐一驗證 doc 中每個數字 vs ground-truth artifact、**偵測幻覺數字**（hallucinated numbers）。**用 Bash 跑 Rscript / python 從原始計算 artifact 重算**：(1) 識別 ground-truth（analysis/*.rds、*.RData、*.R、*.npz、*.csv、*.ipynb、*.py、*.xlsx）；(2) 提取 doc 每個數值（test stat、coef、p-value、AIC/BIC、forecast、平均、sd、t、F、χ²、CI）；(3) 對每個數字找對應 ground-truth（直接讀 .rds：`Rscript -e 'print(readRDS(""...""))'`；讀 .npz：`python -c 'import numpy as np;print(np.load(""..."")[""k""])'`；或重跑腳本）；(4) 分類：✅相符 / ⚠️rounding（末位±1）/ ❌幻覺（超容差）；(5) 跨檔（EN/ZH/DOCX）與內部一致性。每個 doc 中的數字都要查、不可抽樣。任何 ❌ 幻覺數字一律 HIGH。",false
+general,perf,"效能。檢查每個 hot path 的時間複雜度、N+1 query、不必要的重算與配置、是否該快取／批次化。",false
+general,a11y,"無障礙。檢查 ARIA 標籤、鍵盤可達性與 focus 順序、色彩對比、語意化標籤、螢幕報讀器體驗。",false
+general,i18n,"國際化。檢查硬編使用者字串、日期／數字／貨幣格式、RTL 版面、複數與性別規則、時區處理。",false
+general,deps-and-portability,"依賴與可攜性。檢查依賴是否鎖版本、有無未使用或可更輕量替代的依賴、跨平台／跨版本假設、硬編路徑。",false
+general,observability,"可觀測性。檢查 log 是否足以重建故障、有無洩漏祕密、error 是否帶足夠 context、關鍵路徑有無 metric／trace。",false
