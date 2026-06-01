@@ -32,6 +32,10 @@
  *                                                       skill controls the asymmetry by WHICH lenses it includes —
  *                                                       e.g. only reference-verifier + da, never methodology/writing/codex)
  *   disableLenses: [string]                           — lens keys to skip this run (academic --no-numeric → ['number-verifier'])
+ *   includeLenses: [string]                           — pull lenses from OTHER profiles: ["code.security", "academic.methodology"]
+ *   customLenses : [{ key, focus, needsSrt? }]        — caller-defined reviewer roles ("自由組合"); appended to the active set
+ *   maxAgents    : integer                            — override the agent ceiling (default 16, hard-capped to 4..30)
+ *   daFocus / codexInstructions / codexMaxTime        — override the profile defaults (used by profile:"custom")
  *
  * Returns: { findings: Finding[], verdict: 'PASS' | 'FINDINGS', stats: {...} }
  * conforming to references/ensemble-findings-schema.json.
@@ -194,6 +198,18 @@ const PROFILES = {
       '(1) methodology 說統計 OK → 找 alternative interpretation；(2) writing 說邏輯清晰 → 找隱含邏輯跳躍；' +
       '(3) reference-verifier 說文獻 OK → 質疑相關性與時效性；(4) 對每個 LOW 論證為何應 MEDIUM/HIGH。找不到反駁才承認通過。',
   },
+  // custom: no built-in lenses — the entire ensemble is composed at call time from args.includeLenses
+  // (cross-profile pulls) + args.customLenses (caller-defined {key, focus}). daFocus / codexInstructions
+  // are generic defaults, overridable via args.daFocus / args.codexInstructions. This is the "自由組合" entry.
+  custom: {
+    title: '自訂',
+    codexDefault: false,
+    codexInstructions: '你是嚴謹的審閱者，用繁體中文輸出，逐點標注嚴重性、引用具體位置。',
+    lenses: [],
+    daFocus:
+      '反駁前述各 reviewer 的「通過」或「LOW」判斷：對每個「通過」找理由說它其實有問題、對每個「LOW」論證為何應升級。' +
+      '對抗性驗證、防群體盲點。找不到反駁的理由才承認通過。',
+  },
 }
 
 // Guard prepended to every prompt that embeds untrusted content (matters for the `code` profile
@@ -269,7 +285,7 @@ function daPrompt(profile, reviewerResults, A) {
   return [
     `You are the **devil's-advocate** in a parallel-ai-agents ${profile.title} ensemble. The other reviewers reported:`,
     summary,
-    `Your job: ${profile.daFocus}`,
+    `Your job: ${A.daFocus || profile.daFocus}`,
     A.priors && A.priors.da
       ? `所有前輪的完整 ensemble 結果（你被允許看到全部前輪。額外任務：挑戰前輪「通過」/「LOW」判斷、找出前輪所有 reviewer 都漏的盲點、驗證前輪 HIGH 是否過度反應；明確標記哪些是「前輪已知+本輪確認」、哪些是「🆕 前輪未發現」）：\n${dataBlock('PRIOR', A.priors.da)}`
       : '',
@@ -291,8 +307,8 @@ function daPrompt(profile, reviewerResults, A) {
 // as `args.codexCallPath`; the agent runs that absolute path. Bare `codex-call` is only the fallback.
 function codexPrompt(profile, A) {
   const wrapper = A.codexCallPath || 'codex-call'
-  const instr = profile.codexInstructions || '你是嚴謹的審閱者，用繁體中文輸出，逐點標注嚴重性。'
-  const maxTime = profile.codexMaxTime || 600 // academic papers need longer (input length + heavier reasoning)
+  const instr = A.codexInstructions || profile.codexInstructions || '你是嚴謹的審閱者，用繁體中文輸出，逐點標注嚴重性。'
+  const maxTime = Number(A.codexMaxTime) || profile.codexMaxTime || 600 // academic papers need longer (input length + heavier reasoning)
   return [
     `You are the cross-model verifier in a ${profile.title} ensemble. Use Codex (gpt-5.5, a different model family) as a BLIND reviewer, then convert its output into findings. Do NOT mention the Claude reviewers or feed Codex their findings — Codex stays a blind cross-model vote.`,
     DATA_GUARD,
@@ -340,40 +356,69 @@ try {
   A = {}
 }
 
-// Guard BOTH an unknown profile AND a known-but-malformed profile with no lenses. The empty-lenses
-// case is not academic: without it, `budgetForLenses / profile.lenses.length` divides by 0 →
-// maxReplicas = Infinity (MAX_AGENTS cap silently defeated), the fan-out loop produces zero
-// reviewers, and the fail-closed loop iterates nothing → a false PASS with no reviewer having run.
-// (Caught by the harness's own code-profile self-review.) Bail with a HIGH integrity finding here so
-// the division never happens and the skill never renders a false PASS.
+// Guard an unknown profile. (The empty-lens case — including profile:"custom" which ships no
+// built-in lenses — is handled AFTER composition below, where division-by-zero / false-PASS would
+// otherwise occur; that division-by-zero was caught by the harness's own code-profile self-review.)
 const profile = PROFILES[A.profile]
-if (!profile || !Array.isArray(profile.lenses) || profile.lenses.length === 0) {
-  const title = !profile ? `unknown ensemble profile "${A.profile}"` : `profile "${A.profile}" has no lenses`
-  const body = !profile
-    ? `pai-ensemble was invoked with no matching PROFILES entry; available: ${Object.keys(PROFILES).join(', ')}. The skill must fall back to the legacy backend.`
-    : `the "${A.profile}" profile defines no lenses — cannot fan out reviewers. The skill must fall back to the legacy backend.`
+if (!profile) {
   return {
-    findings: [{ lens: 'harness', severity: 'HIGH', title, file: null, body }],
+    findings: [{ lens: 'harness', severity: 'HIGH', title: `unknown ensemble profile "${A.profile}"`, file: null, body: `pai-ensemble was invoked with no matching PROFILES entry; available: ${Object.keys(PROFILES).join(', ')}. The skill must fall back to the legacy backend.` }],
     verdict: 'FINDINGS',
     stats: { profile: A.profile || null, agents: 0 },
   }
 }
 
-// Optional per-run lens disabling (academic --no-numeric / --no-references). The skill passes
-// args.disableLenses = ['number-verifier', ...]; methodology/writing etc. stay. If a malformed call
-// disables everything, fall back to the full set so we never fan out zero reviewers (fail-safe).
+// ── Compose the active lens set (the "自由組合 agents" surface) ──
+// Start from the profile's built-in lenses, optionally pull specific lenses from OTHER profiles
+// (args.includeLenses = ["code.security", "academic.methodology"]), append caller-defined custom
+// lenses (args.customLenses = [{key, focus, needsSrt?}]), then drop any in args.disableLenses.
+// Dedup by key, FIRST wins (built-in → included → custom) so a name clash is predictable, not doubled.
+// profile:"custom" ships no built-in lenses, so a fully bespoke ensemble comes entirely from
+// includeLenses + customLenses.
 const disabled = Array.isArray(A.disableLenses) ? A.disableLenses : []
-const filtered = profile.lenses.filter((l) => !disabled.includes(l.key))
-const activeLenses = filtered.length ? filtered : profile.lenses
+const included = (Array.isArray(A.includeLenses) ? A.includeLenses : [])
+  .map((ref) => {
+    const s = String(ref)
+    const dot = s.indexOf('.')
+    const p = dot < 0 ? '' : s.slice(0, dot)
+    const k = dot < 0 ? s : s.slice(dot + 1)
+    return PROFILES[p] && PROFILES[p].lenses.find((l) => l.key === k)
+  })
+  .filter(Boolean)
+const customs = (Array.isArray(A.customLenses) ? A.customLenses : [])
+  .filter((l) => l && typeof l.key === 'string' && l.key.trim() && typeof l.focus === 'string' && l.focus.trim())
+  .map((l) => ({ key: l.key.trim(), focus: l.focus, needsSrt: !!l.needsSrt }))
+const seen = new Set()
+let assembled = [...profile.lenses, ...included, ...customs].filter(
+  (l) => !disabled.includes(l.key) && !seen.has(l.key) && seen.add(l.key)
+)
+// Empty after composition → bail (covers profile:"custom" with no include/custom, or disabling all).
+if (assembled.length === 0) {
+  return {
+    findings: [{ lens: 'harness', severity: 'HIGH', title: 'no active lenses after composition', file: null, body: `profile "${A.profile}" + includeLenses + customLenses − disableLenses resolved to zero reviewers. Supply at least one lens, or fall back to the legacy backend.` }],
+    verdict: 'FINDINGS',
+    stats: { profile: A.profile || null, agents: 0 },
+  }
+}
 
-// Clamp replicas so total agents ≤ MAX_AGENTS (the "大量 agents" cost ceiling).
+// Cost ceiling (overridable but hard-capped): total = baseLenses × replicas + codex + DA ≤ maxAgents.
+// Two-stage guard — cap the lens COUNT first (so 20 custom lenses can't blow past the ceiling even at
+// replicas=1), then clamp replicas against the remaining budget.
 const codexOn = A.codexEnabled != null ? !!A.codexEnabled : !!profile.codexDefault
+const maxAgents = Math.min(30, Math.max(4, Math.floor(Number(A.maxAgents) || MAX_AGENTS)))
+const maxBaseLenses = Math.max(1, maxAgents - (codexOn ? 1 : 0) - 1) // reserve Codex + DA
+if (assembled.length > maxBaseLenses) {
+  log(`pai-ensemble: lens set ${assembled.length} → ${maxBaseLenses} (maxAgents=${maxAgents}, codex=${codexOn}); extra lenses dropped`)
+  assembled = assembled.slice(0, maxBaseLenses)
+}
+const activeLenses = assembled
+
 const requested = Math.max(1, Math.floor(Number(A.replicas) || 1))
-const budgetForLenses = MAX_AGENTS - (codexOn ? 1 : 0) - 1 // reserve Codex + DA
+const budgetForLenses = maxAgents - (codexOn ? 1 : 0) - 1
 const maxReplicas = Math.max(1, Math.floor(budgetForLenses / activeLenses.length))
 const replicas = Math.min(requested, maxReplicas)
 if (replicas < requested) {
-  log(`pai-ensemble: replicas clamped ${requested} → ${replicas} (MAX_AGENTS=${MAX_AGENTS}, ${activeLenses.length} lenses, codex=${codexOn})`)
+  log(`pai-ensemble: replicas clamped ${requested} → ${replicas} (maxAgents=${maxAgents}, ${activeLenses.length} lenses, codex=${codexOn})`)
 }
 
 // Phase 1 (barrier): every base lens × replicas + optional Codex run concurrently and
