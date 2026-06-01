@@ -41,6 +41,11 @@ allowed-tools:
 | `lecture.content-accuracy` | 教學內容知識正確性 |
 | `lecture.student-readability` | 零基礎學生可讀性 |
 | `lecture.completeness` | 逐字稿覆蓋率 + 結構完整性 |
+| `general.perf` | 效能：hot path 複雜度、N+1、不必要重算、快取/批次 |
+| `general.a11y` | 無障礙：ARIA、鍵盤可達性、色彩對比、報讀器 |
+| `general.i18n` | 國際化：硬編字串、日期/數字/貨幣格式、RTL、時區 |
+| `general.deps-and-portability` | 依賴鎖版本、跨平台/版本假設、硬編路徑 |
+| `general.observability` | log/error context、secret 洩漏、metric/trace |
 
 > 完整 focus 文字見 [`references/builtin-lenses.csv`](../../references/builtin-lenses.csv)（從 harness `PROFILES` 自動產生的 reference）。⚠️ 這是**唯讀 reference** —— 編它**不會**改 harness（內建 lens 的真源是 code，且 workflow runtime 無 FS 讀不到）。要客製請用下方 `--lens-file` 自己的 CSV、或 `--lens`。改了 `PROFILES` 後重生此檔：`bash references/regen-builtin-lenses.sh`。
 
