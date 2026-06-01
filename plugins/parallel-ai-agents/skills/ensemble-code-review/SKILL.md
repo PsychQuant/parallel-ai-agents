@@ -88,32 +88,39 @@ allowed-tools:
 **diff 模式**：依 Phase 0 的來源取 diff，**寫到 temp 檔**（大 diff 不塞 inline args —— Workflow 會把 args JSON-stringify；reviewer 用 file-read tool 讀，避開 escape 地獄 + prompt 膨脹）：
 
 ```bash
-# 0) 鎖定 repo root（順帶當 git-repo guard：非 git repo 這行非 0 退出 → 停、改路徑模式）
-REPO="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "不在 git repo 內 → 改用路徑模式或 cd 進 repo"; exit 1; }
-GIT() { git -C "$REPO" --no-pager "$@"; }   # --no-pager + 後續 --no-color 杜絕 ANSI 污染 DIFF_FILE
-DIFF_FILE="$(mktemp -t pai-codereview-diff.XXXXXX)"
+# 0) 把 Phase 0 的判定 lower 成變數（別只留 prose；<ref>/<N> 必帶值，缺值→報錯）：
+#    --diff → MODE=--diff
+#    --base <ref> / --since <ref> → MODE=--base|--since、REF=<ref>
+#    --commits <N> / --pr <N>     → MODE=--commits|--pr、N=<N>
+REPO="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "不在 git repo 內 → 改路徑模式或 cd 進 repo"; exit 1; }
+GIT() { git -C "$REPO" --no-pager "$@"; }             # --no-pager + --no-color：杜絕 ANSI 污染 DIFF_FILE
+DIFF_FILE="$(mktemp -t pai-codereview-diff.XXXXXX)"   # ⚠ ensemble 跑完後要 rm（含 changed-line 祕密，見鐵律）
 
-# 1) ref/N 驗證（防 command/argument injection + dashed-ref + 越界）— REF/N 來自使用者，先驗才用
-#    ref: 必須解析得到 commit；N: 必須正整數
-validate_ref() { GIT rev-parse --verify --quiet "$1^{commit}" >/dev/null || { echo "ref 不存在或非法: $1"; exit 1; }; }
-validate_int() { [[ "$1" =~ ^[0-9]+$ ]] || { echo "需正整數，得到: $1"; exit 1; }; }
+# ref/N 驗證（防 injection + dashed-ref）：ref 必解析成 commit；N 必正整數（排除 0 與 leading-zero）
+validate_ref() { GIT rev-parse --verify --quiet "$1^{commit}" >/dev/null || { echo "ref 非法: $1"; exit 1; }; }
+validate_int() { [[ "$1" =~ ^[1-9][0-9]*$ ]] || { echo "需正整數(≥1): $1"; exit 1; }; }
+# untracked/新檔 append：超 64KB 轉 path-only，避免單檔撐爆 prompt（對齊 codex-pro 的 cap）；用 repo-relative path
+append_new() { local f="$1" sz; sz=$(wc -c <"$REPO/$f" 2>/dev/null||echo 0)
+  if (( sz > 65536 )); then printf 'diff --git a/%s b/%s\nnew file %d bytes — 過大，僅列路徑\n' "$f" "$f" "$sz" >>"$DIFF_FILE"
+  else GIT diff --no-color --no-index -- /dev/null "$f" >>"$DIFF_FILE" 2>/dev/null||true; fi; }
 
-# 2) 依來源取 diff（每條都檢查 exit code；用 -- / 驗證過的值，不裸內插）
+# 取 diff（每條檢查 exit code；只用驗證過的值，不裸內插）
 case "$MODE" in
   --diff)
-    GIT diff --no-color HEAD > "$DIFF_FILE" || { echo "git diff 失敗"; exit 1; }
-    # untracked（新檔還沒 git add）也要審 —— 各自當「新增檔」append（--no-index 對 /dev/null）
-    GIT ls-files --others --exclude-standard -z | while IFS= read -r -d '' f; do
-      GIT diff --no-color --no-index -- /dev/null "$REPO/$f" >> "$DIFF_FILE" 2>/dev/null || true
-    done ;;
-  --base)    validate_ref "$REF"; GIT diff --no-color "$REF"...HEAD > "$DIFF_FILE" || exit 1 ;;  # 三點=相對 merge-base
-  --since)   validate_ref "$REF"; GIT diff --no-color "$REF"..HEAD  > "$DIFF_FILE" || exit 1 ;;
-  --commits) validate_int "$N"; TOT="$(GIT rev-list --count HEAD)"; ((N>TOT)) && N=$TOT      # clamp 越界
-             GIT diff --no-color "HEAD~$N..HEAD" > "$DIFF_FILE" || exit 1 ;;
-  --pr)      validate_int "$N"; gh pr diff "$N" > "$DIFF_FILE" || { echo "gh pr diff 失敗"; exit 1; } ;;
+    GIT diff --no-color HEAD >"$DIFF_FILE" || { echo "git diff 失敗"; exit 1; }
+    GIT ls-files --others --exclude-standard -z | while IFS= read -r -d '' f; do append_new "$f"; done ;;
+  --base)  validate_ref "$REF"; GIT diff --no-color "$REF"...HEAD >"$DIFF_FILE" || exit 1 ;;  # 三點=相對 merge-base
+  --since) validate_ref "$REF"; GIT diff --no-color "$REF"..HEAD  >"$DIFF_FILE" || exit 1 ;;
+  --commits)
+    validate_int "$N"
+    TOT="$(GIT rev-list --count HEAD)" || { echo "repo 無 commit"; exit 1; }
+    if (( N >= TOT )); then BASE="$(GIT hash-object -t tree /dev/null)"   # N≥全部 → 對 empty tree（含 root 的全部變更；不會 HEAD~TOT 越界 fatal）
+    else BASE="HEAD~$N"; fi
+    GIT diff --no-color "$BASE" HEAD >"$DIFF_FILE" || exit 1 ;;
+  --pr) validate_int "$N"; gh pr diff --color never "$N" >"$DIFF_FILE" || { echo "gh pr diff 失敗"; exit 1; } ;;
 esac
 
-# 3) 空判定：只有「命令成功(exit 0) 且檔案空」才是真『無變更』；上面已用 exit code 把 git 報錯擋掉
+# 空判定：上面已用 exit code 擋掉 git 報錯 → 這裡的空 = 真「無變更」（非 git fatal 被誤判）
 [ -s "$DIFF_FILE" ] || { echo "無變更可審"; exit 1; }
 ```
 
@@ -423,6 +430,8 @@ node "$CODEX_SCRIPT" result $JOB_ID
 - **所有 git/gh 命令檢查 exit code**：非 0（壞 ref / `HEAD~N` 越界 / pre-first-commit / 非 repo）報 stderr 並停 —— **不可把 git 報錯的空輸出當「無變更、乾淨通過」**（假綠燈）。
 - **`--diff` 要含 untracked 新檔**（`git ls-files --others --exclude-standard`），別讓「還沒 git add 的新檔」被靜默漏審。
 - **`git -C "$REPO"` 的 `$REPO` 先定義**（`git rev-parse --show-toplevel`），不可裸用未定義變數。
+- **`--commits N` 的 `N≥commit 總數` 用 empty tree 當 base**（`git hash-object -t tree /dev/null`），**不可** clamp 成 `HEAD~TOT`（= root 的 parent、不存在 → fatal）。`N` 排除 0。
+- **DIFF_FILE 在 ensemble 跑完後刪**（含 changed-line 祕密，別累積在 /tmp）。**不要**用 `trap ... EXIT` 提前刪 —— workflow agent 還沒讀就被刪掉。
 - **（Backend B legacy）5 個 tool calls 在同一個 message 送出**（4 Agent + 1 Bash codex）。不可分步驟。（Backend A workflow 由 harness 處理平行 + Codex barrier，不適用此條。）
 - **Codex 看不到 Claude Team 的討論**。它是完全獨立的盲驗。
 - **Codex 的審稿結果原封不動呈現**，不要修改或摘要。
