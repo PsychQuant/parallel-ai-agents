@@ -88,43 +88,24 @@ allowed-tools:
 **diff 模式**：依 Phase 0 的來源取 diff，**寫到 temp 檔**（大 diff 不塞 inline args —— Workflow 會把 args JSON-stringify；reviewer 用 file-read tool 讀，避開 escape 地獄 + prompt 膨脹）：
 
 ```bash
-# 0) 把 Phase 0 的判定 lower 成變數（別只留 prose；<ref>/<N> 必帶值，缺值→報錯）：
-#    --diff → MODE=--diff
-#    --base <ref> / --since <ref> → MODE=--base|--since、REF=<ref>
-#    --commits <N> / --pr <N>     → MODE=--commits|--pr、N=<N>
-REPO="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "不在 git repo 內 → 改路徑模式或 cd 進 repo"; exit 1; }
-GIT() { git -C "$REPO" --no-pager "$@"; }             # --no-pager + --no-color：杜絕 ANSI 污染 DIFF_FILE
-DIFF_FILE="$(mktemp -t pai-codereview-diff.XXXXXX)"   # ⚠ ensemble 跑完後要 rm（含 changed-line 祕密，見鐵律）
+# Phase 0 已把判定 lower 成變數（缺值→pai-build-diff 自己報錯）：
+#   --diff               → MODE=--diff（無 ARG）
+#   --base|--since <ref> → MODE=--base|--since、ARG=<ref>
+#   --commits|--pr <N>   → MODE=--commits|--pr、ARG=<N>
+ARG="${ARG:-}"
+DIFF_FILE="$(mktemp -t pai-codereview-diff.XXXXXX)"   # ⚠ skill 自管：async reviewer 讀這個檔；Phase 4.5 才 rm（含 changed-line 祕密）
 
-# ref/N 驗證（防 injection + dashed-ref）：ref 必解析成 commit；N 必正整數（排 0/leading-zero，且 ≤9 位防算術溢位）
-validate_ref() { GIT rev-parse --verify --quiet "$1^{commit}" >/dev/null || { echo "ref 非法: $1"; exit 1; }; }
-validate_int() { [[ "$1" =~ ^[1-9][0-9]*$ ]] && (( ${#1} <= 9 )) || { echo "需正整數(1..9 位): $1"; exit 1; }; }
-# untracked/新檔 append：只處理一般檔 —— symlink/FIFO/dir 只列路徑不讀內容（避免 wc-c follow-symlink 量錯、避免 FIFO
-# 把 read 卡死、避免洩 symlink 目標路徑）。內容走 git diff（git 自動 C-quote 檔名，防含換行檔名偽造假 diff 行），
-# 再 head -c 截 64KB 上限避免單檔撐爆 prompt（用 %q 寫 path-only 檔名，中和控制字元）。
-append_new() { local f="$1"
-  if [ -L "$REPO/$f" ] || [ ! -f "$REPO/$f" ]; then printf 'new file（symlink/特殊檔，僅列路徑）: %q\n' "$f" >>"$DIFF_FILE"; return; fi
-  GIT diff --no-color --no-index -- /dev/null "$f" 2>/dev/null | head -c 65536 >>"$DIFF_FILE" || true; }
-
-# 取 diff（每條檢查 exit code；只用驗證過的值，不裸內插）
-case "$MODE" in
-  --diff)
-    GIT diff --no-color HEAD >"$DIFF_FILE" || { echo "git diff 失敗"; exit 1; }
-    GIT ls-files --others --exclude-standard -z | while IFS= read -r -d '' f; do append_new "$f"; done ;;
-  --base)  validate_ref "$REF"; GIT diff --no-color "$REF"...HEAD >"$DIFF_FILE" || exit 1 ;;  # 三點=相對 merge-base
-  --since) validate_ref "$REF"; GIT diff --no-color "$REF"..HEAD  >"$DIFF_FILE" || exit 1 ;;
-  --commits)
-    validate_int "$N"
-    TOT="$(GIT rev-list --count HEAD)" || { echo "repo 無 commit"; exit 1; }
-    if (( N >= TOT )); then BASE="$(GIT hash-object -t tree /dev/null)"   # N≥全部 → 對 empty tree（含 root 的全部變更；不會 HEAD~TOT 越界 fatal）
-    else BASE="HEAD~$N"; fi
-    GIT diff --no-color "$BASE" HEAD >"$DIFF_FILE" || exit 1 ;;
-  --pr) validate_int "$N"; gh pr diff --color never "$N" >"$DIFF_FILE" || { echo "gh pr diff 失敗"; exit 1; } ;;
+# diff 建構統一交給 version-pinned 的 bin/pai-build-diff —— 3 輪硬化 + bats 覆蓋的「單一真相源」。
+# 絕對路徑不賭 PATH（同 codex-call 理由）。退出碼：0=有 diff／3=無變更（良性）／其它=錯誤。
+bash "${CLAUDE_PLUGIN_ROOT}/bin/pai-build-diff" "$MODE" ${ARG:+"$ARG"} >"$DIFF_FILE"; rc=$?
+case "$rc" in
+  0) : ;;                                                      # 有變更 → 往下派 ensemble
+  3) rm -f "$DIFF_FILE"; echo "無變更可審 → 停（不空跑 ensemble）"; exit 0 ;;
+  *) rm -f "$DIFF_FILE"; echo "diff 建構失敗（見上方 stderr）→ 停"; exit 1 ;;
 esac
-
-# 空判定：上面已用 exit code 擋掉 git 報錯 → 這裡的空 = 真「無變更」（非 git fatal 被誤判）
-[ -s "$DIFF_FILE" ] || { echo "無變更可審"; exit 1; }
 ```
+
+> `pai-build-diff` 封裝了全部硬化：ref/N 驗證（防 command injection + dashed-ref）、untracked 新檔的 symlink/FIFO/換行檔名安全處理、`--commits N≥TOT` 用 empty-tree base、所有 git/gh exit-code 檢查、空判定。**要改 diff 邏輯就改 `bin/pai-build-diff` 並更新 `test/pai-build-diff.bats`，不要在這裡重寫 inline**（單一真相源）。契約細節見該 script 與其 25 個 bats 測試。
 
 > **PR mode 的 context 陷阱**：`gh pr diff` 取的是**遠端 PR** 的 diff，但 reviewer 用 Read 讀到的「周邊原始碼」是**本地工作樹**（可能停在別的分支）。所以 `--pr` 模式下，contextBlock 要明示「周邊以 diff 內 hunk context 為準，本地 Read 未必對應 PR 的版本」；要精確就先 `gh pr checkout <N>`（會動工作樹，多數情況不值得）。
 

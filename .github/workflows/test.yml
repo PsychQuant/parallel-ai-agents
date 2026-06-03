@@ -1,0 +1,29 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  shellcheck-bats:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugins/parallel-ai-agents
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bats
+        run: sudo apt-get update && sudo apt-get install -y bats
+        # shellcheck 已預裝在 ubuntu-latest runner
+
+      - name: shellcheck
+        run: shellcheck bin/pai-build-diff
+
+      - name: bats
+        run: bats test/
