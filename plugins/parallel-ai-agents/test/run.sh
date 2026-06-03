@@ -4,8 +4,11 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-echo "── shellcheck bin/pai-build-diff ──"
-shellcheck bin/pai-build-diff
+echo "── shellcheck (bash scripts) ──"
+shellcheck bin/pai-build-diff bin/pai-parse-verdict
+
+echo "── py_compile (python scripts) ──"
+python3 -m py_compile bin/pai-parse-lens-csv
 
 echo "── bats test/ ──"
 bats test/

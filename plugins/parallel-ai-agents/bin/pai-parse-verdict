@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# pai-parse-verdict — academic --auto-iterate 的 Codex verdict tag 解析器（單一真相源）。
+#
+# 從 Codex 輸出抓結構化 verdict tag <verdict>TAG</verdict>（TAG ∈ [A-Z_0-9]+）。
+#
+# 取「最後一個」match —— verdict 在 review 最末（prompt 要求 "output ... at the very end"）；
+# 前面可能出現被 echo 的「輸出格式說明」範例標籤（如 <verdict>CONVERGED</verdict> 字面寫在
+# instruction 裡）。first-match 會誤抓那些範例 → 假收斂、提前 halt 迴圈。last-match 對齊契約。
+# （instruction 的 <verdict>NEEDS_ITER_{N}</verdict> 因含 {N} 不在 [A-Z_0-9] 而天然不被匹配，
+#  但 CONVERGED / PERMANENT_CONVERGENCE 範例會匹配，故 last-match 是必要的。）
+#
+# 用法：pai-parse-verdict [file]    （無 file → 讀 stdin）
+# 輸出：TAG 到 stdout、exit 0；查無 tag → stderr + exit 1（caller 視為「未收斂、繼續迭代」）。
+set -uo pipefail
+
+input="$(cat -- "${1:-/dev/stdin}")" || { echo "讀輸入失敗" >&2; exit 1; }
+
+tag="$(
+  printf '%s' "$input" \
+    | grep -oE '<verdict>[A-Z_0-9]+</verdict>' \
+    | tail -n 1 \
+    | sed -E 's#^<verdict>([A-Z_0-9]+)</verdict>$#\1#'
+)"
+
+[ -n "$tag" ] || { echo "查無 <verdict>TAG</verdict>（TAG ∈ [A-Z_0-9]+）" >&2; exit 1; }
+printf '%s\n' "$tag"
