@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""pai-parse-lens-csv — ensemble-compose 的 --lens-file CSV 解析器（單一真相源）。
+
+用 csv 模組（絕不 naive split —— focus 是含逗號/中文標點的長 prose）。讀 UTF-8（含 BOM）
+CSV，每列 = 一個自訂 lens，輸出 JSON array 到 stdout：
+  [{"key": "...", "focus": "...", "needsSrt": true?}, ...]
+
+契約：
+  - header 需含 key, focus（needsSrt 可選欄）
+  - 跳過 key 或 focus 為空的列（與 harness 的 customLenses filter 對稱）
+  - needsSrt ∈ {1,true,yes}（不分大小寫）→ true；否則省略該欄
+  - 保留列序、不去重（跨來源 first-wins 去重由 harness 做）
+  - 檔案不存在/不可讀 → stderr + exit 1
+
+退出碼：0 成功（含空 array）；1 錯誤；2 用法錯。
+"""
+import csv
+import json
+import sys
+
+
+def main():
+    if len(sys.argv) != 2:
+        print("用法：pai-parse-lens-csv <csv-path>", file=sys.stderr)
+        return 2
+    path = sys.argv[1]
+    out = []
+    try:
+        # utf-8-sig：吃掉 Excel/Windows 存檔的 BOM，否則首欄 header 變 '﻿key'
+        # → 每列 r.get('key') 回 None → 整批 lens 被靜默丟棄。
+        with open(path, newline="", encoding="utf-8-sig") as f:
+            for row in csv.DictReader(f):
+                key = (row.get("key") or "").strip()
+                focus = (row.get("focus") or "").strip()
+                if not key or not focus:
+                    continue
+                item = {"key": key, "focus": focus}
+                if str(row.get("needsSrt", "")).strip().lower() in ("1", "true", "yes"):
+                    item["needsSrt"] = True
+                out.append(item)
+    except FileNotFoundError:
+        print(f"CSV 檔不存在: {path}", file=sys.stderr)
+        return 1
+    except (OSError, UnicodeDecodeError, csv.Error) as e:
+        print(f"讀 CSV 失敗: {e}", file=sys.stderr)
+        return 1
+    json.dump(out, sys.stdout, ensure_ascii=False)
+    sys.stdout.write("\n")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

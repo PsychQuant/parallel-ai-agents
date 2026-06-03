@@ -69,24 +69,14 @@ i18n,"檢查硬編字串、日期/數字/貨幣格式、RTL、複數規則",fals
 - `focus`：給 agent 的**具體**檢查清單（像內建 lens 那樣逐點，太空泛審閱品質差）。**含逗號/中文標點必用 `"..."` 包住。**
 - `needsSrt`（可選欄）：`true` 時該 lens 收到 `srtFile`（lecture 場景）；省略/`false` 即一般。
 
-**解析（skill 必照做）**：用 python3 `csv` 模組（**絕不** naive `split(",")` —— focus 含逗號會被切爛）：
+**解析（skill 必照做）**：交給 version-pinned 的 `bin/pai-parse-lens-csv`（csv 模組、BOM-safe、bats 覆蓋的單一真相源；**絕不** naive `split(",")` —— focus 含逗號會被切爛）：
 
 ```bash
-python3 - "$LENS_FILE" <<'PY'
-import csv, json, sys
-out=[]
-with open(sys.argv[1], newline='', encoding='utf-8') as f:
-    for r in csv.DictReader(f):
-        k=(r.get('key') or '').strip(); foc=(r.get('focus') or '').strip()
-        if not k or not foc: continue
-        row={"key": k, "focus": foc}
-        if str(r.get('needsSrt','')).strip().lower() in ('1','true','yes'): row["needsSrt"]=True
-        out.append(row)
-print(json.dumps(out, ensure_ascii=False))
-PY
+# 輸出 JSON array：[{"key","focus","needsSrt"?}, ...]；空 key/focus 列已跳過。
+python3 "${CLAUDE_PLUGIN_ROOT}/bin/pai-parse-lens-csv" "$LENS_FILE"
 ```
 
-把輸出 array append 進 `customLenses`（與 `--lens` 合併）。範本見 `references/example-lenses.csv`。
+把輸出 array append 進 `customLenses`（與 `--lens` 合併；同 key first-wins 由 harness 處理）。**要改 CSV 解析就改 `bin/pai-parse-lens-csv` + `test/pai-parse-lens-csv.bats`，不要在這裡重寫 inline。** 範本見 `references/example-lenses.csv`。
 
 ## 執行流程
 
@@ -153,4 +143,4 @@ FILE_OR_DIR      — 審閱對象（缺則問使用者）
 - **maxAgents 硬上限 30**；成本由 `lens 數 × replicas + codex + DA` 決定。
 - **跨 profile 同名 lens**：first-wins（base 先、include 次、custom 後），不會疊兩份。
 - **findings/報表契約與其他 ensemble skill 一致** —— 下游消費方式相同。
-- **`--lens-file` 必用 python3 csv 解析**，不可 naive split —— focus 是長 prose，逗號/中文標點會把欄位切爛。CSV 由 skill（主 session，有 Read）讀，**不是** harness（runtime 無 FS）。
+- **`--lens-file` 一律走 `bin/pai-parse-lens-csv`**（csv 模組、BOM-safe、bats 覆蓋），不可 naive split —— focus 是長 prose，逗號/中文標點會把欄位切爛。CSV 由 skill（主 session，有 Read）讀，**不是** harness（runtime 無 FS）。改解析邏輯改 script + 測試。

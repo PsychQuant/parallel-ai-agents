@@ -211,7 +211,7 @@ TaskCreate: "Final: merge all rounds"
 
 > 跨模型獨立性 + DA 資訊不對稱由 harness 保證：codexPrompt 不提及 Claude reviewers；DA 收 `priors.da`（全部前輪完整結果），ref-verifier 只收自己的 watch-list，其餘 lens 收不到任何前輪。DA 為 downstream node（讀完稿，非 live SendMessage）。
 
-> ⚠️ **`--auto-iterate` 的 `<verdict>` tag**：Backend A 的 Codex finding body 內仍含 Codex 原始輸出；auto-iterate 迴圈照常用 regex `<verdict>([A-Z_0-9]+)</verdict>` 從該 body 抓 tag（Phase 5b 不變）。
+> ⚠️ **`--auto-iterate` 的 `<verdict>` tag**：Backend A 的 Codex finding body 內仍含 Codex 原始輸出；auto-iterate 迴圈照常用 `bin/pai-parse-verdict` 從該 body 抓 tag（取 last-match，Phase 5b 不變）。
 
 #### Backend B — Legacy TeamCreate + Codex Bash（fallback）
 
@@ -557,9 +557,8 @@ while N <= max_rounds:
     mode = 'independent' if N is odd else 'hybrid'
     run Phase 1-4 with mode  → review-round-{N}.md
 
-    # 2. Parse Codex verdict
-    verdict = extract_verdict(codex_output)
-    # Look for <verdict>PERMANENT_CONVERGENCE</verdict>, <verdict>CONVERGED</verdict>, etc.
+    # 2. Parse Codex verdict（取最後一個 <verdict>TAG</verdict>；查無 → "" 視為未收斂）
+    verdict = $(bin/pai-parse-verdict review-round-{N}.md) || verdict=""
 
     # 3. Halt check
     if verdict == converge_on:
@@ -599,7 +598,13 @@ At the very end of your review, output exactly one structured verdict tag:
 Choose conservatively. If unsure, NEEDS_ITER_{N}.
 ```
 
-Skill 用 regex `<verdict>([A-Z_0-9]+)</verdict>` 從 Codex output 抓 tag。Robust 對 phrasing 變異;regex 容易 miss 「basically converged」近義詞,因此採結構化 tag。
+Skill 用 `bin/pai-parse-verdict` 從 Codex output 抓 tag（bash + grep，version-pinned、bats 覆蓋的單一真相源）：
+
+```bash
+verdict="$("${CLAUDE_PLUGIN_ROOT}/bin/pai-parse-verdict" review-round-{N}.md)" || verdict=""   # 查無 tag → 空 → 視為未收斂
+```
+
+**取最後一個** `<verdict>TAG</verdict>` match（TAG ∈ `[A-Z_0-9]+`）—— verdict 在 review 最末，前面可能 echo 到 instruction 範例標籤（`<verdict>CONVERGED</verdict>` 字面寫在輸出格式說明裡），first-match 會誤抓成**假收斂**而提前 halt。查無 tag → 非零退出 → caller 視為「未收斂、繼續迭代」（保守，對齊 "If unsure, NEEDS_ITER"）。結構化 tag 對 phrasing 變異 robust（不靠語意近義詞）。**改解析改 `bin/pai-parse-verdict` + `test/pai-parse-verdict.bats`，不要 inline 重寫 regex。**
 
 #### Apply-fixes protocol
 
@@ -736,7 +741,7 @@ Default 起始 focus = (none) — 不設,讓 reviewer 自主探;同一 focus 重
 - **每輪 auto-commit `iter-{N}` checkpoint**,user 可隨時 git revert 回退
 - **HIGH-only fix application**;MEDIUM/LOW 累積到最後一輪一次處理(降低 round-to-round 雜訊)
 - **Ambiguous fix 一律 skip + log to `skipped_fixes.log`**,寧少做不錯做
-- **`<verdict>...</verdict>` tag 必填**;Codex prompt 結尾強制要求,parsing 用結構化 regex 不靠語意
+- **`<verdict>...</verdict>` tag 必填**;Codex prompt 結尾強制要求,parsing 走 `bin/pai-parse-verdict`(結構化 tag、取 last-match、bats 覆蓋)不靠語意
 - **rotate-focus 在 K=3 同 focus CONVERGED 才觸發**;新 focus 從 pool 順序輪換
 - **`max_rounds` 上限 30**;達上限 halt 並報告未達 verdict 條件
 - **同時跑 ralph-loop + `--auto-iterate` 時 skill 警告**(雙 Stop-hook 衝突風險)
