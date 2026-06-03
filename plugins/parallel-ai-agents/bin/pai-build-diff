@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# pai-build-diff — ensemble-code-review 的 diff 模式建構器（單一真相源）
+#
+# 把 git/gh 的變更取成 unified diff 寫到 stdout，給 ensemble-code-review skill
+# 重導到自己的 DIFF_FILE（async reviewer agents 讀的那個檔）。
+#
+# 用法：
+#   pai-build-diff [-C <repo-dir>] --diff
+#   pai-build-diff [-C <repo-dir>] --base   <ref>     # 本分支相對 <ref> 的 merge-base（三點）
+#   pai-build-diff [-C <repo-dir>] --since  <ref>     # <ref>..HEAD（兩點）
+#   pai-build-diff [-C <repo-dir>] --commits <N>      # 最近 N 個 commit
+#   pai-build-diff [-C <repo-dir>] --pr     <N>       # gh pr diff <N>
+#
+# 退出碼（給測試與 skill 區分）：
+#   0  diff 已寫 stdout（有變更）
+#   1  錯誤（非 repo / ref 非法 / N 非法 / git|gh 失敗 / 用法錯）
+#   3  無變更可審（git 成功但 diff 為空 —— 良性，非錯誤）
+#
+# 設計重點（3 輪 self-dogfood 硬化的成果，全部住這）：
+#   * ref/N 一律先驗證再用 —— 防 command injection + dashed-ref 被當 option。
+#   * 所有 git/gh 檢查 exit code —— 不可把 git 報錯的空輸出當「無變更、乾淨通過」（假綠燈）。
+#   * --diff 含 untracked 新檔，但 symlink/FIFO/dir 只列路徑不讀內容
+#     （避免 follow-symlink 洩漏 / FIFO read 卡死），一般新檔走 git diff（自動 C-quote 檔名，
+#     防含換行檔名偽造假 diff 行）+ head -c 64KB 上限。
+#   * --commits N≥commit 總數 → 對 empty tree 取 diff（不 clamp 成 HEAD~TOT 越界 fatal）。
+#   * 內部 buffer 用 trap EXIT 清理是安全的（同步、無 async reader）；skill 的 DIFF_FILE 才需手動 Phase 4.5 清。
+
+set -uo pipefail
+
+usage() {
+  sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+err() { printf '%s\n' "$*" >&2; }
+
+# ── 解析 -C <dir>（可選，給測試指向 fixture repo；skill 不帶則用 cwd） ──
+repo_arg="."
+if [ "${1:-}" = "-C" ]; then
+  [ $# -ge 2 ] || { err "-C 需要一個目錄參數"; exit 1; }
+  repo_arg="$2"; shift 2
+fi
+
+MODE="${1:-}"
+ARG="${2:-}"
+
+case "$MODE" in
+  -h|--help) usage; exit 0 ;;
+  --diff|--base|--since|--commits|--pr) : ;;
+  "")  err "缺 MODE。用法見 --help"; exit 1 ;;
+  *)   err "未知 MODE: ${MODE}（限 --diff/--base/--since/--commits/--pr）"; exit 1 ;;
+esac
+
+# ── 解析 repo root（杜絕「不在 repo 內卻靜默產生空 diff」） ──
+REPO="$(git -C "$repo_arg" rev-parse --show-toplevel 2>/dev/null)" \
+  || { err "不在 git repo 內（-C='$repo_arg'）→ 改路徑模式或 cd 進 repo"; exit 1; }
+
+GIT() { git -C "$REPO" --no-pager "$@"; }   # --no-pager + 下方 --no-color：杜絕 ANSI 污染輸出
+
+# ── 內部 buffer：synchronous，trap EXIT 清理安全（與 skill 的 async DIFF_FILE 無關） ──
+WORK="$(mktemp -t pai-build-diff.XXXXXX)" || { err "mktemp 失敗"; exit 1; }
+trap 'rm -f "$WORK"' EXIT
+
+# ── 驗證器（防 injection + dashed-ref）：ref 必解析成 commit；N 必正整數（排 0/leading-zero，≤9 位防算術溢位） ──
+validate_ref() { GIT rev-parse --verify --quiet "$1^{commit}" >/dev/null || { err "ref 非法: $1"; exit 1; }; }
+validate_int() {
+  # 明確 if（非 A && B || C）—— 排 0/leading-zero（^[1-9][0-9]*$）+ ≤9 位（防 (( ARG >= TOT )) 算術溢位）
+  if [[ "$1" =~ ^[1-9][0-9]*$ ]] && (( ${#1} <= 9 )); then return 0; fi
+  err "需正整數(1..9 位): $1"; exit 1
+}
+
+# ── untracked/新檔 append：只處理一般檔；symlink/FIFO/dir 只列路徑不讀內容 ──
+# （避免 follow-symlink 量錯/洩漏目標、避免 FIFO read 卡死、避免洩 symlink 目標路徑）。
+# 內容走 git diff（git 自動 C-quote 檔名，防含換行檔名偽造假 diff 行），head -c 截 64KB 上限。
+append_new() {
+  local f="$1"
+  if [ -L "$REPO/$f" ] || [ ! -f "$REPO/$f" ]; then
+    printf 'new file（symlink/特殊檔，僅列路徑）: %q\n' "$f" >>"$WORK"
+    return
+  fi
+  GIT diff --no-color --no-index -- /dev/null "$f" 2>/dev/null | head -c 65536 >>"$WORK" || true
+}
+
+# ── 取 diff（每條檢查 exit code；只用驗證過的值，不裸內插） ──
+case "$MODE" in
+  --diff)
+    GIT diff --no-color HEAD >"$WORK" || { err "git diff 失敗"; exit 1; }
+    GIT ls-files --others --exclude-standard -z \
+      | while IFS= read -r -d '' f; do append_new "$f"; done ;;
+  --base)
+    [ -n "$ARG" ] || { err "--base 需要 <ref>"; exit 1; }
+    validate_ref "$ARG"
+    GIT diff --no-color "$ARG"...HEAD >"$WORK" || { err "git diff 失敗"; exit 1; } ;;  # 三點=相對 merge-base
+  --since)
+    [ -n "$ARG" ] || { err "--since 需要 <ref>"; exit 1; }
+    validate_ref "$ARG"
+    GIT diff --no-color "$ARG"..HEAD >"$WORK" || { err "git diff 失敗"; exit 1; } ;;
+  --commits)
+    validate_int "$ARG"
+    TOT="$(GIT rev-list --count HEAD)" || { err "repo 無 commit"; exit 1; }
+    if (( ARG >= TOT )); then
+      BASE="$(GIT hash-object -t tree /dev/null)"   # N≥全部 → 對 empty tree（含 root 的全部變更；不會 HEAD~TOT 越界 fatal）
+    else
+      BASE="HEAD~$ARG"
+    fi
+    GIT diff --no-color "$BASE" HEAD >"$WORK" || { err "git diff 失敗"; exit 1; } ;;
+  --pr)
+    validate_int "$ARG"
+    ( cd "$REPO" && gh pr diff --color never "$ARG" ) >"$WORK" || { err "gh pr diff 失敗"; exit 1; } ;;
+esac
+
+# ── 空判定：上面已用 exit code 擋掉 git 報錯 → 這裡的空 = 真「無變更」（非 git fatal 被誤判） ──
+if [ ! -s "$WORK" ]; then
+  err "無變更可審"
+  exit 3
+fi
+
+cat "$WORK"
