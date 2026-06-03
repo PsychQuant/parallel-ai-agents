@@ -10,4 +10,7 @@ shellcheck bin/pai-build-diff
 echo "── bats test/ ──"
 bats test/
 
+echo "── harness regression (node) ──"
+node test/ensemble-workflow.test.mjs
+
 echo "✓ 全部通過"
