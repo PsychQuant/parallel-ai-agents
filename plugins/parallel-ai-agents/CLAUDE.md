@@ -6,21 +6,30 @@
 
 ## Skills
 
-| Skill | 用途 | 架構 |
-|-------|------|------|
-| `/parallel-ai-agents:ensemble-review` | 審閱文件/程式碼，交叉比對產出共識/盲點報告 | 4 Claude teammates (team) + 1 Codex |
+| Skill | 用途 |
+|-------|------|
+| `/parallel-ai-agents:ensemble-code-review` | 審程式碼/技術文件/diff（最完整：`--diff`/`--base`/`--since`/`--commits`/`--pr` 等 diff 模式，建構走 `bin/pai-build-diff`）|
+| `/parallel-ai-agents:ensemble-academic-review` | 審學術論文（methodology/writing + 文獻真偽 + 數字重算；支援多輪 mix/hybrid/auto-iterate）|
+| `/parallel-ai-agents:ensemble-lecture-review` | 審教學講義（內容正確性/可讀性/逐字稿覆蓋率）|
+| `/parallel-ai-agents:ensemble-compose` | 自由組合：跨 profile 挑 lens + 自訂 reviewer（`--include`/`--lens`/`--lens-file` CSV）|
 
-## 審閱架構
+四個 skill 共用同一個 harness `workflows/ensemble-workflow.js`（`PROFILES` 內建各角色 lens；regression 測試見 `test/`）。
+
+## 審閱架構（雙 backend，findings 形狀一致）
+
+預設 **Backend A — Workflow harness**（`workflows/ensemble-workflow.js`）：distinct-lens reviewers（× `replicas`）+ devil's-advocate（讀同儕**完稿**反駁）+ 可選 Codex 跨模型盲驗 → pure-JS mergeDedup + **fail-closed**（core lens／DA 缺席 = HIGH integrity，不可假 PASS）。reviewer 數是資料（lens 陣列 × replicas），可大量 fan-out（硬上限 `MAX_AGENTS`）。
 
 ```
-ensemble-review
-├── Claude Team（4 teammates，orchestrated）
+ensemble（以 code profile 為例）
+├── reviewers（× replicas，平行 barrier）
 │   ├── architecture — 設計、API、依賴
 │   ├── correctness — 邏輯、bug、edge case
-│   ├── security — 攻擊者視角
-│   └── devils-advocate — 反駁前 3 人
-└── Codex（gpt-5.5，跨模型盲驗）
+│   └── security — 攻擊者視角
+├── devil's-advocate — 讀上面完稿、反駁「通過/LOW」（downstream node，非 live SendMessage）
+└── Codex（gpt-5.5，跨模型盲驗，--codex 開）
 ```
+
+`Workflow` tool 不存在的舊版 Claude Code → fallback **Backend B — legacy TeamCreate fan-out**（同一 message 啟動 N 個 general-purpose Agent + Codex Bash）。兩 backend 報表一致。
 
 ## 依賴
 

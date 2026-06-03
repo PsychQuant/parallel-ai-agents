@@ -437,9 +437,12 @@ if (replicas < requested) {
 
 // Phase 1 (barrier): every base lens × replicas + optional Codex run concurrently and
 // independently. A barrier is correct: the devil's-advocate (phase 2) needs every reviewer's
-// findings to refute them. Each thunk CATCHES its own error and tags its lens (ok:false) so a
-// failed lens is observable downstream — never silently dropped. Each finding's lens is forced to
-// the assigned key so an agent cannot mislabel its attribution.
+// findings to refute them. Each thunk CATCHES its own error AND treats a null agent() return
+// (the runtime hands back null when the user SKIPS an agent mid-run) as ok:false — both are
+// "this lens did not actually review", so both must surface as a fail-closed integrity finding
+// downstream, never a silent pass. (A null slipping through as ok:true with empty findings was a
+// fail-OPEN false-green-light, caught by this harness's own dogfood.) Each finding's lens is forced
+// to the assigned key so an agent cannot mislabel its attribution.
 phase('review')
 const reviewThunks = []
 for (const l of activeLenses) {
@@ -450,7 +453,9 @@ for (const l of activeLenses) {
         label: replicas > 1 ? `review:${l.key}#${k + 1}` : `review:${l.key}`,
         phase: 'review',
       })
-        .then((r) => ({ lens: l.key, findings: ((r && r.findings) || []).map((f) => ({ ...f, lens: l.key })), ok: true }))
+        .then((r) => (r == null
+          ? { lens: l.key, findings: [], ok: false }                                   // user-skipped → fail-closed
+          : { lens: l.key, findings: (r.findings || []).map((f) => ({ ...f, lens: l.key })), ok: true }))
         .catch(() => ({ lens: l.key, findings: [], ok: false }))
     )
   }
@@ -458,7 +463,9 @@ for (const l of activeLenses) {
 const codexThunk = codexOn
   ? () =>
       agent(codexPrompt(profile, A), { schema: FINDINGS_SCHEMA, label: 'codex', phase: 'review' })
-        .then((r) => ({ lens: 'codex', findings: ((r && r.findings) || []).map((f) => ({ ...f, lens: 'codex' })), ok: true }))
+        .then((r) => (r == null
+          ? { lens: 'codex', findings: [], ok: false }                                 // user-skipped → surfaced as process gap
+          : { lens: 'codex', findings: (r.findings || []).map((f) => ({ ...f, lens: 'codex' })), ok: true }))
         .catch(() => ({ lens: 'codex', findings: [], ok: false }))
   : null
 
@@ -468,7 +475,9 @@ const reviewerResults = round1.filter((r) => r.lens !== 'codex')
 // Phase 2: devil's-advocate adversarially refutes the reviewers' judgments (also fail-aware).
 phase('adversarial')
 const da = await agent(daPrompt(profile, reviewerResults, A), { schema: FINDINGS_SCHEMA, label: 'devils-advocate', phase: 'adversarial' })
-  .then((r) => ({ findings: ((r && r.findings) || []).map((f) => ({ ...f, lens: 'devils-advocate' })), ok: true }))
+  .then((r) => (r == null
+    ? { findings: [], ok: false }                                                      // user-skipped DA → fail-closed
+    : { findings: (r.findings || []).map((f) => ({ ...f, lens: 'devils-advocate' })), ok: true }))
   .catch(() => ({ findings: [], ok: false }))
 
 // Phase 3: merge + dedup (pure JS; no agent, no FS). FAIL-CLOSED — a core lens (every base lens

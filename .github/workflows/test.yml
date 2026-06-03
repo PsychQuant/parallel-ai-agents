@@ -27,3 +27,6 @@ jobs:
 
       - name: bats
         run: bats test/
+
+      - name: harness regression (node)
+        run: node test/ensemble-workflow.test.mjs
