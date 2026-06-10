@@ -9,7 +9,7 @@ ensemble-* 的程式表面看似都是「LLM 驅動的編排」，不可測。�
 1. **抽出 decider / parser 純函式** → 窮舉單元測。例：`pai-iterate-decide`（迴圈狀態機）、`pai-parse-verdict`（收斂判定）、`pai-build-diff`（diff 建構）。
 2. **Mock 模型 seam** → 注入確定性 oracle，測「接線」而非模型。例：`ensemble-workflow.test.mjs` 把 `agent()` 換成 mock。
 3. **Fixture 測 side-effect** → 拋棄式 git repo 斷言 commit graph。例：`pai-iter-commit`（空輪不留空 commit）。
-4. **真正不可單元測的（模型判斷品質）** → 屬 eval / invariant assertion 範疇，不進每次 push 的 CI。例：`apply_fixes` 那一次 Edit 改得對不對、reviewer 有沒有抓到埋好的幻覺文獻。
+4. **真正不可單元測的（模型判斷品質）** → 屬 eval 範疇，**不進 CI**：`/parallel-ai-agents:ensemble-eval` 對 `eval/fixtures/` 埋好缺陷的論文跑 K 次真 ensemble，`bin/pai-eval-grade` 容差斷言（每缺陷 ≥ minHits 次被抓到）+ `--apply-fix` 驗證修稿。eval 的**評分器本身是確定性的** → 它有單元測試（`pai-eval-grade.test.mjs`）；非確定的只有「跑 ensemble」那步。
 
 `--auto-iterate` 主迴圈即範例：halt 判定、mode 奇偶交替、focus-rotation、max-rounds clamp、per-round commit 全部抽出測（`pai-iterate-decide` + `pai-iter-commit`），未測表面縮到只剩 `apply_fixes` 一步。
 
@@ -23,6 +23,7 @@ ensemble-* 的程式表面看似都是「LLM 驅動的編排」，不可測。�
 | `pai-parse-verdict.bats` | `../bin/pai-parse-verdict`（ensemble-academic-review `--auto-iterate` 的 verdict tag 解析器）|
 | `pai-iterate-decide.test.mjs` | `../bin/pai-iterate-decide`（`--auto-iterate` 主迴圈的純狀態機：halt / 套 fix / mode 交替 / focus-rotation）|
 | `pai-iter-commit.bats` | `../bin/pai-iter-commit`（`--auto-iterate` 的 per-round checkpoint commit + 空輪防護）|
+| `pai-eval-grade.test.mjs` | `../bin/pai-eval-grade`（eval 評分器：detect 容差聚合 / fix 修稿驗證 —— eval 裡唯一確定性、可單元測的部分）|
 
 `pai-parse-lens-csv.bats` 涵蓋：含逗號/引號/換行的 focus（csv 模組、不被切爛）、needsSrt 變體、空欄跳過、**BOM 不丟列（utf-8-sig regression）**、CRLF、缺檔/缺欄。
 `pai-parse-verdict.bats` 涵蓋：**last-match（防 echoed instruction 範例造成假收斂的 regression）**、`{N}` placeholder 不匹配、嚴格大寫、查無 tag → 非零、stdin/file。

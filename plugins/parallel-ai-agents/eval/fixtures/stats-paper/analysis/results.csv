@@ -1,0 +1,11 @@
+measure,value
+n_total,102
+n_gain,52
+n_loss,50
+mean_gain,4.42
+sd_gain,1.12
+mean_loss,3.95
+sd_loss,1.21
+t_df100,2.79
+p_value,0.03
+cohens_d,0.55

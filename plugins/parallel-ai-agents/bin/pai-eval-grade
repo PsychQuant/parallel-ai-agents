@@ -1,0 +1,142 @@
+#!/usr/bin/env node
+// pai-eval-grade — ensemble eval 的「評分器」（單一真相源、確定性、可單元測）。
+//
+// eval harness 的分工：跑真 ensemble（LLM、貴、手動）由 ensemble-eval skill 負責；
+// 「抓到了沒」的判定是純函式 —— findings JSON × manifest → 命中報告。本 script 只做後者。
+//
+// 兩種模式：
+//   detect — K 次 ensemble run 的 findings，逐 defect 算命中數，容差斷言（hits ≥ minHits）。
+//     pai-eval-grade detect --manifest <manifest.json> [--min-hits N] <findings.json>...
+//     （findings.json = Workflow 回傳的 {findings:[...]} 或裸 array；minHits 預設過半數 = floor(K/2)+1）
+//   fix — apply_fixes 後的修正稿，逐 defect 驗證 planted 文字已消失（可選 corrected 出現）。
+//     pai-eval-grade fix --manifest <manifest.json> <fixed-doc>
+//
+// 命中語意（detect，皆對「同一個 finding」的 title+body、不分大小寫）：
+//   match_any — 任一 pattern 以子字串出現；match_all — 全部 pattern 出現在同一 finding。
+//   兩者皆給 → 兩者皆須成立。expectLens 僅報表參考，不影響判定。
+//   integrity findings（lens did not complete）不算命中，但每 run 的 integrity 數會列出 —— 大量
+//   integrity 表示該 run 的 ensemble 本身壞掉，eval 結果不可信。
+//
+// 退出碼：0 全部 defect 通過；1 有 defect 未達標（或 fix 未修乾淨）；2 用法/IO 錯誤。
+
+const fs = require('node:fs')
+
+function die(msg, code) {
+  process.stderr.write(msg + '\n')
+  process.exit(code)
+}
+
+function readJSON(path) {
+  let raw
+  try {
+    raw = fs.readFileSync(path, 'utf8')
+  } catch (e) {
+    die(`讀檔失敗: ${path}: ${e.message}`, 2)
+  }
+  try {
+    return JSON.parse(raw)
+  } catch {
+    die(`非法 JSON: ${path}`, 2)
+  }
+}
+
+// Workflow 回傳 {findings:[...]} 或裸 array 皆可
+function extractFindings(obj, path) {
+  const arr = Array.isArray(obj) ? obj : obj && Array.isArray(obj.findings) ? obj.findings : null
+  if (!arr) die(`找不到 findings array: ${path}`, 2)
+  return arr
+}
+
+const isIntegrity = (f) => /did not complete|cross-model pass incomplete/i.test(String(f.title || ''))
+
+// defect 是否被「某一個 finding」命中
+function findingHits(finding, defect) {
+  const text = `${finding.title || ''}\n${finding.body || ''}`.toLowerCase()
+  const any = Array.isArray(defect.match_any) ? defect.match_any : null
+  const all = Array.isArray(defect.match_all) ? defect.match_all : null
+  if (any && !any.some((p) => text.includes(String(p).toLowerCase()))) return false
+  if (all && !all.every((p) => text.includes(String(p).toLowerCase()))) return false
+  return Boolean(any || all) // manifest 兩者皆缺 = 無法判定 → 不命中
+}
+
+function gradeDetect(manifest, runFiles, minHitsArg) {
+  const defects = manifest.defects || []
+  if (!defects.length) die('manifest 無 defects', 2)
+  if (!runFiles.length) die('detect 需至少一個 findings.json', 2)
+
+  const runs = runFiles.map((path) => {
+    const findings = extractFindings(readJSON(path), path).filter((f) => !isIntegrity(f))
+    const integrity = extractFindings(readJSON(path), path).filter(isIntegrity).length
+    return { path, findings, integrity }
+  })
+  const K = runs.length
+  const minHits = minHitsArg != null ? minHitsArg : Math.floor(K / 2) + 1
+  if (!(minHits >= 1 && minHits <= K)) die(`--min-hits 需在 1..${K}: ${minHits}`, 2)
+
+  const report = defects.map((d) => {
+    const runsHit = []
+    const lensSet = new Set()
+    runs.forEach((r, i) => {
+      const hits = r.findings.filter((f) => findingHits(f, d))
+      if (hits.length) {
+        runsHit.push(i + 1)
+        hits.forEach((f) => f.lens && lensSet.add(f.lens))
+      }
+    })
+    return { id: d.id, desc: d.desc, expectLens: d.expectLens || [], hits: runsHit.length, runsHit, caughtBy: [...lensSet], pass: runsHit.length >= minHits }
+  })
+  const pass = report.every((d) => d.pass)
+  return {
+    mode: 'detect',
+    runs: runs.map((r, i) => ({ run: i + 1, file: r.path, findings: r.findings.length, integrity: r.integrity })),
+    K,
+    minHits,
+    defects: report,
+    pass,
+  }
+}
+
+function gradeFix(manifest, docPath) {
+  const checks = manifest.fix || []
+  if (!checks.length) die('manifest 無 fix checks', 2)
+  let doc
+  try {
+    doc = fs.readFileSync(docPath, 'utf8')
+  } catch (e) {
+    die(`讀修正稿失敗: ${docPath}: ${e.message}`, 2)
+  }
+  const report = checks.map((c) => {
+    const plantedGone = c.plantedAbsent ? !new RegExp(c.plantedAbsent, 'i').test(doc) : true
+    const correctedIn = c.correctedPresent ? doc.toLowerCase().includes(String(c.correctedPresent).toLowerCase()) : true
+    return { id: c.id, plantedGone, correctedPresent: correctedIn, pass: plantedGone && correctedIn }
+  })
+  return { mode: 'fix', doc: docPath, checks: report, pass: report.every((c) => c.pass) }
+}
+
+function main(argv) {
+  const mode = argv[0]
+  if (mode !== 'detect' && mode !== 'fix') {
+    die('用法：pai-eval-grade detect --manifest m.json [--min-hits N] findings.json...\n' + '      pai-eval-grade fix    --manifest m.json fixed-doc', 2)
+  }
+  let manifestPath = null
+  let minHits = null
+  const positional = []
+  for (let i = 1; i < argv.length; i++) {
+    if (argv[i] === '--manifest') manifestPath = argv[++i]
+    else if (argv[i] === '--min-hits') {
+      minHits = Number(argv[++i])
+      if (!Number.isInteger(minHits)) die(`--min-hits 需整數: ${argv[i]}`, 2)
+    } else positional.push(argv[i])
+  }
+  if (!manifestPath) die('缺 --manifest', 2)
+  const manifest = readJSON(manifestPath)
+
+  const result = mode === 'detect' ? gradeDetect(manifest, positional, minHits) : gradeFix(manifest, positional[0] || die('fix 需一個修正稿路徑', 2))
+  process.stdout.write(JSON.stringify(result, null, 2) + '\n')
+  process.exit(result.pass ? 0 : 1)
+}
+
+if (require.main === module) {
+  main(process.argv.slice(2))
+}
+module.exports = { findingHits, gradeDetect, gradeFix }
