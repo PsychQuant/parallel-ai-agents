@@ -1,0 +1,38 @@
+{
+  "fixture": "stats-paper",
+  "paper": "paper.md",
+  "groundTruth": ["analysis/results.csv"],
+  "notes": "合成論文，4 個故意埋的缺陷。match_any = 任一 pattern 出現在同一 finding（title+body，不分大小寫）即命中；match_all = 全部 pattern 須出現在同一 finding。expectLens 僅供報表參考，不影響判定（任何 lens 抓到都算）。",
+  "defects": [
+    {
+      "id": "hallucinated-ref",
+      "desc": "Tanaka & Whitfield (2019) 為捏造文獻（含捏造期刊 Journal of Behavioral Decision Science）",
+      "expectLens": ["reference-verifier"],
+      "match_any": ["tanaka", "whitfield"]
+    },
+    {
+      "id": "wrong-mean",
+      "desc": "gain 組平均：paper 寫 M=5.42，ground truth mean_gain=4.42",
+      "expectLens": ["number-verifier"],
+      "match_any": ["5.42", "4.42"]
+    },
+    {
+      "id": "wrong-t",
+      "desc": "t 統計量：paper 寫 t(100)=6.34 / p<.001，ground truth t=2.79 / p=0.03",
+      "expectLens": ["number-verifier"],
+      "match_any": ["6.34", "2.79"]
+    },
+    {
+      "id": "n-inconsistency",
+      "desc": "Abstract 寫 120 participants，Method 寫 102（ground truth n_total=102）",
+      "expectLens": ["methodology", "number-verifier", "writing"],
+      "match_all": ["120", "102"]
+    }
+  ],
+  "fix": [
+    { "id": "hallucinated-ref", "plantedAbsent": "Tanaka" },
+    { "id": "wrong-mean", "plantedAbsent": "5\\.42", "correctedPresent": "4.42" },
+    { "id": "wrong-t", "plantedAbsent": "6\\.34", "correctedPresent": "2.79" },
+    { "id": "n-inconsistency", "plantedAbsent": "120 participants", "correctedPresent": "102" }
+  ]
+}

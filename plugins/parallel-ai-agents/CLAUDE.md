@@ -12,8 +12,9 @@
 | `/parallel-ai-agents:ensemble-academic-review` | 審學術論文（methodology/writing + 文獻真偽 + 數字重算；支援多輪 mix/hybrid/auto-iterate）|
 | `/parallel-ai-agents:ensemble-lecture-review` | 審教學講義（內容正確性/可讀性/逐字稿覆蓋率）|
 | `/parallel-ai-agents:ensemble-compose` | 自由組合：跨 profile 挑 lens + 自訂 reviewer（`--include`/`--lens`/`--lens-file` CSV）|
+| `/parallel-ai-agents:ensemble-eval` | **dev 工具**：對 `eval/fixtures/` 埋好缺陷的論文跑 K 次真 ensemble，容差斷言偵測率（+`--apply-fix` 驗修稿）。手動跑、不進 CI |
 
-四個 skill 共用同一個 harness `workflows/ensemble-workflow.js`（`PROFILES` 內建各角色 lens；regression 測試見 `test/`）。
+審閱 skill 共用同一個 harness `workflows/ensemble-workflow.js`（`PROFILES` 內建各角色 lens；確定性 surface 的 regression 測試見 `test/`，模型判斷品質見 `eval/`）。
 
 ## 審閱架構（雙 backend，findings 形狀一致）
 
