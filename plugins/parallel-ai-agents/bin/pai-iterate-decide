@@ -1,0 +1,112 @@
+#!/usr/bin/env node
+// pai-iterate-decide — ensemble-academic-review --auto-iterate 主迴圈的「轉移函式」（單一真相源）。
+//
+// Phase 5b 那個看似「LLM 編排」的迴圈，其決策核心其實是純函式：給定一輪結束時的狀態，
+// 決定 halt / 是否套用本輪 fix / 下一輪的 mode 與 focus。把它抽成可窮舉測試的 decider，
+// 真正未測的就只剩 apply-fix 那一次 Edit 呼叫（屬 eval 範疇）。
+//
+// I/O：state JSON 從 stdin（或 argv[2] 檔路徑）讀入，action JSON 印到 stdout。
+//
+// state = {
+//   round:Int(≥1), maxRounds:Int, verdict:Str(""=無),
+//   convergeOn:Str(default PERMANENT_CONVERGENCE),
+//   currentFocus:Str, focusHistory:[{focus,verdict}](本輪之前的歷史),
+//   focusPool:[Str](optional, default 見下)
+// }
+// action = { halt:Bool, reason:'converged'|'max-rounds'|null, applyFixes:Bool,
+//            nextRound:Int, nextMode:'independent'|'hybrid', nextFocus:Str, rotated:Bool }
+//
+// 語意忠實對應 SKILL.md 主迴圈：
+//   - verdict==convergeOn → break（halt，本輪「不」套 fix）。
+//   - 否則本輪套 HIGH fix + commit；focus_history 追加 (currentFocus,verdict)；
+//     末 3 筆同 focus 且皆 CONVERGED → focus 輪替到 pool 下一個（繞回）。
+//   - 迴圈 N+=1 後 while N<=max_rounds：故 nextRound>maxRounds → halt(reason max-rounds)，
+//     但該輪 fix 仍照套（break 只在 converge）。
+//   - mode：奇數輪 independent、偶數輪 hybrid。
+//   - maxRounds 防呆 clamp [1,30]（對齊 SKILL 的 --max-rounds clamp）。
+
+const DEFAULT_POOL = ['method-section', 'proofs', 'typography', 'cross-references', 'boundary-cases']
+
+function modeFor(n) {
+  return n % 2 === 1 ? 'independent' : 'hybrid'
+}
+
+function nextInPool(pool, focus) {
+  const i = pool.indexOf(focus)
+  if (i < 0) return pool[0] // focus 不在 pool（自訂）→ 從頭
+  return pool[(i + 1) % pool.length] // 繞回
+}
+
+// 末 n 筆都「同一個 focus 且 verdict===CONVERGED」
+function lastNSameFocusConverged(history, n, focus) {
+  if (history.length < n) return false
+  return history.slice(-n).every((h) => h.verdict === 'CONVERGED' && h.focus === focus)
+}
+
+function decide(state) {
+  const round = Math.floor(Number(state.round))
+  const verdict = state.verdict == null ? '' : String(state.verdict)
+  const convergeOn = state.convergeOn ? String(state.convergeOn) : 'PERMANENT_CONVERGENCE'
+  const currentFocus = String(state.currentFocus == null ? '' : state.currentFocus)
+  const pool = Array.isArray(state.focusPool) && state.focusPool.length ? state.focusPool.map(String) : DEFAULT_POOL
+  const history = Array.isArray(state.focusHistory) ? state.focusHistory : []
+  // clamp maxRounds 到 [1,30]（防 0→每輪立即 halt、防 runaway）
+  const maxRounds = Math.min(30, Math.max(1, Math.floor(Number(state.maxRounds) || 1)))
+
+  if (!Number.isInteger(round) || round < 1) {
+    throw new Error(`round 需正整數: ${state.round}`)
+  }
+
+  // 1. 收斂 → break，本輪不套 fix、不前進
+  if (verdict === convergeOn) {
+    return { halt: true, reason: 'converged', applyFixes: false, nextRound: round, nextMode: modeFor(round), nextFocus: currentFocus, rotated: false }
+  }
+
+  // 2. 未收斂 → 本輪套 HIGH fix + commit
+  const newHistory = [...history, { focus: currentFocus, verdict }]
+  const rotated = lastNSameFocusConverged(newHistory, 3, currentFocus)
+  const nextFocus = rotated ? nextInPool(pool, currentFocus) : currentFocus
+  const nextRound = round + 1
+  const halt = nextRound > maxRounds // N+=1 後越界 → 迴圈結束（但本輪 fix 已套）
+  return {
+    halt,
+    reason: halt ? 'max-rounds' : null,
+    applyFixes: true,
+    nextRound,
+    nextMode: modeFor(nextRound),
+    nextFocus,
+    rotated,
+  }
+}
+
+function main() {
+  const fs = require('node:fs')
+  let raw
+  try {
+    raw = process.argv[2] ? fs.readFileSync(process.argv[2], 'utf8') : fs.readFileSync(0, 'utf8')
+  } catch (e) {
+    process.stderr.write(`讀 state 失敗: ${e.message}\n`)
+    return 2
+  }
+  let state
+  try {
+    state = JSON.parse(raw)
+  } catch {
+    process.stderr.write('state 不是合法 JSON\n')
+    return 2
+  }
+  let action
+  try {
+    action = decide(state)
+  } catch (e) {
+    process.stderr.write(`${e.message}\n`)
+    return 2
+  }
+  process.stdout.write(JSON.stringify(action) + '\n')
+  return 0
+}
+
+if (require.main === module) {
+  process.exit(main())
+}
+module.exports = { decide, modeFor, nextInPool, lastNSameFocusConverged, DEFAULT_POOL }

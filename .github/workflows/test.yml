@@ -23,7 +23,7 @@ jobs:
         # shellcheck 已預裝在 ubuntu-latest runner
 
       - name: shellcheck
-        run: shellcheck bin/pai-build-diff bin/pai-parse-verdict
+        run: shellcheck bin/pai-build-diff bin/pai-parse-verdict bin/pai-iter-commit
 
       - name: py_compile
         run: python3 -m py_compile bin/pai-parse-lens-csv
@@ -31,5 +31,5 @@ jobs:
       - name: bats
         run: bats test/
 
-      - name: harness regression (node)
-        run: node test/ensemble-workflow.test.mjs
+      - name: node tests
+        run: for t in test/*.test.mjs; do echo "$t"; node "$t"; done

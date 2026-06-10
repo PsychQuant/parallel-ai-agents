@@ -1,6 +1,17 @@
 # test/
 
-`ensemble-code-review` diff 模式的自動化測試。把過去人工 re-audit（3 輪 self-dogfood）抓到的 bug 全部固化成 regression，取代「每次改 diff 邏輯都要重新人工審」。
+ensemble-* skill 的自動化測試。把過去人工 re-audit（多輪 self-dogfood）抓到的 bug 全部固化成 regression，取代「每次改邏輯都要重新人工審」。
+
+## 哲學：把「LLM 編排」拆成「確定性核心 + 模型 seam」
+
+ensemble-* 的程式表面看似都是「LLM 驅動的編排」，不可測。但把每條流程拆開，**80% 是確定性膠水**（可窮舉測），只有真正呼叫模型那幾步是非確定的。本目錄的策略（Functional Core, Imperative Shell）：
+
+1. **抽出 decider / parser 純函式** → 窮舉單元測。例：`pai-iterate-decide`（迴圈狀態機）、`pai-parse-verdict`（收斂判定）、`pai-build-diff`（diff 建構）。
+2. **Mock 模型 seam** → 注入確定性 oracle，測「接線」而非模型。例：`ensemble-workflow.test.mjs` 把 `agent()` 換成 mock。
+3. **Fixture 測 side-effect** → 拋棄式 git repo 斷言 commit graph。例：`pai-iter-commit`（空輪不留空 commit）。
+4. **真正不可單元測的（模型判斷品質）** → 屬 eval / invariant assertion 範疇，不進每次 push 的 CI。例：`apply_fixes` 那一次 Edit 改得對不對、reviewer 有沒有抓到埋好的幻覺文獻。
+
+`--auto-iterate` 主迴圈即範例：halt 判定、mode 奇偶交替、focus-rotation、max-rounds clamp、per-round commit 全部抽出測（`pai-iterate-decide` + `pai-iter-commit`），未測表面縮到只剩 `apply_fixes` 一步。
 
 ## 測什麼
 
@@ -10,6 +21,8 @@
 | `ensemble-workflow.test.mjs` | `../workflows/ensemble-workflow.js`（共用 harness，4 個 skill 的底層）|
 | `pai-parse-lens-csv.bats` | `../bin/pai-parse-lens-csv`（ensemble-compose 的 `--lens-file` CSV 解析器）|
 | `pai-parse-verdict.bats` | `../bin/pai-parse-verdict`（ensemble-academic-review `--auto-iterate` 的 verdict tag 解析器）|
+| `pai-iterate-decide.test.mjs` | `../bin/pai-iterate-decide`（`--auto-iterate` 主迴圈的純狀態機：halt / 套 fix / mode 交替 / focus-rotation）|
+| `pai-iter-commit.bats` | `../bin/pai-iter-commit`（`--auto-iterate` 的 per-round checkpoint commit + 空輪防護）|
 
 `pai-parse-lens-csv.bats` 涵蓋：含逗號/引號/換行的 focus（csv 模組、不被切爛）、needsSrt 變體、空欄跳過、**BOM 不丟列（utf-8-sig regression）**、CRLF、缺檔/缺欄。
 `pai-parse-verdict.bats` 涵蓋：**last-match（防 echoed instruction 範例造成假收斂的 regression）**、`{N}` placeholder 不匹配、嚴格大寫、查無 tag → 非零、stdin/file。
