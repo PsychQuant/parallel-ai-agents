@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# pai-iter-commit — ensemble-academic-review --auto-iterate 的 per-round checkpoint commit（單一真相源）。
+#
+# 標準訊息 + 空 commit 防護：一輪若沒套到任何 fix（apply-fix 全 skip），不留空的 iter-N commit。
+#
+# 用法：pai-iter-commit [-C <repo>] <N>
+# 退出碼：0 已 commit 或無變更跳過（皆良性）；1 git 錯誤；2 用法/round 非法。
+set -uo pipefail
+
+REPO="."
+if [ "${1:-}" = "-C" ]; then
+  [ $# -ge 2 ] || { echo "-C 需要一個目錄參數" >&2; exit 2; }
+  REPO="$2"; shift 2
+fi
+
+N="${1:-}"
+if [[ "$N" =~ ^[1-9][0-9]*$ ]] && (( ${#N} <= 9 )); then :; else
+  echo "需正整數(1..9 位) round: $N" >&2; exit 2
+fi
+
+GIT() { git -C "$REPO" "$@"; }
+
+GIT rev-parse --git-dir >/dev/null 2>&1 || { echo "不在 git repo 內（-C='$REPO'）" >&2; exit 1; }
+GIT add -A || { echo "git add 失敗" >&2; exit 1; }
+
+# 空 commit 防護：暫存區無變更 → 不留空 iter-N commit（exit 0，良性）
+if GIT diff --cached --quiet; then
+  echo "iter-$N: 無變更，跳過 commit" >&2
+  exit 0
+fi
+
+GIT commit -q -m "iter-$N: apply HIGH fixes from ensemble round $N" \
+  || { echo "git commit 失敗" >&2; exit 1; }
+echo "iter-$N: committed"

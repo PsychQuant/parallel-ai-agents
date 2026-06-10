@@ -547,42 +547,45 @@ TaskUpdate: "Final: merge all rounds" → in_progress
 
 #### 主迴圈
 
-```
-N=1
-verdict=NEEDS_ITER_1
-focus_history=[]
+迴圈的**確定性決策**（halt / 是否套 fix / 下一輪 mode / focus-rotation）全部交給純狀態機
+`bin/pai-iterate-decide`（已測，見 `test/pai-iterate-decide.test.mjs`）；commit 交給 `bin/pai-iter-commit`
+（空輪自動跳過、訊息單一真相源）。**唯一的 LLM 步驟是 `apply_fixes`。**
 
-while N <= max_rounds:
-    # 1. Run round (alternating: odd=independent, even=hybrid)
-    mode = 'independent' if N is odd else 'hybrid'
+```
+N=1; verdict=""; mode=independent; current_focus=method-section; focus_history=[]
+
+loop:
+    # 1. 跑一輪（mode 首輪 independent，之後用上一輪 decider 的 nextMode）
     run Phase 1-4 with mode  → review-round-{N}.md
 
-    # 2. Parse Codex verdict（取最後一個 <verdict>TAG</verdict>；查無 → "" 視為未收斂）
+    # 2. 抓 verdict（取 last-match；查無 → "" 視為未收斂）
     verdict = $(bin/pai-parse-verdict review-round-{N}.md) || verdict=""
 
-    # 3. Halt check
-    if verdict == converge_on:
+    # 3. 決策（halt / applyFixes / nextMode / focus-rotation —— 純狀態機、窮舉測過）
+    #    state JSON 用 jq 組（focus_history 傳本輪「之前」的歷史，decider 內部會 append 當輪做 rotation 判定）
+    action = ( jq -nc --argjson r "$N" --argjson m "$max_rounds" --arg v "$verdict" \
+                       --arg co "$converge_on" --arg f "$current_focus" --argjson h "$focus_history" \
+                       '{round:$r,maxRounds:$m,verdict:$v,convergeOn:$co,currentFocus:$f,focusHistory:$h}' \
+               | node "${CLAUDE_PLUGIN_ROOT}/bin/pai-iterate-decide" )
+
+    # 4. 套 HIGH fix（若 action.applyFixes）+ checkpoint commit（pai-iter-commit 空輪自動跳過、不留空 commit）
+    if action.applyFixes:
+        apply_fixes(parse_findings(review-round-{N}.md, severity='HIGH'))   # ← 唯一非確定性步驟（Edit）
+        "${CLAUDE_PLUGIN_ROOT}/bin/pai-iter-commit" {N}
+
+    # 5. 追加歷史（供下一輪 rotation 判定）
+    focus_history += [ {focus: current_focus, verdict: verdict} ]
+
+    # 6. halt？（converged 或 max-rounds，由 decider 判）
+    if action.halt:
+        log("Halted: " + action.reason)   # 'converged' | 'max-rounds'
         break
 
-    # 4. Apply HIGH-severity fixes
-    high_findings = parse_findings(review-round-{N}.md, severity='HIGH')
-    apply_fixes(high_findings)  → working tree modified
-
-    # 5. Auto-commit checkpoint
-    git add -A
-    git commit -m "iter-{N}: apply HIGH fixes from ensemble round {N}"
-
-    # 6. Rotate focus heuristic (after K=3 same-focus CONVERGED)
-    focus_history.append((current_focus, verdict))
-    if last_3_verdicts_all_CONVERGED_with_same_focus(focus_history):
-        current_focus = next_focus_in_pool()
-        # focus pool: method-section, proofs, typography, cross-references, boundary-cases
-
-    N += 1
-
-if N > max_rounds:
-    log("Halted at max_rounds without reaching {converge_on}")
+    # 7. 前進（mode / focus 全由 decider 給；max_rounds 由 decider clamp 到 [1,30]）
+    N = action.nextRound; mode = action.nextMode; current_focus = action.nextFocus
 ```
+
+> **為何抽成 script**：mode 奇偶交替、halt 判定、`last_3_同focus_CONVERGED → 輪替`、pool 繞回、max-rounds clamp 全是**確定性**邏輯，過去藏在「LLM 編排」裡無法測。抽成 `pai-iterate-decide` 後窮舉測（converged≠max-rounds、最後一輪仍套 fix、剛好 3 次才輪替、pool 繞回…），未測表面縮到只剩 `apply_fixes` 那一次 Edit（屬 eval 範疇，非單元測試）。
 
 #### Verdict 解析 protocol
 
