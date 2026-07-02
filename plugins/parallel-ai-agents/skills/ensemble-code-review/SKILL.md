@@ -133,11 +133,12 @@ esac
 
 1. 解析 harness 絕對路徑：`${CLAUDE_PLUGIN_ROOT}/workflows/ensemble-workflow.js`。
 2. 解析 wrapper 絕對路徑：`${CLAUDE_PLUGIN_ROOT}/bin/codex-call`（**用絕對路徑**，不賭 workflow agent shell 的 PATH —— install-time PATH 注入是 version-pinned、可能 stale/不存在）。
-3. 呼叫 `Workflow` tool，傳 `scriptPath`（harness 絕對路徑）+ `args`：
+3. 解析 dispatch model（#20）：`PAI_AGENT_MODEL` 未設 → `opus`；設了但不在 `sonnet|opus|haiku|fable` → **abort with usage error**（fail-loud，不靜默換模型；engine 對顯式非法值亦會於派發前 throw 作第二層）。解析值經 `args.agentModel` 傳入。接著呼叫 `Workflow` tool，傳 `scriptPath`（harness 絕對路徑）+ `args`：
 
    ```json
    {
      "profile": "code",
+     "agentModel": "<PAI_AGENT_MODEL 解析值（預設 opus，#20）>",
      "file": "<路徑模式：FILE_OR_DIR 絕對路徑>",
      "diffFile": "<diff 模式：Phase 1 的 $DIFF_FILE 絕對路徑>",
      "contextBlock": "<focus + 內容類型 emphasis（見 Phase 1 表）>",
@@ -156,6 +157,8 @@ esac
 > 跨模型獨立性由 harness 保證：codexPrompt **不**提及 Claude reviewers、**不**餵 Codex 他們的 findings；DA 則**會**讀 Claude reviewers 的完稿 findings（兩者 prompt builder 分開）。DA 為 downstream node（讀完稿，非 live SendMessage）。
 
 #### Backend B — Legacy TeamCreate + Codex Bash（fallback）
+
+> 每個 spawn 的 Agent 都帶顯式 `model: $PAI_AGENT_MODEL`（預設 `opus`，#20——不繼承 session 主迴圈模型）。
 
 > **diff 模式時**（不只換路徑字串）：① 把下方 prompt 的 `審閱範圍：{FILE_OR_DIR}` 換成 `審閱範圍（diff）：$DIFF_FILE`；② **在每個 reviewer prompt 開頭加一句框架引導**：「以下是一份 diff，只審變更行、評估**變更的影響面與回歸風險**；需要時自行 Read 周邊原始碼補 context」——否則 teammate 會用『審整棵原始碼樹』的 mental model 看 diff（如 architecture 的『檔案組織/死碼』對著一份 diff 語意走樣）；③ TeamCreate 的 `description` 不要塞 temp 檔路徑，用「diff review」之類描述。devil's-advocate 走 SendMessage 不受影響。
 
@@ -180,8 +183,10 @@ TeamCreate:
 Agent:
   name: "architecture"
   subagent_type: "general-purpose"
+  model: "<PAI_AGENT_MODEL 解析值（預設 opus，#20）>"
   team_name: "ensemble-review-{timestamp}"
   subagent_type: "general-purpose"
+  model: "<PAI_AGENT_MODEL 解析值（預設 opus，#20）>"
   prompt: |
     你是 Architecture Reviewer。
     審閱範圍：{FILE_OR_DIR}
@@ -206,8 +211,10 @@ Agent:
 Agent:
   name: "correctness"
   subagent_type: "general-purpose"
+  model: "<PAI_AGENT_MODEL 解析值（預設 opus，#20）>"
   team_name: "ensemble-review-{timestamp}"
   subagent_type: "general-purpose"
+  model: "<PAI_AGENT_MODEL 解析值（預設 opus，#20）>"
   prompt: |
     你是 Correctness Reviewer。
     審閱範圍：{FILE_OR_DIR}
@@ -232,8 +239,10 @@ Agent:
 Agent:
   name: "security"
   subagent_type: "general-purpose"
+  model: "<PAI_AGENT_MODEL 解析值（預設 opus，#20）>"
   team_name: "ensemble-review-{timestamp}"
   subagent_type: "general-purpose"
+  model: "<PAI_AGENT_MODEL 解析值（預設 opus，#20）>"
   prompt: |
     你是 Security Reviewer，以攻擊者視角審閱。
     審閱範圍：{FILE_OR_DIR}
@@ -258,8 +267,10 @@ Agent:
 Agent:
   name: "devils-advocate"
   subagent_type: "general-purpose"
+  model: "<PAI_AGENT_MODEL 解析值（預設 opus，#20）>"
   team_name: "ensemble-review-{timestamp}"
   subagent_type: "general-purpose"
+  model: "<PAI_AGENT_MODEL 解析值（預設 opus，#20）>"
   prompt: |
     你是 Devil's Advocate。
     審閱範圍：{FILE_OR_DIR}
