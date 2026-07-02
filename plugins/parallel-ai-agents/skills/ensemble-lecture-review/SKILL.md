@@ -58,11 +58,12 @@ Arguments:
 #### Backend A — Workflow（預設）
 
 1. 解析 harness 絕對路徑：`${CLAUDE_PLUGIN_ROOT}/workflows/ensemble-workflow.js`。
-2. 呼叫 `Workflow` tool，傳 `scriptPath`（上述絕對路徑）+ `args`：
+2. 解析 dispatch model（#20）：`PAI_AGENT_MODEL` 未設 → `opus`；設了但不在 `sonnet|opus|haiku|fable` → **abort with usage error**（fail-loud，不靜默換模型；engine 對顯式非法值亦會於派發前 throw 作第二層）。解析值經 `args.agentModel` 傳入。接著呼叫 `Workflow` tool，傳 `scriptPath`（上述絕對路徑）+ `args`：
 
    ```json
    {
      "profile": "lecture",
+     "agentModel": "<PAI_AGENT_MODEL 解析值（預設 opus，#20）>",
      "file": "<講義 HTML 絕對路徑>",
      "srtFile": "<SRT 絕對路徑或 null>",
      "contextBlock": "<student_info + teaching context 組成的字串>",
@@ -77,6 +78,8 @@ Arguments:
 > harness 把三個 reviewer（content-accuracy / student-readability / completeness）的角色 checklist 內建在 `PROFILES.lecture`；devil's-advocate 是 downstream node（讀同儕**完稿** findings，非 live SendMessage）。這是相對 legacy 唯一的行為差異 —— 更穩（無 idle-teammate / SendMessage 不觸發失敗），但 DA 看的是定稿而非即時對話。
 
 #### Backend B — Legacy TeamCreate fan-out（fallback）
+
+> 每個 spawn 的 Agent 都帶顯式 `model: $PAI_AGENT_MODEL`（預設 `opus`，#20——不繼承 session 主迴圈模型）。
 
 **CRITICAL: 所有 4 個 Agent tool calls 必須在同一個 message 送出。**
 

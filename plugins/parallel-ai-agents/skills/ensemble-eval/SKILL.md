@@ -45,11 +45,12 @@ argument-hint: "[--fixture stats-paper] [--runs K] [--min-hits N] [--codex] [--a
 ### Phase 1: 跑 K 次真 ensemble
 
 1. 解析 `FIX=${CLAUDE_PLUGIN_ROOT}/eval/fixtures/<fixture>`；`mktemp -d` 建 results 目錄。
-2. **K 次**呼叫 `Workflow` tool（`scriptPath` = `${CLAUDE_PLUGIN_ROOT}/workflows/ensemble-workflow.js`）：
+2. 解析 dispatch model（#20）：`PAI_AGENT_MODEL` 未設 → `opus`；設了但不在 `sonnet|opus|haiku|fable` → **abort with usage error**（fail-loud，不靜默換模型；engine 對顯式非法值亦會於派發前 throw 作第二層）。解析值經 `args.agentModel` 傳入。然後 **K 次**呼叫 `Workflow` tool（`scriptPath` = `${CLAUDE_PLUGIN_ROOT}/workflows/ensemble-workflow.js`）：
 
    ```json
    {
      "profile": "academic",
+     "agentModel": "<PAI_AGENT_MODEL 解析值（預設 opus，#20）>",
      "file": "<FIX>/paper.md",
      "contextBlock": "學術論文審閱。ground-truth 計算 artifact：<FIX>/analysis/results.csv（number-verifier 逐數字比對用）。",
      "codexEnabled": false,

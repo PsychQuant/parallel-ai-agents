@@ -36,9 +36,28 @@
  *   customLenses : [{ key, focus, needsSrt? }]        — caller-defined reviewer roles ("自由組合"); appended to the active set
  *   maxAgents    : integer                            — override the agent ceiling (default 16, hard-capped to 4..30)
  *   daFocus / codexInstructions / codexMaxTime        — override the profile defaults (used by profile:"custom")
+ *   agentModel   : string                            — Claude model for every ensemble agent dispatch
+ *                                                     ('sonnet'|'opus'|'haiku'|'fable'; #20, mirrors
+ *                                                     issue-driven-development#205). Absent → 'opus';
+ *                                                     an EXPLICITLY invalid value throws before any
+ *                                                     dispatch (pre-dispatch arg-contract violation —
+ *                                                     unlike unknown-profile, which is a mid-run harness
+ *                                                     finding). Without an explicit model, agent() would
+ *                                                     inherit the session's main-loop model — on high-tier
+ *                                                     sessions that burned 563k–1,092k tokens per ensemble
+ *                                                     round and killed a lens agent at a session limit.
  *
  * Returns: { findings: Finding[], verdict: 'PASS' | 'FINDINGS', stats: {...} }
  * conforming to references/ensemble-findings-schema.json.
+ *
+ * EXTERNAL-CONSUMER CONTRACT (#20): the args surface above + the return shape are the STABLE
+ * API for plugins that depend on this engine instead of vendoring a fork (first consumer:
+ * issue-driven-development's idd-verify — its 305-line fork predates this contract and is
+ * slated to become a resolve-installed-engine dependency with graceful degrade). Breaking
+ * changes to arg names, the findings schema, verdict semantics, or fail-closed behavior
+ * require a major version bump + a migration note in CHANGELOG.md. profile:'custom' +
+ * customLenses/includeLenses + contextBlock (pre-sentinel-wrapped by the consumer if the
+ * content is untrusted) + diffFile + agentModel is the supported composition surface.
  */
 
 export const meta = {
@@ -370,6 +389,19 @@ try {
   A = {}
 }
 
+// Dispatch model (#20; mirrors issue-driven-development#205): explicit on every agent()
+// call so the ensemble never inherits the session's main-loop model. The whitelist mirrors
+// the Agent tool's documented enum (sonnet | opus | haiku | fable — 'fable' = Claude Fable 5,
+// the Mythos-class tier). An explicitly invalid value throws BEFORE any dispatch — fail-loud,
+// so a typo'd override can never silently run the ensemble on a model the caller didn't pick.
+const VALID_DISPATCH_MODELS = ['sonnet', 'opus', 'haiku', 'fable']
+if (A.agentModel != null && !VALID_DISPATCH_MODELS.includes(A.agentModel)) {
+  throw new Error(
+    `invalid agentModel '${A.agentModel}' — accepted: ${VALID_DISPATCH_MODELS.join(' | ')} (unset = opus)`
+  )
+}
+const AGENT_MODEL = A.agentModel || 'opus'
+
 // Guard an unknown profile. (The empty-lens case — including profile:"custom" which ships no
 // built-in lenses — is handled AFTER composition below, where division-by-zero / false-PASS would
 // otherwise occur; that division-by-zero was caught by the harness's own code-profile self-review.)
@@ -452,6 +484,7 @@ for (const l of activeLenses) {
         schema: FINDINGS_SCHEMA,
         label: replicas > 1 ? `review:${l.key}#${k + 1}` : `review:${l.key}`,
         phase: 'review',
+        model: AGENT_MODEL,
       })
         .then((r) => (r == null
           ? { lens: l.key, findings: [], ok: false }                                   // user-skipped → fail-closed
@@ -462,7 +495,7 @@ for (const l of activeLenses) {
 }
 const codexThunk = codexOn
   ? () =>
-      agent(codexPrompt(profile, A), { schema: FINDINGS_SCHEMA, label: 'codex', phase: 'review' })
+      agent(codexPrompt(profile, A), { schema: FINDINGS_SCHEMA, label: 'codex', phase: 'review', model: AGENT_MODEL })
         .then((r) => (r == null
           ? { lens: 'codex', findings: [], ok: false }                                 // user-skipped → surfaced as process gap
           : { lens: 'codex', findings: (r.findings || []).map((f) => ({ ...f, lens: 'codex' })), ok: true }))
@@ -474,7 +507,7 @@ const reviewerResults = round1.filter((r) => r.lens !== 'codex')
 
 // Phase 2: devil's-advocate adversarially refutes the reviewers' judgments (also fail-aware).
 phase('adversarial')
-const da = await agent(daPrompt(profile, reviewerResults, A), { schema: FINDINGS_SCHEMA, label: 'devils-advocate', phase: 'adversarial' })
+const da = await agent(daPrompt(profile, reviewerResults, A), { schema: FINDINGS_SCHEMA, label: 'devils-advocate', phase: 'adversarial', model: AGENT_MODEL })
   .then((r) => (r == null
     ? { findings: [], ok: false }                                                      // user-skipped DA → fail-closed
     : { findings: (r.findings || []).map((f) => ({ ...f, lens: 'devils-advocate' })), ok: true }))
@@ -508,6 +541,7 @@ const stats = {
   reviewers: round1.map((r) => ({ lens: r.lens, ok: r.ok, count: (r.findings || []).length })),
   daOk: da.ok,
   integrity: integrity.length,
+  dispatchModel: AGENT_MODEL,
 }
-log(`pai-ensemble[${A.profile}]: ${stats.agents} agents → ${merged.length} merged finding(s) → ${verdict}` + (integrity.length ? ` (${integrity.length} integrity/process-gap)` : ''))
+log(`pai-ensemble[${A.profile}]: ${stats.agents} agents (model: ${AGENT_MODEL}) → ${merged.length} merged finding(s) → ${verdict}` + (integrity.length ? ` (${integrity.length} integrity/process-gap)` : ''))
 return { findings: merged, verdict, stats }

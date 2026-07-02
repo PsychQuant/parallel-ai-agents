@@ -48,6 +48,33 @@ const boom = (label) => async (_p, o) => { if (o && o.label === label) throw new
 const tests = []
 const test = (name, fn) => tests.push({ name, fn })
 
+test('dispatch model defaults to opus at EVERY agent() site (#20)', async () => {
+  const models = []
+  const capture = async (_p, o) => { models.push(o && o.model); return { findings: [] } }
+  const out = await runEnsemble({ profile: 'code', file: '/x', codexEnabled: true, codexCallPath: '/bin/cc' }, capture)
+  assert.ok(models.length >= 4, `expected reviewers+codex+da dispatches, got ${models.length}`)
+  assert.ok(models.every((m) => m === 'opus'), `non-opus dispatch found: ${JSON.stringify(models)}`)
+  assert.equal(out.stats.dispatchModel, 'opus')
+})
+
+test('agentModel override is honored at every site (#20)', async () => {
+  const models = []
+  const capture = async (_p, o) => { models.push(o && o.model); return { findings: [] } }
+  const out = await runEnsemble({ profile: 'code', file: '/x', codexEnabled: false, agentModel: 'sonnet' }, capture)
+  assert.ok(models.every((m) => m === 'sonnet'), JSON.stringify(models))
+  assert.equal(out.stats.dispatchModel, 'sonnet')
+})
+
+test('explicitly invalid agentModel throws BEFORE any dispatch (#20)', async () => {
+  let dispatched = 0
+  const counting = async () => { dispatched++; return { findings: [] } }
+  await assert.rejects(
+    () => runEnsemble({ profile: 'code', file: '/x', codexEnabled: false, agentModel: 'gpt-4' }, counting),
+    /invalid agentModel 'gpt-4'/
+  )
+  assert.equal(dispatched, 0, 'no agent may be dispatched on an invalid model')
+})
+
 test('unknown profile → HIGH harness finding, agents=0', async () => {
   const out = await runEnsemble({ profile: 'nope', file: '/x' }, allPass)
   assert.equal(out.verdict, 'FINDINGS')

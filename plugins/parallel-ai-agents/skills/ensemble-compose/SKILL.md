@@ -109,11 +109,12 @@ FILE_OR_DIR      — 審閱對象（缺則問使用者）
    - `--lens 'perf: 檢查每個迴圈的時間複雜度...'` → `customLenses: [{key:"perf", focus:"檢查每個迴圈的時間複雜度..."}]`
    - `--lens-file pack.csv` → **用 python3 csv 模組解析**（見 § CSV lens 包；focus 含逗號/中文標點，**不可** naive split）→ 每列轉 `{key, focus, needsSrt?}` append 到 `customLenses`（與 `--lens` 合併；同 key first-wins）
    - `--replicas` / `--max-agents` / `--codex` → `replicas` / `maxAgents` / `codexEnabled`
-3. 呼叫 `Workflow` tool，傳 `scriptPath` + `args`：
+3. 解析 dispatch model（#20）：`PAI_AGENT_MODEL` 未設 → `opus`；設了但不在 `sonnet|opus|haiku|fable` → **abort with usage error**（fail-loud，不靜默換模型；engine 對顯式非法值亦會於派發前 throw 作第二層）。解析值經 `args.agentModel` 傳入。接著呼叫 `Workflow` tool，傳 `scriptPath` + `args`：
 
    ```json
    {
      "profile": "custom",
+     "agentModel": "<PAI_AGENT_MODEL 解析值（預設 opus，#20）>",
      "file": "<FILE_OR_DIR 絕對路徑>",
      "contextBlock": "<檔案類型 emphasis + focus>",
      "includeLenses": ["code.security", "academic.methodology"],
@@ -134,7 +135,7 @@ FILE_OR_DIR      — 審閱對象（缺則問使用者）
 
 ## Legacy fallback（無 Workflow tool）
 
-`Workflow` 不可用時，用 TeamCreate 把組裝後的 lens 各開一個 `general-purpose` Agent（role prompt = lens focus）、一個 devil's-advocate、可選 Codex Bash，同其他 skill 的 legacy 流程。所有 tool calls 同一 message 送出。
+`Workflow` 不可用時，用 TeamCreate 把組裝後的 lens 各開一個 `general-purpose` Agent（role prompt = lens focus）、一個 devil's-advocate、可選 Codex Bash，同其他 skill 的 legacy 流程。所有 tool calls 同一 message 送出。每個 spawn 的 Agent 都帶顯式 `model: $PAI_AGENT_MODEL`（預設 `opus`，#20——不繼承 session 主迴圈模型）。
 
 ## 鐵律
 
