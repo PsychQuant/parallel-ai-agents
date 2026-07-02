@@ -83,7 +83,7 @@ Arguments:
 
 **CRITICAL: 所有 4 個 Agent tool calls 必須在同一個 message 送出。**
 
-**CRITICAL: Teammates 必須用 `subagent_type: "general-purpose"`。**
+**CRITICAL: Teammates 必須用 `subagent_type: "general-purpose"`，且每個 Agent call 帶 `model: "<PAI_AGENT_MODEL 解析值（預設 opus，#20）>"`。**
 
 用 TeamCreate 建立 team，然後在同一個 message 啟動 4 個 Agent：
 

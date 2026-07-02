@@ -183,8 +183,10 @@ TeamCreate:
 Agent:
   name: "architecture"
   subagent_type: "general-purpose"
+  model: "<PAI_AGENT_MODEL 解析值（預設 opus，#20）>"
   team_name: "ensemble-review-{timestamp}"
   subagent_type: "general-purpose"
+  model: "<PAI_AGENT_MODEL 解析值（預設 opus，#20）>"
   prompt: |
     你是 Architecture Reviewer。
     審閱範圍：{FILE_OR_DIR}
@@ -209,8 +211,10 @@ Agent:
 Agent:
   name: "correctness"
   subagent_type: "general-purpose"
+  model: "<PAI_AGENT_MODEL 解析值（預設 opus，#20）>"
   team_name: "ensemble-review-{timestamp}"
   subagent_type: "general-purpose"
+  model: "<PAI_AGENT_MODEL 解析值（預設 opus，#20）>"
   prompt: |
     你是 Correctness Reviewer。
     審閱範圍：{FILE_OR_DIR}
@@ -235,8 +239,10 @@ Agent:
 Agent:
   name: "security"
   subagent_type: "general-purpose"
+  model: "<PAI_AGENT_MODEL 解析值（預設 opus，#20）>"
   team_name: "ensemble-review-{timestamp}"
   subagent_type: "general-purpose"
+  model: "<PAI_AGENT_MODEL 解析值（預設 opus，#20）>"
   prompt: |
     你是 Security Reviewer，以攻擊者視角審閱。
     審閱範圍：{FILE_OR_DIR}
@@ -261,8 +267,10 @@ Agent:
 Agent:
   name: "devils-advocate"
   subagent_type: "general-purpose"
+  model: "<PAI_AGENT_MODEL 解析值（預設 opus，#20）>"
   team_name: "ensemble-review-{timestamp}"
   subagent_type: "general-purpose"
+  model: "<PAI_AGENT_MODEL 解析值（預設 opus，#20）>"
   prompt: |
     你是 Devil's Advocate。
     審閱範圍：{FILE_OR_DIR}

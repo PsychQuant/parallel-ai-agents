@@ -50,6 +50,16 @@
  * Returns: { findings: Finding[], verdict: 'PASS' | 'FINDINGS', stats: {...} }
  * conforming to references/ensemble-findings-schema.json.
  *
+ * MODEL-ROUTING CONFIRMED LIVE (#20, 2026-07-02): two 6-agent ensemble runs on this same
+ * Workflow runtime + opts contract — wf_6c1d8ee6-5f3 and wf_d44fa55e-65a (the verify run of
+ * this very change) — were dispatched from a claude-fable-5[1m] session with agentModel:'opus',
+ * and ALL twelve agent transcripts record model=claude-opus-4-8: opts.model is honored
+ * end-to-end (a genuine tier downgrade, not a silently-dropped option). On a runtime that
+ * predates opts.model the option is ignored and dispatch degrades to pre-#20 inherit-session
+ * behavior — dispatchModel then reports the REQUESTED model, so treat it as request-echo, not
+ * runtime-measured. Note the codex lens nuance: agentModel pins only the Claude WRAPPER agent
+ * that drives codex-call; the cross-model reasoning itself stays gpt-5.5 by design.
+ *
  * EXTERNAL-CONSUMER CONTRACT (#20): the args surface above + the return shape are the STABLE
  * API for plugins that depend on this engine instead of vendoring a fork (first consumer:
  * issue-driven-development's idd-verify — its 305-line fork predates this contract and is
@@ -58,6 +68,10 @@
  * require a major version bump + a migration note in CHANGELOG.md. profile:'custom' +
  * customLenses/includeLenses + contextBlock (pre-sentinel-wrapped by the consumer if the
  * content is untrusted) + diffFile + agentModel is the supported composition surface.
+ * Contract exits: guards return findings-shaped results (verdict:'FINDINGS'); the ONE
+ * exception is an invalid agentModel, which THROWS before any dispatch (arg-contract
+ * violation — callers wanting a soft failure must validate before calling). null/''/absent
+ * agentModel all mean "default" (opus).
  */
 
 export const meta = {
@@ -394,13 +408,17 @@ try {
 // the Agent tool's documented enum (sonnet | opus | haiku | fable — 'fable' = Claude Fable 5,
 // the Mythos-class tier). An explicitly invalid value throws BEFORE any dispatch — fail-loud,
 // so a typo'd override can never silently run the ensemble on a model the caller didn't pick.
-const VALID_DISPATCH_MODELS = ['sonnet', 'opus', 'haiku', 'fable']
-if (A.agentModel != null && !VALID_DISPATCH_MODELS.includes(A.agentModel)) {
+const VALID_DISPATCH_MODELS = ['sonnet', 'opus', 'haiku', 'fable'] // maintenance point: keep in sync with the runtime's Agent-tool enum
+if (A.agentModel != null && A.agentModel !== '' && !VALID_DISPATCH_MODELS.includes(A.agentModel)) {
+  // JSON.stringify escapes newlines/quotes so a hostile value cannot pollute the error line.
+  // This throw is the engine's ONLY out-of-band exit (unknown-profile / empty-lens return
+  // findings-shaped guards instead): an arg-CONTRACT violation aborts before any dispatch,
+  // documented as such in the external-consumer contract above.
   throw new Error(
-    `invalid agentModel '${A.agentModel}' — accepted: ${VALID_DISPATCH_MODELS.join(' | ')} (unset = opus)`
+    `invalid agentModel ${JSON.stringify(A.agentModel)} — accepted: ${VALID_DISPATCH_MODELS.join(' | ')} (unset/null/'' = opus)`
   )
 }
-const AGENT_MODEL = A.agentModel || 'opus'
+const AGENT_MODEL = A.agentModel || 'opus' // null / undefined / '' ≡ absent → default
 
 // Guard an unknown profile. (The empty-lens case — including profile:"custom" which ships no
 // built-in lenses — is handled AFTER composition below, where division-by-zero / false-PASS would
@@ -410,7 +428,7 @@ if (!profile) {
   return {
     findings: [{ lens: 'harness', severity: 'HIGH', title: `unknown ensemble profile "${A.profile}"`, file: null, body: `pai-ensemble was invoked with no matching PROFILES entry; available: ${Object.keys(PROFILES).join(', ')}. The skill must fall back to the legacy backend.` }],
     verdict: 'FINDINGS',
-    stats: { profile: A.profile || null, agents: 0 },
+    stats: { profile: A.profile || null, agents: 0, dispatchModel: AGENT_MODEL },
   }
 }
 
@@ -443,7 +461,7 @@ if (assembled.length === 0) {
   return {
     findings: [{ lens: 'harness', severity: 'HIGH', title: 'no active lenses after composition', file: null, body: `profile "${A.profile}" + includeLenses + customLenses − disableLenses resolved to zero reviewers. Supply at least one lens, or fall back to the legacy backend.` }],
     verdict: 'FINDINGS',
-    stats: { profile: A.profile || null, agents: 0 },
+    stats: { profile: A.profile || null, agents: 0, dispatchModel: AGENT_MODEL },
   }
 }
 

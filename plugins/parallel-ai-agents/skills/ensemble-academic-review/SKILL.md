@@ -239,6 +239,7 @@ TeamCreate:
 Agent:
   name: "methodology"
   subagent_type: "general-purpose"
+  model: "<PAI_AGENT_MODEL 解析值（預設 opus，#20）>"
   team_name: "academic-review-{timestamp}-round{N}"
   prompt: |
     你是 Methodology Reviewer，專門審閱學術研究方法。
@@ -265,6 +266,7 @@ Agent:
 Agent:
   name: "writing"
   subagent_type: "general-purpose"
+  model: "<PAI_AGENT_MODEL 解析值（預設 opus，#20）>"
   team_name: "academic-review-{timestamp}-round{N}"
   prompt: |
     你是 Writing Quality Reviewer，專門審閱學術寫作品質。
@@ -293,6 +295,7 @@ Agent:
 Agent:
   name: "reference-verifier"
   subagent_type: "general-purpose"
+  model: "<PAI_AGENT_MODEL 解析值（預設 opus，#20）>"
   team_name: "academic-review-{timestamp}-round{N}"
   prompt: |
     你是 Reference Verifier，專門驗證學術文獻的真實性。
@@ -342,6 +345,7 @@ Agent:
 Agent:
   name: "number-verifier"
   subagent_type: "general-purpose"
+  model: "<PAI_AGENT_MODEL 解析值（預設 opus，#20）>"
   team_name: "academic-review-{timestamp}-round{N}"
   prompt: |
     你是 Number Verifier，專門驗證學術／實證文件中每一個數字 vs ground truth artifact。
@@ -399,6 +403,7 @@ Agent:
 Agent:
   name: "devils-advocate"
   subagent_type: "general-purpose"
+  model: "<PAI_AGENT_MODEL 解析值（預設 opus，#20）>"
   team_name: "academic-review-{timestamp}-round{N}"
   prompt: |
     你是 Devil's Advocate，學術審閱的對抗性驗證者。

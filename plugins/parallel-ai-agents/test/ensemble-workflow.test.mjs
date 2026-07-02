@@ -65,12 +65,27 @@ test('agentModel override is honored at every site (#20)', async () => {
   assert.equal(out.stats.dispatchModel, 'sonnet')
 })
 
+test('agentModel null / empty string ≡ absent → default opus, no throw (#20)', async () => {
+  for (const v of [null, '']) {
+    const models = []
+    const capture = async (_p, o) => { models.push(o && o.model); return { findings: [] } }
+    const out = await runEnsemble({ profile: 'code', file: '/x', codexEnabled: false, agentModel: v }, capture)
+    assert.ok(models.every((m) => m === 'opus'), `agentModel=${JSON.stringify(v)} → ${JSON.stringify(models)}`)
+    assert.equal(out.stats.dispatchModel, 'opus')
+  }
+})
+
+test('early-return guards carry dispatchModel in stats (#20 verify fix)', async () => {
+  const out = await runEnsemble({ profile: 'nope', file: '/x', agentModel: 'sonnet' }, allPass)
+  assert.equal(out.stats.dispatchModel, 'sonnet')
+})
+
 test('explicitly invalid agentModel throws BEFORE any dispatch (#20)', async () => {
   let dispatched = 0
   const counting = async () => { dispatched++; return { findings: [] } }
   await assert.rejects(
     () => runEnsemble({ profile: 'code', file: '/x', codexEnabled: false, agentModel: 'gpt-4' }, counting),
-    /invalid agentModel 'gpt-4'/
+    /invalid agentModel "gpt-4"/
   )
   assert.equal(dispatched, 0, 'no agent may be dispatched on an invalid model')
 })
