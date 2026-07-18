@@ -28,7 +28,7 @@
  *   replicas     : integer                           — independent instances per base lens (default 1)
  *   codexEnabled : boolean                           — run the cross-model Codex lens (code/academic)
  *   codexCallPath: string | null                     — absolute path to bin/codex-call (skill: ${CLAUDE_PLUGIN_ROOT}/bin/codex-call); avoids PATH fragility
- *   codexModel   : string | null                     — model for the cross-model codex leg (default 'gpt-5.5', preserving pre-#22 behavior; consumers e.g. IDD pass their governance-resolved value)
+ *   codexModel   : string | null                     — model for the cross-model codex leg (fallback default = release-time snapshot of codex-pro governance, #23; ALL first-party skills + external consumers pass their resolved value)
  *   codexEffort  : string | null                     — reasoning effort for the codex leg (default 'xhigh')
  *   priors       : { [lensKey]: string, da?: string } — per-lens pre-sliced prior-round context (academic hybrid;
  *                                                       skill controls the asymmetry by WHICH lenses it includes —
@@ -60,7 +60,7 @@
  * predates opts.model the option is ignored and dispatch degrades to pre-#20 inherit-session
  * behavior — dispatchModel then reports the REQUESTED model, so treat it as request-echo, not
  * runtime-measured. Note the codex lens nuance: agentModel pins only the Claude WRAPPER agent
- * that drives codex-call; the cross-model reasoning runs on args.codexModel (default gpt-5.5, #22).
+ * that drives codex-call; the cross-model reasoning runs on args.codexModel (#22; fallback = codex-pro governance snapshot, #23).
  *
  * EXTERNAL-CONSUMER CONTRACT (#20): the args surface above + the return shape are the STABLE
  * API for plugins that depend on this engine instead of vendoring a fork (first consumer:
@@ -358,7 +358,7 @@ function codexPrompt(profile, A) {
   const wrapper = A.codexCallPath || 'codex-call'
   const instr = A.codexInstructions || profile.codexInstructions || '你是嚴謹的審閱者，用繁體中文輸出，逐點標注嚴重性。'
   const maxTime = Number(A.codexMaxTime) || profile.codexMaxTime || 600 // academic papers need longer (input length + heavier reasoning)
-  const codexModel = A.codexModel || 'gpt-5.5'   // #22: caller-governed; default preserves pre-#22 behavior
+  const codexModel = A.codexModel || 'gpt-5.6-sol'   // #22 caller-governed; fallback = governance SNAPSHOT (#23) — authoritative source is codex-pro defaults.json, pai skills resolve live per references/codex-governance.md
   const codexEffort = A.codexEffort || 'xhigh'
   return [
     `You are the cross-model verifier in a ${profile.title} ensemble. Use Codex (${codexModel}, a different model family) as a BLIND reviewer, then convert its output into findings. Do NOT mention the Claude reviewers or feed Codex their findings — Codex stays a blind cross-model vote.`,

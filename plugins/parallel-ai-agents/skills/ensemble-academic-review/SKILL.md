@@ -32,7 +32,7 @@ allowed-tools:
 
 # /ensemble-academic-review — 學術論文 Ensemble 審閱
 
-5 個 Claude teammates（學術審閱角色）+ 1 個 Codex（gpt-5.5）各自獨立審閱，合成比較表找共識和盲點。
+5 個 Claude teammates（學術審閱角色）+ 1 個 Codex（gpt-5.x）各自獨立審閱，合成比較表找共識和盲點。
 
 > **原理同 Ensemble OCR**：不同角色的錯誤模式不重疊。5 個 Claude 以不同學術審閱角度審閱且互相挑戰，Codex 提供跨模型盲驗。
 
@@ -111,7 +111,7 @@ mix 4 thesis.md
 │   ├── number-verifier — 逐一驗證數字 vs 原始計算 artifact（永遠獨立）— 可關
 │   └── devils-advocate — 反駁（hybrid 時看得到所有前輪結果）
 │
-└── Codex（gpt-5.5，永遠獨立）
+└── Codex（gpt-5.x，永遠獨立）
 
 → 每輪產出獨立的 review-round-{N}.md
 → mix 模式最後合併所有輪次 → review-summary.md
@@ -188,7 +188,7 @@ TaskCreate: "Final: merge all rounds"
 
 每一輪這樣呼叫：
 
-1. 解析 harness 絕對路徑 `${CLAUDE_PLUGIN_ROOT}/workflows/ensemble-workflow.js`；wrapper 絕對路徑 `${CLAUDE_PLUGIN_ROOT}/bin/codex-call`。
+1. 解析 harness 絕對路徑 `${CLAUDE_PLUGIN_ROOT}/workflows/ensemble-workflow.js`；wrapper 絕對路徑 `${CLAUDE_PLUGIN_ROOT}/bin/codex-call`。並依 [`references/codex-governance.md`](../../references/codex-governance.md) 解析 `CODEX_MODEL`/`CODEX_EFFORT`（#23，codex-pro 契約；缺席 fail-fast）。
 2. 解析 dispatch model（#20）：`PAI_AGENT_MODEL` 未設 → `opus`；設了但不在 `sonnet|opus|haiku|fable` → **abort with usage error**（fail-loud，不靜默換模型；engine 對顯式非法值亦會於派發前 throw 作第二層）。解析值經 `args.agentModel` 傳入。接著呼叫 `Workflow` tool，傳 `scriptPath` + `args`：
 
    ```json
@@ -199,6 +199,8 @@ TaskCreate: "Final: merge all rounds"
      "contextBlock": "<全文/文獻列表/ground-truth artifact 清單/focus>",
      "codexEnabled": true,
      "codexCallPath": "${CLAUDE_PLUGIN_ROOT}/bin/codex-call",
+     "codexModel": "<依 references/codex-governance.md 解析（codex-pro 契約；#23）>",
+     "codexEffort": "<同上>",
      "replicas": 1,
      "disableLenses": [],
      "priors": {}
@@ -477,8 +479,8 @@ Agent:
 ```bash
 codex-call \
   --output "{output_file}" \
-  --model gpt-5.5 \
-  --effort xhigh \
+  --model "$CODEX_MODEL" \
+  --effort "$CODEX_EFFORT" \
   --service-tier fast \
   --max-time 900 \
   --instructions "你是嚴謹的學術論文審閱者，從 methodology、writing、reference 三個角度審閱。用中文輸出。" << 'EOF'
@@ -765,7 +767,7 @@ Default 起始 focus = (none) — 不設,讓 reviewer 自主探;同一 focus 重
 2. **Theorem counter shared across `\newtheorem{lemma}[theorem]` = printing off-by-one** — 必查 LaTeX counter 結構
 3. **Hypothesis silently inherited across theorems** — 在某 theorem 加的 condition 可能影響後續 theorem,需明示「not inherited by Theorem N」
 4. **Stress-test on rare-audited sections (§Notation, §Discussion) 抓得到 11+ NEW HIGH** — 建議 rotate-focus 時主動進這些區
-5. **Codex `gpt-5.5 xhigh` 比 4-Claude consensus 嚴格** — 4-Claude 全 PASS 不等於 Codex 也 PASS
+5. **Codex `gpt-5.x xhigh` 比 4-Claude consensus 嚴格** — 4-Claude 全 PASS 不等於 Codex 也 PASS
 6. **PDF Token warnings (hyperref) 是真 bug 不是 cosmetic** — silent 不 fix 會在 ToC/bookmarks 失敗
 7. **degenerate counter-example 必查** — 「u≡0」「g(z)=z²-1」這類 counter 應在 case-taxonomy 之內排除
 8. **CONVERGED ≠ PERMANENT_CONVERGENCE** — 前者是 scope-limited 的「目前 focus 沒抓到新東西」,後者是 cross-focus 全綠;只接受後者作 halt verdict 是 default 設計

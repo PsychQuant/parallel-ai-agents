@@ -6,7 +6,7 @@
 // that bypasses the codex CLI subprocess (which can hang on stdin/stdout pipes).
 //
 // Usage:
-//   codex-call --output FILE [--model gpt-5.5] [--effort xhigh]
+//   codex-call --output FILE [--model gpt-5.6-sol] [--effort xhigh]
 //              [--service-tier ""] [--max-time 600]
 //              [--instructions TEXT] [--prompt-file FILE | PROMPT]
 //
@@ -342,7 +342,7 @@ func streamCodex(prompt: String, outputFile: String, model: String, effort: Stri
 
 struct Args {
     var output: String?
-    var model: String = "gpt-5.5"
+    var model: String = "gpt-5.6-sol"  // governance SNAPSHOT (#23) — authoritative: codex-pro references/defaults.json; callers SHOULD pass --model
     var effort: String = "xhigh"
     var serviceTier: String = ""
     var maxTime: Int = 600
@@ -373,7 +373,7 @@ func parseArgs() -> Args {
             codex-call — direct HTTP wrapper for chatgpt.com/backend-api
 
             Usage:
-              codex-call --output FILE [--model gpt-5.5] [--effort xhigh]
+              codex-call --output FILE [--model gpt-5.6-sol] [--effort xhigh]
                          [--service-tier ""] [--max-time 600]
                          [--instructions TEXT]
                          [--prompt-file FILE | PROMPT]

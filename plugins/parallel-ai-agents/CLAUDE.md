@@ -27,7 +27,7 @@ ensemble（以 code profile 為例）
 │   ├── correctness — 邏輯、bug、edge case
 │   └── security — 攻擊者視角
 ├── devil's-advocate — 讀上面完稿、反駁「通過/LOW」（downstream node，非 live SendMessage）
-└── Codex（gpt-5.5，跨模型盲驗，--codex 開）
+└── Codex（gpt-5.x — model 由 codex-pro 治理契約解析（references/codex-governance.md，#23）；跨模型盲驗，--codex 開）
 ```
 
 `Workflow` tool 不存在的舊版 Claude Code → fallback **Backend B — legacy TeamCreate fan-out**（同一 message 啟動 N 個 general-purpose Agent + Codex Bash）。兩 backend 報表一致。
@@ -57,7 +57,7 @@ Swift script wrapper，取代原本的 `codex exec --full-auto`。設計目的�
 ```bash
 codex-call \
   --output result.md \
-  --model gpt-5.5 \
+  --model "$CODEX_MODEL" \   # 依 references/codex-governance.md 解析（#23）
   --effort xhigh \
   --max-time 600 \
   --instructions "你是嚴謹 reviewer。" \
@@ -67,7 +67,7 @@ codex-call \
 或 stdin：
 
 ```bash
-echo "..." | codex-call --output out.md --model gpt-5.5 --effort xhigh
+echo "..." | codex-call --output out.md --model "$CODEX_MODEL" --effort "$CODEX_EFFORT"   # 治理解析見 references/codex-governance.md
 ```
 
 Wrapper 在 plugin 安裝時自動加入 PATH（透過 `bin/`），所以直接呼叫名字即可，不需要絕對路徑。

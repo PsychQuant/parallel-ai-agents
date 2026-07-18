@@ -90,7 +90,7 @@ FILE_OR_DIR      — 審閱對象（缺則問使用者）
 --base profile   — 基底 profile（預設 custom = 無內建 lens）；給 code/academic/lecture 則先帶入該 profile 全部 lens 再加 include/custom
 --replicas N     — 每個 lens 複製 N 份獨立實例（預設 1）
 --max-agents N   — agent 上限（預設 16，硬上限 30）
---codex          — 加 Codex（gpt-5.5）跨模型盲驗（預設關）
+--codex          — 加 Codex（gpt-5.x）跨模型盲驗（預設關）
 --focus '...'    — 全域審閱重點（注入每個 lens 的 context）
 ```
 
@@ -108,7 +108,7 @@ FILE_OR_DIR      — 審閱對象（缺則問使用者）
    - `--include code.security` → `includeLenses: ["code.security", ...]`
    - `--lens 'perf: 檢查每個迴圈的時間複雜度...'` → `customLenses: [{key:"perf", focus:"檢查每個迴圈的時間複雜度..."}]`
    - `--lens-file pack.csv` → **用 python3 csv 模組解析**（見 § CSV lens 包；focus 含逗號/中文標點，**不可** naive split）→ 每列轉 `{key, focus, needsSrt?}` append 到 `customLenses`（與 `--lens` 合併；同 key first-wins）
-   - `--replicas` / `--max-agents` / `--codex` → `replicas` / `maxAgents` / `codexEnabled`
+   - `--replicas` / `--max-agents` / `--codex` → `replicas` / `maxAgents` / `codexEnabled`（`--codex` 生效時另依 [`references/codex-governance.md`](../../references/codex-governance.md) 解析並傳 `codexModel`/`codexEffort`，#23）
 3. 解析 dispatch model（#20）：`PAI_AGENT_MODEL` 未設 → `opus`；設了但不在 `sonnet|opus|haiku|fable` → **abort with usage error**（fail-loud，不靜默換模型；engine 對顯式非法值亦會於派發前 throw 作第二層）。解析值經 `args.agentModel` 傳入。接著呼叫 `Workflow` tool，傳 `scriptPath` + `args`：
 
    ```json
@@ -122,7 +122,9 @@ FILE_OR_DIR      — 審閱對象（缺則問使用者）
      "replicas": 1,
      "maxAgents": 16,
      "codexEnabled": false,
-     "codexCallPath": "${CLAUDE_PLUGIN_ROOT}/bin/codex-call"
+     "codexCallPath": "${CLAUDE_PLUGIN_ROOT}/bin/codex-call",
+     "codexModel": "<--codex 生效時依 references/codex-governance.md 解析（#23）；false 時省略>",
+     "codexEffort": "<同上>"
    }
    ```
 

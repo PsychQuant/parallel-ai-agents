@@ -25,7 +25,7 @@ allowed-tools:
 
 # /ensemble-review — Orchestrated Team + Codex 交叉審閱
 
-4 個 Claude teammates（orchestrated team）+ 1 個 Codex（gpt-5.5）各自獨立審閱，合成比較表找出共識和盲點。
+4 個 Claude teammates（orchestrated team）+ 1 個 Codex（gpt-5.x）各自獨立審閱，合成比較表找出共識和盲點。
 
 > **原理同 Ensemble OCR**：不同模型、不同角色的錯誤模式不重疊。4 個 Claude 以不同專業角度審閱且互相挑戰，Codex 提供跨模型盲驗。
 
@@ -40,7 +40,7 @@ allowed-tools:
 │   ├── security — injection、secrets、權限、輸入驗證（攻擊者視角）
 │   └── devils-advocate — 讀前 3 人結論，反駁「通過」判斷
 │
-└── Codex（gpt-5.5，完全獨立 process，跨模型盲驗）
+└── Codex（gpt-5.x，完全獨立 process，跨模型盲驗）
 
 → 5 份 findings 合併去重 → 比較表
 ```
@@ -48,7 +48,7 @@ allowed-tools:
 **為什麼 5 個？**
 - 4 個 Claude teammates 在同一個 team 裡**互相挑戰**（不是各自獨立報告）
 - Devil's Advocate 的工作是**試著證明其他 3 個的通過判斷是錯的**
-- Codex 是完全不同的模型家族（gpt-5.5），提供**跨模型盲驗**
+- Codex 是完全不同的模型家族（gpt-5.x），提供**跨模型盲驗**
 
 ## 執行流程
 
@@ -132,7 +132,8 @@ esac
 #### Backend A — Workflow（預設）
 
 1. 解析 harness 絕對路徑：`${CLAUDE_PLUGIN_ROOT}/workflows/ensemble-workflow.js`。
-2. 解析 wrapper 絕對路徑：`${CLAUDE_PLUGIN_ROOT}/bin/codex-call`（**用絕對路徑**，不賭 workflow agent shell 的 PATH —— install-time PATH 注入是 version-pinned、可能 stale/不存在）。
+2. **解析 codex 治理**（#23，codexEnabled=true 必經）：依 [`references/codex-governance.md`](../../references/codex-governance.md) 從 codex-pro 契約解析 `CODEX_MODEL`/`CODEX_EFFORT`（缺席 fail-fast + 安裝指令）。
+3. 解析 wrapper 絕對路徑：`${CLAUDE_PLUGIN_ROOT}/bin/codex-call`（**用絕對路徑**，不賭 workflow agent shell 的 PATH —— install-time PATH 注入是 version-pinned、可能 stale/不存在）。
 3. 解析 dispatch model（#20）：`PAI_AGENT_MODEL` 未設 → `opus`；設了但不在 `sonnet|opus|haiku|fable` → **abort with usage error**（fail-loud，不靜默換模型；engine 對顯式非法值亦會於派發前 throw 作第二層）。解析值經 `args.agentModel` 傳入。接著呼叫 `Workflow` tool，傳 `scriptPath`（harness 絕對路徑）+ `args`：
 
    ```json
@@ -144,13 +145,15 @@ esac
      "contextBlock": "<focus + 內容類型 emphasis（見 Phase 1 表）>",
      "codexEnabled": true,
      "codexCallPath": "${CLAUDE_PLUGIN_ROOT}/bin/codex-call",
+     "codexModel": "<依 references/codex-governance.md 解析（codex-pro 契約；#23）>",
+     "codexEffort": "<同上>",
      "replicas": 1
    }
    ```
 
    - **path 模式傳 `file`、diff 模式傳 `diffFile`（擇一，不要兩個都傳）**。harness 的 `code` lens 與 Codex 都會用 file-read tool 讀 `diffFile` 並當 diff 審；`--replicas` 帶入時覆蓋預設 1。
 
-   - `codexEnabled: true` → Codex（gpt-5.5）作為 barrier 內第 4 個 agent，shell 出去呼 `codexCallPath`（**絕不** `codex exec`），fail-soft：timeout/error 只回 1 個 INFO finding（不阻擋 Claude-lens verdict）。
+   - `codexEnabled: true` → Codex（gpt-5.x）作為 barrier 內第 4 個 agent，shell 出去呼 `codexCallPath`（**絕不** `codex exec`），fail-soft：timeout/error 只回 1 個 INFO finding（不阻擋 Claude-lens verdict）。
    - `replicas` 預設 1（3 Claude lens + Codex + DA = 5，與 legacy 等價）。調高即大量 fan-out；harness 封頂 `MAX_AGENTS=16`（建議 Codex replica ≤2，fast = 2.5× credit）。
 4. Workflow 回 `{ findings, verdict, stats }`，`findings` 已 merge+dedup（severity 高者勝、跨 lens 不誤併）。Codex 的 finding `lens="codex"`、DA 的 `lens="devils-advocate"`。直接進 Phase 4 render，**不要**自己再 dedup。
 
@@ -294,7 +297,7 @@ Agent:
 ```bash
 codex-call \
   --output "{output_file}" \
-  --model gpt-5.5 \
+  --model "$CODEX_MODEL" \
   --effort xhigh \
   --service-tier fast \
   --max-time 600 \
@@ -305,7 +308,7 @@ EOF
 
 > **為什麼不用 `codex exec`**：subprocess 偶爾會 hang（stdin/stdout pipe 互鎖、tty 問題），等 10 分鐘 timeout 才能繼續。`codex-call` 是 plugin 自帶 wrapper（`bin/codex-call`，Swift script，安裝時自動加入 PATH），直接 HTTP POST 到 `chatgpt.com/backend-api/codex/responses`，仍走你的 ChatGPT 訂閱 OAuth — 但 `--max-time` 是硬性保證，不會 hang。
 >
-> **Fast mode**：傳 `--service-tier fast`，wrapper 內部會翻譯成 backend 接受的 `priority`（codex CLI 內部也是這樣翻譯）。Fast = 1.5× 速度、2.5× credit（gpt-5.5）；ensemble 場景值得，因為 user 在等。
+> **Fast mode**：傳 `--service-tier fast`，wrapper 內部會翻譯成 backend 接受的 `priority`（codex CLI 內部也是這樣翻譯）。Fast = 1.5× 速度、2.5× credit（gpt-5.x）；ensemble 場景值得，因為 user 在等。
 >
 > **OAuth token**：wrapper 自動讀 `~/.codex/auth.json`（codex CLI 的同一份），到期前 5 分鐘自動 refresh，用 file lock 避免 ensemble 平行 race。
 
