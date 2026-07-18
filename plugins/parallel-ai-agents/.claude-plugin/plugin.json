@@ -1,7 +1,7 @@
 {
   "name": "parallel-ai-agents",
-  "description": "平行派發任務給多個 AI agent（Claude + Codex），獨立執行後交叉比對結果。Codex 改走直接 HTTP wrapper（bin/codex-call，Swift script）取代 codex exec subprocess，解決 hang 問題且避開 Python 版本飄移",
-  "version": "2.18.0",
+  "description": "v2.19.0: codexModel / codexEffort engine args (#22) — the cross-model codex leg's model and effort become caller-governed contract args (defaults gpt-5.5 / xhigh preserve pre-#22 behavior byte-identically). First consumer: issue-driven-dev passing codex-pro-resolved governance. 平行派發任務給多個 AI agent（Claude + Codex），獨立執行後交叉比對結果。Codex 改走直接 HTTP wrapper（bin/codex-call，Swift script）取代 codex exec subprocess，解決 hang 問題且避開 Python 版本飄移",
+  "version": "2.19.0",
   "author": {
     "name": "Che Cheng"
   }

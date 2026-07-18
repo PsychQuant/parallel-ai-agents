@@ -28,6 +28,8 @@
  *   replicas     : integer                           — independent instances per base lens (default 1)
  *   codexEnabled : boolean                           — run the cross-model Codex lens (code/academic)
  *   codexCallPath: string | null                     — absolute path to bin/codex-call (skill: ${CLAUDE_PLUGIN_ROOT}/bin/codex-call); avoids PATH fragility
+ *   codexModel   : string | null                     — model for the cross-model codex leg (default 'gpt-5.5', preserving pre-#22 behavior; consumers e.g. IDD pass their governance-resolved value)
+ *   codexEffort  : string | null                     — reasoning effort for the codex leg (default 'xhigh')
  *   priors       : { [lensKey]: string, da?: string } — per-lens pre-sliced prior-round context (academic hybrid;
  *                                                       skill controls the asymmetry by WHICH lenses it includes —
  *                                                       e.g. only reference-verifier + da, never methodology/writing/codex)
@@ -58,7 +60,7 @@
  * predates opts.model the option is ignored and dispatch degrades to pre-#20 inherit-session
  * behavior — dispatchModel then reports the REQUESTED model, so treat it as request-echo, not
  * runtime-measured. Note the codex lens nuance: agentModel pins only the Claude WRAPPER agent
- * that drives codex-call; the cross-model reasoning itself stays gpt-5.5 by design.
+ * that drives codex-call; the cross-model reasoning runs on args.codexModel (default gpt-5.5, #22).
  *
  * EXTERNAL-CONSUMER CONTRACT (#20): the args surface above + the return shape are the STABLE
  * API for plugins that depend on this engine instead of vendoring a fork (first consumer:
@@ -356,8 +358,10 @@ function codexPrompt(profile, A) {
   const wrapper = A.codexCallPath || 'codex-call'
   const instr = A.codexInstructions || profile.codexInstructions || '你是嚴謹的審閱者，用繁體中文輸出，逐點標注嚴重性。'
   const maxTime = Number(A.codexMaxTime) || profile.codexMaxTime || 600 // academic papers need longer (input length + heavier reasoning)
+  const codexModel = A.codexModel || 'gpt-5.5'   // #22: caller-governed; default preserves pre-#22 behavior
+  const codexEffort = A.codexEffort || 'xhigh'
   return [
-    `You are the cross-model verifier in a ${profile.title} ensemble. Use Codex (gpt-5.5, a different model family) as a BLIND reviewer, then convert its output into findings. Do NOT mention the Claude reviewers or feed Codex their findings — Codex stays a blind cross-model vote.`,
+    `You are the cross-model verifier in a ${profile.title} ensemble. Use Codex (${codexModel}, a different model family) as a BLIND reviewer, then convert its output into findings. Do NOT mention the Claude reviewers or feed Codex their findings — Codex stays a blind cross-model vote.`,
     DATA_GUARD,
     A.contextBlock ? `Context:\n${dataBlock('CONTEXT', A.contextBlock)}` : '',
     artifactInstruction(A),
@@ -366,7 +370,7 @@ function codexPrompt(profile, A) {
     `2. Build a review prompt = brief review instructions (繁中、逐點、針對${profile.title}、標 CRITICAL/HIGH/MEDIUM/LOW/INFO、引用具體位置) FOLLOWED BY the artifact content. Write the whole thing to a temp file with your file-write tool. Do NOT echo/printf/heredoc artifact bytes into any shell command — that is a command-injection sink on untrusted content.`,
     `3. Run the plugin wrapper (NEVER \`codex exec\` — it hangs). Bound it with --max-time:`,
     '```bash',
-    `${wrapper} --output "$OUT_FILE" --model gpt-5.5 --effort xhigh --service-tier fast --max-time ${maxTime} --instructions ${JSON.stringify(instr)} --prompt-file "$PROMPT_FILE"`,
+    `${wrapper} --output "$OUT_FILE" --model ${codexModel} --effort ${codexEffort} --service-tier fast --max-time ${maxTime} --instructions ${JSON.stringify(instr)} --prompt-file "$PROMPT_FILE"`,
     '```',
     `4. Read "$OUT_FILE" back and map Codex's reported issues into the schema. Present Codex's findings faithfully in each finding's body. If the run times out / errors / produces nothing useful, return EXACTLY one finding: {severity:"INFO", title:"cross-model pass incomplete", file:null, body:"codex-call exceeded its lifetime bound or errored; cross-model lens did not complete"} — never silently drop it.`,
   ]
