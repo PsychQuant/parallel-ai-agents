@@ -51,7 +51,9 @@ $ git -C ~/.claude/plugins/cache/claude-plugins-official/data/0.1.0 submodule st
 
 開頭的 `-` 是 git 對「submodule 未初始化」的標記；該目錄實際為空。官方 plugin marketplace 文檔全篇未提及 `submodule`，亦即不在支援契約內。
 
-**結論**：submodule 能在開發端提供解耦與版本記錄，但這個價值跨不過散發邊界，使用者端拿到的是空目錄。因此 lens 外部化不採用 submodule。
+**結論**：submodule 提供的解耦與版本記錄跨不過散發邊界，使用者端拿到的是空目錄。因此 lens 外部化不採用 submodule。
+
+更根本的理由見 D7：即便只把 submodule 用於開發端，它在本設計中也**沒有任何 build 或 runtime 依賴**，屬於純成本。
 
 ### 2.3 marketplace 原生提供等價能力
 
@@ -69,6 +71,34 @@ $ git -C ~/.claude/plugins/cache/claude-plugins-official/data/0.1.0 submodule st
 | D4 | 報表輸出 **provenance 行**，記錄 lens pack 版本與被 override 的 lens | 不記錄（等於放棄本設計的主要價值之一） |
 | D5 | 缺席與損壞**分開處理**：沒裝 → 靜默；裝了但壞 → 警告 | 一律靜默降級（製造「以為生效但沒生效」的無跡象失敗） |
 | D6 | 三個 profile skill 都接上 lens pack，不只 `ensemble-compose` | 只擴 compose —— 日常主要路徑拿不到好處 |
+
+| D7 | **不使用 git submodule**。lens pack 與本 repo 為**平行 repo**；開發端的並排需求由 VS Code multi-root workspace 滿足 | submodule 掛 `repos/lenses`（曾列入考慮，見下方 D7 補述） |
+
+### D7 補述：為何連開發端也不用 submodule
+
+submodule 的正當判準只有一條：**parent repo 在 build 或 run 時是否需要讀該 repo 的檔案。**本設計中答案是「否」——依 D1／§4，skill **永遠**從 marketplace 安裝的 pai-lenses 讀取，plugin 目錄內不存在 lens 來源。
+
+曾為 submodule 保留的三個開發端理由，逐一檢視後皆不成立：
+
+| 理由 | 檢視結果 |
+|---|---|
+| 編輯方便 | 平行 repo 兩個目錄並排同樣方便，且零同步成本 |
+| CI 整合測試 | 合併邏輯**應以 fixture CSV 測試**（受控輸入），不應吃真實 lens repo —— 真實資料會變動，測試將 flaky。此理由本身即為誤 |
+| 版本錨點 | 被上一條取代：測試用的 fixture 位於本 repo 內、已受 git 追蹤，「此版 code 以何種 lens 輸入測試」已被記錄 |
+
+成本面：submodule pointer 落後時 `git status` 即為 dirty，會在與程式無關的情況下卡住 release 流程，並養成「先 bump 再說」的習慣 —— 每個手動同步點都是一條會安靜損壞的縫。
+
+**注意**：此判準是本設計專屬，非通則。`bestOCR` 的 `repos/measureOCR` 使用 submodule 是正確的 —— 那裡 parent 確實在跑量測時讀該 repo，且 pin 本身就是目的（pre-registration 凍結）。同一個工具，在有依賴時是資產，在無依賴時是純成本。
+
+### D1 補述：獨立 repo 的兩個理由
+
+**理由一：版本座標。** lens 是量測儀器，需要獨立於 plugin 版本的版本號（見 §1）。
+
+**理由二：外部貢獻的出口成本。** 若 lens 留在 `parallel-ai-agents` 內，接受一條外部貢獻的 lens **等於要發一次 plugin release** —— 使用者得 `/plugin update parallel-ai-agents`，連帶吃下所有無關的 code 變更。這使維護者傾向不收 lens PR，等於 issue #24 的痛點換個入口再現。獨立 repo 讓「收一條 lens」只需 bump lens pack 版本。
+
+次要但實際的效果：目前 repo 內有**三個看起來都像 lens 的地方** —— `PROFILES`（JS，唯一真正生效）、`references/builtin-lenses.csv`（改了無效的 catalog）、`references/example-lenses.csv`（範本）。外部貢獻者有相當機率改到無效的那個，通過 review 後卻毫無效果。獨立 repo 內不存在「假的 lens 檔案」，順帶消除此陷阱。
+
+兩個理由指向同一件事：**lens 的發布不應綁在 plugin 的發布上。**
 
 ---
 
