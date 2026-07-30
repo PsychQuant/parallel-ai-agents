@@ -73,6 +73,13 @@ $ git -C ~/.claude/plugins/cache/claude-plugins-official/data/0.1.0 submodule st
 | D6 | 三個 profile skill 都接上 lens pack，不只 `ensemble-compose` | 只擴 compose —— 日常主要路徑拿不到好處 |
 
 | D7 | **不使用 git submodule**。lens pack 與本 repo 為**平行 repo**；開發端的並排需求由 VS Code multi-root workspace 滿足 | submodule 掛 `repos/lenses`（曾列入考慮，見下方 D7 補述） |
+| D8 | 新增**第三層 user-level lens**（`~/.claude/pai-lenses/*.csv`），疊加於 lens pack 之上，三層共用同一套 `override` 語意 | 只做兩層 —— 使用者將無法擁有不被 `/plugin update` 覆蓋的自訂 lens |
+
+### D8 補述：為何需要第三層
+
+lens pack 安裝後位於 `~/.claude/plugins/cache/`，那是**受管理的靜態副本** —— 使用者在該處的修改會被下一次 `/plugin update` 覆寫。因此「使用者擁有自己的 lens」這個需求，**無法由 D1 的 repo 拆分滿足**，兩者正交：D1 解決發布節奏與版本座標，D8 解決使用者端的可寫性。
+
+第三層另有一個結構上的好處：它的路徑是固定的 `~/.claude/pai-lenses/`，**不依賴跨 plugin 檔案定位**（§10 的未驗證前提）。因此若 §10 驗證失敗，lens pack 可退化為「使用者自行 clone 至 `~/.claude/pai-lenses/`」，與第三層共用同一套讀取與合併機制，設計不需重做。
 
 ### D7 補述：為何連開發端也不用 submodule
 
@@ -104,9 +111,11 @@ submodule 的正當判準只有一條：**parent repo 在 build 或 run 時是�
 
 ## 4. 架構
 
+### 4.1 散發佈局
+
 ```
-┌─ PsychQuant/pai-lenses（新 repo）───────────────┐
-│  lenses/code.csv  academic.csv  lecture.csv    │  ← lens 單一真相源（資料）
+┌─ PsychQuant/pai-lenses（新 repo，平行於本 repo）┐
+│  lenses/code.csv  academic.csv  lecture.csv    │  ← 上游 lens 集（資料）
 │  .claude-plugin/plugin.json（version: 1.0.0）  │  ← 供 marketplace 註冊
 └────────────────────────────────────────────────┘
                     ▲ 註冊 + version/sha pin
@@ -116,21 +125,36 @@ submodule 的正當判準只有一條：**parent repo 在 build 或 run 時是�
                     ▼ 各自安裝至 cache
 ┌─ parallel-ai-agents plugin ────────────────────┐
 │  workflows/ensemble-workflow.js  ← 不修改      │
-│    PROFILES：17 條 built-in lens（baseline）    │
 │  skills/{code,academic,lecture,compose}        │
-│    Phase 0 新增：定位 lens pack → 解析 CSV →    │
-│    合併 → args.customLenses                    │
+│    Phase 0：三層疊加 → args.customLenses       │
 └────────────────────────────────────────────────┘
 ```
 
+### 4.2 三層 lens 解析（skill Phase 0，由下而上疊加）
+
+```
+ ①  built-in PROFILES        workflows/ensemble-workflow.js
+     17 條 baseline lens；harness 自帶，永遠存在
+                  ↓ 疊加（D3 override 語意）
+ ②  lens pack               ~/.claude/plugins/cache/<mkt>/pai-lenses/<ver>/lenses/<profile>.csv
+     上游發布；有獨立版本號；受 /plugin update 管理
+                  ↓ 疊加（同一套 override 語意）
+ ③  user-level              ~/.claude/pai-lenses/<profile>.csv
+     使用者自有；固定路徑；不受 /plugin update 覆寫
+                  ↓
+     合併結果 → args.customLenses → harness（不修改）
+```
+
+三層皆為**可選**：② 未安裝、③ 不存在時各自靜默略過（§8），① 保證系統永遠有可用的 lens。
+
 **harness 不修改**。`args.customLenses` 介面既有（`ensemble-compose` 已在使用），本設計是在既有接縫上外接，不新增 harness 端概念。
 
-### 資料流（以 `ensemble-code-review` 為例）
+### 4.3 資料流（以 `ensemble-code-review` 為例）
 
-1. skill Phase 0 定位 lens pack 的 `lenses/code.csv`
-2. 以既有的 `bin/pai-parse-lens-csv` 解析（**不新寫 parser**）
-3. 依 D3 規則與 built-in 合併，產生 `customLenses` 與 provenance 資訊
-4. 傳入 harness；harness 端行為與現況完全相同
+1. skill Phase 0 取得 `PROFILES.code` 作為起始集合
+2. 定位 lens pack 的 `lenses/code.csv`；存在則以既有的 `bin/pai-parse-lens-csv` 解析（**不新寫 parser**）並依 §6 疊加
+3. 讀 `~/.claude/pai-lenses/code.csv`；存在則同樣解析並疊加
+4. 產生 `customLenses` 與 provenance 資訊，傳入 harness；harness 端行為與現況完全相同
 
 ---
 
@@ -151,9 +175,11 @@ api-compat,"檢查對外 API 破壞性變更…",false,
 | `key` | 是 | lens 識別碼；空值該列跳過（既有行為） |
 | `focus` | 是 | lens 的審閱指示；空值該列跳過（既有行為） |
 | `needsSrt` | 否 | `1`/`true`/`yes`（不分大小寫）→ true（既有行為） |
-| `override` | 否 | `1`/`true`/`yes` → 取代同 key 的 built-in lens；其餘值或空白 → 純新增 |
+| `override` | 否 | `1`/`true`/`yes` → 取代**較低層**同 key 的 lens；其餘值或空白 → 純新增 |
 
 `override` 的值解析沿用 `needsSrt` 既有的 truthy 慣例，避免同一份 CSV 出現兩套布林寫法。
+
+**user-level（層 ③）使用完全相同的 schema 與檔名慣例** —— `~/.claude/pai-lenses/code.csv` 的格式與 lens pack 的 `lenses/code.csv` 無異。使用者可直接複製一份 lens pack 的檔案來改，不需學第二套格式。
 
 本設計假設**單一 lens pack**。多個 pack 並存的優先序不在本 spec 範圍。
 
@@ -161,16 +187,25 @@ api-compat,"檢查對外 API 破壞性變更…",false,
 
 ## 6. 合併規則（D3 具體化）
 
-輸入：built-in lens 集合 `B`（來自 `PROFILES[profile]`）、lens pack 列 `P`。
+合併是一個**逐層折疊**：以 built-in 為起始累積集合，依序將每個上層來源疊加上去。
 
-1. 對 `P` 中每一列 `p`：
-   - `p.override` 為 truthy 且 `p.key ∈ B` → **取代** `B` 中該條，記入 `overridden` 清單
-   - `p.override` 為 truthy 且 `p.key ∉ B` → 當作純新增，並**發出警告**（幾乎必為 typo）
-   - `p.override` 非 truthy 且 `p.key ∈ B` → **跳過**該列，並**發出警告**（撞名但未聲明 override）
-   - `p.override` 非 truthy 且 `p.key ∉ B` → **新增**，記入 `added` 清單
-2. 輸出合併後 lens 集合 + `{added, overridden, warnings}`
+- 起始集合 `A₀ = PROFILES[profile]`（層 ①）
+- 來源序列 `S = [lens pack 列（層 ②）, user-level 列（層 ③）]`；缺席的來源直接略過
 
-此合併為純函數，是本次唯一的新語意，應獨立於 I/O 實作以便測試。
+對 `S` 中每個來源的每一列 `p`，針對**當前累積集合** `A`：
+
+| `p.override` | `p.key ∈ A` | 動作 |
+|---|---|---|
+| truthy | 是 | **取代** `A` 中該條；記入 `overridden`（標註來源層） |
+| truthy | 否 | 當作純新增，並**發出警告**（幾乎必為 typo） |
+| 非 truthy | 是 | **跳過**該列，並**發出警告**（撞名但未聲明 override） |
+| 非 truthy | 否 | **新增**；記入 `added`（標註來源層） |
+
+輸出：合併後 lens 集合 + `{added, overridden, warnings}`，每筆均帶來源層標記。
+
+**關鍵語意**：判定對象是「**當前累積集合**」而非「built-in」。因此 user-level 要覆蓋 lens pack 的某條 lens，同樣必須寫 `override=true` —— 覆蓋任何已存在的 lens 都需要顯式聲明，不論它來自哪一層。規則一致，不因層級而分岐。
+
+此折疊為純函數，是本次唯一的新語意，應獨立於 I/O 實作以便測試。其形式亦使未來增層（如專案級 lens，見 §11）只需延長來源序列 `S`，無須修改合併邏輯。
 
 ### `ensemble-compose` 的行為
 
@@ -185,19 +220,23 @@ compose 既有的合併順序（base → include → custom，first-wins）與 `
 
 ## 7. Provenance 輸出（D4）
 
-每次 ensemble 報表開頭輸出一行：
+每次 ensemble 報表開頭輸出 lens 組成，三層皆列出：
 
 ```
-lens: built-in 17 + pack pai-lenses v1.2.0 (sha abc1234) → +4 added, 2 overridden (security, methodology)
+lens: 22 active = built-in 17 + pack pai-lenses v1.2.0 (abc1234) + user
+  added:       api-compat(pack), migration-safety(pack), team-style(user)
+  overridden:  security(pack), writing(user)
 ```
 
-未安裝 lens pack 時：
+三層皆缺席時：
 
 ```
-lens: built-in 17 (no lens pack installed)
+lens: 17 active = built-in only (no lens pack, no user lenses)
 ```
 
-`eval/` 的輸出同樣帶此行，使偵測率數字自帶量測條件。
+**每筆 added / overridden 均標註來源層**。這對除錯是必要的：當某條 lens 的行為不如預期，第一個要回答的問題就是「這條是誰定義的」——沒有來源標記，三層疊加會變成無法回溯的黑箱。
+
+`eval/` 的輸出同樣帶此區塊，使偵測率數字自帶量測條件。**user-level lens 會影響 eval 結果**，因此跑 eval 時這一行必須一併記錄，否則跨機器的偵測率數字不可比。
 
 ---
 
@@ -205,13 +244,16 @@ lens: built-in 17 (no lens pack installed)
 
 | 情境 | 處置 | 理由 |
 |---|---|---|
-| lens pack 未安裝 | 靜默使用 built-in | 預期內狀態，非錯誤 |
-| 已安裝但無該 profile 的 CSV | 靜默使用 built-in | lens pack 可只覆蓋部分 profile |
-| CSV 存在但解析失敗 | **警告** + 使用 built-in 繼續；provenance 標記 `pack: parse failed` | 使用者會誤以為新 lens 生效 |
-| `override=true` 但 key 不在 built-in | **警告** + 當純新增處理 | 幾乎必為 typo |
+| lens pack 未安裝（層 ②） | **靜默**略過該層 | 預期內狀態，非錯誤 |
+| `~/.claude/pai-lenses/` 不存在（層 ③） | **靜默**略過該層 | 多數使用者不會有自訂 lens |
+| 某層存在但缺該 profile 的 CSV | **靜默**略過該層 | 各層皆可只覆蓋部分 profile |
+| CSV 存在但解析失敗 | **警告** + 略過該層後繼續；provenance 標記 `<layer>: parse failed` | 使用者會誤以為新 lens 生效 |
+| `override=true` 但 key 不在當前累積集合 | **警告** + 當純新增處理 | 幾乎必為 typo |
 | 空 `key` 或 `focus` 的列 | 跳過（既有 parser 行為） | 與 harness 的 `customLenses` filter 對稱 |
 
 判準：**使用者是否會因為沉默而形成錯誤信念**。會，就必須發出警告。
+
+注意「靜默」與「警告」的分界不隨層級改變，只隨**該狀態是否為預期內**而定：層 ③ 不存在是預期內（靜默），層 ③ 存在但寫壞了不是（警告）。
 
 ---
 
@@ -220,9 +262,11 @@ lens: built-in 17 (no lens pack installed)
 | 對象 | 作法 |
 |---|---|
 | `bin/pai-parse-lens-csv` | 擴充既有 `test/pai-parse-lens-csv.bats`：`override` 欄位的 truthy／falsy／空值／非法值 |
-| 合併規則（§6） | 新增單元測試，覆蓋四種分支 + 警告產出；純函數，不觸及 I/O |
-| lens pack 定位 | 新增測試：未安裝／已安裝／多版本並存 |
-| provenance 行 | 斷言格式與計數正確（含未安裝時的變體） |
+| 折疊規則（§6） | 新增單元測試，覆蓋四種分支 × 警告產出；**含三層案例**：層 ③ override 層 ②、層 ③ 未聲明 override 而撞層 ② 的 key（應跳過並警告）。純函數，不觸及 I/O |
+| 來源定位 | 層 ②：未安裝／已安裝／多版本並存；層 ③：目錄不存在／存在但無該 profile |
+| provenance 區塊 | 斷言格式、計數、**來源層標記**正確（含三層全缺席的變體） |
+
+**測試輸入一律使用 fixture CSV**，不讀取真實 lens pack 或使用者的 `~/.claude/pai-lenses/` —— 後者會讓測試結果依賴執行機器的個人設定而 flaky。此點亦為 D7 判定 submodule 無 CI 依賴的根據。
 
 既有測試骨架（bats + node）沿用，不另起框架。
 
@@ -239,7 +283,9 @@ lens: built-in 17 (no lens pack installed)
 
 實作計畫的第一個 task 必須是驗證「能否穩定定位另一個已安裝 plugin 的檔案」。
 
-**若驗證失敗**，退回替代形狀：lens pack 改為使用者自行 clone 至約定路徑（如 `~/.claude/pai-lenses/`），skill 讀固定路徑。此時 D1 的 marketplace 版本 pin 失效，版本記錄改以 lens pack repo 內的 `VERSION` 檔 + git SHA 表達，D2–D6 不受影響。
+**此前提只影響層 ②。** 層 ③（user-level）路徑固定為 `~/.claude/pai-lenses/`，不需要任何 plugin 定位邏輯，因此不受本前提影響。
+
+**若驗證失敗**，退回替代形狀：lens pack 改為使用者自行 clone 至 `~/.claude/pai-lenses/`，與層 ③ **共用同一套讀取與折疊機制**（D8 補述）。此時 D1 的 marketplace 版本 pin 失效，版本記錄改以 lens pack repo 內的 `VERSION` 檔 + git SHA 表達；D2–D8 的語意皆不受影響，僅少一個來源層。
 
 ---
 
@@ -248,3 +294,5 @@ lens: built-in 17 (no lens pack installed)
 - **umbrella marketplace（`psychquant-claude-plugins`）的 vestigial `parallel-ai-agents` 副本清理** —— issue #24 的另一條 follow-up，屬獨立問題，不在本 spec。
 - **`disable` 語意（停用某條 built-in lens）** —— harness 雖已有 `disableLenses` 參數，但目前無實際需求驅動；`override` 成無害 focus 已可覆蓋多數情境。有具體案例再議。
 - **`references/builtin-lenses.csv` 的廢除** —— 保留為 `PROFILES` 的唯讀 catalog（`regen-builtin-lenses.sh` 產物），但檔頭須標明「可編輯的 lens 位於 lens pack，編輯本檔無效」。
+- **專案級 lens（`.claude/pai-lenses/`，第四層）** —— §6 的折疊形式已使增層只需延長來源序列，但目前無需求驅動。待有「不同專案要不同 lens」的具體案例再議。
+- **多個 lens pack 並存的優先序** —— 本設計假設單一 pack（§5）。
