@@ -11,6 +11,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.20.1] - 2026-07-31
+
+### Fixed
+
+- **`bin/codex-call` 吞掉 SSE `error` 事件的訊息 (#25)** — 後端在 HTTP 200 stream 內以 `{"type":"error","error":{...,"message":...}}` 回報時（實測觸發：`server_is_overloaded`），訊息提取鏈的三條路徑無一命中，全部塌成 fallback 字面值 `"Codex error"`，使 200-stream 內的失敗無法區分原因。抽出 `extractErrorMessage(_:)` 並補上 `json["error"]["message"]` 路徑（插在既有 top-level message 之後，不搶先既有行為）。HTTP 4xx 類（實測 model 400 / auth 401 / rate-limit 429）走既有 HTTP 錯誤路徑、本來就正確報告，不受影響。
+- **`case "error", "response.failed"` 缺 first-event latch (#25 verify)** — `didReceive` 內的 `return` 只離開當次 callback、不取消 task，後續 chunk 仍會重入該 case 並**覆寫** `streamError`；跨 TCP chunk 時勝出的是最後一個事件。若尾隨一則 `error: null` 的 `response.failed`，好訊息會被覆寫回 `"Codex error"`，且隨網路分塊非決定性。加 `if streamError == nil` latch，與同檔 `didCompleteWithError` 既有寫法一致。
+- **新 bats 檔在 CI（ubuntu-latest）會失敗 (#25 verify)** — `codex-call` 是 `#!/usr/bin/swift` script（macOS-only），而 CI 用 `bats test/` glob 整個目錄。`setup()` 加 macOS + CLT swift guard；否則 4/5 紅燈，且「無效 JSON → 非零 exit」那則會因 126≠0 以錯誤理由通過。
+
+### Added
+
+- **`--selftest-error-extract <json>` hidden flag** — 餵一則 SSE 事件 payload 給 `extractErrorMessage` 並印出結果，不發 HTTP、不列於 `--help`。存在理由：`CODEX_URL` 是 hardcoded 常數、無注入點，沒有這個 hook 該提取邏輯結構上無法自動化回歸（這也是 #25 存活至今的原因）。
+- **`test/codex-call-error-extract.bats`** — 5 case，含實測 payload 作 regression 錨點與「新增路徑不得搶先既有路徑」的順序保護。
+
 ## [2.18.0] - 2026-07-02
 
 ### Added

@@ -274,8 +274,17 @@ final class StreamCollector: NSObject, URLSessionDataDelegate {
         case "response.output_text.delta":
             if let delta = json["delta"] as? String { accumulated += delta }
         case "error", "response.failed":
-            streamError = NSError(domain: "codex-call", code: -1,
-                                   userInfo: [NSLocalizedDescriptionKey: extractErrorMessage(json)])
+            // Latch: first terminal event wins. The `return` in didReceive only exits THAT
+            // callback — it does not cancel the task (invalidateAndCancel runs after
+            // done.wait). So later chunks keep arriving and re-entering this case; without
+            // the latch the LAST event wins, and a trailing `response.failed` carrying
+            // `error: null` would overwrite a good message back to the "Codex error"
+            // fallback — non-deterministically, depending on TCP chunking (#25 verify).
+            // Mirrors the existing latch at didCompleteWithError (`streamError == nil`).
+            if streamError == nil {
+                streamError = NSError(domain: "codex-call", code: -1,
+                                       userInfo: [NSLocalizedDescriptionKey: extractErrorMessage(json)])
+            }
         default:
             break
         }

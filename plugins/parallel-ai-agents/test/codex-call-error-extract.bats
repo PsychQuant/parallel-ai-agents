@@ -11,6 +11,14 @@
 
 setup() {
   BIN="${BATS_TEST_DIRNAME}/../bin/codex-call"
+  # codex-call 的 shebang 是 `#!/usr/bin/swift`（釘 Xcode CLT swift，見 plugin CLAUDE.md），
+  # 所以這支測試是 macOS-only。CI 的 shellcheck-bats job 跑在 ubuntu-latest 且用
+  # `bats test/` glob 整個目錄 —— 沒有這道 guard，本檔在 CI 上會以 exit 126
+  # (bad interpreter) 失敗，且下方「無效 JSON → 非零 exit」那則會因為 126≠0 而
+  # 以錯誤的理由通過（比紅燈更糟：永遠綠、什麼都沒驗到）。
+  # 本 repo 既有的 7 支測試全部可攜，這是第一支平台相依的。
+  [ "$(uname)" = "Darwin" ] && [ -x /usr/bin/swift ] \
+    || skip "needs macOS + Xcode CLT swift (codex-call is a #!/usr/bin/swift script)"
 }
 
 @test "#25 regression：頂層 error 物件內的 message 被正確提取（實測 payload）" {
