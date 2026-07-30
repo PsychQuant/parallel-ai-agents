@@ -192,6 +192,27 @@ func refreshIfNeeded(_ auth: inout [String: Any]) throws {
     log("token refreshed")
 }
 
+// MARK: - SSE error message extraction
+
+/// Pull the human-readable message out of an SSE `error` / `response.failed` event.
+///
+/// The backend puts it in different places depending on the event shape:
+///   `{"type":"error","error":{"code":…,"message":…}}`                  → json["error"]["message"]
+///   `{"type":"response.failed","response":{"error":{"message":…}}}`    → json["response"]["error"]["message"]
+///   (defensive: a hypothetical top-level form)                        → json["message"]
+///
+/// #25 — the `json["error"]["message"]` path was missing, so a real backend error
+/// like `server_is_overloaded` matched none of the paths and collapsed to the
+/// "Codex error" fallback. Every HTTP-200-stream failure then looked identical,
+/// making "retry now vs stop" undecidable. Order matters: the top-level path stays
+/// first so the new one cannot shadow it.
+func extractErrorMessage(_ json: [String: Any]) -> String {
+    return (json["message"] as? String)
+        ?? ((json["error"] as? [String: Any])?["message"] as? String)
+        ?? ((json["response"] as? [String: Any])?["error"] as? [String: Any])?["message"] as? String
+        ?? "Codex error"
+}
+
 // MARK: - SSE streaming
 
 final class StreamCollector: NSObject, URLSessionDataDelegate {
@@ -253,11 +274,8 @@ final class StreamCollector: NSObject, URLSessionDataDelegate {
         case "response.output_text.delta":
             if let delta = json["delta"] as? String { accumulated += delta }
         case "error", "response.failed":
-            let msg = (json["message"] as? String)
-                ?? ((json["response"] as? [String: Any])?["error"] as? [String: Any])?["message"] as? String
-                ?? "Codex error"
             streamError = NSError(domain: "codex-call", code: -1,
-                                   userInfo: [NSLocalizedDescriptionKey: msg])
+                                   userInfo: [NSLocalizedDescriptionKey: extractErrorMessage(json)])
         default:
             break
         }
@@ -349,6 +367,7 @@ struct Args {
     var instructions: String = "You are a careful, rigorous reviewer. Respond in the user's language."
     var promptFile: String?
     var prompt: String?
+    var selftestErrorExtract: String?  // hidden test hook (#25); see --selftest-error-extract
 }
 
 func parseArgs() -> Args {
@@ -368,6 +387,11 @@ func parseArgs() -> Args {
         case "--max-time": a.maxTime = Int(next()) ?? a.maxTime
         case "--instructions": a.instructions = next()
         case "--prompt-file": a.promptFile = next()
+        // Hidden test hook (#25) — deliberately absent from --help. Feeds one SSE
+        // event payload through extractErrorMessage and prints the result; sends no
+        // HTTP. Exists because CODEX_URL is a hardcoded constant with no injection
+        // point, so the extraction chain is otherwise untestable from bats.
+        case "--selftest-error-extract": a.selftestErrorExtract = next()
         case "--help", "-h":
             print("""
             codex-call — direct HTTP wrapper for chatgpt.com/backend-api
@@ -394,6 +418,17 @@ func parseArgs() -> Args {
 // MARK: - Main
 
 let a = parseArgs()
+
+// Hidden test hook (#25) — must precede the --output guard: this path sends no
+// request and writes no file, so requiring --output would be meaningless.
+if let raw = a.selftestErrorExtract {
+    guard let data = raw.data(using: .utf8),
+          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    else { die("--selftest-error-extract: invalid JSON") }
+    print(extractErrorMessage(json))
+    exit(0)
+}
+
 guard let output = a.output else { die("--output is required") }
 
 let prompt: String
