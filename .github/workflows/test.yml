@@ -57,11 +57,20 @@ jobs:
       # instead of silently reverting to zero coverage. Then assert on the run's OUTPUT,
       # not on the guard's inputs: `bats` exits 0 when every test SKIPS, which is exactly
       # the vacuous green this job exists to prevent (#25 verify).
-      - name: bats (codex-call, macOS-only) — fail if anything skipped
+      - name: bats (codex-call, macOS-only) — fail on failure OR on skip
+        # `shell: bash` is load-bearing: Actions' DEFAULT shell is `bash -e {0}`
+        # — errexit WITHOUT pipefail — so `bats | tee` would report tee's status
+        # (always 0) and a failing test would exit the step green. Naming the shell
+        # explicitly gets `-eo pipefail`. Belt-and-braces: also assert no `not ok`,
+        # since `grep -q '^ok'` alone is satisfied by any single passing sibling.
+        shell: bash
         run: |
+          set -o pipefail
           bats --formatter tap test/codex-call-*.bats | tee /tmp/bats.tap
+          if grep -q '^not ok' /tmp/bats.tap; then
+            echo "::error::a codex-call test failed"; exit 1
+          fi
           if grep -q '# skip' /tmp/bats.tap; then
-            echo "::error::tests skipped on the macOS job — the regression anchor is vacuous"
-            exit 1
+            echo "::error::tests skipped on the macOS job — the regression anchor is vacuous"; exit 1
           fi
           grep -q '^ok' /tmp/bats.tap || { echo "::error::no tests ran"; exit 1; }

@@ -194,6 +194,9 @@ func refreshIfNeeded(_ auth: inout [String: Any]) throws {
 
 // MARK: - SSE error message extraction
 
+/// The information-free fallback, named rather than inlined so #28 can key off it.
+let CODEX_FALLBACK_MESSAGE = "Codex error"
+
 /// Pull the human-readable message out of an SSE `error` / `response.failed` event.
 ///
 /// The backend puts it in different places depending on the event shape:
@@ -212,10 +215,6 @@ func refreshIfNeeded(_ auth: inout [String: Any]) throws {
 /// predicate rather than a presence check, which is tracked with the rest of the SSE
 /// terminal-event semantics in #28. Deliberately NOT fixed here: #25 is scoped to the
 /// missing path, which has a reproducible payload.
-
-/// The information-free fallback, named rather than inlined so #28 can key off it.
-let CODEX_FALLBACK_MESSAGE = "Codex error"
-
 func extractErrorMessage(_ json: [String: Any]) -> String {
     return (json["message"] as? String)
         ?? ((json["error"] as? [String: Any])?["message"] as? String)
@@ -454,7 +453,6 @@ if let raw = a.selftestErrorExtract {
     print(extractErrorMessage(json))
     exit(0)
 }
-
 
 guard let output = a.output else { die("--output is required") }
 

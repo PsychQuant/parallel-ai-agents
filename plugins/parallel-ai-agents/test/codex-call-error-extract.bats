@@ -41,7 +41,7 @@ setup() {
   [[ "$output" != *"nested msg"* ]]
 }
 
-@test "三條路徑皆無 message → fallback 到 Codex error" {
+@test "所有路徑皆無 message → fallback 到 Codex error" {
   run "$BIN" --selftest-error-extract '{"type":"error","error":{"code":"some_code_without_message"}}'
   [ "$status" -eq 0 ]
   [[ "$output" == *"Codex error"* ]]

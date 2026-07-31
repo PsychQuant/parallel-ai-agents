@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **`bin/codex-call` 吞掉 SSE `error` 事件的訊息 (#25)** — 後端在 HTTP 200 stream 內以 `{"type":"error","error":{...,"message":...}}` 回報時（實測觸發：`server_is_overloaded`），訊息提取鏈的三條路徑無一命中，全部塌成 fallback 字面值 `"Codex error"`，使該類失敗無法區分原因。抽出 `extractErrorMessage(_:)` 並補上 `json["error"]["message"]` 路徑（插在既有 top-level message 之後，不搶先既有行為）。HTTP 4xx 類（實測 model 400 / auth 401 / rate-limit 429）走既有 HTTP 錯誤路徑、本來就正確報告，不受影響。
+- **`bin/codex-call` 吞掉 SSE `error` 事件的訊息 (#25)** — 後端在 HTTP 200 stream 內以 `{"type":"error","error":{...,"message":...}}` 回報時（實測觸發：`server_is_overloaded`），原有的兩條提取路徑皆不匹配，塌成 fallback 字面值 `"Codex error"`，使該類失敗無法區分原因。抽出 `extractErrorMessage(_:)` 並補上 `json["error"]["message"]` 路徑（插在既有 top-level message 之後，不搶先既有行為）。HTTP 4xx 類（實測 model 400 / auth 401 / rate-limit 429）走既有 HTTP 錯誤路徑、本來就正確報告，不受影響。
 
 ### Added
 
@@ -24,7 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Known limitations
 
-- 本版**只修**「提取路徑缺漏」這個有可重現 payload 的症狀。同一子系統的分幀與終端事件語意問題 —— UTF-8 切在 byte 邊界導致整個 chunk 被丟棄、殘留 buffer 從不 flush、多個終端事件時的勝出政策、CRLF 分幀 —— 追蹤於 **#28**，該處會先蒐集後端 teardown 的真實 trace 再定政策。
+- **經 ensemble 使用時，本修正對使用者尚不可見（#27）** — `workflows/ensemble-workflow.js` 的 codex lens prompt 以**硬編碼字串**回報失敗（`"codex-call exceeded its lifetime bound or errored…"`），不帶 `codex-call` 的 stderr。因此本版真正改善的是**直接呼叫 `codex-call`** 的情境；跨模型 leg 的失敗原因要在 ensemble 報表上可讀，需 #27 一併落地。此處明列，避免上方描述被讀成端到端已修。
+- 同一子系統的分幀與終端事件語意問題 —— UTF-8 切在 byte 邊界導致整個 chunk 被丟棄、殘留 buffer 從不 flush、多個終端事件時的勝出政策、CRLF 分幀 —— 追蹤於 **#28**，該處會先蒐集後端 teardown 的真實 trace 再定政策。
+- `extractErrorMessage` 的每條路徑接受任意 String（含 `""`），故空的 top-level `message` 會遮蔽真實的巢狀值；修法需要「資訊量謂詞」而非「存在性檢查」，一併歸 #28。
+
 
 ## [2.20.0] - 2026-07-18
 
