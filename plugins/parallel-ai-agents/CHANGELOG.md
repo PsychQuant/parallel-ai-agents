@@ -15,14 +15,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **`bin/codex-call` 吞掉 SSE `error` 事件的訊息 (#25)** — 後端在 HTTP 200 stream 內以 `{"type":"error","error":{...,"message":...}}` 回報時（實測觸發：`server_is_overloaded`），訊息提取鏈的三條路徑無一命中，全部塌成 fallback 字面值 `"Codex error"`，使 200-stream 內的失敗無法區分原因。抽出 `extractErrorMessage(_:)` 並補上 `json["error"]["message"]` 路徑（插在既有 top-level message 之後，不搶先既有行為）。HTTP 4xx 類（實測 model 400 / auth 401 / rate-limit 429）走既有 HTTP 錯誤路徑、本來就正確報告，不受影響。
-- **`case "error", "response.failed"` 缺 first-event latch (#25 verify)** — `didReceive` 內的 `return` 只離開當次 callback、不取消 task，後續 chunk 仍會重入該 case 並**覆寫** `streamError`；跨 TCP chunk 時勝出的是最後一個事件。若尾隨一則 `error: null` 的 `response.failed`，好訊息會被覆寫回 `"Codex error"`，且隨網路分塊非決定性。加 `if streamError == nil` latch，與同檔 `didCompleteWithError` 既有寫法一致。
-- **新 bats 檔在 CI（ubuntu-latest）會失敗 (#25 verify)** — `codex-call` 是 `#!/usr/bin/swift` script（macOS-only），而 CI 用 `bats test/` glob 整個目錄。`setup()` 加 macOS + CLT swift guard；否則 4/5 紅燈，且「無效 JSON → 非零 exit」那則會因 126≠0 以錯誤理由通過。
+- **`bin/codex-call` 吞掉 SSE `error` 事件的訊息 (#25)** — 後端在 HTTP 200 stream 內以 `{"type":"error","error":{...,"message":...}}` 回報時（實測觸發：`server_is_overloaded`），訊息提取鏈三條路徑無一命中，全部塌成 fallback 字面值 `"Codex error"`。抽出 `extractErrorMessage(_:)` 並補上 `json["error"]["message"]` 路徑（插在既有 top-level message 之後）。HTTP 4xx 類（實測 model 400 / auth 401 / rate-limit 429）走既有 HTTP 錯誤路徑、本來就正確報告，不受影響。
+- **終端事件的勝出政策：arrival-order → informativeness (#25 R2)** — 首版修法用 `if streamError == nil`（first-wins）latch，但實測四種 bare/rich × same-chunk/split 交錯後證明它**只是把失敗搬家**：無 message 的終端事件若先到，會釘死 fallback 並丟棄後到的真實訊息。改為只在「手上是 fallback 且新來的不是」時升級，且永不讓後到事件降級已持有的訊息。
+- **buffer drain：移除 while-loop 內的 early return (#25 R2)** — 該 `return` 在**單次** callback 內中止 drain loop，使已在 buffer 內的 sibling 終端事件完全不被處理。而終端錯誤正是 backend flush+close 的時刻，`error` + `response.failed` 同 segment 抵達的機率不低於分開。與上一項是**複合缺陷**：只修其一皆不足以覆蓋四種交錯。
+- **新 bats 檔在 CI（ubuntu-latest）會失敗 (#25 R2)** — `codex-call` 是 macOS-only Swift script，而 CI 用 `bats test/` glob 整個目錄。`setup()` 加 Darwin + CLT swift guard，並**新增 `macos-swift-bats` job** —— 只加 guard 會把紅燈換成「永遠 skip」的 vacuous green，regression 錨點等於零覆蓋。
 
 ### Added
 
-- **`--selftest-error-extract <json>` hidden flag** — 餵一則 SSE 事件 payload 給 `extractErrorMessage` 並印出結果，不發 HTTP、不列於 `--help`。存在理由：`CODEX_URL` 是 hardcoded 常數、無注入點，沒有這個 hook 該提取邏輯結構上無法自動化回歸（這也是 #25 存活至今的原因）。
-- **`test/codex-call-error-extract.bats`** — 5 case，含實測 payload 作 regression 錨點與「新增路徑不得搶先既有路徑」的順序保護。
+- **`--selftest-error-extract <json>` hidden flag** — 餵一則 SSE 事件 payload 給 `extractErrorMessage` 並印出結果，不發 HTTP、不列於 `--help`。
+- **`--selftest-process-events <json-array>` hidden flag (#25 R2)** — 吃一個 chunk 字串陣列（每元素 = 一次 `didReceive` 投遞），驅動真實 `StreamCollector.feed` 並印出最終 `streamError`。讓 **chunk 邊界成為可表達的測試輸入** —— 爭議所在的終端事件語意正是單 payload 測試在構造上看不見的部分。
+- **`test/codex-call-stream-latch.bats`** — 9 case，涵蓋 bare/rich × same-chunk/split 四交錯矩陣 + 邊界（僅 bare / 僅 rich / 雙 rich / 無終端事件 / 非陣列輸入）。
+- **`test/codex-call-error-extract.bats`** — 5 case，含實測 payload 作 regression 錨點與「新增路徑不得搶先」的順序保護。
+
+## [2.20.0] - 2026-07-18
+
+### Added
+
+- **first-party skills 深度整合 codex-pro governance (#23)** — 五個 ensemble-* skill 的 codex leg 不再於 pai 樹內 pin model/effort，改由 codex-pro 的 EXTERNAL-CONSUMER CONTRACT（`references/profile-contract.md` + `references/defaults.json`，0.7.0+）解析；解析流程的 canonical 落在 `references/codex-governance.md`，skills 引用該檔而不內嵌分歧複本。
+
+## [2.19.0] - 2026-07-18
+
+### Added
+
+- **`codexModel` / `codexEffort` engine args (#22)** — `ensemble-workflow.js` 新增這兩個 caller-governed args，讓跨模型 leg 的 model/effort 由呼叫端治理契約決定，而非引擎內部寫死。消費端（如 issue-driven-development 的 idd-verify）據此把 codex-pro 的治理值 thread 進來；引擎若靜默忽略這兩個 arg，canonical tier 的治理鏈會斷（故 consumer 端以最低版本閘門把關）。
 
 ## [2.18.0] - 2026-07-02
 

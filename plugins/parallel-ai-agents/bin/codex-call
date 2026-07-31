@@ -206,11 +206,15 @@ func refreshIfNeeded(_ auth: inout [String: Any]) throws {
 /// "Codex error" fallback. Every HTTP-200-stream failure then looked identical,
 /// making "retry now vs stop" undecidable. Order matters: the top-level path stays
 /// first so the new one cannot shadow it.
+/// The information-free fallback. Named because the terminal-event policy in
+/// StreamCollector needs to recognize it in order to upgrade past it (#25 R2).
+let CODEX_FALLBACK_MESSAGE = "Codex error"
+
 func extractErrorMessage(_ json: [String: Any]) -> String {
     return (json["message"] as? String)
         ?? ((json["error"] as? [String: Any])?["message"] as? String)
         ?? ((json["response"] as? [String: Any])?["error"] as? [String: Any])?["message"] as? String
-        ?? "Codex error"
+        ?? CODEX_FALLBACK_MESSAGE
 }
 
 // MARK: - SSE streaming
@@ -220,6 +224,9 @@ final class StreamCollector: NSObject, URLSessionDataDelegate {
     var buffer = ""
     var statusCode: Int = 0
     var streamError: Error?
+    /// True when `streamError` currently holds the information-free fallback, so a
+    /// later terminal event carrying a real message is allowed to upgrade it (#25 R2).
+    var streamErrorIsFallback = false
     let done = DispatchSemaphore(value: 0)
     var firstBytes: Data?
 
@@ -237,12 +244,23 @@ final class StreamCollector: NSObject, URLSessionDataDelegate {
             return
         }
         guard let chunk = String(data: data, encoding: .utf8) else { return }
+        feed(chunk)
+    }
+
+    /// Drain one chunk's worth of SSE events. Split out of `didReceive` so chunk
+    /// boundaries are directly expressible as test input — no URLSession, no socket,
+    /// no CODEX_URL injection point needed (see --selftest-process-events).
+    func feed(_ chunk: String) {
         buffer += chunk
         while let range = buffer.range(of: "\n\n") {
             let event = String(buffer[buffer.startIndex..<range.lowerBound])
             buffer.removeSubrange(buffer.startIndex..<range.upperBound)
             processEvent(event)
-            if streamError != nil { return }
+            // NO early return on streamError (#25 R2). Bailing here aborted the drain
+            // loop, so sibling events already sitting in `buffer` were never processed —
+            // and a terminal error is exactly when the backend flushes and closes, so
+            // `error` + `response.failed` landing in ONE segment is at least as likely
+            // as being split. The stream is torn down regardless; draining costs nothing.
         }
     }
 
@@ -274,16 +292,21 @@ final class StreamCollector: NSObject, URLSessionDataDelegate {
         case "response.output_text.delta":
             if let delta = json["delta"] as? String { accumulated += delta }
         case "error", "response.failed":
-            // Latch: first terminal event wins. The `return` in didReceive only exits THAT
-            // callback — it does not cancel the task (invalidateAndCancel runs after
-            // done.wait). So later chunks keep arriving and re-entering this case; without
-            // the latch the LAST event wins, and a trailing `response.failed` carrying
-            // `error: null` would overwrite a good message back to the "Codex error"
-            // fallback — non-deterministically, depending on TCP chunking (#25 verify).
-            // Mirrors the existing latch at didCompleteWithError (`streamError == nil`).
-            if streamError == nil {
+            // Informativeness policy, NOT arrival-order (#25 R2).
+            //
+            // A backend teardown can emit more than one terminal event, and a plain
+            // "first wins" latch bets on an ordering nobody has evidence for: a
+            // message-less event (e.g. {"error":{"code":"x"}}) arriving first would pin
+            // the fallback and discard a later event that does carry a message. Measured
+            // across the four bare/rich × same-chunk/split interleavings, first-wins does
+            // not remove the failure — it relocates it. So: take a message when we have
+            // none, and upgrade the fallback when a real message shows up, but never let
+            // a later event downgrade an informative message we already hold.
+            let msg = extractErrorMessage(json)
+            if streamError == nil || (streamErrorIsFallback && msg != CODEX_FALLBACK_MESSAGE) {
                 streamError = NSError(domain: "codex-call", code: -1,
-                                       userInfo: [NSLocalizedDescriptionKey: extractErrorMessage(json)])
+                                       userInfo: [NSLocalizedDescriptionKey: msg])
+                streamErrorIsFallback = (msg == CODEX_FALLBACK_MESSAGE)
             }
         default:
             break
@@ -376,7 +399,8 @@ struct Args {
     var instructions: String = "You are a careful, rigorous reviewer. Respond in the user's language."
     var promptFile: String?
     var prompt: String?
-    var selftestErrorExtract: String?  // hidden test hook (#25); see --selftest-error-extract
+    var selftestErrorExtract: String?   // hidden test hook (#25); see --selftest-error-extract
+    var selftestProcessEvents: String?  // hidden test hook (#25 R2); see --selftest-process-events
 }
 
 func parseArgs() -> Args {
@@ -401,6 +425,13 @@ func parseArgs() -> Args {
         // HTTP. Exists because CODEX_URL is a hardcoded constant with no injection
         // point, so the extraction chain is otherwise untestable from bats.
         case "--selftest-error-extract": a.selftestErrorExtract = next()
+        // Hidden test hook (#25 R2) — also absent from --help. Takes a JSON array of
+        // chunk strings (each = one didReceive delivery, containing 0..N complete SSE
+        // events), feeds them through the real StreamCollector.feed, and prints the
+        // resulting streamError. Exists because the terminal-event policy is the
+        // *contested* semantics here, and single-payload tests cannot see multi-event
+        // interleavings by construction.
+        case "--selftest-process-events": a.selftestProcessEvents = next()
         case "--help", "-h":
             print("""
             codex-call — direct HTTP wrapper for chatgpt.com/backend-api
@@ -435,6 +466,20 @@ if let raw = a.selftestErrorExtract {
           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     else { die("--selftest-error-extract: invalid JSON") }
     print(extractErrorMessage(json))
+    exit(0)
+}
+
+// Hidden test hook (#25 R2) — same placement rationale as above: no request, no file.
+// Drives the real StreamCollector through a caller-specified chunk sequence so that
+// chunk boundaries (which decide the outcome) are test input rather than luck.
+if let raw = a.selftestProcessEvents {
+    guard let data = raw.data(using: .utf8),
+          let chunks = try? JSONSerialization.jsonObject(with: data) as? [String]
+    else { die("--selftest-process-events: expected a JSON array of chunk strings") }
+    let collector = StreamCollector()
+    collector.statusCode = 200
+    for chunk in chunks { collector.feed(chunk) }
+    print((collector.streamError as NSError?)?.localizedDescription ?? "(no error)")
     exit(0)
 }
 

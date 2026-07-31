@@ -33,3 +33,27 @@ jobs:
 
       - name: node tests
         run: for t in test/*.test.mjs; do echo "$t"; node "$t"; done
+
+  # codex-call 是 `#!/usr/bin/swift` script（釘 Xcode CLT swift，見 plugin CLAUDE.md），
+  # 其 bats 測試在 setup() 以 Darwin + CLT swift guard 自我 skip。沒有這個 job，那些
+  # 測試會在 ubuntu job 上被 skip 而**永遠不執行** —— CI 全綠但 #25 的 regression 錨點
+  # 零覆蓋（green-but-vacuous，#25 R2 verify HIGH）。macOS runner 內建 Xcode，故 guard
+  # 會通過、測試真正跑到。
+  macos-swift-bats:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: plugins/parallel-ai-agents
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bats
+        run: brew install bats-core
+
+      - name: Assert swift toolchain is present (guard must not silently skip here)
+        run: |
+          test -x /usr/bin/swift || { echo "::error::/usr/bin/swift missing on macOS runner — the codex-call bats guard would skip, defeating this job's purpose"; exit 1; }
+          swift --version
+
+      - name: bats (codex-call, macOS-only)
+        run: bats test/codex-call-error-extract.bats test/codex-call-stream-latch.bats
