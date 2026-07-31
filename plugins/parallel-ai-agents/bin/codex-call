@@ -216,10 +216,34 @@ let CODEX_FALLBACK_MESSAGE = "Codex error"
 /// terminal-event semantics in #28. Deliberately NOT fixed here: #25 is scoped to the
 /// missing path, which has a reproducible payload.
 func extractErrorMessage(_ json: [String: Any]) -> String {
-    return (json["message"] as? String)
+    let raw = (json["message"] as? String)
         ?? ((json["error"] as? [String: Any])?["message"] as? String)
         ?? ((json["response"] as? [String: Any])?["error"] as? [String: Any])?["message"] as? String
         ?? CODEX_FALLBACK_MESSAGE
+    return sanitizeBackendText(raw)
+}
+
+/// Cap and de-fang backend-controlled text before it becomes an error message.
+///
+/// Why this ships with #25 instead of joining #28's deferral pile: before this change the
+/// shape the backend actually emits (`error.message`) matched none of the paths and
+/// collapsed to the constant — the sink was dead in practice. Adding the path is what
+/// makes it live, so the cap belongs to the same change. The two sibling external-text
+/// sites already truncate identically (`body.prefix(500)`); this makes the third
+/// consistent instead of leaving the newest one as the only uncapped route.
+///
+/// Control characters are stripped because this string is written straight to a TTY and
+/// also reaches an agent's context through the Bash tool: CSI/OSC sequences could
+/// overpaint the real failure, and untrusted text should not arrive holding
+/// terminal-control power. Newline and tab survive — they carry no such power.
+func sanitizeBackendText(_ raw: String) -> String {
+    let stripped = String(String.UnicodeScalarView(raw.unicodeScalars.filter { s in
+        if s.value == 0x0A || s.value == 0x09 { return true }          // keep \n, \t
+        if s.value < 0x20 || s.value == 0x7F { return false }           // C0 + DEL
+        if s.value >= 0x80 && s.value <= 0x9F { return false }          // C1
+        return true
+    }))
+    return stripped.count > 500 ? String(stripped.prefix(500)) + "…(truncated)" : stripped
 }
 
 // MARK: - SSE streaming

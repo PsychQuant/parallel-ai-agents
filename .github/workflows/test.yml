@@ -66,11 +66,21 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          bats --formatter tap test/codex-call-*.bats | tee /tmp/bats.tap
-          if grep -q '^not ok' /tmp/bats.tap; then
+          TAP="${RUNNER_TEMP:-/tmp}/codex-call-bats.tap"
+          # Capture bats' status instead of letting errexit abort here: with pipefail
+          # active a failing run would kill the step before any check below could emit
+          # its `::error::` line, so the three checks would be decorative and only the
+          # generic "Process completed with exit code 1" would surface.
+          rc=0
+          bats --formatter tap test/codex-call-*.bats | tee "$TAP" || rc=$?
+          if grep -q '^not ok' "$TAP"; then
             echo "::error::a codex-call test failed"; exit 1
           fi
-          if grep -q '# skip' /tmp/bats.tap; then
+          # -i because the TAP directive's casing is bats' choice and bats is unpinned
+          # (`brew install bats-core`); a casing change must not silently reopen the
+          # vacuous-green hole this check exists to close.
+          if grep -qi '# skip' "$TAP"; then
             echo "::error::tests skipped on the macOS job — the regression anchor is vacuous"; exit 1
           fi
-          grep -q '^ok' /tmp/bats.tap || { echo "::error::no tests ran"; exit 1; }
+          grep -q '^ok' "$TAP" || { echo "::error::no tests ran (empty glob or bats bail-out)"; exit 1; }
+          exit "$rc"
