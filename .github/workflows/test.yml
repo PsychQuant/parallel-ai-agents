@@ -50,10 +50,18 @@ jobs:
       - name: Install bats
         run: brew install bats-core
 
-      - name: Assert swift toolchain is present (guard must not silently skip here)
-        run: |
-          test -x /usr/bin/swift || { echo "::error::/usr/bin/swift missing on macOS runner — the codex-call bats guard would skip, defeating this job's purpose"; exit 1; }
-          swift --version
+      - name: Assert swift toolchain is usable (the real gate — a present shim is not enough)
+        run: swift --version
 
-      - name: bats (codex-call, macOS-only)
-        run: bats test/codex-call-error-extract.bats test/codex-call-stream-latch.bats
+      # Glob rather than an explicit list, so a future macOS-only bats file is picked up
+      # instead of silently reverting to zero coverage. Then assert on the run's OUTPUT,
+      # not on the guard's inputs: `bats` exits 0 when every test SKIPS, which is exactly
+      # the vacuous green this job exists to prevent (#25 verify).
+      - name: bats (codex-call, macOS-only) — fail if anything skipped
+        run: |
+          bats --formatter tap test/codex-call-*.bats | tee /tmp/bats.tap
+          if grep -q '# skip' /tmp/bats.tap; then
+            echo "::error::tests skipped on the macOS job — the regression anchor is vacuous"
+            exit 1
+          fi
+          grep -q '^ok' /tmp/bats.tap || { echo "::error::no tests ran"; exit 1; }

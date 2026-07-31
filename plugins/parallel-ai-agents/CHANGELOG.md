@@ -15,17 +15,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **`bin/codex-call` 吞掉 SSE `error` 事件的訊息 (#25)** — 後端在 HTTP 200 stream 內以 `{"type":"error","error":{...,"message":...}}` 回報時（實測觸發：`server_is_overloaded`），訊息提取鏈三條路徑無一命中，全部塌成 fallback 字面值 `"Codex error"`。抽出 `extractErrorMessage(_:)` 並補上 `json["error"]["message"]` 路徑（插在既有 top-level message 之後）。HTTP 4xx 類（實測 model 400 / auth 401 / rate-limit 429）走既有 HTTP 錯誤路徑、本來就正確報告，不受影響。
-- **終端事件的勝出政策：arrival-order → informativeness (#25 R2)** — 首版修法用 `if streamError == nil`（first-wins）latch，但實測四種 bare/rich × same-chunk/split 交錯後證明它**只是把失敗搬家**：無 message 的終端事件若先到，會釘死 fallback 並丟棄後到的真實訊息。改為只在「手上是 fallback 且新來的不是」時升級，且永不讓後到事件降級已持有的訊息。
-- **buffer drain：移除 while-loop 內的 early return (#25 R2)** — 該 `return` 在**單次** callback 內中止 drain loop，使已在 buffer 內的 sibling 終端事件完全不被處理。而終端錯誤正是 backend flush+close 的時刻，`error` + `response.failed` 同 segment 抵達的機率不低於分開。與上一項是**複合缺陷**：只修其一皆不足以覆蓋四種交錯。
-- **新 bats 檔在 CI（ubuntu-latest）會失敗 (#25 R2)** — `codex-call` 是 macOS-only Swift script，而 CI 用 `bats test/` glob 整個目錄。`setup()` 加 Darwin + CLT swift guard，並**新增 `macos-swift-bats` job** —— 只加 guard 會把紅燈換成「永遠 skip」的 vacuous green，regression 錨點等於零覆蓋。
+- **`bin/codex-call` 吞掉 SSE `error` 事件的訊息 (#25)** — 後端在 HTTP 200 stream 內以 `{"type":"error","error":{...,"message":...}}` 回報時（實測觸發：`server_is_overloaded`），訊息提取鏈的三條路徑無一命中，全部塌成 fallback 字面值 `"Codex error"`，使該類失敗無法區分原因。抽出 `extractErrorMessage(_:)` 並補上 `json["error"]["message"]` 路徑（插在既有 top-level message 之後，不搶先既有行為）。HTTP 4xx 類（實測 model 400 / auth 401 / rate-limit 429）走既有 HTTP 錯誤路徑、本來就正確報告，不受影響。
 
 ### Added
 
-- **`--selftest-error-extract <json>` hidden flag** — 餵一則 SSE 事件 payload 給 `extractErrorMessage` 並印出結果，不發 HTTP、不列於 `--help`。
-- **`--selftest-process-events <json-array>` hidden flag (#25 R2)** — 吃一個 chunk 字串陣列（每元素 = 一次 `didReceive` 投遞），驅動真實 `StreamCollector.feed` 並印出最終 `streamError`。讓 **chunk 邊界成為可表達的測試輸入** —— 爭議所在的終端事件語意正是單 payload 測試在構造上看不見的部分。
-- **`test/codex-call-stream-latch.bats`** — 9 case，涵蓋 bare/rich × same-chunk/split 四交錯矩陣 + 邊界（僅 bare / 僅 rich / 雙 rich / 無終端事件 / 非陣列輸入）。
-- **`test/codex-call-error-extract.bats`** — 5 case，含實測 payload 作 regression 錨點與「新增路徑不得搶先」的順序保護。
+- **`--selftest-error-extract <json>` hidden flag** — 餵一則 SSE 事件 payload 給 `extractErrorMessage` 並印出結果，不發 HTTP、不列於 `--help`。存在理由：`CODEX_URL` 是 hardcoded 常數、無注入點，沒有這個 hook 該提取邏輯結構上無法自動化回歸（這也是本 bug 存活至今的原因）。
+- **`test/codex-call-error-extract.bats`** — 5 case，含實測 payload 作 regression 錨點與「新增路徑不得搶先既有路徑」的順序保護。**macOS-only**（SUT 是 `#!/usr/bin/swift` script），`setup()` 以 Darwin + CLT swift guard 自我 skip；CI 另有 `macos-swift-bats` job 確保它真的被執行，而非在 ubuntu job 靜默 skip。
+
+### Known limitations
+
+- 本版**只修**「提取路徑缺漏」這個有可重現 payload 的症狀。同一子系統的分幀與終端事件語意問題 —— UTF-8 切在 byte 邊界導致整個 chunk 被丟棄、殘留 buffer 從不 flush、多個終端事件時的勝出政策、CRLF 分幀 —— 追蹤於 **#28**，該處會先蒐集後端 teardown 的真實 trace 再定政策。
 
 ## [2.20.0] - 2026-07-18
 
