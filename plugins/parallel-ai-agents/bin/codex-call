@@ -232,10 +232,25 @@ func extractErrorMessage(_ json: [String: Any]) -> String {
 /// sites already truncate identically (`body.prefix(500)`); this makes the third
 /// consistent instead of leaving the newest one as the only uncapped route.
 ///
-/// Control characters are stripped because this string is written straight to a TTY and
-/// also reaches an agent's context through the Bash tool: CSI/OSC sequences could
-/// overpaint the real failure, and untrusted text should not arrive holding
-/// terminal-control power. Newline and tab survive — they carry no such power.
+/// C0/DEL/C1 are stripped because this text is written straight to a TTY and also reaches
+/// an agent's context via the Bash tool. Newline and tab are kept for readability — NOT
+/// because they are harmless. They are not: 500 blank lines will scroll the real failure
+/// out of a terminal just as effectively as a CSI erase. What actually bounds that is the
+/// budget below, not the character filter.
+///
+/// The budget is measured in UTF-8 BYTES and LINES, not Characters. `String.count` counts
+/// extended grapheme clusters, which are unbounded in scalar length — a base character
+/// plus N combining marks is ONE Character — so a Character-based cap does not bound
+/// anything. Measured on the previous grapheme-based version: 500 CJK characters passed
+/// as 1,500 bytes and 500 clusters of 20 combining marks passed as 20,500 bytes, both
+/// with no truncation marker. Bytes and lines are what a TTY and a token budget actually
+/// spend, so those are what we cap (#25 R6).
+///
+/// Remaining sanitization gaps — bidi overrides (U+202A–U+202E, U+2066–U+2069), the
+/// Unicode Tags block, U+FEFF, U+2028/U+2029, the two sibling `body.prefix(500)` sites
+/// that share the Character-counting flaw, and the forgeable in-band marker — are tracked
+/// in #28. They need one coherent pass over every backend-text sink, not a fourth
+/// piecemeal edit here.
 func sanitizeBackendText(_ raw: String) -> String {
     let stripped = String(String.UnicodeScalarView(raw.unicodeScalars.filter { s in
         if s.value == 0x0A || s.value == 0x09 { return true }          // keep \n, \t
@@ -243,7 +258,26 @@ func sanitizeBackendText(_ raw: String) -> String {
         if s.value >= 0x80 && s.value <= 0x9F { return false }          // C1
         return true
     }))
-    return stripped.count > 500 ? String(stripped.prefix(500)) + "…(truncated)" : stripped
+    return clampToBudget(stripped)
+}
+
+/// Byte + line budget. Truncates on whichever limit is hit first.
+func clampToBudget(_ s: String, maxBytes: Int = 2000, maxLines: Int = 20) -> String {
+    var out = String.UnicodeScalarView()
+    var bytes = 0
+    var lines = 1
+    var clipped = false
+    for scalar in s.unicodeScalars {
+        let w = String(scalar).utf8.count
+        if scalar.value == 0x0A {
+            if lines + 1 > maxLines { clipped = true; break }
+            lines += 1
+        }
+        if bytes + w > maxBytes { clipped = true; break }
+        out.append(scalar)
+        bytes += w
+    }
+    return clipped ? String(out) + "…(truncated)" : String(out)
 }
 
 // MARK: - SSE streaming

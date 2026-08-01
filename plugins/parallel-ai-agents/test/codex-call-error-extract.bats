@@ -63,12 +63,13 @@ setup() {
 # 因此後端可控文字的長度上限與控制字元剝除隨同一個變更一起交付，
 # 而不是留給 #28。同檔另外兩處外部文字（HTTP 錯誤 body）本來就 .prefix(500)。
 
-# 超長後端訊息被截斷並標記
-@test "cap: overlong backend message is truncated and marked" {
-  LONG=$(printf 'A%.0s' $(seq 1 600))
+# 超長後端訊息被截斷並標記（以 byte 預算為準）
+@test "cap: message beyond the byte budget is truncated and marked" {
+  LONG=$(printf 'A%.0s' $(seq 1 3000))
   run "$BIN" --selftest-error-extract "{\"error\":{\"message\":\"$LONG\"}}"
   [ "$status" -eq 0 ]
-  [ "${#output}" -le 520 ]
+  BYTES=$(printf '%s' "$output" | wc -c | tr -d ' ')
+  [ "$BYTES" -le 2100 ]
   [[ "$output" == *"(truncated)"* ]]
 }
 
@@ -87,12 +88,13 @@ setup() {
 }
 
 # newline / tab 保留 —— 它們不帶終端控制能力
-@test "newline and tab are preserved (they carry no terminal-control power)" {
+# 斷言分隔符「本身」，不可用子字串檢查：剝除後的 "line1line2end" 仍含
+# line1/line2/end 三個子字串，那組斷言對「保留」與「剝除」不可分辨
+# （#25 R6 以 mutation 實證：刪掉保留子句，舊版測試仍全綠）。
+@test "newline and tab survive sanitize as actual separators" {
   run "$BIN" --selftest-error-extract '{"error":{"message":"line1\nline2\tend"}}'
   [ "$status" -eq 0 ]
-  [[ "$output" == *"line1"* ]]
-  [[ "$output" == *"line2"* ]]
-  [[ "$output" == *"end"* ]]
+  [ "$output" = $'line1\nline2\tend' ]
 }
 
 # 一般長度訊息不因 sanitize 而變形
@@ -100,4 +102,40 @@ setup() {
   run "$BIN" --selftest-error-extract '{"error":{"message":"Our servers are currently overloaded. Please try again later."}}'
   [ "$status" -eq 0 ]
   [ "$output" = "Our servers are currently overloaded. Please try again later." ]
+}
+
+# byte 預算 —— 前一版用 String.count（grapheme cluster）當上限，
+# 對 CJK 與組合記號完全失效；以下兩個 case 在舊實作下會紅。
+@test "budget counts UTF-8 bytes: CJK under budget passes intact" {
+  CJK=$(python3 -c "print('測' * 500)")
+  run "$BIN" --selftest-error-extract "{\"error\":{\"message\":\"$CJK\"}}"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"(truncated)"* ]]
+}
+
+@test "budget counts UTF-8 bytes: CJK over budget is capped by bytes" {
+  CJK=$(python3 -c "print('測' * 1000)")
+  run "$BIN" --selftest-error-extract "{\"error\":{\"message\":\"$CJK\"}}"
+  [ "$status" -eq 0 ]
+  BYTES=$(printf '%s' "$output" | wc -c | tr -d ' ')
+  [ "$BYTES" -le 2100 ]
+  [[ "$output" == *"(truncated)"* ]]
+}
+
+@test "budget is not fooled by combining marks in one grapheme cluster" {
+  COMB=$(python3 -c "print(('A' + '\u0301' * 20) * 500)")
+  run "$BIN" --selftest-error-extract "{\"error\":{\"message\":\"$COMB\"}}"
+  [ "$status" -eq 0 ]
+  BYTES=$(printf '%s' "$output" | wc -c | tr -d ' ')
+  [ "$BYTES" -le 2100 ]
+  [[ "$output" == *"(truncated)"* ]]
+}
+
+@test "line budget: a flood of newlines cannot scroll the real error away" {
+  FLOOD=$(python3 -c "print('REAL FAILURE' + chr(92) + 'n' * 1, end=''); print(('x' + chr(92) + 'n') * 400, end='')")
+  run "$BIN" --selftest-error-extract "{\"error\":{\"message\":\"$FLOOD\"}}"
+  [ "$status" -eq 0 ]
+  LINES=$(printf '%s' "$output" | grep -c '' || true)
+  [ "$LINES" -le 21 ]
+  [[ "$output" == *"REAL FAILURE"* ]]
 }
