@@ -192,6 +192,94 @@ func refreshIfNeeded(_ auth: inout [String: Any]) throws {
     log("token refreshed")
 }
 
+// MARK: - SSE error message extraction
+
+/// The information-free fallback, named rather than inlined so #28 can key off it.
+let CODEX_FALLBACK_MESSAGE = "Codex error"
+
+/// Pull the human-readable message out of an SSE `error` / `response.failed` event.
+///
+/// The backend puts it in different places depending on the event shape:
+///   `{"type":"error","error":{"code":…,"message":…}}`                  → json["error"]["message"]
+///   `{"type":"response.failed","response":{"error":{"message":…}}}`    → json["response"]["error"]["message"]
+///   (defensive: a hypothetical top-level form)                        → json["message"]
+///
+/// #25 — the `json["error"]["message"]` path was missing, so a real backend error
+/// like `server_is_overloaded` matched none of the paths and collapsed to the
+/// "Codex error" fallback. Every HTTP-200-stream failure then looked identical,
+/// making "retry now vs stop" undecidable. Order matters: the top-level path stays
+/// first so the new one cannot shadow it.
+///
+/// KNOWN GAP (#28): each path accepts any String, including "" — an empty top-level
+/// `message` therefore shadows a real nested one. Fixing that needs an informativeness
+/// predicate rather than a presence check, which is tracked with the rest of the SSE
+/// terminal-event semantics in #28. Deliberately NOT fixed here: #25 is scoped to the
+/// missing path, which has a reproducible payload.
+func extractErrorMessage(_ json: [String: Any]) -> String {
+    let raw = (json["message"] as? String)
+        ?? ((json["error"] as? [String: Any])?["message"] as? String)
+        ?? ((json["response"] as? [String: Any])?["error"] as? [String: Any])?["message"] as? String
+        ?? CODEX_FALLBACK_MESSAGE
+    return sanitizeBackendText(raw)
+}
+
+/// Cap and de-fang backend-controlled text before it becomes an error message.
+///
+/// Why this ships with #25 instead of joining #28's deferral pile: before this change the
+/// shape the backend actually emits (`error.message`) matched none of the paths and
+/// collapsed to the constant — the sink was dead in practice. Adding the path is what
+/// makes it live, so the cap belongs to the same change. The two sibling external-text
+/// sites already truncate identically (`body.prefix(500)`); this makes the third
+/// consistent instead of leaving the newest one as the only uncapped route.
+///
+/// C0/DEL/C1 are stripped because this text is written straight to a TTY and also reaches
+/// an agent's context via the Bash tool. Newline and tab are kept for readability — NOT
+/// because they are harmless. They are not: 500 blank lines will scroll the real failure
+/// out of a terminal just as effectively as a CSI erase. What actually bounds that is the
+/// budget below, not the character filter.
+///
+/// The budget is measured in UTF-8 BYTES and LINES, not Characters. `String.count` counts
+/// extended grapheme clusters, which are unbounded in scalar length — a base character
+/// plus N combining marks is ONE Character — so a Character-based cap does not bound
+/// anything. Measured on the previous grapheme-based version: 500 CJK characters passed
+/// as 1,500 bytes and 500 clusters of 20 combining marks passed as 20,500 bytes, both
+/// with no truncation marker. Bytes and lines are what a TTY and a token budget actually
+/// spend, so those are what we cap (#25 R6).
+///
+/// Remaining sanitization gaps — bidi overrides (U+202A–U+202E, U+2066–U+2069), the
+/// Unicode Tags block, U+FEFF, U+2028/U+2029, the two sibling `body.prefix(500)` sites
+/// that share the Character-counting flaw, and the forgeable in-band marker — are tracked
+/// in #28. They need one coherent pass over every backend-text sink, not a fourth
+/// piecemeal edit here.
+func sanitizeBackendText(_ raw: String) -> String {
+    let stripped = String(String.UnicodeScalarView(raw.unicodeScalars.filter { s in
+        if s.value == 0x0A || s.value == 0x09 { return true }          // keep \n, \t
+        if s.value < 0x20 || s.value == 0x7F { return false }           // C0 + DEL
+        if s.value >= 0x80 && s.value <= 0x9F { return false }          // C1
+        return true
+    }))
+    return clampToBudget(stripped)
+}
+
+/// Byte + line budget. Truncates on whichever limit is hit first.
+func clampToBudget(_ s: String, maxBytes: Int = 2000, maxLines: Int = 20) -> String {
+    var out = String.UnicodeScalarView()
+    var bytes = 0
+    var lines = 1
+    var clipped = false
+    for scalar in s.unicodeScalars {
+        let w = String(scalar).utf8.count
+        if scalar.value == 0x0A {
+            if lines + 1 > maxLines { clipped = true; break }
+            lines += 1
+        }
+        if bytes + w > maxBytes { clipped = true; break }
+        out.append(scalar)
+        bytes += w
+    }
+    return clipped ? String(out) + "…(truncated)" : String(out)
+}
+
 // MARK: - SSE streaming
 
 final class StreamCollector: NSObject, URLSessionDataDelegate {
@@ -215,12 +303,22 @@ final class StreamCollector: NSObject, URLSessionDataDelegate {
             firstBytes = (firstBytes ?? Data()) + data
             return
         }
+        // KNOWN GAP (#28): `didReceive` delivers Data on TCP availability, with no
+        // alignment to UTF-8 codepoint boundaries. A cut mid-character makes this
+        // decode return nil and drops the WHOLE chunk — every complete event in it
+        // included — and the bytes are not retained for the next chunk. With this
+        // plugin defaulting to CJK output that is routine, not a corner case. Fixing
+        // it needs byte-level buffering; tracked in #28 with the rest of the framing.
         guard let chunk = String(data: data, encoding: .utf8) else { return }
         buffer += chunk
         while let range = buffer.range(of: "\n\n") {
             let event = String(buffer[buffer.startIndex..<range.lowerBound])
             buffer.removeSubrange(buffer.startIndex..<range.upperBound)
             processEvent(event)
+            // KNOWN GAP (#28): this bail aborts the drain within a single callback,
+            // so sibling events already in `buffer` go unprocessed. Left as-is here
+            // deliberately — changing it only pays off together with the terminal-event
+            // policy, and that policy still lacks the backend trace it depends on.
             if streamError != nil { return }
         }
     }
@@ -253,11 +351,14 @@ final class StreamCollector: NSObject, URLSessionDataDelegate {
         case "response.output_text.delta":
             if let delta = json["delta"] as? String { accumulated += delta }
         case "error", "response.failed":
-            let msg = (json["message"] as? String)
-                ?? ((json["response"] as? [String: Any])?["error"] as? [String: Any])?["message"] as? String
-                ?? "Codex error"
+            // Unconditional assignment — same as before #25. Which terminal event should
+            // win when several arrive is a policy question that two attempts (#25 R1
+            // first-wins latch, R2 informativeness bit) both got wrong, because nobody
+            // has yet observed how the backend actually tears down. Tracked in #28,
+            // where the trace comes first and the policy second. #25 only fixes the
+            // missing extraction path, which has a reproducible payload.
             streamError = NSError(domain: "codex-call", code: -1,
-                                   userInfo: [NSLocalizedDescriptionKey: msg])
+                                   userInfo: [NSLocalizedDescriptionKey: extractErrorMessage(json)])
         default:
             break
         }
@@ -349,6 +450,7 @@ struct Args {
     var instructions: String = "You are a careful, rigorous reviewer. Respond in the user's language."
     var promptFile: String?
     var prompt: String?
+    var selftestErrorExtract: String?   // hidden test hook (#25); see --selftest-error-extract
 }
 
 func parseArgs() -> Args {
@@ -368,6 +470,11 @@ func parseArgs() -> Args {
         case "--max-time": a.maxTime = Int(next()) ?? a.maxTime
         case "--instructions": a.instructions = next()
         case "--prompt-file": a.promptFile = next()
+        // Hidden test hook (#25) — deliberately absent from --help. Feeds one SSE
+        // event payload through extractErrorMessage and prints the result; sends no
+        // HTTP. Exists because CODEX_URL is a hardcoded constant with no injection
+        // point, so the extraction chain is otherwise untestable from bats.
+        case "--selftest-error-extract": a.selftestErrorExtract = next()
         case "--help", "-h":
             print("""
             codex-call — direct HTTP wrapper for chatgpt.com/backend-api
@@ -394,6 +501,17 @@ func parseArgs() -> Args {
 // MARK: - Main
 
 let a = parseArgs()
+
+// Hidden test hook (#25) — must precede the --output guard: this path sends no
+// request and writes no file, so requiring --output would be meaningless.
+if let raw = a.selftestErrorExtract {
+    guard let data = raw.data(using: .utf8),
+          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    else { die("--selftest-error-extract: invalid JSON") }
+    print(extractErrorMessage(json))
+    exit(0)
+}
+
 guard let output = a.output else { die("--output is required") }
 
 let prompt: String
