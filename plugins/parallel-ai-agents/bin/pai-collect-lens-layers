@@ -1,0 +1,157 @@
+#!/usr/bin/env python3
+"""pai-collect-lens-layers — 蒐集三層 lens 疊加的層 ②（lens pack）與層 ③（user）。
+
+層 ① built-in **不在這裡**：它活在 harness 的 `PROFILES` 物件裡，而 workflow runtime
+沒有檔案系統存取，所以 built-in 永遠由 harness 自己供給。這支只負責「skill 讀得到、
+harness 讀不到」的那兩層，結果由 skill 併進 `args.customLenses`。
+
+用法：pai-collect-lens-layers <profile>
+
+輸出 JSON 到 stdout：
+  {
+    "lenses":   [{"key","focus","needsSrt"?,"override"?,"_layer":"pack"|"user"}, ...],
+    "layers":   [{"name","path","version","status"}, ...],
+    "warnings": [...]
+  }
+
+陣列順序即優先序：pack 在前、user 在後。撞名的判定（first-wins，除非標 `override`）
+**全部交給 harness** —— 這裡只搬運、不去重。單一去重點才不會兩邊語意漂移（#29）。
+
+CSV 解析一律委派 `bin/pai-parse-lens-csv`（BOM-safe、csv 模組、bats 覆蓋的單一真相源）。
+
+status 語意（對應 spec D5「缺席與損壞分開處理」）：
+  absent       沒裝 → 靜默，不產生 warning
+  ok           正常
+  empty        檔案在、卻解析出 0 條 lens（多半是 header 打錯）→ 警告。
+               這是最危險的失敗模式：不警告的話它會安靜地什麼都不貢獻
+  corrupt      解析器非零退出（讀不到 / 編碼壞）→ 警告
+  unversioned  裝了 pai-lenses 卻沒有 semver 目錄（plugin.json 缺 version）→ 警告。
+               「裝了但不可用」不是「沒裝」，不可靜默
+
+環境變數（測試注入用；預設值即正式路徑）：
+  PAI_LENS_CACHE_ROOT  預設 ~/.claude/plugins/cache
+  PAI_USER_LENS_DIR    預設 ~/.claude/pai-lenses
+
+退出碼：0（含全部缺席）；2 用法錯。
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+PACK_PLUGIN = "pai-lenses"
+SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)")
+PARSER = Path(__file__).resolve().parent / "pai-parse-lens-csv"
+
+
+def _semver_key(name):
+    m = SEMVER.match(name)
+    return tuple(int(g) for g in m.groups()) if m else None
+
+
+def find_pack_dir(cache_root):
+    """回傳 (dir, version, status)。跨 marketplace glob —— lens pack 註冊在哪個
+    marketplace 是使用者端的事，不該寫死在這裡。"""
+    candidates = []
+    homes = sorted(Path(cache_root).glob(f"*/{PACK_PLUGIN}")) if cache_root.exists() else []
+    for home in homes:
+        if not home.is_dir():
+            continue
+        for child in home.iterdir():
+            if not child.is_dir():
+                continue
+            key = _semver_key(child.name)
+            if key is not None:
+                candidates.append((key, child))
+    if candidates:
+        key, path = max(candidates, key=lambda kv: kv[0])
+        return path, ".".join(str(n) for n in key), "ok"
+    # 有 pai-lenses 目錄卻挑不出 semver 版本 = 裝了但不可用，不是沒裝
+    if homes:
+        return None, None, "unversioned"
+    return None, None, "absent"
+
+
+def parse_csv(path):
+    """→ (lenses, status, warning)。解析委派給 pai-parse-lens-csv。"""
+    if not path or not path.is_file():
+        return [], "absent", None
+    proc = subprocess.run(
+        [sys.executable, str(PARSER), str(path)],
+        capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        return [], "corrupt", f"lens CSV 解析失敗（{path}）：{proc.stderr.strip()}"
+    try:
+        lenses = json.loads(proc.stdout)
+    except json.JSONDecodeError as e:
+        return [], "corrupt", f"lens CSV 解析輸出不是 JSON（{path}）：{e}"
+    if not lenses:
+        return [], "empty", (
+            f"lens CSV 解析出 0 條 lens（{path}）—— header 是否為 key,focus？"
+            "檔案存在卻不貢獻任何 lens，多半是打錯而不是刻意留空。"
+        )
+    return lenses, "ok", None
+
+
+def main():
+    if len(sys.argv) != 2:
+        print("用法：pai-collect-lens-layers <profile>", file=sys.stderr)
+        return 2
+    profile = sys.argv[1].strip()
+    if not profile:
+        print("用法：pai-collect-lens-layers <profile>", file=sys.stderr)
+        return 2
+
+    cache_root = Path(os.environ.get("PAI_LENS_CACHE_ROOT")
+                      or Path.home() / ".claude" / "plugins" / "cache")
+    user_dir = Path(os.environ.get("PAI_USER_LENS_DIR")
+                    or Path.home() / ".claude" / "pai-lenses")
+
+    lenses, layers, warnings = [], [], []
+
+    # ── 層 ②：lens pack ──
+    pack_dir, pack_version, pack_status = find_pack_dir(cache_root)
+    pack_csv = pack_dir / "lenses" / f"{profile}.csv" if pack_dir else None
+    if pack_status == "unversioned":
+        warnings.append(
+            f"{PACK_PLUGIN} 已安裝但找不到 semver 版本目錄（{cache_root}）—— "
+            "lens pack 的 plugin.json 必須有 version 欄位，否則 cache 目錄名是 unknown、"
+            "無法被定位。本層已略過。"
+        )
+    elif pack_status == "ok":
+        got, csv_status, warn = parse_csv(pack_csv)
+        pack_status = csv_status
+        lenses += [dict(l, _layer="pack") for l in got]
+        if warn:
+            warnings.append(warn)
+    layers.append({
+        "name": "pack",
+        "path": str(pack_csv) if pack_csv else None,
+        "version": pack_version,
+        "status": pack_status,
+    })
+
+    # ── 層 ③：user ──
+    user_csv = user_dir / f"{profile}.csv"
+    got, user_status, warn = parse_csv(user_csv)
+    lenses += [dict(l, _layer="user") for l in got]
+    if warn:
+        warnings.append(warn)
+    layers.append({
+        "name": "user",
+        "path": str(user_csv),
+        "version": None,
+        "status": user_status,
+    })
+
+    json.dump({"lenses": lenses, "layers": layers, "warnings": warnings},
+              sys.stdout, ensure_ascii=False)
+    sys.stdout.write("\n")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
