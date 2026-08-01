@@ -118,8 +118,9 @@ def main():
     if pack_status == "unversioned":
         warnings.append(
             f"{PACK_PLUGIN} 已安裝但找不到 semver 版本目錄（{cache_root}）—— "
-            "lens pack 的 plugin.json 必須有 version 欄位，否則 cache 目錄名是 unknown、"
-            "無法被定位。本層已略過。"
+            "lens pack 的 plugin.json 必須有 version 欄位 —— 缺了的話 cache 目錄名會退回 "
+            "git commit SHA（官方文件的 fallback）或 unknown（實測見過），兩者都不是 semver、"
+            "定位不到。本層已略過。"
         )
     elif pack_status == "ok":
         got, csv_status, warn = parse_csv(pack_csv)
