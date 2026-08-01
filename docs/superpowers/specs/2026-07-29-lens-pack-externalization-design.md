@@ -2,7 +2,7 @@
 
 - **日期**：2026-07-29
 - **相關 issue**：[PsychQuant/parallel-ai-agents#24](https://github.com/PsychQuant/parallel-ai-agents/issues/24)（agents/lens 設定更新現況盤點）
-- **狀態**：設計已確認，待寫實作計畫
+- **狀態**：設計已確認；§10 的唯一未驗證前提已於 2026-08-01 驗證成立，待寫實作計畫
 
 ---
 
@@ -272,20 +272,48 @@ lens: 17 active = built-in only (no lens pack, no user lenses)
 
 ---
 
-## 10. 未驗證前提（必須排在實作第一步）
+## 10. 跨 plugin 檔案定位（**已於 2026-08-01 驗證成立**）
 
-**跨 plugin 檔案定位尚未驗證。** `${CLAUDE_PLUGIN_ROOT}` 只指向 plugin 自身，要讀 `pai-lenses` 的檔案需定位其 cache 路徑，而觀察到 cache 結構不一致：
+原本列為「動工前必須先驗、驗不過就要改 D1 形狀」的前提。**已驗證：成立，不需退路。**
+
+### 更正：原本說「結構不一致」是判斷錯誤
+
+spec 初稿寫：
+
+> 觀察到 cache 結構不一致：`claude-plugins-official/data/0.1.0/`（含版本層）vs `parallel-ai-agents/parallel-ai-agents/`（不含版本層）
+
+**這個觀察是錯的。** 錯因是當時用 `find -maxdepth 3` 列舉，`parallel-ai-agents/parallel-ai-agents` 是 `<marketplace>/<plugin>` 這個**中間層**，版本目錄在它底下、超出 maxdepth。實際列舉：
 
 ```
-~/.claude/plugins/cache/claude-plugins-official/data/0.1.0/   ← 含版本層
-~/.claude/plugins/cache/parallel-ai-agents/parallel-ai-agents/ ← 不含版本層
+~/.claude/plugins/cache/parallel-ai-agents/parallel-ai-agents/2.20.0
+~/.claude/plugins/cache/codex-pro/codex-pro/0.7.0
+~/.claude/plugins/cache/issue-driven-development/issue-driven-dev/2.102.2
 ```
 
-實作計畫的第一個 task 必須是驗證「能否穩定定位另一個已安裝 plugin 的檔案」。
+結構是**一致的** `<marketplace>/<plugin>/<version>/`。
 
-**此前提只影響層 ②。** 層 ③（user-level）路徑固定為 `~/.claude/pai-lenses/`，不需要任何 plugin 定位邏輯，因此不受本前提影響。
+### 定位方法（已有 production 先例）
 
-**若驗證失敗**，退回替代形狀：lens pack 改為使用者自行 clone 至 `~/.claude/pai-lenses/`，與層 ③ **共用同一套讀取與折疊機制**（D8 補述）。此時 D1 的 marketplace 版本 pin 失效，版本記錄改以 lens pack repo 內的 `VERSION` 檔 + git SHA 表達；D2–D8 的語意皆不受影響，僅少一個來源層。
+```bash
+DIR=$(ls -d ~/.claude/plugins/cache/<marketplace>/<plugin>/*/ 2>/dev/null \
+      | grep -E '/[0-9]+\.[0-9]+\.[0-9]+/$' | sort -V | tail -1)
+```
+
+這**不是**為本 spec 發明的方法 —— `issue-driven-dev` 的 `idd-verify` 已在 production 用它解析兩個依賴（pai ensemble engine 與 codex-pro governance defaults），且帶最低版本閘門。2026-08-01 實測三個不同 marketplace 全部解析成功。
+
+### Precondition：lens pack 必須有 `version` 欄位
+
+唯一的 edge case：**`plugin.json` 缺 `version` 欄位時，cache 目錄名是 `unknown` 而非 semver**，semver glob 會漏掉它。實例：`claude-plugins-official` 底下的 `mcp-server-dev` / `feature-dev` / `context7` 等（皆確認 `plugin.json` 無 `version`）。
+
+對本設計無妨 —— D1 本來就要求 lens pack 有版本號（版本座標是它的主要價值之一）。但這使「有 `version` 欄位」從**慣例**升格為**功能性前提**，須寫進 lens pack 的 repo README 與 CI 檢查。
+
+### 層 ③ 不受影響
+
+層 ③（user-level）路徑固定為 `~/.claude/pai-lenses/`，不經任何 plugin 定位邏輯 —— 這一點在驗證前後都成立。
+
+### 原退路（保留紀錄，現已不需要）
+
+若定位不可行，原計畫是讓 lens pack 退回「使用者自行 clone 至 `~/.claude/pai-lenses/`」、與層 ③ 共用機制，代價是 D1 的 marketplace 版本 pin 失效。**驗證通過後不採用**，此段僅作決策紀錄保留。
 
 ---
 
