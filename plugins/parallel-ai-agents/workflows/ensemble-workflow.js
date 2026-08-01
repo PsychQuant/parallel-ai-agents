@@ -440,7 +440,10 @@ if (!profile) {
 // Start from the profile's built-in lenses, optionally pull specific lenses from OTHER profiles
 // (args.includeLenses = ["code.security", "academic.methodology"]), append caller-defined custom
 // lenses (args.customLenses = [{key, focus, needsSrt?}]), then drop any in args.disableLenses.
-// Dedup by key, FIRST wins (built-in → included → custom) so a name clash is predictable, not doubled.
+// Dedup by key, FIRST wins (built-in → included → custom) so a name clash is predictable, not doubled
+// — UNLESS the later entry sets `override: true`, which is how a lens pack declares "replace that one"
+// (#29). Unmarked clashes behave exactly as they did before #29, so every pre-existing caller is
+// byte-for-byte unaffected; only an explicit opt-in changes the outcome.
 // profile:"custom" ships no built-in lenses, so a fully bespoke ensemble comes entirely from
 // includeLenses + customLenses.
 const disabled = Array.isArray(A.disableLenses) ? A.disableLenses : []
@@ -455,17 +458,42 @@ const included = (Array.isArray(A.includeLenses) ? A.includeLenses : [])
   .filter(Boolean)
 const customs = (Array.isArray(A.customLenses) ? A.customLenses : [])
   .filter((l) => l && typeof l.key === 'string' && l.key.trim() && typeof l.focus === 'string' && l.focus.trim())
-  .map((l) => ({ key: l.key.trim(), focus: l.focus, needsSrt: !!l.needsSrt }))
-const seen = new Set()
-let assembled = [...profile.lenses, ...included, ...customs].filter(
-  (l) => !disabled.includes(l.key) && !seen.has(l.key) && seen.add(l.key)
-)
+  .map((l) => ({ key: l.key.trim(), focus: l.focus, needsSrt: !!l.needsSrt, override: !!l.override }))
+
+// Fold the layers in order, recording what happened to each incoming lens. Replacement is IN PLACE:
+// the devil's-advocate reads the reviewers' write-ups in lens order, so quietly moving an overridden
+// lens to the end of the set would change what it sees for reasons unrelated to the override.
+const lensProvenance = []
+const slotByKey = new Map()
+const originBySlot = [] // origin of whichever lens currently OCCUPIES each slot (an override changes it)
+let assembled = []
+for (const [origin, group] of [['builtin', profile.lenses], ['include', included], ['custom', customs]]) {
+  for (const l of group) {
+    if (disabled.includes(l.key)) continue
+    const lens = { key: l.key, focus: l.focus, ...(l.needsSrt ? { needsSrt: true } : {}) }
+    const slot = slotByKey.get(l.key)
+    if (slot === undefined) {
+      slotByKey.set(l.key, assembled.length)
+      originBySlot[assembled.length] = origin
+      assembled = [...assembled, lens]
+      lensProvenance.push({ key: l.key, origin, action: 'added' })
+    } else if (l.override) {
+      lensProvenance.push({ key: l.key, origin, action: 'overridden', overrodeFrom: originBySlot[slot] })
+      originBySlot[slot] = origin
+      assembled = assembled.map((cur, i) => (i === slot ? lens : cur))
+    } else {
+      lensProvenance.push({ key: l.key, origin, action: 'ignored' })
+    }
+  }
+}
 // Empty after composition → bail (covers profile:"custom" with no include/custom, or disabling all).
 if (assembled.length === 0) {
   return {
     findings: [{ lens: 'harness', severity: 'HIGH', title: 'no active lenses after composition', file: null, body: `profile "${A.profile}" + includeLenses + customLenses − disableLenses resolved to zero reviewers. Supply at least one lens, or fall back to the legacy backend.` }],
     verdict: 'FINDINGS',
-    stats: { profile: A.profile || null, agents: 0, dispatchModel: AGENT_MODEL },
+    // Carry provenance even here — it is exactly what tells the caller WHY the set is empty
+    // (everything disabled? every layer ignored as an unmarked clash?).
+    stats: { profile: A.profile || null, agents: 0, dispatchModel: AGENT_MODEL, lensProvenance },
   }
 }
 
@@ -564,6 +592,7 @@ const stats = {
   daOk: da.ok,
   integrity: integrity.length,
   dispatchModel: AGENT_MODEL,
+  lensProvenance,
 }
 log(`pai-ensemble[${A.profile}]: ${stats.agents} agents (model: ${AGENT_MODEL}) → ${merged.length} merged finding(s) → ${verdict}` + (integrity.length ? ` (${integrity.length} integrity/process-gap)` : ''))
 return { findings: merged, verdict, stats }
