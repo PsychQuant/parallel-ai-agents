@@ -22,33 +22,38 @@ setup() {
     || skip "needs macOS + Xcode CLT swift (codex-call is a #!/usr/bin/swift script)"
 }
 
-@test "#25 regression：頂層 error 物件內的 message 被正確提取（實測 payload）" {
+# 頂層 error 物件內的 message 被正確提取（實測 payload）
+@test "regression #25: message inside top-level error object is extracted (measured payload)" {
   run "$BIN" --selftest-error-extract '{"type":"error","error":{"type":"service_unavailable_error","code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later.","param":null},"sequence_number":2}'
   [ "$status" -eq 0 ]
   [[ "$output" == *"Our servers are currently overloaded"* ]]
   [[ "$output" != *"Codex error"* ]]
 }
 
-@test "response.failed 形狀：既有 response.error.message 路徑行為不變" {
+# 既有 response.error.message 路徑行為不變
+@test "response.failed shape: pre-existing response.error.message path unchanged" {
   run "$BIN" --selftest-error-extract '{"type":"response.failed","response":{"error":{"code":"server_is_overloaded","message":"Backend overloaded via response.failed"}}}'
   [ "$status" -eq 0 ]
   [[ "$output" == *"Backend overloaded via response.failed"* ]]
 }
 
-@test "頂層 message 優先：新增路徑未搶先於既有第一條" {
+# 新增路徑未搶先於既有第一條
+@test "top-level message wins: the added path does not preempt the existing first one" {
   run "$BIN" --selftest-error-extract '{"type":"error","message":"top-level msg","error":{"message":"nested msg"}}'
   [ "$status" -eq 0 ]
   [[ "$output" == *"top-level msg"* ]]
   [[ "$output" != *"nested msg"* ]]
 }
 
-@test "所有路徑皆無 message → fallback 到 Codex error" {
+# 所有路徑皆無 message 時落到 fallback
+@test "no message on any path -> fallback to Codex error" {
   run "$BIN" --selftest-error-extract '{"type":"error","error":{"code":"some_code_without_message"}}'
   [ "$status" -eq 0 ]
   [[ "$output" == *"Codex error"* ]]
 }
 
-@test "無效 JSON → 非零 exit，不靜默" {
+# 無效 JSON 須非零 exit，不得靜默
+@test "invalid JSON -> non-zero exit, never silent" {
   run "$BIN" --selftest-error-extract 'not-json-at-all'
   [ "$status" -ne 0 ]
 }
@@ -58,7 +63,8 @@ setup() {
 # 因此後端可控文字的長度上限與控制字元剝除隨同一個變更一起交付，
 # 而不是留給 #28。同檔另外兩處外部文字（HTTP 錯誤 body）本來就 .prefix(500)。
 
-@test "cap：超長後端訊息被截斷並標記" {
+# 超長後端訊息被截斷並標記
+@test "cap: overlong backend message is truncated and marked" {
   LONG=$(printf 'A%.0s' $(seq 1 600))
   run "$BIN" --selftest-error-extract "{\"error\":{\"message\":\"$LONG\"}}"
   [ "$status" -eq 0 ]
@@ -66,7 +72,8 @@ setup() {
   [[ "$output" == *"(truncated)"* ]]
 }
 
-@test "控制字元剝除：ESC/CSI 不得抵達 stderr（可見文字須保留）" {
+# ESC/CSI 不得抵達 stderr，可見文字須保留
+@test "control chars stripped: ESC/CSI must not reach stderr (visible text kept)" {
   # 控制字元用 JSON 的 \u 逸出序列表達，不可寫 literal —— JSON 規範要求
   # U+0000..U+001F 必須逸出，literal 會讓 payload 本身就是非法 JSON，
   # 於是測到的是「解析失敗」而非「sanitize 生效」（本測試初版就踩到）。
@@ -79,7 +86,8 @@ setup() {
   [[ "$output" == *"wiped"* ]]
 }
 
-@test "newline / tab 保留（它們不帶終端控制能力）" {
+# newline / tab 保留 —— 它們不帶終端控制能力
+@test "newline and tab are preserved (they carry no terminal-control power)" {
   run "$BIN" --selftest-error-extract '{"error":{"message":"line1\nline2\tend"}}'
   [ "$status" -eq 0 ]
   [[ "$output" == *"line1"* ]]
@@ -87,7 +95,8 @@ setup() {
   [[ "$output" == *"end"* ]]
 }
 
-@test "一般長度訊息不因 sanitize 而變形" {
+# 一般長度訊息不因 sanitize 而變形
+@test "ordinary-length message is not altered by sanitize" {
   run "$BIN" --selftest-error-extract '{"error":{"message":"Our servers are currently overloaded. Please try again later."}}'
   [ "$status" -eq 0 ]
   [ "$output" = "Our servers are currently overloaded. Please try again later." ]
