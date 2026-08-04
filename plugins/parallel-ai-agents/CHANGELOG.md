@@ -11,6 +11,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.23.0] - 2026-08-04
+
+### Added
+
+- `ensemble-contribute-lenses` skill：層 ③（user）的回流路徑。掃 `~/.claude/pai-lenses/*.csv`、
+  比對 built-in 與 lens pack、判定目標層後開 PR。判準是「能不能只用一條 lens 表達」——
+  CSV 描述得了 lens，描述不了 profile 級的 `title` / `daFocus` / `codexDefault`，
+  故新 profile 必須進層 ①，缺的欄位一律向使用者索取不代填。
+  `override` 標記預設不送（會替所有使用者移除一條調校過的 lens，且傷害是靜默的）。
+- `references/lens-layers.md` 開頭新增「我想加 lens，該去哪」決策表（四種情況直接對到動作）。
+
+### Changed
+
+- `pai-lenses` 由獨立 repo 併回本 repo `plugins/pai-lenses/`（`git subtree`，保留其 3 個 commit）。
+  marketplace source 由 `{"source":"github",...}` 改為 `./plugins/pai-lenses`，與主 plugin 一致。
+  併回理由：`bin/pai-collect-lens-layers` 的 `PACK_PLUGIN` 寫死單一 pack 名、只 glob `*/pai-lenses`，
+  架構只認一個官方 pack，「讓第三方各自發 pack」的分離理由不成立。
+- 其 `validate.yml` 併入 root `test.yml` 為獨立 job；併入後落在 `plugins/` 下的 workflow
+  不會被 GitHub 執行，故移除以免誤導。
+
+### Fixed
+
+- `references/builtin-lenses.csv` 檔頭改為 `!!! GENERATED FILE — DO NOT EDIT !!!` ——
+  實測有人（含本次開發 session）第一次就誤以為該檔可編輯而去改它。
+
+
 ## [2.22.0] - 2026-08-04
 
 ### Added
