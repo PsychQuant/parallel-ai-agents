@@ -12,6 +12,22 @@
 
 層 ① 由 harness 供給，層 ②③ 由 skill 蒐集後經 `args.customLenses` 送進去。**陣列順序即優先序**。
 
+## 我想加一條 lens，該去哪？
+
+| 你的情況 | 去哪 | 怎麼做 |
+|---|---|---|
+| 只想自己用 | 層 ③ user | 編 `~/.claude/pai-lenses/<profile>.csv`，立即生效，不必發布 |
+| 想貢獻，且是**既有** profile 的 lens | 層 ② lens pack | 編 `plugins/pai-lenses/lenses/<profile>.csv` + bump version |
+| 想貢獻，且需要**新 profile** | 層 ① built-in | 改 `workflows/ensemble-workflow.js` 的 `PROFILES` → 跑 `references/regen-builtin-lenses.sh` |
+| 本機已經寫好，想一次送上去 | — | `/ensemble-contribute-lenses`（掃 user 層、判定目標層、開 PR） |
+
+> ⚠️ **`references/builtin-lenses.csv` 是 generated 的唯讀投影** —— 編它不改變任何行為。
+> 真源是 `PROFILES`。這個檔存在只為了讓人「看得到目前有哪些 lens」。
+
+> ⚠️ **新 profile 不能只靠 lens pack**：CSV 描述得了 lens，描述不了 profile 級的
+> `title` / `daFocus` / `codexDefault`。harness 的 `PROFILES` 沒有該 key 時，用它呼叫會回
+> `unknown ensemble profile` 且 **0 個 agent 被派出**，workflow 卻仍「成功」結束。
+
 ## Skill 該做的事
 
 ### 1. 蒐集（Phase 2，呼叫 Workflow 之前）

@@ -1,5 +1,5 @@
 profile,key,focus,needsSrt
-# 唯讀 catalog — 編輯本檔不會改變任何行為。真源是 workflows/ensemble-workflow.js 的 PROFILES。要新增/修改 lens 請走 lens pack 或 ~/.claude/pai-lenses/（見 references/lens-layers.md）。本檔由 references/regen-builtin-lenses.sh 產生。
+# !!! GENERATED FILE — DO NOT EDIT !!! 唯讀 catalog — 編輯本檔不會改變任何行為。真源是 workflows/ensemble-workflow.js 的 PROFILES。要新增/修改 lens 請走 lens pack 或 ~/.claude/pai-lenses/（見 references/lens-layers.md）。本檔由 references/regen-builtin-lenses.sh 產生。
 minutes,fidelity,"記錄對逐字稿的忠實性，這是會議記錄的第一要求。逐條比對，檢查：(1) 記錄中每一條討論事項、決議、待辦，是否都能在逐字稿找到依據？(2) 有無記錄者的推論、整理或補充，被寫成像是會中發生的事？(3) 有無誤讀原話——特別注意把「性質」誤讀成「物件」的一類（實例：發言者說本案屬 top-down 推動，記錄卻寫成「另備 top-down 計畫書」，把計畫的性質誤讀為另一份文件）；(4) 討論中的傾向、某人的個別意見，有無被寫成全體共識或決議？(5) 數值是否與逐字稿一致？逐字稿字錯率高，若記錄已註明某數值另經查證，檢查該查證是否確實成立。判準是「拿掉逐字稿，這句話還站得住嗎」。找不到依據就是 finding，不要因為內容看起來合理就放過。",true
 minutes,completeness,"記錄是否完整覆蓋會議內容。檢查：(1) 逐字稿有討論但記錄漏寫的重點，這是本 lens 最重要的產出；(2) 會中提到的風險、疑義、反對意見有無被略過（正面內容被保留而負面內容消失，是常見的偏移）；(3) 有無提到但未列入待辦的承諾事項；(4) 決議是否齊備（會中作成的決定有無遺漏）。注意：記錄本就該摘要而非逐字，濾掉贅詞、離題、重複不算遺漏。判準是「與會者讀完記錄，會不會以為某件事沒發生過」。",true
 minutes,attribution,"發言與責任的歸屬是否有依據。檢查：(1) 記錄具名到個人之處，該人身分是否真的可確認？（語者分離常不可靠，在未確認的情況下具名是嚴重問題）(2) 待辦事項的主辦方歸屬依據為何？以單位層級歸屬時，該推論是否成立？(3) 有無把某方的發言記成另一方的？(4) 敏感內容的歸屬是否恰當（自陳的利益衝突、內部策略、對第三方的評價，具名記錄可能造成困擾）。單位層級的歸屬若有機制性證據（例如發言者提到只有某單位才有的內部機制），可以成立；純粹憑語氣或立場推測則不成立。",true
