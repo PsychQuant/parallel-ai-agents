@@ -143,6 +143,84 @@ test('mergeDedup robust to malformed severity (no crash, finding kept, FINDINGS)
   assert.equal(out.verdict, 'FINDINGS') // 'BOGUS' !== 'INFO'
 })
 
+// ── #29 lens-layer override semantics ───────────────────────────────────────
+// 三層 lens 疊加（built-in → lens pack → user）在 harness 內折疊，所以「撞名時誰勝出」
+// 是 harness 的不變式，不是 skill 側的膠水。lens pack 的 CSV 用 override 欄宣告取代意圖。
+
+// 捕捉每個 reviewer 的 prompt —— 這是唯一能分辨「哪一份 focus 真的出貨」的觀測點。
+const captureLenses = () => {
+  const seen = []
+  const impl = async (prompt, o) => {
+    if (o && typeof o.label === 'string' && o.label.startsWith('review:')) {
+      seen.push({ key: o.label.slice('review:'.length), prompt: String(prompt) })
+    }
+    return { findings: [] }
+  }
+  return { seen, impl }
+}
+
+test('#29 向後相容鎖：未標記的撞名仍是 first-wins（built-in 勝）', async () => {
+  const { seen, impl } = captureLenses()
+  await runEnsemble(
+    { profile: 'code', file: '/x', codexEnabled: false,
+      customLenses: [{ key: 'security', focus: 'CUSTOM_SECURITY_FOCUS' }] },
+    impl
+  )
+  const sec = seen.filter((s) => s.key === 'security')
+  assert.equal(sec.length, 1, 'security 被複製成兩個 reviewer')
+  assert.ok(!sec[0].prompt.includes('CUSTOM_SECURITY_FOCUS'),
+    '未標記的 custom lens 蓋掉了 built-in —— first-wins 被改壞了')
+})
+
+test('#29 override:true 取代同 key 的 built-in lens', async () => {
+  const { seen, impl } = captureLenses()
+  await runEnsemble(
+    { profile: 'code', file: '/x', codexEnabled: false,
+      customLenses: [{ key: 'security', focus: 'CUSTOM_SECURITY_FOCUS', override: true }] },
+    impl
+  )
+  const sec = seen.filter((s) => s.key === 'security')
+  assert.equal(sec.length, 1, 'override 必須是取代，不是追加')
+  assert.ok(sec[0].prompt.includes('CUSTOM_SECURITY_FOCUS'),
+    'override:true 沒生效 —— 出貨的仍是 built-in 的 focus')
+})
+
+test('#29 override 是原位取代（lens 順序不變）', async () => {
+  const base = captureLenses()
+  await runEnsemble({ profile: 'code', file: '/x', codexEnabled: false }, base.impl)
+  const baseOrder = base.seen.map((s) => s.key)
+  assert.ok(baseOrder.length >= 2, 'code profile 應有多個 lens')
+
+  const over = captureLenses()
+  await runEnsemble(
+    { profile: 'code', file: '/x', codexEnabled: false,
+      customLenses: [{ key: baseOrder[0], focus: 'OVERRIDDEN', override: true }] },
+    over.impl
+  )
+  assert.deepEqual(over.seen.map((s) => s.key), baseOrder,
+    'override 把 lens 移位了 —— devil\'s-advocate 依序讀 reviewer 完稿，位置是契約的一部分')
+})
+
+test('#29 stats.lensProvenance 記錄 added / overridden / ignored', async () => {
+  const out = await runEnsemble(
+    { profile: 'code', file: '/x', codexEnabled: false,
+      customLenses: [
+        { key: 'security', focus: 'REPLACED', override: true },
+        { key: 'correctness', focus: 'SHOULD_BE_IGNORED' },
+        { key: 'perf', focus: '全新的 lens' },
+      ] },
+    allPass
+  )
+  const prov = out.stats.lensProvenance
+  assert.ok(Array.isArray(prov), 'stats.lensProvenance 缺席')
+  // 每個「進來的」lens 一筆（含 built-in），後來者覆寫同 key 的紀錄 → 取最後一筆為最終處置
+  const byKey = Object.fromEntries(prov.map((p) => [p.key, p]))
+  assert.equal(byKey.security.action, 'overridden', JSON.stringify(prov))
+  assert.equal(byKey.security.overrodeFrom, 'builtin', JSON.stringify(prov))
+  assert.equal(byKey.correctness.action, 'ignored', JSON.stringify(prov))
+  assert.equal(byKey.perf.action, 'added', JSON.stringify(prov))
+})
+
 let pass = 0
 let fail = 0
 for (const t of tests) {

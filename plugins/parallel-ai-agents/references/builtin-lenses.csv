@@ -1,4 +1,5 @@
 profile,key,focus,needsSrt
+# 唯讀 catalog — 編輯本檔不會改變任何行為。真源是 workflows/ensemble-workflow.js 的 PROFILES。要新增/修改 lens 請走 lens pack 或 ~/.claude/pai-lenses/（見 references/lens-layers.md）。本檔由 references/regen-builtin-lenses.sh 產生。
 lecture,content-accuracy,"教學講義的知識正確性。檢查：(1) 統計概念定義是否正確（p-value、power、effect size、confidence interval）；(2) 公式/數學符號有無寫錯（KaTeX 語法）；(3) 心理學理論描述是否準確（如 Higgins, Regulatory Focus/Fit）；(4) 因果推論有無把相關說成因果或過度推論；(5) 術語一致性（同概念是否同名）；(6) 範例是否恰當支持概念。",false
 lecture,student-readability,"從「零程式基礎」學生角度的易懂程度。檢查：(1) 白話程度（專業術語有無解釋）；(2) 邏輯銜接（段落跳躍是否太大）；(3) 抽象概念有無搭配具體例子；(4) 表格/圖表是否幫助理解（還是增加混淆）；(5) 篇幅平衡（重要概念是否足夠篇幅）；(6) 結構導航（標題是否清楚、好找）；(7)「重點整理」是否真涵蓋最重要內容。自問：「零基礎學生讀到這裡會卡住嗎？」",false
 lecture,completeness,"講義是否完整覆蓋上課內容。檢查：(1) 逐字稿覆蓋率（逐字稿有教但講義漏寫的重點，最重要）；(2) 結構完整性（有無「重點整理」「課後作業」section；h2/h3 層級正確、無孤立 h3；h2 之間有 --- 分隔）；(3) KaTeX/Mermaid（有數學符號處有無 KaTeX CDN、有路徑圖處有無 Mermaid 或 ASCII art）；(4) 連結有效性（href 指向的檔案是否存在）；(5) 缺少的教學元素（該有 blockquote 提醒、該用表格對比卻只用文字處）。",true

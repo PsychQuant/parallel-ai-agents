@@ -26,7 +26,21 @@ jobs:
         run: shellcheck bin/pai-build-diff bin/pai-parse-verdict bin/pai-iter-commit
 
       - name: py_compile
-        run: python3 -m py_compile bin/pai-parse-lens-csv
+        run: python3 -m py_compile bin/pai-parse-lens-csv bin/pai-collect-lens-layers
+
+      # builtin-lenses.csv is generated from the harness PROFILES. It drives nothing at runtime
+      # (#29 keeps the built-in baseline inside the harness), so a stale catalog is a DOCS defect,
+      # not a correctness one — but this repo's pitch is "contribute a lens", and a catalog that
+      # disagrees with the code sends contributors at the wrong thing. Three lines to prevent that.
+      - name: builtin-lenses.csv drift (regenerate → expect no diff)
+        shell: bash
+        run: |
+          set -o pipefail
+          bash references/regen-builtin-lenses.sh
+          git diff --exit-code -- references/builtin-lenses.csv || {
+            echo "::error::references/builtin-lenses.csv is stale — run 'bash references/regen-builtin-lenses.sh' and commit the result"
+            exit 1
+          }
 
       - name: bats
         run: bats test/

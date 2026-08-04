@@ -134,7 +134,8 @@ esac
 1. 解析 harness 絕對路徑：`${CLAUDE_PLUGIN_ROOT}/workflows/ensemble-workflow.js`。
 2. **解析 codex 治理**（#23，codexEnabled=true 必經）：依 [`references/codex-governance.md`](../../references/codex-governance.md) 從 codex-pro 契約解析 `CODEX_MODEL`/`CODEX_EFFORT`（缺席 fail-fast + 安裝指令）。
 3. 解析 wrapper 絕對路徑：`${CLAUDE_PLUGIN_ROOT}/bin/codex-call`（**用絕對路徑**，不賭 workflow agent shell 的 PATH —— install-time PATH 注入是 version-pinned、可能 stale/不存在）。
-3. 解析 dispatch model（#20）：`PAI_AGENT_MODEL` 未設 → `opus`；設了但不在 `sonnet|opus|haiku|fable` → **abort with usage error**（fail-loud，不靜默換模型；engine 對顯式非法值亦會於派發前 throw 作第二層）。解析值經 `args.agentModel` 傳入。接著呼叫 `Workflow` tool，傳 `scriptPath`（harness 絕對路徑）+ `args`：
+4. **蒐集 lens 層 ②③**（#29）：`python3 "${CLAUDE_PLUGIN_ROOT}/bin/pai-collect-lens-layers" code` → `lenses` **原樣**（含 `override` 欄）進 `args.customLenses`；`layers` / `warnings` 留給 Phase 4 的 provenance 行。完整契約見 [`references/lens-layers.md`](../../references/lens-layers.md)。⚠️ **`profile` 維持 `"code"`，不可改成 `"custom"`** —— 理由（`profile.title` 無 args 覆寫路徑）在該文件。
+5. 解析 dispatch model（#20）：`PAI_AGENT_MODEL` 未設 → `opus`；設了但不在 `sonnet|opus|haiku|fable` → **abort with usage error**（fail-loud，不靜默換模型；engine 對顯式非法值亦會於派發前 throw 作第二層）。解析值經 `args.agentModel` 傳入。接著呼叫 `Workflow` tool，傳 `scriptPath`（harness 絕對路徑）+ `args`：
 
    ```json
    {
@@ -142,6 +143,7 @@ esac
      "agentModel": "<PAI_AGENT_MODEL 解析值（預設 opus，#20）>",
      "file": "<路徑模式：FILE_OR_DIR 絕對路徑>",
      "diffFile": "<diff 模式：Phase 1 的 $DIFF_FILE 絕對路徑>",
+     "customLenses": "<pai-collect-lens-layers 的 lenses（層 ②③）；無則省略>",
      "contextBlock": "<focus + 內容類型 emphasis（見 Phase 1 表）>",
      "codexEnabled": true,
      "codexCallPath": "${CLAUDE_PLUGIN_ROOT}/bin/codex-call",
@@ -155,7 +157,7 @@ esac
 
    - `codexEnabled: true` → Codex（gpt-5.x）作為 barrier 內第 4 個 agent，shell 出去呼 `codexCallPath`（**絕不** `codex exec`），fail-soft：timeout/error 只回 1 個 INFO finding（不阻擋 Claude-lens verdict）。
    - `replicas` 預設 1（3 Claude lens + Codex + DA = 5，與 legacy 等價）。調高即大量 fan-out；harness 封頂 `MAX_AGENTS=16`（建議 Codex replica ≤2，fast = 2.5× credit）。
-4. Workflow 回 `{ findings, verdict, stats }`，`findings` 已 merge+dedup（severity 高者勝、跨 lens 不誤併）。Codex 的 finding `lens="codex"`、DA 的 `lens="devils-advocate"`。直接進 Phase 4 render，**不要**自己再 dedup。
+6. Workflow 回 `{ findings, verdict, stats }`，`findings` 已 merge+dedup（severity 高者勝、跨 lens 不誤併）。Codex 的 finding `lens="codex"`、DA 的 `lens="devils-advocate"`。直接進 Phase 4 render，**不要**自己再 dedup。`stats.lensProvenance` 供 Phase 4 的 provenance 行使用。
 
 > 跨模型獨立性由 harness 保證：codexPrompt **不**提及 Claude reviewers、**不**餵 Codex 他們的 findings；DA 則**會**讀 Claude reviewers 的完稿 findings（兩者 prompt builder 分開）。DA 為 downstream node（讀完稿，非 live SendMessage）。
 
@@ -333,6 +335,7 @@ Codex prompt 應包含：
 
 產出比較表：
 
+0. **Provenance 行**（#29）：findings 表之前先印 lens 來源一行（+ `warnings` 逐條）。格式與資料來源見 [`references/lens-layers.md`](../../references/lens-layers.md) §4/§5。**沒裝 lens pack 時也要印** —— 換了刻度不說，是 eval 數字不可比的根源。
 1. **去重**：相同檔案 + 相似描述 → 合併，標註來源 `[team:architecture+codex]`
 2. **severity 以最高為準**：如果 correctness 說 MEDIUM 但 codex 說 HIGH → HIGH
 3. **Devil's Advocate 的反駁如果成立** → 升級 severity

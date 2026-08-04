@@ -3,13 +3,14 @@
 
 用 csv 模組（絕不 naive split —— focus 是含逗號/中文標點的長 prose）。讀 UTF-8（含 BOM）
 CSV，每列 = 一個自訂 lens，輸出 JSON array 到 stdout：
-  [{"key": "...", "focus": "...", "needsSrt": true?}, ...]
+  [{"key": "...", "focus": "...", "needsSrt": true?, "override": true?}, ...]
 
 契約：
-  - header 需含 key, focus（needsSrt 可選欄）
+  - header 需含 key, focus（needsSrt / override 為可選欄）
   - 跳過 key 或 focus 為空的列（與 harness 的 customLenses filter 對稱）
-  - needsSrt ∈ {1,true,yes}（不分大小寫）→ true；否則省略該欄
-  - 保留列序、不去重（跨來源 first-wins 去重由 harness 做）
+  - needsSrt / override ∈ {1,true,yes}（不分大小寫）→ true；否則省略該欄
+  - 保留列序、不去重（跨來源去重由 harness 做：預設 first-wins，標了
+    override 的列才取代同 key 的既有 lens —— 見 #29）
   - 檔案不存在/不可讀 → stderr + exit 1
 
 退出碼：0 成功（含空 array）；1 錯誤；2 用法錯。
@@ -17,6 +18,12 @@ CSV，每列 = 一個自訂 lens，輸出 JSON array 到 stdout：
 import csv
 import json
 import sys
+
+
+def _truthy(value):
+    """CSV 布林欄的共用判準（needsSrt / override）—— 兩欄必須同一套語意，
+    否則寫 lens pack 的人得記兩組規則。"""
+    return str(value or "").strip().lower() in ("1", "true", "yes")
 
 
 def main():
@@ -35,8 +42,10 @@ def main():
                 if not key or not focus:
                     continue
                 item = {"key": key, "focus": focus}
-                if str(row.get("needsSrt", "")).strip().lower() in ("1", "true", "yes"):
+                if _truthy(row.get("needsSrt")):
                     item["needsSrt"] = True
+                if _truthy(row.get("override")):
+                    item["override"] = True
                 out.append(item)
     except FileNotFoundError:
         print(f"CSV 檔不存在: {path}", file=sys.stderr)

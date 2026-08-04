@@ -52,6 +52,35 @@ assert d=={"a":True,"b":True,"c":True,"d":None,"e":None}, d
 ' "$output"
 }
 
+@test "override true/yes/1 → true；false/空/缺欄 → 省略（#29）" {
+  printf 'key,focus,override\na,fa,true\nb,fb,YES\nc,fc,1\nd,fd,false\ne,fe,\n' > "$CSV"
+  run "$BIN" "$CSV"
+  [ "$status" -eq 0 ]
+  python3 -c '
+import json,sys
+d={x["key"]:x.get("override") for x in json.loads(sys.argv[1])}
+assert d=={"a":True,"b":True,"c":True,"d":None,"e":None}, d
+' "$output"
+}
+
+@test "override 與 needsSrt 互不干擾（#29）" {
+  printf 'key,focus,needsSrt,override\na,fa,true,false\nb,fb,false,true\n' > "$CSV"
+  run "$BIN" "$CSV"
+  [ "$status" -eq 0 ]
+  python3 -c '
+import json,sys
+d={x["key"]:(x.get("needsSrt"),x.get("override")) for x in json.loads(sys.argv[1])}
+assert d=={"a":(True,None),"b":(None,True)}, d
+' "$output"
+}
+
+@test "無 override 欄的舊 CSV → 每列都不帶 override（向後相容，#29）" {
+  printf 'key,focus\nperf,檢查複雜度\n' > "$CSV"
+  run "$BIN" "$CSV"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *'"override"'* ]]
+}
+
 @test "空 key 或空 focus 的列被跳過" {
   printf 'key,focus\n,有focus沒key\n有key沒focus,\nok,好\n' > "$CSV"
   run "$BIN" "$CSV"

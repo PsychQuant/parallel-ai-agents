@@ -25,12 +25,23 @@ node --input-type=module <<NODE
 import { PROFILES } from '${tmp}'
 import { writeFileSync } from 'fs'
 const esc = (s) => '"' + String(s).replace(/"/g, '""') + '"'
-const rows = ['profile,key,focus,needsSrt']
+// The notice must sit AFTER the header, never before it: a leading '#' line would be read
+// as the header row and the whole file would parse to []. Placed here it lands in the first
+// column with key/focus empty, so pai-parse-lens-csv skips it (empty key) -- the file stays
+// safe to feed to --lens-file while the warning is the first thing a human sees.
+// NOTE: this heredoc is UNQUOTED (interpolates tmp/out), so no backticks in here -- the shell
+// would run them as command substitution.
+const rows = [
+  'profile,key,focus,needsSrt',
+  '# 唯讀 catalog — 編輯本檔不會改變任何行為。真源是 workflows/ensemble-workflow.js 的 PROFILES。' +
+    '要新增/修改 lens 請走 lens pack 或 ~/.claude/pai-lenses/（見 references/lens-layers.md）。' +
+    '本檔由 references/regen-builtin-lenses.sh 產生。',
+]
 for (const [pname, p] of Object.entries(PROFILES)) {
   for (const l of (p.lenses || [])) {
     rows.push([pname, l.key, esc(l.focus), l.needsSrt ? 'true' : 'false'].join(','))
   }
 }
 writeFileSync('${out}', rows.join('\n') + '\n')
-console.log('wrote', rows.length - 1, 'built-in lenses →', '${out}')
+console.log('wrote', rows.length - 2, 'built-in lenses →', '${out}')  // −2: header + notice row
 NODE
