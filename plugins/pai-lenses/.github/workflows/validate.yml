@@ -1,0 +1,23 @@
+name: validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The checks live in scripts/validate.py, not inline here. An inline heredoc inside a
+      # `run: |` block must stay indented to remain part of the YAML block scalar — put its body
+      # at column 0 (as a heredoc normally wants) and the workflow silently stops parsing.
+      # A separate script also means contributors can run the exact same check locally.
+      - name: validate lens pack (semver version + every CSV yields ≥1 lens)
+        run: python3 scripts/validate.py
