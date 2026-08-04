@@ -1,0 +1,15 @@
+{
+  "name": "pai-lenses",
+  "version": "0.1.0",
+  "description": "parallel-ai-agents 的 lens pack：以 CSV 提供可疊加的 reviewer lens（層 ②）。新增一條 lens = 改 CSV + bump 版本，不必動 plugin 程式碼。",
+  "author": {
+    "name": "Che Cheng"
+  },
+  "category": "development",
+  "keywords": [
+    "parallel-ai-agents",
+    "ensemble-review",
+    "lenses",
+    "code-review"
+  ]
+}
