@@ -98,3 +98,20 @@ jobs:
           fi
           grep -q '^ok' "$TAP" || { echo "::error::no tests ran (empty glob or bats bail-out)"; exit 1; }
           exit "$rc"
+
+  pai-lenses-validate:
+    # 併回本 repo 前，這個檢查住在 PsychQuant/pai-lenses 自己的 validate.yml。
+    # 併入後該檔落在 plugins/pai-lenses/.github/ —— GitHub 只執行 repo root 的
+    # .github/workflows/，所以它形同失效。改掛成本 repo 的獨立 job：兩個 plugin
+    # 的 CI 職責分離，且 scripts/validate.py 本身不動（貢獻者仍可本機跑同一支）。
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugins/pai-lenses
+    steps:
+      - uses: actions/checkout@v4
+
+      # 檢查的內容不寫進 workflow 而放在 scripts/validate.py：`run: |` 區塊裡的
+      # heredoc 一旦把內容放在第 0 欄就會跳出 YAML block scalar，workflow 靜默停止解析。
+      - name: validate lens pack (semver version + every CSV yields >=1 lens)
+        run: python3 scripts/validate.py
