@@ -11,6 +11,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.22.0] - 2026-08-04
+
+### Added
+
+- `minutes` profile：會議記錄的 ensemble 審閱，四個 lens 互為補集。
+  `fidelity`（記錄寫的逐字稿有嗎、推論有無被寫成會中決定、有無誤讀原話）與
+  `completeness`（逐字稿有的記錄漏了嗎、不利內容有無消失）一正一反，缺一不可；
+  `attribution` 查發言與責任歸屬的依據（語者分離常不可靠，未確認即具名是嚴重問題）；
+  `cross-document` 比對來函、開會通知、前次記錄，並檢查交叉參照是否指對位置。
+  DA 盯三種安靜的偏移：個別發言寫成全體共識、條件句寫成確定句、會後才知道的事寫得像會中已知。
+- `ensemble-minutes-review` skill：載明與 `sinica-admin:meeting-minutes` 的分工
+  （機械檢查歸 compile.sh、事實核對歸本 skill），以及無逐字稿時應拒絕執行而非降級。
+
+### Fixed
+
+- 文件補上兩個實測陷阱：`args` 傳字串時 `profile` 解析為 `undefined`、0 個 agent 被派出
+  而 workflow 仍「成功」結束（僅在 findings 留一條 harness HIGH）；`agentModel` 不指定時
+  agent 繼承 session main-loop model，高階 session 單輪曾燒 56-109 萬 token 並撞死 lens agent。
+
+
 ## [2.21.0] - 2026-08-01
 
 ### Added
