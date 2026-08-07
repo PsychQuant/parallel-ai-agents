@@ -36,6 +36,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `references/builtin-lenses.csv` 檔頭改為 `!!! GENERATED FILE — DO NOT EDIT !!!` ——
   實測有人（含本次開發 session）第一次就誤以為該檔可編輯而去改它。
 
+### Fixed（#33 verify R1 — 6-AI ensemble 抓到 15 個 HIGH 後的修正）
+
+第一版的 `ensemble-contribute-lenses` **照著做走不完，走完了東西也送不到**。逐項：
+
+- **skill 現在有可執行的起點與終點**。新增 Phase 0「定位可修改的 repo 工作樹」（已在 repo → 用它；
+  有 push 權 → `gh repo clone`；外部貢獻者 → `gh repo fork --clone`），全流程路徑改以 `$REPO_ROOT` 為
+  唯一基準；Phase 6 補上 `git switch -c` / `git add` / `git commit` / `git push` / `gh pr create`。
+  先前所有路徑都默默假設 cwd 是本 repo 的 clone，但這個 skill 鎖定的使用者手上只有 plugin cache
+  （不是 git checkout，不能 commit）。
+- **bump 一律兩處**。層 ①② 的 bump 指令、決策表、`lens-layers.md`、pack README 全部改成
+  `plugin.json` **與** `marketplace.json` 對應 entry。只改一處時 PR merge 後使用者收不到新版、
+  **且沒有任何錯誤訊息** —— 這正好是這個 skill 想達成的相反面。
+- **比對改用 parser 不用 `grep`**。`focus` 是可含換行與逗號的 quoted 長 prose，`grep` 拿到的是
+  record 的第一個實體行而非欄位值，「focus 相同/不同」的分支根本無法實作；且 `key`/`profile`
+  來自使用者輸入，直接插進 `grep -E` 是 regex/option 注入。
+- **profile 存在性改查真源**（新增 `bin/pai-list-profiles`）。`builtin-lenses.csv` 由 lens 產生，
+  `lenses: []` 的 profile（`custom`）在投影裡一列都沒有 —— 拿它問存在性對 `custom` 必定答錯，
+  會把該進層 ② 的貢獻送去層 ①、在 `PROFILES` 產生重複 key 並靜默蓋掉既有 profile。
+- **Phase 6 的 catalog 檢查不再自我阻擋**。層 ① 路徑在 Phase 5 已跑過 regen，此時 catalog 相對
+  HEAD 本來就該有差異，原本的 `git diff --exit-code` 必然把正常流程判成失敗。改為驗冪等
+  （再跑一次 regen 不會再變）。
+
+### Added（同上一輪）
+
+- `bin/pai-list-profiles` — 印出 `PROFILES` 的 profile key（真源查詢；抽取法同 regen script）。
+- `plugins/pai-lenses/scripts/validate.py` 新增三道機械閘門，先前都只寫在散文裡：
+  `check_marketplace_sync`（兩處 version 必須一致）、`check_profiles`（CSV 檔名必須是既有 profile ——
+  否則 harness 回 `unknown ensemble profile`、0 agent 派出、workflow 仍「成功」結束）、
+  以及「`key` 以 `#` 開頭」的偵測（CSV 無註解語法，而 README 叫人拿有註解列的 catalog 當範本）。
+- `test/pai-collect-lens-layers.bats` 新增整合錨點：用**真實的** `plugins/pai-lenses` 內容複製進
+  模擬 cache，驗證併回（相對路徑 source）後仍被正確定位與解析。先前這一項只有手動驗過。
+- root `CLAUDE.md` 更新：不再宣告「唯一的 plugin」，版本同步 CRITICAL 規則改為逐 plugin 的表格。
+
 
 ## [2.22.0] - 2026-08-04
 

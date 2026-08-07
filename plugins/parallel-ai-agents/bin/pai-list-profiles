@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# pai-list-profiles — 印出 harness PROFILES 的所有 profile key，一行一個。
+#
+# 為什麼需要這支（#33 verify H7）：`references/builtin-lenses.csv` 是 PROFILES 的
+# generated 投影，但它**由 lens 產生** —— `regen-builtin-lenses.sh` 只對
+# `for (const l of (p.lenses || []))` 產列。所以 `lenses: []` 的 profile（例如
+# `custom`，它的定位就是「自由組合、無內建 lens」）在投影裡一列都沒有。
+#
+# 拿投影回答「這個 profile 存在嗎」會對 custom 必定答錯，並把該進層 ② 的貢獻
+# 誤送層 ①、在 PROFILES 產生重複 key 靜默蓋掉既有 profile。投影保證的是
+# 「列出所有 built-in lens」，不是「列出所有 profile」—— 兩個不同的集合。
+#
+# 抽取法與 regen-builtin-lenses.sh 相同：取「純定義區」（在 Orchestration 分隔線
+# 之前，runtime globals 尚未出現）、中和 meta export、append 一行 re-export，
+# 交給真的 JS engine 求值。不用 regex 撈 key —— PROFILES 的 focus 字串含大量
+# 標點與跳脫，regex 會撈錯。
+#
+# 退出碼：0 成功；1 harness 找不到或求值失敗。
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+harness="${PAI_HARNESS:-$here/../workflows/ensemble-workflow.js}"
+
+if [ ! -f "$harness" ]; then
+  echo "找不到 harness：$harness" >&2
+  exit 1
+fi
+
+tmpdir="$(mktemp -d)"
+trap 'rm -rf "$tmpdir"' EXIT
+tmp="$tmpdir/profiles.mjs"
+
+awk '/^\/\/ ── Orchestration ──/{exit} {print}' "$harness" \
+  | sed 's/^export const meta/const meta/' > "$tmp"
+echo 'export { PROFILES }' >> "$tmp"
+
+node --input-type=module <<NODE
+import { PROFILES } from '${tmp}'
+for (const k of Object.keys(PROFILES)) console.log(k)
+NODE

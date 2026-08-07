@@ -5,29 +5,40 @@
 裝了這個 plugin 之後，`ensemble-code-review` / `ensemble-academic-review` / `ensemble-lecture-review` /
 `ensemble-compose` 的 lens 集合會自動疊上這裡的內容。
 
-## 為什麼有這個 repo
+## 為什麼有這個 plugin
 
-built-in lens 的真源是 `parallel-ai-agents` 裡 `workflows/ensemble-workflow.js` 的 `PROFILES` 物件。
+built-in lens 的真源是 `plugins/parallel-ai-agents/workflows/ensemble-workflow.js` 的 `PROFILES` 物件。
 動它 = 改程式碼 → bump plugin 版本 → 同步 marketplace。結果是 lens 從 2026-06 起一條都沒新增過 ——
 **不是沒人想改，是改一條的成本太高**。
 
-拆出來之後：
+把 lens 抽成獨立 plugin 之後：
 
 |  | 之前 | 現在 |
 |---|---|---|
-| 新增一條 lens | 改 JS + bump plugin + 同步 marketplace | 改 CSV + bump 本 repo |
-| 收外部貢獻 | 收一條 lens = 發一次 plugin release | merge 一個 PR |
+| 新增一條 lens | 改 JS + bump 主 plugin | 改 CSV + bump 本 plugin |
 | 量測條件可追溯 | plugin 版本號會被無關改動污染 | lens pack 版本就是 lens 的版本座標 |
 
-最後一點對 `eval/fixtures/` 的偵測率數字尤其重要：lens 是量測儀器，前後用不同 lens 量到的數字不可比。
+第二點對 `eval/fixtures/` 的偵測率數字尤其重要：lens 是量測儀器，前後用不同 lens 量到的數字不可比。
 報表的 provenance 行會印出本 pack 的版本。
+
+### 為什麼**不**是獨立 repo（#33 的更正）
+
+本 pack 曾短暫是獨立的 `PsychQuant/pai-lenses` repo，理由是「降低外部貢獻的出口成本」。
+那個理由**不成立**，而且反過來是障礙：
+
+- 三層疊加的層 ③（`~/.claude/pai-lenses/`）要回流時，貢獻者得先判斷該進層 ① 還是層 ②，
+  而那兩層當時分屬**兩個 repo** —— 判定與開 PR 都跨 repo
+- 兩層在同一棵樹上，`/ensemble-contribute-lenses` 才有辦法自動判定目標層並在**一個 PR** 裡完成
+
+舊 repo 已封存（README 指向這裡）。層 ①②③ 的完整契約見
+[`references/lens-layers.md`](../parallel-ai-agents/references/lens-layers.md)。
 
 ## 三層疊加
 
 | 層 | 來源 | 給誰 |
 |---|---|---|
 | ① built-in | `parallel-ai-agents` 的 `PROFILES` | 所有人的 baseline |
-| ② **lens pack（本 repo）** | `lenses/<profile>.csv` | 裝了這個 plugin 的人 |
+| ② **lens pack（本 plugin）** | `lenses/<profile>.csv` | 裝了這個 plugin 的人 |
 | ③ user | `~/.claude/pai-lenses/<profile>.csv` | 只有你自己 |
 
 順序即優先序。撞名時**預設 first-wins**（先到的勝），只有標了 `override` 的才取代。
@@ -71,9 +82,21 @@ truthy 判準：`1` / `true` / `yes`（不分大小寫）。空白或省略 = fa
 
 ## 貢獻
 
-1. Fork → 改 `lenses/<profile>.csv` → PR
-2. PR 描述說明：這條 lens 抓什麼、為什麼既有的抓不到、若標了 `override` 為何要取代
-3. CI 會檢查 CSV 可解析、`plugin.json` 有 `version`
+**本機已經寫好 lens（層 ③）** → 跑 `/parallel-ai-agents:ensemble-contribute-lenses`。
+它會掃 `~/.claude/pai-lenses/*.csv`、判定每條該進層 ① 還是層 ②、產出變更並開 PR。
+
+**手動貢獻**：
+
+1. Fork `PsychQuant/parallel-ai-agents` → 改 `plugins/pai-lenses/lenses/<profile>.csv`
+2. **bump 兩處 version**：本 plugin 的 `.claude-plugin/plugin.json` **與** repo root
+   `.claude-plugin/marketplace.json` 的 `pai-lenses` entry。只改一處 → merge 後使用者收不到，
+   **且無錯誤訊息**（CI 的 `check_marketplace_sync` 會擋）
+3. PR 描述說明：這條 lens 抓什麼、為什麼既有的抓不到、若標了 `override` 為何要取代
+4. **檔名必須是既有 profile**（`bin/pai-list-profiles` 查得到的）。需要新 profile 就不是
+   改這裡 —— CSV 描述不了 profile 級的 `title`/`daFocus`/`codexDefault`，要改 `PROFILES`（層 ①）
+
+CI（`pai-lenses-validate`）會檢查：semver `version`、marketplace 版本一致、檔名是既有 profile、
+CSV 可解析且每檔至少一條 lens、以及 `key` 不是誤複製進來的註解列。
 
 ## 硬性前提：`plugin.json` 必須有 `version`
 
