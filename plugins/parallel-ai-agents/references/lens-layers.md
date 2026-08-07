@@ -17,8 +17,11 @@
 | 你的情況 | 去哪 | 怎麼做 |
 |---|---|---|
 | 只想自己用 | 層 ③ user | 編 `~/.claude/pai-lenses/<profile>.csv`，立即生效，不必發布 |
-| 想貢獻，且是**既有** profile 的 lens | 層 ② lens pack | 編 `plugins/pai-lenses/lenses/<profile>.csv` + bump version |
-| 想貢獻，且需要**新 profile** | 層 ① built-in | 改 `workflows/ensemble-workflow.js` 的 `PROFILES` → 跑 `references/regen-builtin-lenses.sh` |
+| 想貢獻，且是**既有** profile 的 lens | 層 ② lens pack | 編 `plugins/pai-lenses/lenses/<profile>.csv` + bump **兩處** version（`plugin.json` 與 `marketplace.json` 對應 entry）|
+| 想貢獻，且需要**新 profile** | 層 ① built-in | 改 `workflows/ensemble-workflow.js` 的 `PROFILES` → 跑 `references/regen-builtin-lenses.sh` → bump 兩處 version |
+
+> ⚠️ **「profile 是否存在」要查真源，不要查 `builtin-lenses.csv`**：該投影由 lens 產生，
+> `lenses: []` 的 profile（如 `custom`）在裡面一列都沒有。用 `bin/pai-list-profiles`。
 | 本機已經寫好，想一次送上去 | — | `/ensemble-contribute-lenses`（掃 user 層、判定目標層、開 PR） |
 
 > ⚠️ **`references/builtin-lenses.csv` 是 generated 的唯讀投影** —— 編它不改變任何行為。

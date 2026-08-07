@@ -146,6 +146,41 @@ assert d["lenses"][0].get("override") is True, d["lenses"]
 ' "$output"
 }
 
+@test "整合錨點（#33）：併回後的真實 pai-lenses 內容，在安裝後的 cache 佈局仍被解析" {
+  # issue #33 要求 4 —— source 從 github 改成相對路徑後，cache 佈局會不會變、
+  # semver glob 還找不找得到 pack。這條用**真實的 plugins/pai-lenses 內容**（不是 fixture）
+  # 複製進模擬 cache，所以 pack 的檔名、版本、CSV 任何一項壞掉都會在這裡紅。
+  #
+  # 佈局取自同 marketplace 的實證：parallel-ai-agents 自己就是相對路徑 source，
+  # 其 cache 是 ~/.claude/plugins/cache/parallel-ai-agents/parallel-ai-agents/<semver>/。
+  PACK_SRC="${BATS_TEST_DIRNAME}/../../pai-lenses"
+  [ -d "$PACK_SRC" ] || skip "找不到 $PACK_SRC（pai-lenses 未併入本 repo）"
+  VER=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['version'])" \
+        "${PACK_SRC}/.claude-plugin/plugin.json")
+  DEST="${CACHE}/parallel-ai-agents/pai-lenses/${VER}"
+  mkdir -p "$DEST"
+  cp -R "${PACK_SRC}/." "$DEST/"
+
+  run "$BIN" code
+  [ "$status" -eq 0 ]
+  jq_py '
+import json,sys
+d=json.loads(sys.argv[1])
+pack=[l for l in d["layers"] if l["name"]=="pack"][0]
+assert pack["status"]=="ok", pack
+assert d["lenses"], "真實 pack 的 code.csv 一條 lens 都沒收到"
+assert all(x["_layer"]=="pack" for x in d["lenses"]), d["lenses"]
+assert d["warnings"]==[], d["warnings"]
+' "$output"
+  # 版本要如實回報 —— provenance 行靠它，報錯版本等於量測條件記錯
+  jq_py "
+import json,sys
+d=json.loads(sys.argv[1])
+v=[l for l in d['layers'] if l['name']=='pack'][0]['version']
+assert v=='${VER}', (v, '${VER}')
+" "$output"
+}
+
 @test "無參數 → exit 2（用法）" {
   run "$BIN"
   [ "$status" -eq 2 ]
