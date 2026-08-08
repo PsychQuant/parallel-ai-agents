@@ -58,6 +58,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   HEAD 本來就該有差異，原本的 `git diff --exit-code` 必然把正常流程判成失敗。改為驗冪等
   （再跑一次 regen 不會再變）。
 
+### Fixed（#33 verify R2 — 18 個 HIGH，核心判定是「R1 的方向對但形式錯了」）
+
+R1 補齊了缺的段落，但沒有讓它**能跑**。R2 的 18 個 HIGH 有 8 個指向同一件事：
+
+> 這個流程不可能以「文件裡的一串 bash 區塊」的形式運作。
+
+AI 逐個 fenced block 呼叫 Bash 時每次都是新 shell —— `REPO_ROOT` / `USER_DIR` / `UPSTREAM`
+到下一個 block 全是空字串；`profile` 從未被賦值也沒有走訪 `*.csv` 的迴圈；沒有 `set -e`，
+所以 Phase 6 的 `validate.py` **不是閘門**：驗證 exit 1 後仍會照常 commit / push / 開 PR。
+
+- **新增 `bin/pai-contribute-lenses`**（python3）—— 整條回流流程改為一支腳本，SKILL.md 退回成
+  「何時用、判準是什麼」的薄封裝。一個 process 內完成就沒有跨 shell 的狀態問題，而且可以被
+  bats 測（10 條，含 3 處 mutation 驗證）。腳本**不代填任何設計決定**：新 profile 缺
+  `title`/`daFocus`/`codexDefault`、或 `override` 缺取代理由時 **exit 3 並印出缺什麼**，
+  由 skill 問使用者後帶參數重跑。驗證是**真正的閘門** —— 未過即 exit 1，且此時保證尚未做
+  任何 git 寫入或遠端操作。
+- **與 built-in 逐字相同的 lens 現在判 `SKIP` 而非 `MODIFY`** —— 先前 `builtin` 的 focus 讀進來
+  卻從未比較（dead code），導致「上游已經有一模一樣的東西」被要求提供 override 理由。
+- **catalog 同步檢查改為無條件比對**。先前用「catalog 有沒有被改」當作「這是不是層 ① 路徑」的
+  proxy，而「改了 `PROFILES` 卻忘了跑 regen」正好讓 catalog 沒差異 → 檢查整段被跳過 ——
+  守衛對它自己要抓的案例結構性不可達。
+- **profile 真源查詢區分「失敗」與「查無」**。先前 `pai-list-profiles | grep -qxF` 把
+  node 缺席／harness 求值失敗壓成與「查無此 profile」相同的 exit code，會被讀成「新 profile」
+  並在 `PROFILES` 產生重複 key 靜默蓋掉既有 profile。
+- **`check_marketplace_sync` 改為檢查所有相對路徑 plugin**（先前只查 `pai-lenses` 一個 entry），
+  新增第三個 plugin 時自動涵蓋。主 plugin 的層 ① 路徑先前完全沒有機械閘門。
+- **新增 `check_bumped`** —— 改了 `lenses/*.csv` 就必須 bump（相對 base ref 增加），不只是
+  「兩處一致」。equality 守得住「同步」，守不住「有 bump」；先前改了 lens 而兩處都停在同一版時
+  四個檢查全過、CI 全綠、使用者收不到新 lens、無任何錯誤訊息 —— 與 pack README 的宣稱直接矛盾。
+  CI 帶 `--base`（並改用 `fetch-depth: 0`，否則 shallow clone 讓這個檢查安靜地不存在）。
+- **CSV 範本複製的偵測改對目標** —— 先前偵測「`key` 以 `#` 開頭」，但那對真正的 catalog 註解列
+  不可能觸發（該列在 catalog 裡的第一欄是 `profile`）。真正的危害是**欄位錯位**：整份複製
+  `profile,key,focus,needsSrt` 後 `key` 欄拿到 profile 名、`focus` 欄拿到 key，而每一列看起來
+  都還是合法的 lens。改為偵測 header 含 `profile` 欄。
+- **root `README.md` 補上 `pai-lenses` 的安裝路徑**。R1 只修了被點名的 `CLAUDE.md`，而 README
+  才是**唯一寫了安裝指令的檔案** —— 舊 repo 已封存後，使用者從此沒有任何管道裝到層 ②，
+  而沒裝時 collector 回 `absent`（靜默、依設計不警告）→ 整個層 ② 安靜地不存在。
+- **bump `pai-lenses` 0.1.0 → 0.2.0**。本 PR 改了該 plugin 的 README 與 validate.py 卻沒 bump ——
+  一份反覆論證「漏 bump 是靜默失敗」的 PR，作者自己第一個違反。
+
 ### Added（同上一輪）
 
 - `bin/pai-list-profiles` — 印出 `PROFILES` 的 profile key（真源查詢；抽取法同 regen script）。

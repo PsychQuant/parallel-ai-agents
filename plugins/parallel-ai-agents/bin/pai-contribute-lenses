@@ -1,0 +1,375 @@
+#!/usr/bin/env python3
+"""pai-contribute-lenses — 把本機 user 層（層 ③）的 lens 送回公共層。
+
+**為什麼是一支腳本而不是 SKILL.md 裡的一串 bash 區塊**（#33 verify R1/R2）：
+前兩版把流程寫成文件裡的 fenced bash blocks，兩輪 6-AI verify 都判 FAIL，
+第二輪明確指出形式本身不可行 ——
+
+  - AI 逐個 block 呼叫 Bash 時**每次都是新 shell**：`REPO_ROOT` / `USER_DIR` /
+    `UPSTREAM` 在下一個 block 全是空字串
+  - `profile` 從未被賦值，也沒有走訪 `*.csv` 的迴圈
+  - 沒有 `set -e`：validate 失敗後仍會照常 commit / push / 開 PR ——
+    宣稱的「閘門」其實不是閘門
+
+一個 process 內完成就沒有這些問題，而且可以被 bats 測。
+
+**分工**：本腳本做**機械**的部分（盤點 → 比對 → 分類 → 產出變更 → 驗證 → git/PR）。
+需要**判斷**的部分不在這裡：新 profile 的 title/daFocus/codexDefault、override 的取代
+理由，都由呼叫端（skill）向使用者取得後以參數傳入。缺少時本腳本 **exit 3 並印出缺什麼**，
+絕不代填 —— 那是設計決定不是格式轉換。
+
+用法：
+  pai-contribute-lenses [--profile NAME] [--dry-run] [--include-override]
+                        [--repo-root PATH] [--upstream OWNER/REPO]
+                        [--override-reason KEY=REASON]...
+                        [--new-profile-meta PROFILE=title|daFocus|codexDefault]...
+
+退出碼：
+  0  完成（或 --dry-run 印完計畫）
+  1  錯誤（含驗證未過 —— 此時保證尚未做任何 git 寫入或遠端操作）
+  2  用法錯
+  3  需要使用者輸入（新 profile 欄位／override 理由）—— 呼叫端負責問，然後重跑
+"""
+import argparse
+import csv
+import io
+import json
+import os
+import pathlib
+import subprocess
+import sys
+
+UPSTREAM_DEFAULT = "PsychQuant/parallel-ai-agents"
+
+
+def die(msg, code=1):
+    print(f"✗ {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def run(cmd, **kw):
+    """跑外部指令。check=True 時失敗即中止 —— 這是 set -e 的替代品。"""
+    return subprocess.run(cmd, text=True, capture_output=True, **kw)
+
+
+# ── repo 定位 ────────────────────────────────────────────────────────────────
+
+def resolve_repo_root(explicit, upstream, allow_network):
+    """回傳可修改的 repo 工作樹。
+
+    這個 skill 的目標使用者是「lens 寫在 ~/.claude/pai-lenses/、人在別的專案目錄」的
+    貢獻者 —— 他手上有的是 plugin cache（不是 git checkout，不能 commit）。所以必須
+    明確解出一個工作樹，不能假設 cwd。
+    """
+    if explicit:
+        root = pathlib.Path(explicit).resolve()
+        if not (root / ".claude-plugin" / "marketplace.json").is_file():
+            die(f"--repo-root {root} 不像是本 repo（缺 .claude-plugin/marketplace.json）")
+        return root
+
+    r = run(["git", "rev-parse", "--show-toplevel"])
+    if r.returncode == 0:
+        cand = pathlib.Path(r.stdout.strip())
+        if (cand / ".claude-plugin" / "marketplace.json").is_file() and (cand / "plugins" / "pai-lenses").is_dir():
+            return cand
+
+    if not allow_network:
+        die("不在本 repo 內，且 --dry-run 不會 clone/fork。\n"
+            "  請在本 repo 的 checkout 內執行，或用 --repo-root 指定，或拿掉 --dry-run。", 1)
+
+    dest = pathlib.Path(os.environ.get("PAI_CONTRIB_CLONE_DIR")
+                        or pathlib.Path.home() / ".cache" / "pai-contrib" / "parallel-ai-agents")
+    if (dest / ".git").is_dir():
+        print(f"→ 重用既有 clone：{dest}")
+        return dest
+    dest.parent.mkdir(parents=True, exist_ok=True)
+
+    perm = run(["gh", "repo", "view", upstream, "--json", "viewerPermission",
+                "-q", ".viewerPermission"])
+    can_push = perm.returncode == 0 and perm.stdout.strip() in ("ADMIN", "MAINTAIN", "WRITE")
+    cmd = (["gh", "repo", "clone", upstream, str(dest)] if can_push
+           else ["gh", "repo", "fork", upstream, "--clone", "--remote", "--", str(dest)])
+    print(f"→ {'clone' if can_push else 'fork + clone'} {upstream} → {dest}")
+    r = run(cmd)
+    if r.returncode != 0:
+        die(f"取得工作樹失敗：{r.stderr.strip()}")
+    return dest
+
+
+# ── lens 讀取與比對 ──────────────────────────────────────────────────────────
+
+def parse_lens_csv(parser, path):
+    """解析一份 lens CSV。一律走 pai-parse-lens-csv（BOM-safe、csv 模組、bats 覆蓋的
+    單一真相源）—— 絕不 naive split，focus 是含逗號與換行的 quoted 長 prose。"""
+    if not path.is_file():
+        return {}
+    r = run([sys.executable, str(parser), str(path)])
+    if r.returncode != 0:
+        die(f"解析 {path} 失敗：{r.stderr.strip()}")
+    return {l["key"]: l for l in json.loads(r.stdout)}
+
+
+def builtin_lenses(root, profile):
+    """從 generated 投影讀某 profile 的 built-in lens（key → focus）。
+
+    注意：投影只保證「列出所有 built-in *lens*」。profile 的**存在性**不可查它 ——
+    見 known_profiles()。"""
+    cat = root / "plugins/parallel-ai-agents/references/builtin-lenses.csv"
+    out = {}
+    with cat.open(newline="", encoding="utf-8-sig") as fh:
+        for r in csv.DictReader(fh):
+            if (r.get("profile") or "") == profile and (r.get("key") or "").strip():
+                out[r["key"]] = (r.get("focus") or "")
+    return out
+
+
+def known_profiles(root):
+    """查真源 PROFILES 的 profile key。
+
+    #33 verify R2 H3：這裡必須把「查詢失敗」與「查無此 profile」分開。壓成同一個
+    exit code 時，node 缺席／harness 求值失敗會被讀成「profile 不存在 → 新 profile」，
+    於是在 PROFILES 新增一個**其實已存在**的 key、重複 key 靜默蓋掉既有 profile ——
+    正是本流程宣稱要 fail-loud 防止的事。"""
+    lister = root / "plugins/parallel-ai-agents/bin/pai-list-profiles"
+    if not lister.is_file():
+        die(f"找不到 {lister} —— 無法查 profile 真源")
+    r = run(["bash", str(lister)])
+    if r.returncode != 0:
+        die("查 PROFILES 失敗（node 缺席？harness 求值錯誤？）：\n  " + r.stderr.strip() +
+            "\n  這與「查無此 profile」是兩回事，不可當成新 profile 處理。")
+    profiles = {p.strip() for p in r.stdout.split() if p.strip()}
+    if not profiles:
+        die("PROFILES 解析出 0 個 profile —— 這不可能，視為查詢失敗")
+    return profiles
+
+
+def classify(mine, pack, builtin):
+    """把本機 lens 分成三類。回傳 [(action, key, note)]。"""
+    rows = []
+    for key, l in mine.items():
+        focus = l["focus"]
+        if key in pack and pack[key]["focus"] == focus:
+            rows.append(("SKIP", key, "已回流（層 ② 內容相同）"))
+        elif key in builtin and builtin[key] == focus:
+            # R2 H13：與 built-in 逐字相同的 lens 先前被判 MODIFY 並導向 override，
+            # 但它其實什麼都不用做 —— 上游已經有一模一樣的東西。
+            rows.append(("SKIP", key, "已在層 ①（built-in 內容相同）"))
+        elif key in pack or key in builtin:
+            where = "層 ②" if key in pack else "層 ①"
+            rows.append(("MODIFY", key, f"{where}已有同 key 但 focus 不同 → 需 override"))
+        else:
+            rows.append(("CANDIDATE", key, "兩層都沒有"))
+    return rows
+
+
+# ── 產出變更 ─────────────────────────────────────────────────────────────────
+
+def append_to_pack(root, profile, lenses, dry):
+    """把 lens 附加進 lenses/<profile>.csv。用 csv.writer 寫 —— focus 含逗號與換行，
+    手拼字串必爛。"""
+    path = root / "plugins/pai-lenses/lenses" / f"{profile}.csv"
+    header = ["key", "focus", "needsSrt", "override"]
+    existing = path.read_text(encoding="utf-8-sig") if path.is_file() else ""
+    buf = io.StringIO()
+    w = csv.writer(buf, lineterminator="\n")
+    if not existing:
+        w.writerow(header)
+    for l in lenses:
+        w.writerow([l["key"], l["focus"],
+                    "true" if l.get("needsSrt") else "",
+                    "true" if l.get("override") else ""])
+    if dry:
+        print(f"  [dry-run] 會附加到 {path.relative_to(root)}：{[l['key'] for l in lenses]}")
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(buf.getvalue())
+    print(f"  已附加 {len(lenses)} 條 → {path.relative_to(root)}")
+
+
+def bump(root, plugin_dir_name, dry, part="minor"):
+    """bump 一個 plugin 的版本 —— **兩處**：plugin.json 與 marketplace.json 對應 entry。
+
+    只改一處時 PR merge 後使用者 /plugin update 收不到新版，而且沒有任何錯誤訊息。
+    """
+    pj = root / "plugins" / plugin_dir_name / ".claude-plugin" / "plugin.json"
+    mp = root / ".claude-plugin" / "marketplace.json"
+    d = json.loads(pj.read_text(encoding="utf-8"))
+    name = d["name"]
+    major, minor, patch = (int(x) for x in d["version"].split(".")[:3])
+    new = f"{major}.{minor + 1}.0" if part == "minor" else f"{major}.{minor}.{patch + 1}"
+    if dry:
+        print(f"  [dry-run] 會把 {name} 從 {d['version']} bump 到 {new}（plugin.json + marketplace.json）")
+        return new
+    d["version"] = new
+    pj.write_text(json.dumps(d, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    m = json.loads(mp.read_text(encoding="utf-8"))
+    hit = False
+    for p in m.get("plugins", []):
+        if p.get("name") == name:
+            p["version"] = new
+            hit = True
+    if not hit:
+        die(f"marketplace.json 找不到 {name} entry —— 無法同步版本")
+    mp.write_text(json.dumps(m, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(f"  {name} {new}（plugin.json + marketplace.json 皆已更新）")
+    return new
+
+
+# ── 驗證（真正的閘門：任何 git 寫入之前）────────────────────────────────────
+
+def gate(root):
+    """全部驗證通過才回傳。任一項失敗 → exit 1，且此時保證尚未做任何 git 寫入。
+
+    #33 verify R2 H2：前一版把 validate.py 放在 Phase 6 的 bash block 裡但沒有
+    set -e / || exit，驗證 exit 1 之後仍會照常 commit / push / 開 PR —— 宣稱的閘門
+    其實不是閘門。"""
+    print("→ 驗證")
+    v = run([sys.executable, "scripts/validate.py"], cwd=root / "plugins/pai-lenses")
+    print("\n".join("    " + l for l in (v.stdout or "").splitlines()))
+    if v.returncode != 0:
+        die("lens pack 驗證未通過（上方為輸出）—— 未做任何 git 寫入")
+
+    # catalog 同步：**無條件**比對，不用「catalog 有沒有被改」當 proxy。
+    # R2 H4/H9/H12：用 proxy 時，「改了 PROFILES 卻忘了跑 regen」正好讓 catalog 沒
+    # 差異 → 檢查被整段跳過 —— 守衛對它自己要抓的案例結構性不可達。
+    cat = root / "plugins/parallel-ai-agents/references/builtin-lenses.csv"
+    before = cat.read_bytes() if cat.is_file() else b""
+    r = run(["bash", "plugins/parallel-ai-agents/references/regen-builtin-lenses.sh"], cwd=root)
+    if r.returncode != 0:
+        die(f"regen 失敗：{r.stderr.strip()}")
+    if cat.read_bytes() != before:
+        die("builtin-lenses.csv 與 PROFILES 不同步 —— regen 產生了差異。\n"
+            "  （已幫你重生，請確認內容後一併 commit）")
+    print("    catalog 與 PROFILES 同步 ✓")
+
+
+# ── git / PR ────────────────────────────────────────────────────────────────
+
+def open_pr(root, upstream, slug, body, touched, dry):
+    if dry:
+        print(f"  [dry-run] 會開 branch contrib/{slug}、commit {len(touched)} 個檔、push、開 PR")
+        return
+    branch = f"contrib/{slug}"
+    for cmd in (["git", "switch", "-c", branch],
+                ["git", "add", *touched],
+                ["git", "commit", "-m", f"feat(lenses): 貢獻 lens 回公共層 ({slug})"],
+                ["git", "push", "-u", "origin", branch]):
+        r = run(cmd, cwd=root)
+        if r.returncode != 0:
+            die(f"{' '.join(cmd[:2])} 失敗：{r.stderr.strip()}")
+    bodyfile = root / ".git" / "pai-contrib-pr-body.md"
+    bodyfile.write_text(body, encoding="utf-8")
+    r = run(["gh", "pr", "create", "--repo", upstream,
+             "--title", f"lens 貢獻：{slug}", "--body-file", str(bodyfile)], cwd=root)
+    if r.returncode != 0:
+        die(f"gh pr create 失敗：{r.stderr.strip()}")
+    print(f"  PR：{r.stdout.strip()}")
+
+
+# ── main ────────────────────────────────────────────────────────────────────
+
+def main():
+    ap = argparse.ArgumentParser(add_help=True)
+    ap.add_argument("--profile")
+    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--include-override", action="store_true")
+    ap.add_argument("--repo-root")
+    ap.add_argument("--upstream", default=UPSTREAM_DEFAULT)
+    ap.add_argument("--override-reason", action="append", default=[], metavar="KEY=REASON")
+    args = ap.parse_args()
+    dry = args.dry_run
+
+    user_dir = pathlib.Path(os.environ.get("PAI_USER_LENS_DIR")
+                            or pathlib.Path.home() / ".claude" / "pai-lenses")
+    if not user_dir.is_dir():
+        print(f"本機無 {user_dir} — 沒有可貢獻的 lens。")
+        return 0
+    csvs = sorted(user_dir.glob("*.csv"))
+    if args.profile:
+        csvs = [p for p in csvs if p.stem == args.profile]
+        if not csvs:
+            die(f"{user_dir} 下沒有 {args.profile}.csv", 1)
+    if not csvs:
+        print(f"{user_dir} 下沒有 .csv — 沒有可貢獻的 lens。")
+        return 0
+
+    root = resolve_repo_root(args.repo_root, args.upstream, allow_network=not dry)
+    parser = root / "plugins/parallel-ai-agents/bin/pai-parse-lens-csv"
+    profiles = known_profiles(root)
+    reasons = dict(kv.split("=", 1) for kv in args.override_reason if "=" in kv)
+
+    plan, needs_input, touched = [], [], set()
+    for path in csvs:
+        profile = path.stem
+        mine = parse_lens_csv(parser, path)
+        if not mine:
+            print(f"→ {path.name}: 解析出 0 條 lens（header 是否為 key,focus？）")
+            continue
+        if profile not in profiles:
+            # 新 profile 只能進層 ①，而 CSV 描述不了 profile 級的 title/daFocus/
+            # codexDefault —— 缺就問，不代填（代填等於替使用者做設計決定）。
+            needs_input.append(
+                f"profile '{profile}' 不在 PROFILES（既有：{', '.join(sorted(profiles))}）。"
+                f"這是新 profile，只能進層 ①，需要 title / daFocus / codexDefault —— "
+                f"請向使用者取得後改 PROFILES，本腳本不代填。")
+            continue
+        pack = parse_lens_csv(parser, root / "plugins/pai-lenses/lenses" / f"{profile}.csv")
+        rows = classify(mine, pack, builtin_lenses(root, profile))
+        print(f"→ {path.name}（profile {profile}）")
+        send = []
+        for action, key, note in rows:
+            print(f"    {action:9s} {key} — {note}")
+            if action == "CANDIDATE":
+                send.append(mine[key])
+            elif action == "MODIFY":
+                if not args.include_override:
+                    print(f"              （預設不送 —— 加 --include-override 才列入）")
+                elif key not in reasons:
+                    needs_input.append(
+                        f"lens '{key}' 要取代既有的同 key lens，需要取代理由 —— "
+                        f"重跑時帶 --override-reason {key}=<理由>")
+                else:
+                    send.append({**mine[key], "override": True})
+        if send:
+            plan.append((profile, send))
+
+    if needs_input:
+        print("\n需要使用者輸入才能繼續：", file=sys.stderr)
+        for n in needs_input:
+            print(f"  - {n}", file=sys.stderr)
+        return 3
+    if not plan:
+        print("\n沒有需要送出的 lens。")
+        return 0
+
+    print("\n→ 產出變更")
+    for profile, lenses in plan:
+        append_to_pack(root, profile, lenses, dry)
+        touched.add(f"plugins/pai-lenses/lenses/{profile}.csv")
+    bump(root, "pai-lenses", dry)
+    touched.update({"plugins/pai-lenses/.claude-plugin/plugin.json", ".claude-plugin/marketplace.json"})
+
+    if dry:
+        print("\n[dry-run] 未寫入任何檔案、未做任何 git 操作。")
+        return 0
+
+    gate(root)   # 真正的閘門：未過就 exit 1，此時尚未有任何 git 寫入
+
+    keys = [l["key"] for _, ls in plan for l in ls]
+    slug = "-".join(keys[:3])[:40] or "lenses"
+    body = ["## 貢獻的 lens", ""]
+    for profile, lenses in plan:
+        for l in lenses:
+            body.append(f"- `{profile}` / **{l['key']}** — 來源：本機 `{user_dir}/{profile}.csv`"
+                        + (f"；**取代**既有同 key lens，理由：{reasons.get(l['key'], '')}"
+                           if l.get("override") else "；純新增"))
+    body += ["", "目標層：② lens pack（`plugins/pai-lenses/lenses/`）", "",
+             "由 `/parallel-ai-agents:ensemble-contribute-lenses` 產生。"]
+    open_pr(root, args.upstream, slug, "\n".join(body), sorted(touched), dry)
+    print("\n完成。本機的原始 CSV 未刪 —— PR merge 前刪掉會兩頭落空。")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
