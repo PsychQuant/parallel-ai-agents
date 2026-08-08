@@ -11,104 +11,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [2.23.0] - 2026-08-04
+## [2.23.0] - 2026-08-09
 
-### Added
+`pai-lenses` 從獨立 repo 併回本 repo 成為第二個 plugin，並把三層 lens 疊加的文件與 CI 閘門補齊。
 
-- `ensemble-contribute-lenses` skill：層 ③（user）的回流路徑。掃 `~/.claude/pai-lenses/*.csv`、
-  比對 built-in 與 lens pack、判定目標層後開 PR。判準是「能不能只用一條 lens 表達」——
-  CSV 描述得了 lens，描述不了 profile 級的 `title` / `daFocus` / `codexDefault`，
-  故新 profile 必須進層 ①，缺的欄位一律向使用者索取不代填。
-  `override` 標記預設不送（會替所有使用者移除一條調校過的 lens，且傷害是靜默的）。
-- `references/lens-layers.md` 開頭新增「我想加 lens，該去哪」決策表（四種情況直接對到動作）。
+> **範圍說明**：本版**不含**層 ③ 的自動回流工具。它原本在同一個 PR 裡，經三輪 6-AI verify
+> （HIGH 數 15 → 18 → 32）後拆出到 **#39**。R3 的 32 個 HIGH 有 **29 個**落在回流工具上，
+> 併回這一半三輪下來**沒有任何一個 HIGH** —— 所以先出貨併回（使用者現在才裝得到層 ②），
+> 回流工具在自己的 issue 裡從頭想。三輪換來的 29 條缺陷清單已逐條寫進 #39 當規格。
 
 ### Changed
 
-- `pai-lenses` 由獨立 repo 併回本 repo `plugins/pai-lenses/`（`git subtree`，保留其 3 個 commit）。
+- **`pai-lenses` 併回 `plugins/pai-lenses/`**（`git subtree`，保留其 3 個原始 commit）。
   marketplace source 由 `{"source":"github",...}` 改為 `./plugins/pai-lenses`，與主 plugin 一致。
   併回理由：`bin/pai-collect-lens-layers` 的 `PACK_PLUGIN` 寫死單一 pack 名、只 glob `*/pai-lenses`，
-  架構只認一個官方 pack，「讓第三方各自發 pack」的分離理由不成立。
-- 其 `validate.yml` 併入 root `test.yml` 為獨立 job；併入後落在 `plugins/` 下的 workflow
-  不會被 GitHub 執行，故移除以免誤導。
+  架構只認一個官方 pack，「讓第三方各自發 pack」的分離理由不成立；且層 ③ 要回流時，
+  判定目標層與開 PR 都得跨兩個 repo。舊 repo 已封存並在 README 指向新位置。
+- 其 `validate.yml` 併入 root `test.yml` 為獨立 job（`pai-lenses-validate`）——
+  併入後落在 `plugins/` 下的 workflow 不會被 GitHub 執行，故移除以免誤導。
+
+### Added
+
+- **`bin/pai-list-profiles`** — 印出 `PROFILES` 的 profile key。**profile 的存在性必須查真源**：
+  `references/builtin-lenses.csv` 是**由 lens 產生**的投影，`lenses: []` 的 profile（`custom`）
+  在裡面一列都沒有。拿投影問存在性對 `custom` 必定答錯。
+- **root `README.md` 補上 `pai-lenses` 的安裝路徑**（先前完全沒有）。舊 repo 封存後，
+  README 是唯一的入口 —— 沒寫等於使用者裝不到層 ②，而沒裝時 collector 回 `absent`
+  （靜默、依設計不警告），整個層 ② 會安靜地不存在。
+- **`references/lens-layers.md` 的「我想加一條 lens，該去哪」決策表**（四種情況直接對到動作）。
+- **`plugins/pai-lenses/scripts/validate.py` 的機械閘門**，先前都只寫在散文裡：
+  - `check_marketplace_sync` — **每一個**相對路徑 plugin 的 `plugin.json` 與 marketplace entry
+    版本必須一致（不只 `pai-lenses`；主 plugin 先前完全沒有閘門）
+  - `check_bumped` — 改了 `lenses/*.csv` 就必須 bump（相對 base ref 增加）。
+    equality 守得住「同步」，守不住「有 bump」。**git 跑不起來時報錯而非略過** ——
+    「閘門沒跑」與「無需 bump」是兩回事
+  - `check_profiles` — CSV 檔名必須是既有 profile；且對沒有專屬 review skill 的 profile
+    （`minutes` / `general` / `custom`）發警告說明它只會經 `--base` 載入
+  - CSV 形狀：未知 header 欄（`overide` 這種 typo 會讓整欄靜默失效）、缺 `key`/`focus` 的列、
+    整份複製 catalog 造成的欄位錯位，全部改為 error
+- CI 帶 `--base` 並改 `fetch-depth: 0` —— 預設 shallow clone 會讓 `git diff base...HEAD` 失敗，
+  bump 檢查會安靜地不存在。
 
 ### Fixed
 
 - `references/builtin-lenses.csv` 檔頭改為 `!!! GENERATED FILE — DO NOT EDIT !!!` ——
   實測有人（含本次開發 session）第一次就誤以為該檔可編輯而去改它。
-
-### Fixed（#33 verify R1 — 6-AI ensemble 抓到 15 個 HIGH 後的修正）
-
-第一版的 `ensemble-contribute-lenses` **照著做走不完，走完了東西也送不到**。逐項：
-
-- **skill 現在有可執行的起點與終點**。新增 Phase 0「定位可修改的 repo 工作樹」（已在 repo → 用它；
-  有 push 權 → `gh repo clone`；外部貢獻者 → `gh repo fork --clone`），全流程路徑改以 `$REPO_ROOT` 為
-  唯一基準；Phase 6 補上 `git switch -c` / `git add` / `git commit` / `git push` / `gh pr create`。
-  先前所有路徑都默默假設 cwd 是本 repo 的 clone，但這個 skill 鎖定的使用者手上只有 plugin cache
-  （不是 git checkout，不能 commit）。
-- **bump 一律兩處**。層 ①② 的 bump 指令、決策表、`lens-layers.md`、pack README 全部改成
-  `plugin.json` **與** `marketplace.json` 對應 entry。只改一處時 PR merge 後使用者收不到新版、
-  **且沒有任何錯誤訊息** —— 這正好是這個 skill 想達成的相反面。
-- **比對改用 parser 不用 `grep`**。`focus` 是可含換行與逗號的 quoted 長 prose，`grep` 拿到的是
-  record 的第一個實體行而非欄位值，「focus 相同/不同」的分支根本無法實作；且 `key`/`profile`
-  來自使用者輸入，直接插進 `grep -E` 是 regex/option 注入。
-- **profile 存在性改查真源**（新增 `bin/pai-list-profiles`）。`builtin-lenses.csv` 由 lens 產生，
-  `lenses: []` 的 profile（`custom`）在投影裡一列都沒有 —— 拿它問存在性對 `custom` 必定答錯，
-  會把該進層 ② 的貢獻送去層 ①、在 `PROFILES` 產生重複 key 並靜默蓋掉既有 profile。
-- **Phase 6 的 catalog 檢查不再自我阻擋**。層 ① 路徑在 Phase 5 已跑過 regen，此時 catalog 相對
-  HEAD 本來就該有差異，原本的 `git diff --exit-code` 必然把正常流程判成失敗。改為驗冪等
-  （再跑一次 regen 不會再變）。
-
-### Fixed（#33 verify R2 — 18 個 HIGH，核心判定是「R1 的方向對但形式錯了」）
-
-R1 補齊了缺的段落，但沒有讓它**能跑**。R2 的 18 個 HIGH 有 8 個指向同一件事：
-
-> 這個流程不可能以「文件裡的一串 bash 區塊」的形式運作。
-
-AI 逐個 fenced block 呼叫 Bash 時每次都是新 shell —— `REPO_ROOT` / `USER_DIR` / `UPSTREAM`
-到下一個 block 全是空字串；`profile` 從未被賦值也沒有走訪 `*.csv` 的迴圈；沒有 `set -e`，
-所以 Phase 6 的 `validate.py` **不是閘門**：驗證 exit 1 後仍會照常 commit / push / 開 PR。
-
-- **新增 `bin/pai-contribute-lenses`**（python3）—— 整條回流流程改為一支腳本，SKILL.md 退回成
-  「何時用、判準是什麼」的薄封裝。一個 process 內完成就沒有跨 shell 的狀態問題，而且可以被
-  bats 測（10 條，含 3 處 mutation 驗證）。腳本**不代填任何設計決定**：新 profile 缺
-  `title`/`daFocus`/`codexDefault`、或 `override` 缺取代理由時 **exit 3 並印出缺什麼**，
-  由 skill 問使用者後帶參數重跑。驗證是**真正的閘門** —— 未過即 exit 1，且此時保證尚未做
-  任何 git 寫入或遠端操作。
-- **與 built-in 逐字相同的 lens 現在判 `SKIP` 而非 `MODIFY`** —— 先前 `builtin` 的 focus 讀進來
-  卻從未比較（dead code），導致「上游已經有一模一樣的東西」被要求提供 override 理由。
-- **catalog 同步檢查改為無條件比對**。先前用「catalog 有沒有被改」當作「這是不是層 ① 路徑」的
-  proxy，而「改了 `PROFILES` 卻忘了跑 regen」正好讓 catalog 沒差異 → 檢查整段被跳過 ——
-  守衛對它自己要抓的案例結構性不可達。
-- **profile 真源查詢區分「失敗」與「查無」**。先前 `pai-list-profiles | grep -qxF` 把
-  node 缺席／harness 求值失敗壓成與「查無此 profile」相同的 exit code，會被讀成「新 profile」
-  並在 `PROFILES` 產生重複 key 靜默蓋掉既有 profile。
-- **`check_marketplace_sync` 改為檢查所有相對路徑 plugin**（先前只查 `pai-lenses` 一個 entry），
-  新增第三個 plugin 時自動涵蓋。主 plugin 的層 ① 路徑先前完全沒有機械閘門。
-- **新增 `check_bumped`** —— 改了 `lenses/*.csv` 就必須 bump（相對 base ref 增加），不只是
-  「兩處一致」。equality 守得住「同步」，守不住「有 bump」；先前改了 lens 而兩處都停在同一版時
-  四個檢查全過、CI 全綠、使用者收不到新 lens、無任何錯誤訊息 —— 與 pack README 的宣稱直接矛盾。
-  CI 帶 `--base`（並改用 `fetch-depth: 0`，否則 shallow clone 讓這個檢查安靜地不存在）。
-- **CSV 範本複製的偵測改對目標** —— 先前偵測「`key` 以 `#` 開頭」，但那對真正的 catalog 註解列
-  不可能觸發（該列在 catalog 裡的第一欄是 `profile`）。真正的危害是**欄位錯位**：整份複製
-  `profile,key,focus,needsSrt` 後 `key` 欄拿到 profile 名、`focus` 欄拿到 key，而每一列看起來
-  都還是合法的 lens。改為偵測 header 含 `profile` 欄。
-- **root `README.md` 補上 `pai-lenses` 的安裝路徑**。R1 只修了被點名的 `CLAUDE.md`，而 README
-  才是**唯一寫了安裝指令的檔案** —— 舊 repo 已封存後，使用者從此沒有任何管道裝到層 ②，
-  而沒裝時 collector 回 `absent`（靜默、依設計不警告）→ 整個層 ② 安靜地不存在。
-- **bump `pai-lenses` 0.1.0 → 0.2.0**。本 PR 改了該 plugin 的 README 與 validate.py 卻沒 bump ——
-  一份反覆論證「漏 bump 是靜默失敗」的 PR，作者自己第一個違反。
-
-### Added（同上一輪）
-
-- `bin/pai-list-profiles` — 印出 `PROFILES` 的 profile key（真源查詢；抽取法同 regen script）。
-- `plugins/pai-lenses/scripts/validate.py` 新增三道機械閘門，先前都只寫在散文裡：
-  `check_marketplace_sync`（兩處 version 必須一致）、`check_profiles`（CSV 檔名必須是既有 profile ——
-  否則 harness 回 `unknown ensemble profile`、0 agent 派出、workflow 仍「成功」結束）、
-  以及「`key` 以 `#` 開頭」的偵測（CSV 無註解語法，而 README 叫人拿有註解列的 catalog 當範本）。
-- `test/pai-collect-lens-layers.bats` 新增整合錨點：用**真實的** `plugins/pai-lenses` 內容複製進
-  模擬 cache，驗證併回（相對路徑 source）後仍被正確定位與解析。先前這一項只有手動驗過。
-- root `CLAUDE.md` 更新：不再宣告「唯一的 plugin」，版本同步 CRITICAL 規則改為逐 plugin 的表格。
-
+- root `CLAUDE.md` 不再宣告「唯一的 plugin」；版本同步的 CRITICAL 規則改為逐 plugin 的表格。
 
 ## [2.22.0] - 2026-08-04
 
