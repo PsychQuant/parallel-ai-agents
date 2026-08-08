@@ -27,7 +27,7 @@
       "name": "pai-lenses",
       "source": "./plugins/pai-lenses",
       "description": "parallel-ai-agents 的 lens pack（層 ②）：以 CSV 提供可疊加的 reviewer lens。裝了之後四個 ensemble skill 的 lens 集合會自動疊上；撞名需在 CSV 標 override 才取代。新增一條 lens = 改 CSV + bump 版本，不必動 plugin 程式碼。",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "author": {
         "name": "Che Cheng"
       },
