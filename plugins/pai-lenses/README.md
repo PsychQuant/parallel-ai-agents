@@ -28,7 +28,7 @@ built-in lens 的真源是 `plugins/parallel-ai-agents/workflows/ensemble-workfl
 
 - 三層疊加的層 ③（`~/.claude/pai-lenses/`）要回流時，貢獻者得先判斷該進層 ① 還是層 ②，
   而那兩層當時分屬**兩個 repo** —— 判定與開 PR 都跨 repo
-- 兩層在同一棵樹上，`/ensemble-contribute-lenses` 才有辦法自動判定目標層並在**一個 PR** 裡完成
+- 兩層在同一棵樹上，自動判定目標層的回流工具才有辦法在**一個 PR** 裡完成（實作中，見 #39）
 
 舊 repo 已封存（README 指向這裡）。層 ①②③ 的完整契約見
 [`references/lens-layers.md`](../parallel-ai-agents/references/lens-layers.md)。
@@ -82,8 +82,8 @@ truthy 判準：`1` / `true` / `yes`（不分大小寫）。空白或省略 = fa
 
 ## 貢獻
 
-**本機已經寫好 lens（層 ③）** → 跑 `/parallel-ai-agents:ensemble-contribute-lenses`。
-它會掃 `~/.claude/pai-lenses/*.csv`、判定每條該進層 ① 還是層 ②、產出變更並開 PR。
+> 自動回流工具（掃 `~/.claude/pai-lenses/*.csv`、判定目標層、開 PR）**尚未就緒** —— 見 #39。
+> 目前請照下面的手動流程。
 
 **手動貢獻**：
 

@@ -22,6 +22,10 @@ import subprocess
 import sys
 
 SEMVER = re.compile(r"^\d+\.\d+\.\d+")
+# 有專屬 review skill 硬接 pai-collect-lens-layers 的 profile。其餘 profile 的 pack CSV
+# 仍然合法（ensemble-compose --base <profile> 會載入），但不會出現在任何專屬審閱裡 ——
+# 貢獻者值得被告知這件事（#33 verify R3 H30）。
+WIRED_PROFILES = {"code", "academic", "lecture"}
 TRUTHY = ("1", "true", "yes")
 FALSY = ("", "0", "false", "no")
 
@@ -70,6 +74,29 @@ def check_csvs(root, errs):
         if not rows or "key" not in rows[0] or "focus" not in rows[0]:
             errs.append(f"::error file={rel}::header 必須含 key 與 focus")
             continue
+        # #33 verify R3 H9：未知 header 欄是錯不是警告。`overide`（少一個 r）這種 typo
+        # 會讓整欄被 csv 模組當成不認識的欄位而丟掉 —— lens 照常出貨、override 靜默失效，
+        # 而 CI 全綠。這正是本 validator 存在的理由那一類失敗。
+        KNOWN = {"key", "focus", "needsSrt", "override"}
+        unknown = [c for c in (rows[0].keys() if rows else []) if c and c not in KNOWN]
+        if unknown:
+            errs.append(
+                f"::error file={rel}::header 有不認識的欄位 {unknown}（合法欄位：{sorted(KNOWN)}）。"
+                "拼錯的欄位會被靜默忽略 —— 例如 'overide' 會讓該列的 override 完全失效而不報錯"
+            )
+            continue
+
+        # #33 verify R3 H9：缺 key 或 focus 的列先前只是被濾掉，只要同檔另有一列有效就整體通過。
+        # 但那一列是**貢獻者想送的東西**，被吃掉了卻沒人知道。
+        bad = [i for i, r in enumerate(rows, start=2)
+               if not ((r.get("key") or "").strip() and (r.get("focus") or "").strip())]
+        if bad:
+            errs.append(
+                f"::error file={rel}::第 {bad} 列缺 key 或 focus —— 這些列會被解析器整列丟棄。"
+                "若是刻意留空請刪掉該列；若是資料，補齊欄位"
+            )
+            continue
+
         lenses = [r for r in rows
                   if (r.get("key") or "").strip() and (r.get("focus") or "").strip()]
         if not lenses:
@@ -169,7 +196,15 @@ def check_bumped(root, errs, base):
     changed = subprocess.run(["git", "diff", "--name-only", f"{base}...HEAD", "--", rel],
                              cwd=repo, capture_output=True, text=True)
     if changed.returncode != 0:
-        print(f"note: git diff 失敗（base={base} 不存在？）—— 略過 bump 檢查：{changed.stderr.strip()}")
+        # #33 verify R3 H8：先前這裡只印 note 就成功返回 —— fail-open。
+        # 「git 跑不起來」與「沒東西要檢查」是兩回事：前者代表這道閘門**根本沒跑**，
+        # 而 CI 仍然全綠。最常見的原因是 shallow clone 沒有 base（已加 fetch-depth: 0），
+        # 但無論原因為何，靜默放行等於讓閘門在最需要它的時候消失。
+        errs.append(
+            f"::error::bump 檢查無法執行（base={base}）：{changed.stderr.strip()}。"
+            "這不是「無需 bump」—— 是這道閘門沒有跑。"
+            "CI 請確認 checkout 有 fetch-depth: 0 且 base SHA 在本地歷史內"
+        )
         return
     if not changed.stdout.strip():
         print("lenses/ 相對 base 無變更 —— 無需 bump ✓")
@@ -180,7 +215,12 @@ def check_bumped(root, errs, base):
                          cwd=repo, capture_output=True, text=True)
     prev = json.loads(old.stdout).get("version", "") if old.returncode == 0 else None
     if prev is None:
-        print(f"note: base 沒有這個 plugin.json（新增的 pack？）—— 略過 bump 檢查")
+        # base 沒有這個 plugin.json = 這個 PR 本身在新增整個 pack。此時沒有「前一版」
+        # 可比，跳過是對的 —— 但必須說出口。#33 verify R3 H8 指出：引入這道閘門的
+        # 那個 PR 正好落在這個分支，所以閘門在它自己身上結構性不可達。
+        print(f"note: base（{base}）沒有 plugins/pai-lenses/.claude-plugin/plugin.json —— "
+              "本 PR 在新增整個 pack，無前一版可比，bump 檢查略過。"
+              "（這是唯一合法的略過情境；下一個改 lens 的 PR 就會被實際檢查。）")
         return
     def tup(v):
         try:
@@ -229,6 +269,15 @@ def check_profiles(root, errs):
             )
         else:
             print(f"{path.relative_to(root)}: profile '{path.stem}' 存在於 PROFILES ✓")
+            # #33 verify R3 H30：profile 存在於 PROFILES ≠ 有 skill 會載入這一層。
+            # 只有 code / academic / lecture 有專屬 review skill 硬接 pai-collect-lens-layers；
+            # 其餘（minutes / general / custom）唯一的載入路徑是 ensemble-compose --base <profile>。
+            # 不是錯（compose 確實會載），但貢獻者需要知道它不會出現在任何專屬審閱裡。
+            if path.stem not in WIRED_PROFILES:
+                print(f"::warning file={path.relative_to(root)}::profile '{path.stem}' 沒有專屬的 "
+                      f"review skill（只有 {', '.join(sorted(WIRED_PROFILES))} 有）。"
+                      f"這些 lens 只會在 /ensemble-compose --base {path.stem} 時被載入，"
+                      "不會出現在任何專屬審閱中")
 
 
 def main():

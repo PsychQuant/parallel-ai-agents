@@ -29,7 +29,6 @@ Claude Code marketplace，散發 **平行多 AI agent 審閱** plugin。
 | `/ensemble-academic-review` | 學術論文審閱：methodology、writing、reference verification（che-zotero-mcp 抓幻覺文獻）、number-verification（R/Python 重跑 ground-truth 抓幻覺數字）、devils-advocate。支援 independent／hybrid／mix N 三種模式 |
 | `/ensemble-lecture-review` | 教學講義審閱：內容正確性／可讀性／逐字稿覆蓋率（可帶 `--srt`） |
 | `/ensemble-compose` | 自由組合：跨 profile 挑 lens + 自訂 reviewer（`--include` / `--lens` / `--lens-file`）|
-| `/ensemble-contribute-lenses` | 把本機 `~/.claude/pai-lenses/` 的 lens 送回公共層並開 PR |
 | `/ensemble-eval` | **dev 工具**：對埋好缺陷的 fixture 跑 K 次真 ensemble，量偵測率 |
 
 ## 三層 lens 疊加
@@ -42,8 +41,7 @@ reviewer 的 lens 由三層疊出來，順序即優先序：
 | ② lens pack | `pai-lenses` 的 `lenses/<profile>.csv` | 改 CSV + bump 版本 |
 | ③ user | `~/.claude/pai-lenses/<profile>.csv` | 直接編，立即生效、不必發布 |
 
-撞名時預設 first-wins，CSV 標了 `override` 才取代。寫在層 ③ 的 lens 想回流上游，跑
-`/ensemble-contribute-lenses`。完整契約見
+撞名時預設 first-wins，CSV 標了 `override` 才取代。寫在層 ③ 的 lens 目前**還沒有**回流上游的路徑（實作中，見 [#39](https://github.com/PsychQuant/parallel-ai-agents/issues/39)）。完整契約見
 [`references/lens-layers.md`](plugins/parallel-ai-agents/references/lens-layers.md)。
 
 ## 為什麼
@@ -62,9 +60,8 @@ reviewer 的 lens 由三層疊出來，順序即優先序：
 │   │   │   └── plugin.json
 │   │   ├── bin/
 │   │   │   ├── codex-call      # Swift script：直接 HTTP 呼叫 Codex
-│   │   │   ├── pai-list-profiles        # 查 PROFILES 真源
-│   │   │   └── pai-contribute-lenses    # 層 ③ 的回流流程
-│   │   ├── skills/             # 六個 skill
+│   │   │   └── pai-list-profiles        # 查 PROFILES 真源
+│   │   ├── skills/             # 五個 skill
 │   │   ├── workflows/          # ensemble harness
 │   │   ├── references/         # lens-layers 契約、built-in lens catalog
 │   │   ├── CHANGELOG.md
