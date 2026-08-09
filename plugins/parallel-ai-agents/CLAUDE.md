@@ -11,6 +11,7 @@
 | `/parallel-ai-agents:ensemble-code-review` | 審程式碼/技術文件/diff（最完整：`--diff`/`--base`/`--since`/`--commits`/`--pr` 等 diff 模式，建構走 `bin/pai-build-diff`）|
 | `/parallel-ai-agents:ensemble-academic-review` | 審學術論文（methodology/writing + 文獻真偽 + 數字重算；支援多輪 mix/hybrid/auto-iterate）|
 | `/parallel-ai-agents:ensemble-lecture-review` | 審教學講義（內容正確性/可讀性/逐字稿覆蓋率）|
+| `/parallel-ai-agents:ensemble-minutes-review` | 審會議記錄（fidelity/completeness 一正一反 + attribution + actionability）。⚠️ **尚未呼叫 `bin/pai-collect-lens-layers`**，所以 `plugins/pai-lenses/lenses/minutes.csv` 與 `~/.claude/pai-lenses/minutes.csv` 的 lens 不會進到它的審閱 —— 接線缺口追蹤於 #40 |
 | `/parallel-ai-agents:ensemble-compose` | 自由組合：跨 profile 挑 lens + 自訂 reviewer（`--include`/`--lens`/`--lens-file` CSV）|
 | `/parallel-ai-agents:ensemble-eval` | **dev 工具**：對 `eval/fixtures/` 埋好缺陷的論文跑 K 次真 ensemble，容差斷言偵測率（+`--apply-fix` 驗修稿）。手動跑、不進 CI |
 

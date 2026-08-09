@@ -127,11 +127,19 @@ jobs:
         # base SHA 走 env 而非直接內插進 run（workflow-injection 的標準防護形狀）。
         # push 事件沒有 pull_request.base.sha —— 先前那條路會讓 validate 不帶 --base，
         # 而「改了 lens 必須 bump」這道閘門在 push-to-main 上就結構性不存在（#33 verify R4）。
-        # push 改用 event.before；首次 push / force-push 後它可能是全零 SHA，那時傳空字串，
-        # validate 會 fail-loud 說「沒有 base ref」而不是靜默略過。
+        # push 改用 event.before；首次 push / force-push 後它可能是全零 SHA，那時傳空字串。
+        # --event 一併傳進去（#33 verify R5）：它決定兩件事 ——
+        #   (1) base 的比較語意：pull_request 收斂成 merge-base（問「這個 PR 引入了什麼」），
+        #       push 用 base 本身做兩點 exact-tree 比較（問「這次 push 讓 main 變成什麼」）。
+        #       先前變更清單用三點、舊版本用 `git show base:`，是兩個不同基準，force-push
+        #       時的 lens 回退完全漏檢。
+        #   (2) 沒有 base 時該報錯還是留紀錄：workflow_dispatch **結構上**兩個 base 都沒有，
+        #       R4 的無條件 fail-loud 讓它永遠紅 —— 一個不可能綠的檢查，下一個人會直接把
+        #       fail-loud 拿掉，連 PR/push 的守備一起賠掉。
         env:
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           PUSH_BEFORE: ${{ github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           BASE="$PR_BASE"
           if [ -z "$BASE" ] && [ -n "$PUSH_BEFORE" ] \
@@ -139,8 +147,8 @@ jobs:
             BASE="$PUSH_BEFORE"
           fi
           if [ -n "$BASE" ]; then
-            python3 scripts/validate.py --base "$BASE"
+            python3 scripts/validate.py --base "$BASE" --event "$EVENT_NAME"
           else
-            echo "::warning::沒有可用的 base ref（首次 push？）—— bump 檢查會 fail-loud"
-            python3 scripts/validate.py
+            echo "::warning::沒有可用的 base ref（事件 $EVENT_NAME）—— 交給 validate 判定"
+            python3 scripts/validate.py --event "$EVENT_NAME"
           fi

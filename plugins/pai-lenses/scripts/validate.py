@@ -6,13 +6,16 @@
 
 用 stdlib `csv` —— 與 consumer 的 `pai-parse-lens-csv` 同一個模組、同一套 quoting 規則。
 
-用法：validate.py [--base <ref>]
-  --base  用來判斷「改了 lens 卻沒 bump 版本」。CI 傳 PR base 或 push 的 before SHA。
+用法：validate.py [--base <ref>] [--event <github-event-name>]
+  --base   用來判斷「改了 lens 卻沒 bump 版本」。CI 傳 PR base 或 push 的 before SHA。
+  --event  觸發事件名（`pull_request` / `push` / `workflow_dispatch`）。決定 base 的
+           比較語意，以及「拿不到 base」時該報錯還是只留一行紀錄。
 
 退出碼：0 全部通過；1 有錯；2 用法錯。
 """
 import csv
 import json
+import os
 import pathlib
 import re
 import subprocess
@@ -40,36 +43,30 @@ def repo_root(root):
     return cand if (cand / ".claude-plugin" / "marketplace.json").is_file() else None
 
 
-def wired_profiles(repo):
-    """掃出「有 skill 會呼叫 pai-collect-lens-layers 載入層 ②③」的 profile。
+def collector_wiring(repo, profile):
+    """回傳 (該 profile 的專屬 skill 目錄名 or None, 那支 skill 看起來有沒有接 collector)。
 
-    #33 verify R4：先前這是寫死的 {code, academic, lecture}，警告文字因此說 minutes
-    「沒有專屬 review skill」—— **那是假的**。`ensemble-minutes-review` 存在（v2.22.0 出貨），
-    它只是沒接 collector。把可修的 bug 寫成天生如此的事實，等於讓那個缺口不再被當成缺口。
+    **這是啟發式，不是事實判定。** 前一版（#33 verify R4）用 regex 掃全部 SKILL.md
+    推導「哪些 profile 已接線」，並在 docstring 宣稱「訊息依構造為真」——
+    R5 用六個 case 實測，**兩個方向都被推翻**：
 
-    改成掃描推導後，訊息依構造為真：接了就是接了，沒接就報它沒接。"""
+      - regex 只認裸字與雙引號，`pai-collect-lens-layers 'minutes'`（單引號）→ 判成沒接
+      - 散文（「之後應該要跑 …，目前尚未接線」）、註解掉的程式碼、甚至
+        「**不要**呼叫 pai-collect-lens-layers minutes」這句警語 → 全部判成已接
+
+    也就是說：在 SKILL.md 的**散文**上用 regex 推導事實，做不到「依構造為真」。
+    現在改成 (1) 只看該 profile 自己的 skill、(2) 跳過 shell 註解行、(3) 不再解析參數
+    （`"$PROFILE"` 這種變數寫法本來就抓不到），並且**訊息降級為附帶但書的提示** ——
+    它指出一個值得人工確認的可能缺口，不宣稱事實。真正的接線缺口追蹤於 #40。"""
     if repo is None:
-        return None
-    skills = repo / "plugins" / "parallel-ai-agents" / "skills"
-    if not skills.is_dir():
-        return None
-    pat = re.compile(r'pai-collect-lens-layers"?\s+"?\$?\{?([a-zA-Z_][a-zA-Z0-9_]*)')
-    out = set()
-    for f in skills.glob("*/SKILL.md"):
-        for m in pat.finditer(f.read_text(encoding="utf-8", errors="replace")):
-            tok = m.group(1)
-            if tok.isupper() or tok.startswith("BASE"):     # $BASE_PROFILE 之類的變數
-                continue
-            out.add(tok)
-    return out
-
-
-def existing_skill_for(repo, profile):
-    """該 profile 是否有同名的專屬 review skill（不論有沒有接 collector）。"""
-    if repo is None:
-        return None
+        return None, None
     d = repo / "plugins" / "parallel-ai-agents" / "skills" / f"ensemble-{profile}-review"
-    return d.name if d.is_dir() else None
+    if not (d / "SKILL.md").is_file():
+        return None, None
+    lines = (d / "SKILL.md").read_text(encoding="utf-8", errors="replace").splitlines()
+    wired = any("pai-collect-lens-layers" in ln and not ln.lstrip().startswith("#")
+                for ln in lines)
+    return d.name, wired
 
 
 def check_version(root, errs):
@@ -113,7 +110,30 @@ def check_marketplace_sync(root, errs):
             rel = src.get("path")
         if not rel:
             continue                           # github/url/npm 等物件式遠端來源
-        pj = repo / rel / ".claude-plugin" / "plugin.json"
+        # #33 verify R5：先前直接 `repo / rel` 組路徑，完全沒有 containment 檢查。
+        # 三條逃逸路徑實測都成立：(1) 絕對路徑 —— pathlib 的 `/` 遇絕對右運算元會**整段
+        # 取代**左邊（`Path('/repo') / '/tmp/x'` == `/tmp/x`）；(2) `..` 不做正規化；
+        # (3) symlink。後果有兩層：這道被標 CRITICAL 的版本同步閘門，可以被一個指到
+        # repo 外（例如 maintainer 本機另一個 checkout）的 source 滿足 —— 同一份 commit
+        # 在本機綠、在 CI 紅；而且這支在 `on: pull_request` 下會跑，fork PR 完全控制
+        # marketplace.json，等於拿未受信任字串去讀任意 <X>/.claude-plugin/plugin.json。
+        # 判定必須是 error 而非 continue —— 靜默跳過正是本 PR 一路在修的病。
+        if os.path.isabs(rel) or ".." in pathlib.PurePosixPath(rel).parts:
+            errs.append(f"::error file={mp}::{entry.get('name')} 的 source 是 {src!r} —— "
+                        "本 repo 內的 plugin 只能用不含 '..' 的相對路徑。"
+                        "絕對路徑與 '..' 會讓這道版本閘門去比對 repo 外的檔案")
+            continue
+        resolved = (repo / rel).resolve()
+        try:
+            inside = resolved.is_relative_to(repo.resolve())    # Python 3.9+
+        except AttributeError:                                  # 3.8 fallback
+            inside = str(resolved).startswith(str(repo.resolve()) + os.sep)
+        if not inside:
+            errs.append(f"::error file={mp}::{entry.get('name')} 的 source {src!r} "
+                        f"解析後落在 repo 外（{resolved}）—— 可能是 symlink。"
+                        "版本閘門只能比對本 repo 內的 plugin")
+            continue
+        pj = resolved / ".claude-plugin" / "plugin.json"
         if not pj.is_file():
             errs.append(f"::error file={mp}::{entry.get('name')} 的 source 指向 {src}，"
                         "但該處沒有 .claude-plugin/plugin.json")
@@ -145,8 +165,18 @@ def check_marketplace_sync(root, errs):
         errs.append(f"::error file={mp}::沒有任何本 repo 內的 plugin 被檢查 —— 這個檢查形同虛設")
 
 
-def check_bumped(root, errs, base):
-    """改了 `lenses/*.csv` 就**必須** bump 版本（相對 base ref 增加），不只是「兩處一致」。"""
+def check_bumped(root, errs, base, event=None):
+    """改了 `lenses/*.csv` 就**必須** bump 版本（相對 base 增加），不只是「兩處一致」。
+
+    #33 verify R5：先前變更清單用三點 `base...HEAD`（= merge-base(base,HEAD) → HEAD），
+    版本卻用 `git show base:`（= base **本身**）—— **兩個不同的比較基準**。在分岔歷史下
+    這不只是不一致，而是漏檢：對 main force-push 時 `event.before`（B）與新 tip（C）的
+    merge-base 是更早的 A，`git diff B...C` 完全看不見「B→C 之間 lens 被回退或刪掉」，
+    validator 會印「無需 bump ✓」。
+
+    改法：**先把 base 收斂成單一個 cmp_base，變更清單與舊版本都從它取**。
+    語意由 event 決定 —— PR 要問「這個 PR 引入了什麼」（merge-base），
+    push 要問「這次 push 讓 main 的樹變成什麼」（exact tree，兩點）。"""
     repo = repo_root(root)
     if repo is None:
         print("note: 不在 monorepo 內 —— 略過 bump 檢查")
@@ -154,10 +184,21 @@ def check_bumped(root, errs, base):
     if not base:
         # #33 verify R4：CI 的 push-to-main 事件沒有 pull_request.base.sha，先前會走到這裡
         # 靜默略過 —— 「CI 宣稱的核心發布閘門在 push-to-main 上結構性不存在」。
-        # workflow 已改為 push 事件傳 github.event.before；仍拿不到就是設定壞了，要報錯。
+        # #33 verify R5：但 R4 的修法讓 `workflow_dispatch` **永遠紅** —— 那個事件既沒有
+        # pull_request.base.sha 也沒有 event.before。一個結構上不可能綠的檢查，下一個人
+        # 會直接把 fail-loud 拿掉，連 PR/push 的守備一起失去。改成看事件與執行環境分流：
+        # 手動觸發／本機執行留可見紀錄（那不是發布事件），CI 的 PR/push 拿不到才是設定壞了。
+        if event == "workflow_dispatch":
+            print("::notice::手動觸發（workflow_dispatch）沒有 base ref —— bump 檢查本次未執行。"
+                  "它守的是 PR 與 push 的發布路徑，手動重跑不是發布事件")
+            return
+        if os.environ.get("GITHUB_ACTIONS") != "true":
+            print("note: 本機執行且未給 --base —— bump 檢查未跑（CI 會跑）。"
+                  "要在本機驗這一條：--base <ref>")
+            return
         errs.append(
-            "::error::沒有 base ref，無法判斷「改了 lens 卻沒 bump」。"
-            "本機手動跑可忽略；在 CI 看到這行代表 workflow 沒把 base 傳進來"
+            "::error::CI 裡沒有 base ref，無法判斷「改了 lens 卻沒 bump」——"
+            f"事件是 {event or '<unknown>'}，workflow 沒把 base 傳進來"
             "（pull_request 用 base.sha、push 用 event.before）"
         )
         return
@@ -169,7 +210,20 @@ def check_bumped(root, errs, base):
         errs.append(f"::error::base ref '{base}' 不在本地歷史內 —— bump 檢查沒有跑。"
                     "CI 請確認 checkout 帶 fetch-depth: 0")
         return
-    changed = subprocess.run(["git", "diff", "--name-only", f"{base}...HEAD", "--", rel],
+    cmp_base = base
+    if event == "pull_request":
+        mb = subprocess.run(["git", "merge-base", base, "HEAD"],
+                            cwd=repo, capture_output=True, text=True)
+        if mb.returncode != 0 or not mb.stdout.strip():
+            errs.append(f"::error::算不出 merge-base({base}, HEAD)：{mb.stderr.strip()}。"
+                        "這不是「無需 bump」—— 是這道閘門沒有跑")
+            return
+        cmp_base = mb.stdout.strip()
+        print(f"bump 檢查基準：merge-base({base[:12]}, HEAD) = {cmp_base[:12]}（pull_request）")
+    else:
+        print(f"bump 檢查基準：{base[:12]} 本身（{event or 'exact-tree'}）")
+    # 兩點 —— 與下面取舊版本的 `git show {cmp_base}:` 是同一個基準。
+    changed = subprocess.run(["git", "diff", "--name-only", cmp_base, "HEAD", "--", rel],
                              cwd=repo, capture_output=True, text=True)
     if changed.returncode != 0:
         errs.append(f"::error::bump 檢查無法執行：{changed.stderr.strip()}。"
@@ -180,10 +234,11 @@ def check_bumped(root, errs, base):
         return
     pj = root / ".claude-plugin" / "plugin.json"
     now = json.loads(pj.read_text(encoding="utf-8")).get("version", "")
-    old = subprocess.run(["git", "show", f"{base}:plugins/pai-lenses/.claude-plugin/plugin.json"],
-                         cwd=repo, capture_output=True, text=True)
+    old = subprocess.run(
+        ["git", "show", f"{cmp_base}:plugins/pai-lenses/.claude-plugin/plugin.json"],
+        cwd=repo, capture_output=True, text=True)
     if old.returncode != 0:
-        print(f"note: base（{base}）沒有 plugins/pai-lenses/.claude-plugin/plugin.json —— "
+        print(f"note: base（{cmp_base[:12]}）沒有 plugins/pai-lenses/.claude-plugin/plugin.json —— "
               "本次在新增整個 pack，無前一版可比。這是唯一合法的略過情境")
         return
     prev = json.loads(old.stdout).get("version", "")
@@ -227,7 +282,6 @@ def check_lens_dir_shape(root, errs):
 
 def check_csvs(root, errs, files):
     repo = repo_root(root)
-    wired = wired_profiles(repo)
     known_profiles = None
     if repo is not None:
         lister = repo / "plugins" / "parallel-ai-agents" / "bin" / "pai-list-profiles"
@@ -278,10 +332,12 @@ def check_csvs(root, errs, files):
                         "多出來的值會被丟棄。最常見原因是 focus 裡的逗號沒有用雙引號包起來，"
                         "那會讓 focus 被截斷、後面的欄位整個錯位")
             continue
-        short = [i for i, r in enumerate(rows, start=2) if any(v is None for v in r.values())]
-        if short:
-            errs.append(f"::error file={rel}::第 {short} 列的欄位數少於 header —— 請補齊或刪掉該列")
-            continue
+        # #33 verify R5：先前這裡對「任一欄是 None」（列比 header 短）一律 error —— 那是
+        # **假陽性，而且擋掉的正是本 PR 想鋪的貢獻路徑**。`perf,"a, b, c"` 這種省略尾端
+        # 可選欄的寫法：pack README 明文允許（「空白**或省略** = false」）、生產端
+        # `pai-parse-lens-csv`（`DictReader(restval=None)` → `_truthy(None)` = False）
+        # 解析得好好的、rc=0。守門者比被守的契約嚴，擋掉的是合法貢獻。
+        # 真正危險的是「key / focus 被截斷」—— 那由下面的 bad 檢查涵蓋（None → 空字串 → 命中）。
         bad = [i for i, r in enumerate(rows, start=2)
                if not ((r.get("key") or "").strip() and (r.get("focus") or "").strip())]
         if bad:
@@ -306,19 +362,18 @@ def check_csvs(root, errs, files):
 
         print(f"{rel}: {len(rows)} 條 lens ✓（profile '{profile}'）")
 
-        # 這一層的訊息由掃描推導，不寫死 —— 見 wired_profiles() 的註解。
-        if wired is not None and profile not in wired:
-            own = existing_skill_for(repo, profile)
-            if own:
-                print(f"::warning file={rel}::profile '{profile}' **有**專屬 skill "
-                      f"`/{own}`，但該 skill 尚未呼叫 pai-collect-lens-layers —— "
-                      f"這裡的 lens 不會出現在它的審閱裡，只會在 "
-                      f"/ensemble-compose --base {profile} 時被載入。"
-                      f"這是那個 skill 的接線缺口（追蹤於 #40），不是本 pack 的問題")
-            else:
-                print(f"::warning file={rel}::profile '{profile}' 沒有專屬 review skill"
-                      f"（有接 collector 的是：{', '.join(sorted(wired))}）——"
-                      f" 這裡的 lens 只會在 /ensemble-compose --base {profile} 時被載入")
+        # 這段是**啟發式提示**，不是事實判定 —— 見 collector_wiring() 的註解。
+        own, wired = collector_wiring(repo, profile)
+        if own is None:
+            print(f"::warning file={rel}::profile '{profile}' 沒有 ensemble-{profile}-review "
+                  f"這支專屬 skill —— 這裡的 lens 只會在 /ensemble-compose --base {profile} "
+                  f"時被載入")
+        elif wired is False:
+            print(f"::warning file={rel}::在 `/{own}` 的 SKILL.md 裡找不到 "
+                  f"pai-collect-lens-layers 的呼叫 —— 若確實沒接，這裡的 lens 不會出現在"
+                  f"它的審閱裡，只會在 /ensemble-compose --base {profile} 時被載入"
+                  f"（那是該 skill 的接線缺口，追蹤於 #40，不是本 pack 的問題）。"
+                  f"**本檢查是掃 SKILL.md 文字的啟發式，可能誤判，請人工確認**")
 
         for r in rows:
             for col in ("override", "needsSrt"):
@@ -329,18 +384,21 @@ def check_csvs(root, errs, files):
 
 def main():
     argv = sys.argv[1:]
-    base = None
-    if "--base" in argv:
-        i = argv.index("--base")
-        if i + 1 >= len(argv):
-            print("用法：validate.py [--base <ref>]", file=sys.stderr)
-            return 2
-        base = argv[i + 1] or None
+    opts = {"--base": None, "--event": None}
+    for flag in opts:
+        if flag in argv:
+            i = argv.index(flag)
+            if i + 1 >= len(argv):
+                print("用法：validate.py [--base <ref>] [--event <github-event-name>]",
+                      file=sys.stderr)
+                return 2
+            opts[flag] = argv[i + 1] or None
+    base, event = opts["--base"], opts["--event"]
     root = pathlib.Path(__file__).resolve().parent.parent
     errs = []
     check_version(root, errs)
     check_marketplace_sync(root, errs)
-    check_bumped(root, errs, base)
+    check_bumped(root, errs, base, event)
     files = check_lens_dir_shape(root, errs)
     if files:
         check_csvs(root, errs, files)
