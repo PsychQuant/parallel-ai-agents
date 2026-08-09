@@ -15,9 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 `pai-lenses` 從獨立 repo 併回本 repo 成為第二個 plugin，並把三層 lens 疊加的文件與 CI 閘門補齊。
 
-> **範圍說明**：本版**不含**層 ③ 的自動回流工具。它原本在同一個 PR 裡，經四輪 6-AI verify
-> （HIGH 數 15 → 18 → 32 → 14）後拆出到 **#39**。R3 的 32 個 HIGH 有 **29 個**落在回流工具上；
-> 剩下 3 個在 `validate.py`（**本版出貨的內容**，已於 R4 修掉）。
+> **範圍說明**：本版**不含**層 ③ 的自動回流工具。它原本在同一個 PR 裡，經五輪 6-AI verify
+> （HIGH 數 15 → 18 → 32 → 14 → 15）後拆出到 **#39**。R3 的 32 個 HIGH 有 **29 個**落在
+> 回流工具上；剩下 3 個在 `validate.py`（**本版出貨的內容**，已於 R4 修掉）。
+> 收斂之後的 R4／R5 全部落在本版出貨的內容裡並已逐條修掉 —— 也就是說「另一半很乾淨」
+> 從來不是收斂的理由（見下方 Fixed 段的 R5 條目），**缺陷密度差一個量級**才是。
 >
 > 收斂的理由不是「另一半完全乾淨」——它不是——而是**缺陷密度差了一個量級**，
 > 且回流工具連三輪不收斂（每輪的修法都讓 HIGH 變多）。拆開之後：使用者現在裝得到層 ②，
@@ -48,8 +50,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `check_bumped` — 改了 `lenses/*.csv` 就必須 bump（相對 base ref 增加）。
     equality 守得住「同步」，守不住「有 bump」。**git 跑不起來時報錯而非略過** ——
     「閘門沒跑」與「無需 bump」是兩回事
-  - `check_profiles` — CSV 檔名必須是既有 profile；且對沒有專屬 review skill 的 profile
-    （`minutes` / `general` / `custom`）發警告說明它只會經 `--base` 載入
+  - `check_csvs` 內的 profile 檢查 — CSV 檔名必須是既有 profile（真源查 `bin/pai-list-profiles`）；
+    並對「lens 進不到該 profile 專屬 skill」的情況發警告：`minutes` **有**專屬 skill
+    （`/ensemble-minutes-review`，v2.22.0 出貨）但尚未呼叫 collector（接線缺口，追蹤於 #40），
+    `general` / `custom` 則本來就沒有專屬 skill。兩種情況下該 profile 的層 ②③ lens 都只在
+    `/ensemble-compose --base <profile>` 生效。**這個警告是掃 SKILL.md 文字的啟發式，
+    可能誤判**（R5 實測：註解掉的呼叫會被判成沒接、散文提及會被判成已接），訊息本身有標注
   - CSV 形狀：未知 header 欄（`overide` 這種 typo 會讓整欄靜默失效）、缺 `key`/`focus` 的列、
     整份複製 catalog 造成的欄位錯位，全部改為 error
 - CI 帶 `--base` 並改 `fetch-depth: 0` —— 預設 shallow clone 會讓 `git diff base...HEAD` 失敗，
@@ -57,6 +63,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`check_bumped` 的比較基準收斂成一個**（#33 verify R5）。先前變更清單用三點
+  `base...HEAD`（merge-base → HEAD）、舊版本卻用 `git show base:`（base 本身）——
+  兩個不同基準，force-push 到 main 時「lens 被回退」完全漏檢並印出「無需 bump ✓」。
+  現在由 `--event` 決定語意：`pull_request` 收斂成 merge-base、`push` 用 base 本身做兩點
+  exact-tree 比較，變更清單與舊版本都取自同一個基準。
+- **`check_marketplace_sync` 補上 containment 檢查**（#33 verify R5）。先前直接
+  `repo / rel` 組路徑，絕對路徑（pathlib 的 `/` 會整段取代左邊）、`..`、symlink 三條路
+  都能讓這道版本閘門去比對 repo **外**的 `plugin.json` 並印綠燈 —— 同一份 commit 在本機綠、
+  在 CI 紅。此檢查在 `on: pull_request` 下會跑，fork PR 完全控制 marketplace.json。
+- **短列不再是 error**（#33 verify R5）。`perf,"a, b, c"`（省略尾端可選欄）是 pack README
+  明文允許、生產端 `pai-parse-lens-csv` 解析得好好的寫法，先前卻被判 error —— 守門者比被守的
+  契約嚴，擋掉的正是本版想鋪的貢獻路徑。真正危險的「`focus` 被截斷」由既有的缺 key/focus 檢查涵蓋。
+- **`workflow_dispatch` 不再必定失敗**（#33 verify R5）。該事件結構上既沒有
+  `pull_request.base.sha` 也沒有 `event.before`，R4 的無條件 fail-loud 讓手動觸發永遠紅；
+  一個不可能綠的檢查，下一個人會直接把 fail-loud 拿掉、連 PR/push 的守備一起賠掉。
+  現在手動觸發與本機執行留可見紀錄（那不是發布事件），CI 的 PR/push 拿不到 base 才報錯。
 - `references/builtin-lenses.csv` 檔頭改為 `!!! GENERATED FILE — DO NOT EDIT !!!` ——
   實測有人（含本次開發 session）第一次就誤以為該檔可編輯而去改它。
 - root `CLAUDE.md` 不再宣告「唯一的 plugin」；版本同步的 CRITICAL 規則改為逐 plugin 的表格。

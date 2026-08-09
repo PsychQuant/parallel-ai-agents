@@ -28,6 +28,7 @@ Claude Code marketplace，散發 **平行多 AI agent 審閱** plugin。
 | `/ensemble-code-review` | 程式碼／技術文件審閱：architecture、correctness、security + devils-advocate + Codex 獨立審一遍，最後合成比較表 |
 | `/ensemble-academic-review` | 學術論文審閱：methodology、writing、reference verification（che-zotero-mcp 抓幻覺文獻）、number-verification（R/Python 重跑 ground-truth 抓幻覺數字）、devils-advocate。支援 independent／hybrid／mix N 三種模式 |
 | `/ensemble-lecture-review` | 教學講義審閱：內容正確性／可讀性／逐字稿覆蓋率（可帶 `--srt`） |
+| `/ensemble-minutes-review` | 會議記錄審閱：fidelity／completeness（一正一反）＋ attribution ＋ actionability。⚠️ 目前**尚未**接上 lens 疊加，`minutes` 的層 ②③ lens 只在 `/ensemble-compose --base minutes` 生效（[#40](https://github.com/PsychQuant/parallel-ai-agents/issues/40)）|
 | `/ensemble-compose` | 自由組合：跨 profile 挑 lens + 自訂 reviewer（`--include` / `--lens` / `--lens-file`）|
 | `/ensemble-eval` | **dev 工具**：對埋好缺陷的 fixture 跑 K 次真 ensemble，量偵測率 |
 
@@ -61,7 +62,7 @@ reviewer 的 lens 由三層疊出來，順序即優先序：
 │   │   ├── bin/
 │   │   │   ├── codex-call      # Swift script：直接 HTTP 呼叫 Codex
 │   │   │   └── pai-list-profiles        # 查 PROFILES 真源
-│   │   ├── skills/             # 五個 skill
+│   │   ├── skills/             # 六個 skill
 │   │   ├── workflows/          # ensemble harness
 │   │   ├── references/         # lens-layers 契約、built-in lens catalog
 │   │   ├── CHANGELOG.md
