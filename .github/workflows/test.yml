@@ -125,11 +125,22 @@ jobs:
         # 只驗「兩處一致」守不住這個（#33 verify R2 H5/H10）。PR 事件用 base ref，
         # push 到 main 時沒有 base，validate 會明確印出略過而非假裝檢查過。
         # base SHA 走 env 而非直接內插進 run（workflow-injection 的標準防護形狀）。
+        # push 事件沒有 pull_request.base.sha —— 先前那條路會讓 validate 不帶 --base，
+        # 而「改了 lens 必須 bump」這道閘門在 push-to-main 上就結構性不存在（#33 verify R4）。
+        # push 改用 event.before；首次 push / force-push 後它可能是全零 SHA，那時傳空字串，
+        # validate 會 fail-loud 說「沒有 base ref」而不是靜默略過。
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
         run: |
-          if [ -n "$BASE_SHA" ]; then
-            python3 scripts/validate.py --base "$BASE_SHA"
+          BASE="$PR_BASE"
+          if [ -z "$BASE" ] && [ -n "$PUSH_BEFORE" ] \
+             && [ "$PUSH_BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            BASE="$PUSH_BEFORE"
+          fi
+          if [ -n "$BASE" ]; then
+            python3 scripts/validate.py --base "$BASE"
           else
+            echo "::warning::沒有可用的 base ref（首次 push？）—— bump 檢查會 fail-loud"
             python3 scripts/validate.py
           fi
