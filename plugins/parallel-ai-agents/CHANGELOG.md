@@ -15,15 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 `pai-lenses` 從獨立 repo 併回本 repo 成為第二個 plugin，並把三層 lens 疊加的文件與 CI 閘門補齊。
 
-> **範圍說明**：本版**不含**層 ③ 的自動回流工具。它原本在同一個 PR 裡，經五輪 6-AI verify
-> （HIGH 數 15 → 18 → 32 → 14 → 15）後拆出到 **#39**。R3 的 32 個 HIGH 有 **29 個**落在
+> **範圍說明**：本版**不含**層 ③ 的自動回流工具。它原本在同一個 PR 裡，經六輪 6-AI verify
+> （HIGH 數 15 → 18 → 32 → 14 → 15 → 4）後拆出到 **#39**。R3 的 32 個 HIGH 有 **29 個**落在
 > 回流工具上；剩下 3 個在 `validate.py`（**本版出貨的內容**，已於 R4 修掉）。
-> 收斂之後的 R4／R5 全部落在本版出貨的內容裡並已逐條修掉 —— 也就是說「另一半很乾淨」
-> 從來不是收斂的理由（見下方 Fixed 段的 R5 條目），**缺陷密度差一個量級**才是。
->
-> 收斂的理由不是「另一半完全乾淨」——它不是——而是**缺陷密度差了一個量級**，
-> 且回流工具連三輪不收斂（每輪的修法都讓 HIGH 變多）。拆開之後：使用者現在裝得到層 ②，
-> 回流工具在自己的 issue 裡從頭想。三輪換來的 29 條缺陷清單已逐條寫進 #39 當規格。
+> 收斂之後的 R4／R5／R6 共 33 個 HIGH **全部**落在本版出貨的內容裡並已逐條修掉 ——
+> 也就是說「另一半很乾淨」從來不是收斂的理由（見下方 Fixed 段）。理由是**缺陷密度差了
+> 一個量級**，且回流工具連三輪不收斂（每輪的修法都讓 HIGH 變多）。拆開之後：使用者現在
+> 裝得到層 ②，回流工具在自己的 issue 裡從頭想。三輪換來的 29 條缺陷清單已逐條寫進 #39 當規格。
 
 ### Changed
 
@@ -45,8 +43,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   （靜默、依設計不警告），整個層 ② 會安靜地不存在。
 - **`references/lens-layers.md` 的「我想加一條 lens，該去哪」決策表**（四種情況直接對到動作）。
 - **`plugins/pai-lenses/scripts/validate.py` 的機械閘門**，先前都只寫在散文裡：
-  - `check_marketplace_sync` — **每一個**相對路徑 plugin 的 `plugin.json` 與 marketplace entry
-    版本必須一致（不只 `pai-lenses`；主 plugin 先前完全沒有閘門）
+  - `check_marketplace_sync` — **雙向**：每一個相對路徑 plugin 的 `plugin.json` 與 marketplace
+    entry 版本必須一致（不只 `pai-lenses`；主 plugin 先前完全沒有閘門），且每一個
+    `plugins/*/` 目錄都必須有 entry 指向它。路徑一律做 containment 判定，且判定的是
+    **實際要讀的那個檔**而非它的祖先目錄
   - `check_bumped` — 改了 `lenses/*.csv` 就必須 bump（相對 base ref 增加）。
     equality 守得住「同步」，守不住「有 bump」。**git 跑不起來時報錯而非略過** ——
     「閘門沒跑」與「無需 bump」是兩回事
@@ -63,6 +63,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`check_marketplace_sync` 改為雙向**（#33 verify R6）。先前只從 marketplace entry 那側走，
+  「entry 根本不存在」完全不涵蓋 —— 實測把 `pai-lenses` 整條 entry 刪掉，validator 印
+  `marketplace 版本一致：parallel-ai-agents 2.23.0 ✓` 並 exit 0，而使用者直接裝不到。
+  現在另從檔案系統枚舉 `plugins/*/.claude-plugin/plugin.json`，每一個都必須有 entry 指向它。
+- **containment 檢查移到「實際要讀的那個檔」上**（#33 verify R6）。R5 只判定 plugin **目錄**，
+  之後才把 `.claude-plugin/plugin.json` 接上去讀 —— 檢查的路徑不是讀的路徑。
+  `plugins/x/.claude-plugin -> repo 外` 這個形狀因此完全不被擋，仍印綠燈。
+  R5 的註解與上一版 CHANGELOG 都逐字宣稱 symlink 已擋，**那是只修到一半的宣稱**。
+- **`check_bumped` 的第三個讀取點也收斂到 committed history**（#33 verify R6）。R5 統一了
+  「變更清單」與「舊版本」，卻漏了 `now` —— 它讀的是工作目錄。同一次執行裡兩個基準仍然並存：
+  在工作目錄 bump（不 commit）可以讓閘門印「已 bump ✓」並整支 exit 0。另外，未 commit 的
+  變更現在會先印一行 warning，因為假綠燈出現在「無變更」那條路徑上，訊息必須在那裡也看得到。
+- **新增撞名檢查**（#33 verify R6）。harness 對未標 `override` 的撞名是 `action: 'ignored'` ——
+  那條 lens 一個 agent 都不會派。先前 validator 對「與 built-in 同 key」與「同檔內重複 key」
+  完全無感，印「3 條 lens ✓」而實際只有 1 條會跑。這是貢獻路徑上最可能發生的安靜失敗
+  （新手最容易挑一個現成的 lens 名字）。標了 `override` 則照常放行，並在訊息裡說明它的代價。
 - **`check_bumped` 的比較基準收斂成一個**（#33 verify R5）。先前變更清單用三點
   `base...HEAD`（merge-base → HEAD）、舊版本卻用 `git show base:`（base 本身）——
   兩個不同基準，force-push 到 main 時「lens 被回退」完全漏檢並印出「無需 bump ✓」。
