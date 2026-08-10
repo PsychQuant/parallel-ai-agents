@@ -95,8 +95,19 @@ truthy 判準：`1` / `true` / `yes`（不分大小寫）。空白或省略 = fa
 4. **檔名必須是既有 profile**（`bin/pai-list-profiles` 查得到的）。需要新 profile 就不是
    改這裡 —— CSV 描述不了 profile 級的 `title`/`daFocus`/`codexDefault`，要改 `PROFILES`（層 ①）
 
-CI（`manifests-and-lens-pack`）會檢查：semver `version`、marketplace 版本一致、檔名是既有 profile、
-CSV 可解析且每檔至少一條 lens、以及 `key` 不是誤複製進來的註解列。
+CI（`manifests-and-lens-pack`）會檢查（`scripts/validate.py`，貢獻者可在本機跑同一支）：
+
+| 閘門 | 擋什麼 |
+|---|---|
+| semver `version` | 缺了或格式不對 → cache 目錄名不是 semver，consumer 定位不到，pack 等同沒裝 |
+| marketplace 版本**雙向**同步 | 只改一處 → 使用者收不到更新；有目錄沒 entry → 根本裝不到 |
+| **改了 `lenses/*.csv` 必須 bump** | 版本沒變 → 使用者端不會收到這些 lens |
+| **撞名** | 與 built-in 同 key 且未標 `override` → harness 判為 `ignored`，那條 lens 一個 agent 都不會派；同檔內重複 key 同理 |
+| `override` 撞名 | 不擋，但印 warning —— 它會讓一條 built-in lens 從所有人的審閱裡消失 |
+| 檔名是既有 profile | 真源查 `bin/pai-list-profiles`（**不是** `builtin-lenses.csv`，那是由 lens 產生的投影）|
+| CSV 形狀 | 欄位數不符、未知欄（`overide` 這種 typo 會讓整欄靜默失效）、缺 `key`/`focus`、0 條 lens、`key` 是誤複製進來的註解列 |
+
+**這份清單與程式碼的一致性由 `scripts/test_validate.py` 守著** —— 每道閘門都有雙向測試。
 
 ## ⚠️ 一條 lens 是 **prompt 權限**，不只是資料
 
