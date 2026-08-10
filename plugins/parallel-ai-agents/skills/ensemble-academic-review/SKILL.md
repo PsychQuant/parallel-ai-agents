@@ -220,6 +220,13 @@ TaskCreate: "Final: merge all rounds"
 
 #### Backend B — Legacy TeamCreate + Codex Bash（fallback）
 
+> ⚠️ **Backend B 吃不到層 ②③**（#33 verify R6）：上面 Phase 的 collector 結果只進
+> Backend A 的 `args.customLenses`，這裡的 reviewer 是固定的一組 prompt。也就是說在
+> 沒有 `Workflow` tool 的舊版 Claude Code 上，**裝了 `pai-lenses` 也不會生效，而且不會有
+> 任何警告** —— 與「沒裝」在輸出上完全一樣。要確認實際載入了哪幾層，看報表的 provenance 行。
+> 讓 Backend B 也消費 lens 清單需要把 teammate prompt 由 lens 陣列生成，不在本次範圍。
+
+
 > 每個 spawn 的 Agent 都帶顯式 `model: $PAI_AGENT_MODEL`（預設 `opus`，#20——不繼承 session 主迴圈模型）。
 
 **CRITICAL: 所有 tool calls（TeamCreate + Codex Bash）必須在同一個 message 送出。不可分步驟。**

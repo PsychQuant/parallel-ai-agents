@@ -63,6 +63,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **閘門的路徑與判準不再與位置耦合**（#33 verify R6 MEDIUM 批次）：
+  - bump 檢查的 pack 路徑由 `root.relative_to(repo)` 導出，不再寫死 `plugins/pai-lenses/…`
+    （實測改名後每一次 lens 變更都印「無需 bump ✓」而完全不受守護）
+  - `--event` 缺省時改用 merge-base 語意。先前 exact-tree 讓「本機跑 `--base main`」在
+    分岔分支上必定假失敗，訊息還指名一個該分支沒動過的檔案
+  - `pai-list-profiles` 不存在或輸出為空時**報錯**，不再讓 profile 名稱閘門靜默蒸發
+  - `lenses/` 下的 dotfile（`.DS_Store`）略過。先前一個 macOS 產物就讓貢獻者本機自檢 exit 1，
+    而 CI 是乾淨 checkout 永遠碰不到 —— 只卡本 PR 主打的那條路徑
+  - marketplace `source` 改為**正面判定相對路徑**且三態（是／明確遠端／判不出來→warning）。
+    先前是「三個遠端前綴的白名單，其餘一律當本 repo 路徑」，`ssh://`、`github:owner/repo`、
+    `file://`、`owner/repo` 全都會被誤判成缺檔而 hard error —— marketplace 一收錄第三方
+    遠端 plugin，CI 就直接紅
+  - `check_bumped` 的兩處 `json.loads` 包了 try。先前 plugin.json 壞掉會 crash，
+    `main()` 印 errs 的迴圈永遠到不了 —— 前兩項檢查已寫進 errs 的 `::error` 一條都印不出來，
+    GitHub 只拿到裸 traceback、零 annotation，後兩項檢查整段被跳過
+  - 版本閘門補上 description 漂移偵測（warning）。本 PR 自己就製造了那個漂移，
+    而剛立起來的閘門對它是盲的；補上後立刻抓到第二處（`pai-lenses` 也不同步），兩處皆已同步
+- **`bin/pai-list-profiles` 補上回歸錨點**（#33 verify R6）。它是 PROFILES 的唯一真源查詢
+  入口、靠 harness 的一行**註解**分隔線切段，出貨時卻零測試覆蓋 —— 而 profile 名稱閘門現在
+  依賴它。五條測試全部做過 mutation：其中「涵蓋 `custom`」原本寫成子字串比對，
+  把真源改成 `customXX` 照樣通過，已改為整行精確比對。
+- **CI job 更名 `pai-lenses-validate` → `manifests-and-lens-pack`**（#33 verify R6）。
+  它跑的 `check_marketplace_sync` 檢查的是 repo 內**每一個** plugin 的 manifest（含主 plugin），
+  掛在以 pack 命名的 job 底下會讓人以為主 plugin 沒有版本閘門。
+- **文件補上三個缺口**（#33 verify R6）：已安裝舊版 `0.1.0`（github source）者的遷移路徑
+  （README，並誠實標注該路徑未實測）；`override` 在決策表的專屬一列與「預設不送、送就要舉證」
+  的警告（`lens-layers.md`，對應 #33 (c) 的第三條判準）；**Backend B 吃不到層 ②③** ——
+  舊版 Claude Code 沒有 `Workflow` tool 時會 fallback，那條路裝了 pack 也不生效且無警告，
+  現在 `lens-layers.md` 與三支 skill 的 Backend B 段落都寫明了。
 - **`check_marketplace_sync` 改為雙向**（#33 verify R6）。先前只從 marketplace entry 那側走，
   「entry 根本不存在」完全不涵蓋 —— 實測把 `pai-lenses` 整條 entry 刪掉，validator 印
   `marketplace 版本一致：parallel-ai-agents 2.23.0 ✓` 並 exit 0，而使用者直接裝不到。
@@ -81,9 +110,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   （新手最容易挑一個現成的 lens 名字）。標了 `override` 則照常放行，並在訊息裡說明它的代價。
 - **`check_bumped` 的比較基準收斂成一個**（#33 verify R5）。先前變更清單用三點
   `base...HEAD`（merge-base → HEAD）、舊版本卻用 `git show base:`（base 本身）——
-  兩個不同基準，force-push 到 main 時「lens 被回退」完全漏檢並印出「無需 bump ✓」。
-  現在由 `--event` 決定語意：`pull_request` 收斂成 merge-base、`push` 用 base 本身做兩點
-  exact-tree 比較，變更清單與舊版本都取自同一個基準。
+  兩個不同基準。現在由 `--event` 決定語意：`push` 用 base 本身做兩點 exact-tree 比較
+  （問「這次 push 讓 main 變成什麼」），其餘（含本機不帶 `--event`）收斂成 merge-base
+  （問「這個分支引入了什麼」），變更清單與舊版本取自同一個基準。
+
+  > **更正（R6）**：R5 這條原本寫「force-push 到 main 時 lens 被回退完全漏檢…現在
+  > 用 exact-tree 比較」，**暗示 force-push 已被守住 —— 那是不實的**。`actions/checkout`
+  > 只 fetch **ref 可達**的物件，force-push 之後舊 tip（`event.before`）不再被任何 ref 指到，
+  > `fetch-depth: 0` 也拿不到，所以 `git rev-parse` 直接失敗。**force-push 到 main 不在這道
+  > 閘門的守備範圍**；現在的行為是印一則說清楚原因的 `::error`（fail-loud，不是假綠燈），
+  > 而不是假裝比較過。修掉的是「兩個基準」那個真缺陷，不是 force-push。
 - **`check_marketplace_sync` 補上 containment 檢查**（#33 verify R5）。先前直接
   `repo / rel` 組路徑，絕對路徑（pathlib 的 `/` 會整段取代左邊）、`..`、symlink 三條路
   都能讓這道版本閘門去比對 repo **外**的 `plugin.json` 並印綠燈 —— 同一份 commit 在本機綠、

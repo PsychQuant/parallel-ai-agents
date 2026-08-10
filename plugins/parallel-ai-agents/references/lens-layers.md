@@ -19,6 +19,7 @@
 | 只想自己用 | 層 ③ user | 編 `~/.claude/pai-lenses/<profile>.csv`，立即生效，不必發布 |
 | 想貢獻，且是**既有** profile 的 lens | 層 ② lens pack | 編 `plugins/pai-lenses/lenses/<profile>.csv` + bump **兩處** version（`plugin.json` 與 `marketplace.json` 對應 entry）|
 | 想貢獻，且需要**新 profile** | 層 ① built-in | 改 `workflows/ensemble-workflow.js` 的 `PROFILES` → 跑 `references/regen-builtin-lenses.sh` → bump 兩處 version |
+| 想貢獻，且要**取代**一條既有 lens（`override`）| 層 ② lens pack | 同上，但 CSV 的 `override` 欄填 `true`，**且在 PR 描述寫清楚原本那條為什麼不夠用**。預設不送 —— 見下方警告 |
 | 本機已經寫好，想一次送上去 | — | **自動回流工具尚未就緒**（見 [#39](https://github.com/PsychQuant/parallel-ai-agents/issues/39)）；目前照上面兩列手動做 |
 
 > ⚠️ **「profile 是否存在」要查真源，不要查 `builtin-lenses.csv`**：該投影由 lens 產生，
@@ -26,6 +27,18 @@
 
 > ⚠️ **`references/builtin-lenses.csv` 是 generated 的唯讀投影** —— 編它不改變任何行為。
 > 真源是 `PROFILES`。這個檔存在只為了讓人「看得到目前有哪些 lens」。
+
+> ⚠️ **層 ②③ 只在 Backend A（`Workflow` harness）生效。** 沒有 `Workflow` tool 的舊版
+> Claude Code 會 fallback 到 Backend B（legacy TeamCreate fan-out），那條路的 reviewer 是
+> 固定的一組 prompt，**collector 的結果不會進去，也不會有任何警告** —— 裝了 pack 與沒裝
+> 在輸出上一模一樣。報表的 provenance 行是唯一能分辨的地方。（#33 verify R6）
+
+> ⚠️ **`override` 預設不送，送就要舉證。** 它不是「我比較重要」，是「**把那一條刪掉、換成我的**」——
+> 一條調校過的 built-in lens 會從**所有人**的審閱裡消失，而報表只在 provenance 行留一筆
+> `overridden`。CI 現在會擋下「與 built-in 撞名但**沒**標 `override`」的貢獻（那種 lens 會被
+> harness 判為 `ignored`、一個 agent 都不會派，卻看起來像加了一條）；但**標了 `override`
+> 的貢獻機械上一律放行** —— 該不該取代是人的判斷，閘門只保證那個決定是顯式的。
+> Reviewer 請把它當成刪除既有 lens 的 PR 來審。
 
 > ⚠️ **新 profile 不能只靠 lens pack**：CSV 描述得了 lens，描述不了 profile 級的
 > `title` / `daFocus` / `codexDefault`。harness 的 `PROFILES` 沒有該 key 時，用它呼叫會回

@@ -17,6 +17,13 @@ Claude Code marketplace，散發 **平行多 AI agent 審閱** plugin。
 /plugin install pai-lenses@parallel-ai-agents        # 官方 lens pack（建議一併安裝）
 ```
 
+> **已經裝過舊版（`0.1.0`，來自獨立的 `PsychQuant/pai-lenses` repo）的人**：那個 repo 已封存，
+> pack 現在由本 marketplace 提供。跑
+> `/plugin marketplace update parallel-ai-agents` 再 `/plugin update pai-lenses` 即可切過來
+> （marketplace 名稱與 plugin 名稱都沒變，只有 source 從 github 改成本 repo 的相對路徑）。
+> ⚠️ 這條路徑**尚未實測**（見 [#33](https://github.com/PsychQuant/parallel-ai-agents/issues/33)
+> 的 verify R6）—— 若 `/plugin` 仍顯示 0.1.0，先移除再重裝。
+
 > **`pai-lenses` 是選配但建議裝。** 沒裝時 ensemble 只會用 harness 內建的 lens ——
 > 不會報錯、不會警告（缺席是靜默的，這是刻意設計），所以**「沒裝」與「裝了但沒生效」
 > 從輸出上看不出差別**。報表的 provenance 行會列出實際載入了哪幾層，可據此確認。

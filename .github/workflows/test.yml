@@ -101,11 +101,17 @@ jobs:
           grep -q '^ok' "$TAP" || { echo "::error::no tests ran (empty glob or bats bail-out)"; exit 1; }
           exit "$rc"
 
-  pai-lenses-validate:
-    # 併回本 repo 前，這個檢查住在 PsychQuant/pai-lenses 自己的 validate.yml。
-    # 併入後該檔落在 plugins/pai-lenses/.github/ —— GitHub 只執行 repo root 的
-    # .github/workflows/，所以它形同失效。改掛成本 repo 的獨立 job：兩個 plugin
-    # 的 CI 職責分離，且 scripts/validate.py 本身不動（貢獻者仍可本機跑同一支）。
+  manifests-and-lens-pack:
+    # 名稱刻意不叫 `pai-lenses-validate`（#33 verify R6）：這支跑的
+    # `check_marketplace_sync` 檢查的是 **repo 內每一個 plugin** 的 manifest —— 包含主
+    # plugin —— 不只是 lens pack。掛在一個以 pack 命名的 job 底下會讓人以為主 plugin 的
+    # 版本閘門不存在。**指令碼本身仍住在 pack 裡**（`plugins/pai-lenses/scripts/validate.py`）
+    # —— 那是刻意的取捨：貢獻者要能在本機跑同一支。代價是主 plugin 的 manifest 閘門實作在
+    # 一個資料 pack 底下，這個位置耦合尚未解決，改名只是讓它在 CI 介面上不再誤導。
+    #
+    # 併回本 repo 前，這個檢查住在 PsychQuant/pai-lenses 自己的 validate.yml。併入後該檔
+    # 落在 plugins/pai-lenses/.github/ —— GitHub 只執行 repo root 的 .github/workflows/，
+    # 所以它形同失效。改掛成本 repo 的獨立 job。
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -113,26 +119,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # fetch-depth: 0 是必要的 —— 預設 shallow clone 只有一個 commit，
-          # 下面的 `git diff <base>...HEAD` 會因為 base SHA 不在本地歷史裡而失敗，
-          # 而 validate.py 對 git 失敗是「印出略過」而非報錯 —— 檢查會安靜地不存在。
+          # fetch-depth: 0 是必要的 —— 預設 shallow clone 只有一個 commit，base SHA
+          # 不在本地歷史裡，bump 檢查就跑不了。（validate.py 現在對此**報錯**而非略過，
+          # 所以缺了不會安靜消失；但報錯也不等於檢查過 —— 還是要把歷史抓齊。）
           fetch-depth: 0
 
       # 檢查的內容不寫進 workflow 而放在 scripts/validate.py：`run: |` 區塊裡的
       # heredoc 一旦把內容放在第 0 欄就會跳出 YAML block scalar，workflow 靜默停止解析。
-      - name: validate lens pack (version sync + bump-on-change + profile names + CSV shape)
+      - name: validate manifests + lens pack (每個 plugin 的版本／entry 雙向同步、改 lens 必 bump、profile 名稱、CSV 形狀與撞名)
         # --base 讓 validate 能判斷「改了 lenses/*.csv 卻沒 bump 版本」——
-        # 只驗「兩處一致」守不住這個（#33 verify R2 H5/H10）。PR 事件用 base ref，
-        # push 到 main 時沒有 base，validate 會明確印出略過而非假裝檢查過。
+        # 只驗「兩處一致」守不住這個（#33 verify R2 H5/H10）。
         # base SHA 走 env 而非直接內插進 run（workflow-injection 的標準防護形狀）。
         # push 事件沒有 pull_request.base.sha —— 先前那條路會讓 validate 不帶 --base，
         # 而「改了 lens 必須 bump」這道閘門在 push-to-main 上就結構性不存在（#33 verify R4）。
         # push 改用 event.before；首次 push / force-push 後它可能是全零 SHA，那時傳空字串。
         # --event 一併傳進去（#33 verify R5）：它決定兩件事 ——
-        #   (1) base 的比較語意：pull_request 收斂成 merge-base（問「這個 PR 引入了什麼」），
-        #       push 用 base 本身做兩點 exact-tree 比較（問「這次 push 讓 main 變成什麼」）。
-        #       先前變更清單用三點、舊版本用 `git show base:`，是兩個不同基準，force-push
-        #       時的 lens 回退完全漏檢。
+        #   (1) base 的比較語意：push 用 base 本身做兩點 exact-tree 比較（問「這次 push
+        #       讓 main 變成什麼」），其餘收斂成 merge-base（問「這個分支引入了什麼」）。
+        #       先前變更清單用三點、舊版本用 `git show base:`，是兩個不同基準。
+        #       **注意 force-push 不在守備範圍**（#33 verify R6）：舊 tip 不被任何 ref 指到，
+        #       actions/checkout 拿不到它，validate 會 fail-loud 說「沒有跑」而非假裝比較過。
         #   (2) 沒有 base 時該報錯還是留紀錄：workflow_dispatch **結構上**兩個 base 都沒有，
         #       R4 的無條件 fail-loud 讓它永遠紅 —— 一個不可能綠的檢查，下一個人會直接把
         #       fail-loud 拿掉，連 PR/push 的守備一起賠掉。
