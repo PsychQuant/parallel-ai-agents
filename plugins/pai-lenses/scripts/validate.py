@@ -27,6 +27,15 @@ FALSY = ("", "0", "false", "no")
 KNOWN_COLS = ("key", "focus", "needsSrt", "override")
 
 
+def _truthy(value):
+    """與生產端 `bin/pai-parse-lens-csv` 的 `_truthy` **逐字同義**。
+
+    守門者與被守的契約用兩套判準，就是「兩份不會一起改的規格」—— 分岔會安靜地發生在邊界上。
+    這裡刻意用同一個運算式（`str(value or "").strip().lower() in TRUTHY`），
+    而不是自己重寫一套看起來等價的判斷。"""
+    return str(value or "").strip().lower() in TRUTHY
+
+
 def version_tuple(v):
     """semver → 可比較的 tuple。prerelease/build 後綴一律忽略（只比 major.minor.patch）。
 
@@ -84,8 +93,24 @@ def check_version(root, errs):
         )
 
 
+def _inside(path, repo_abs):
+    """path 是否在 repo_abs 之內（含 repo_abs 本身）。兩者都必須已 resolve()。"""
+    try:
+        return path.is_relative_to(repo_abs)                  # Python 3.9+
+    except AttributeError:                                    # 3.8 fallback
+        return str(path).startswith(str(repo_abs) + os.sep)
+
+
 def check_marketplace_sync(root, errs):
-    """**每一個**在本 repo 內的 plugin，其 plugin.json version 必須與 marketplace entry 一致。"""
+    """**每一個**在本 repo 內的 plugin，其 plugin.json version 必須與 marketplace entry 一致，
+    而且**每一個 plugin 目錄都必須有 entry**。
+
+    #33 verify R6：先前只從 marketplace entry 這一側走，於是「entry 根本不存在」完全不被
+    涵蓋 —— 實測把 `pai-lenses` 整條 entry 刪掉，validator 印
+    `marketplace 版本一致：parallel-ai-agents 2.23.0 ✓` 並 exit 0，而使用者
+    `/plugin install pai-lenses@parallel-ai-agents` 直接裝不到。`seen == 0` 那道保險也不會
+    觸發（主 plugin 讓 seen 是 1）。新增第三個 plugin 時最可能的失誤正是「建了目錄、忘了加
+    entry」，走的是同一段 code。所以現在**雙向**：entry → 檔案（版本一致）、檔案 → entry（存在）。"""
     repo = repo_root(root)
     if repo is None:
         print("note: 不在 monorepo 內 —— 略過 marketplace 版本一致檢查")
@@ -96,7 +121,9 @@ def check_marketplace_sync(root, errs):
     except (OSError, json.JSONDecodeError) as e:
         errs.append(f"::error file={mp}::讀取失敗：{e}")
         return
+    repo_abs = repo.resolve()
     seen = 0
+    claimed = set()   # 有 entry 指名的 plugin 目錄（含被判非法者）
     for entry in plugins:
         src = entry.get("source")
         # #33 verify R4：先前用字串前綴 './' 當「在本 repo 內」的判準，少寫 './' 的
@@ -123,17 +150,26 @@ def check_marketplace_sync(root, errs):
                         "本 repo 內的 plugin 只能用不含 '..' 的相對路徑。"
                         "絕對路徑與 '..' 會讓這道版本閘門去比對 repo 外的檔案")
             continue
+        # #33 verify R6：R5 只對 **plugin 目錄** 做 containment，然後才把
+        # `.claude-plugin/plugin.json` 接上去讀 —— **檢查的路徑不是實際讀的路徑**。
+        # 實測：`plugins/evil/.claude-plugin -> /repo/外` 這個形狀完全不被擋，
+        # 版本閘門拿了 repo 外的 plugin.json 當來源並印「marketplace 版本一致：evil 9.9.9 ✓」。
+        # 修法：對**最終要讀的那個檔**做判定；目錄那層也保留，兩層才涵蓋
+        # 「目錄本身是 symlink」與「目錄合法但底下某層是 symlink」兩種形狀。
+        # 先登記「這個 entry 指名了哪個目錄」，再做 containment 判定。順序是刻意的：
+        # 被判非法的 entry 仍然算「有人指名」，否則下面的反向檢查會再報一次
+        # 「沒有指向它的 entry」—— 那句話是假的（有 entry，只是非法），而一個假訊息
+        # 會讓讀 CI log 的人去修錯的東西。normpath 而非 resolve：反向檢查那側枚舉的是
+        # repo 內的實際目錄，兩側必須用同一種正規化才比得起來。
+        claimed.add(pathlib.Path(os.path.normpath(repo_abs / rel)))
         resolved = (repo / rel).resolve()
-        try:
-            inside = resolved.is_relative_to(repo.resolve())    # Python 3.9+
-        except AttributeError:                                  # 3.8 fallback
-            inside = str(resolved).startswith(str(repo.resolve()) + os.sep)
-        if not inside:
+        pj = (resolved / ".claude-plugin" / "plugin.json").resolve()
+        outside = [p for p in (resolved, pj) if not _inside(p, repo_abs)]
+        if outside:
             errs.append(f"::error file={mp}::{entry.get('name')} 的 source {src!r} "
-                        f"解析後落在 repo 外（{resolved}）—— 可能是 symlink。"
+                        f"解析後落在 repo 外（{outside[0]}）—— 可能是 symlink。"
                         "版本閘門只能比對本 repo 內的 plugin")
             continue
-        pj = resolved / ".claude-plugin" / "plugin.json"
         if not pj.is_file():
             errs.append(f"::error file={mp}::{entry.get('name')} 的 source 指向 {src}，"
                         "但該處沒有 .claude-plugin/plugin.json")
@@ -163,6 +199,17 @@ def check_marketplace_sync(root, errs):
             print(f"marketplace 版本一致：{entry.get('name')} {pj_ver} ✓")
     if seen == 0:
         errs.append(f"::error file={mp}::沒有任何本 repo 內的 plugin 被檢查 —— 這個檢查形同虛設")
+
+    # 反向：檔案系統 → marketplace entry。缺 entry 的 plugin 使用者根本裝不到，
+    # 而正向迴圈**結構上**看不到它（它不在 plugins 陣列裡）。#33 verify R6。
+    for found in sorted(repo_abs.glob("plugins/*/.claude-plugin/plugin.json")):
+        pdir = found.parent.parent
+        if pathlib.Path(os.path.normpath(pdir)) not in claimed:
+            errs.append(
+                f"::error file={mp}::{pdir.relative_to(repo_abs)} 有 plugin.json，"
+                f"但 marketplace.json 裡沒有指向它的 entry —— 使用者 "
+                f"`/plugin install {pdir.name}@<marketplace>` 會直接裝不到，且沒有任何錯誤訊息"
+            )
 
 
 def check_bumped(root, errs, base, event=None):
@@ -222,7 +269,23 @@ def check_bumped(root, errs, base, event=None):
         print(f"bump 檢查基準：merge-base({base[:12]}, HEAD) = {cmp_base[:12]}（pull_request）")
     else:
         print(f"bump 檢查基準：{base[:12]} 本身（{event or 'exact-tree'}）")
-    # 兩點 —— 與下面取舊版本的 `git show {cmp_base}:` 是同一個基準。
+    # #33 verify R6：R5 把「變更清單」與「舊版本」統一到 cmp_base，但**漏了第三個讀取點**
+    # —— `now` 當時是從工作目錄的 plugin.json 讀的。同一次執行裡 changed 看 committed
+    # history、now 看 working tree，還是兩個基準。CI 裡兩者相同所以看不出來；但本檔自己
+    # 印的提示叫人在本機用 `--base <ref>` 驗，照做（改了 lens 還沒 commit）實測會得到：
+    #   lenses/ 相對 base 無變更 —— 無需 bump ✓      ← 肯定式綠燈，且是假的
+    #   lenses/code.csv: 2 條 lens ✓                ← 同一次執行看到了那條新 lens
+    # 現在三個讀取點全部取自 committed history，並且**先**把未 commit 的差異講出來 ——
+    # 那句提示必須在「無變更」那條路徑上也印得到，否則假綠燈依舊。
+    pj_rel = "plugins/pai-lenses/.claude-plugin/plugin.json"
+    dirty = subprocess.run(["git", "status", "--porcelain", "--", rel, pj_rel],
+                           cwd=repo, capture_output=True, text=True)
+    if dirty.returncode == 0 and dirty.stdout.strip():
+        # porcelain v1 = 2 個狀態字元 + 1 個空白 + 路徑。**不可**先 strip() 整個 stdout：
+        # 那會吃掉第一行的前導空白（` M path` → `M path`），ln[3:] 就多切一個字元。
+        paths = [ln[3:] for ln in dirty.stdout.splitlines() if len(ln) > 3]
+        print("::warning::工作目錄有未 commit 的變更，bump 檢查**只涵蓋已 commit 的內容**："
+              + ", ".join(paths))
     changed = subprocess.run(["git", "diff", "--name-only", cmp_base, "HEAD", "--", rel],
                              cwd=repo, capture_output=True, text=True)
     if changed.returncode != 0:
@@ -230,10 +293,16 @@ def check_bumped(root, errs, base, event=None):
                     "這不是「無需 bump」—— 是這道閘門沒有跑")
         return
     if not changed.stdout.strip():
-        print("lenses/ 相對 base 無變更 —— 無需 bump ✓")
+        print("lenses/ 相對 base 無變更（已 commit 的部分）—— 無需 bump ✓")
         return
     pj = root / ".claude-plugin" / "plugin.json"
-    now = json.loads(pj.read_text(encoding="utf-8")).get("version", "")
+    cur = subprocess.run(["git", "show", f"HEAD:{pj_rel}"],
+                         cwd=repo, capture_output=True, text=True)
+    if cur.returncode != 0:
+        errs.append(f"::error file={pj}::HEAD 上沒有 {pj_rel} —— 無法與 base 比較版本。"
+                    "這不是「無需 bump」")
+        return
+    now = json.loads(cur.stdout).get("version", "")
     old = subprocess.run(
         ["git", "show", f"{cmp_base}:plugins/pai-lenses/.claude-plugin/plugin.json"],
         cwd=repo, capture_output=True, text=True)
@@ -280,8 +349,37 @@ def check_lens_dir_shape(root, errs):
     return good
 
 
+def builtin_lens_keys(repo):
+    """{profile: {lens key, …}}，取自 `references/builtin-lenses.csv`。查不到回 None。
+
+    **為什麼這裡可以用那份投影，而 profile 存在性不行**（#33 verify R6，兩者不矛盾）：
+    該檔由 `regen-builtin-lenses.sh` **逐 lens** 產生 —— 一條 lens 一列。所以
+    `lenses: []` 的 profile（`custom`）在裡面一列都沒有，拿它問「這個 profile 存在嗎」
+    必定答錯（那要問 `bin/pai-list-profiles`）；但問「這個 profile 有哪些 lens key」時，
+    沒有列 == 沒有 lens == 沒有東西可撞名，答案是對的。CI 有 drift 檢查守它的新鮮度。"""
+    if repo is None:
+        return None
+    cat = repo / "plugins" / "parallel-ai-agents" / "references" / "builtin-lenses.csv"
+    if not cat.is_file():
+        return None
+    out = {}
+    try:
+        with cat.open(newline="", encoding="utf-8-sig") as fh:
+            for r in csv.DictReader(fh):
+                prof = (r.get("profile") or "").strip()
+                key = (r.get("key") or "").strip()
+                # 檔頭的 GENERATED 註解列會被 DictReader 當成資料列（CSV 無註解語法）。
+                if not prof or prof.startswith("#") or not key:
+                    continue
+                out.setdefault(prof, set()).add(key)
+    except (OSError, UnicodeDecodeError, csv.Error):
+        return None
+    return out
+
+
 def check_csvs(root, errs, files):
     repo = repo_root(root)
+    builtin_keys = builtin_lens_keys(repo)
     known_profiles = None
     if repo is not None:
         lister = repo / "plugins" / "parallel-ai-agents" / "bin" / "pai-list-profiles"
@@ -352,6 +450,40 @@ def check_csvs(root, errs, files):
                             "這一列會變成一條真的 lens 送進 reviewer prompt")
 
         profile = path.stem
+
+        # #33 verify R6：先前完全沒有撞名檢查。harness 的合成邏輯對**未標 override** 的
+        # 撞名是 `action: 'ignored'` —— 那條 lens 不會被派任何 agent。實測一個含
+        # 「與 built-in 同 key」+「檔內重複 key」的 CSV：validator 印「3 條 lens ✓」exit 0，
+        # 而三條裡只有一條會真的跑。貢獻者正確 bump、CI 全綠、PR merge、使用者收到新版 ——
+        # 那條 lens 從來沒出現在任何審閱裡。這是本 PR 想鋪的貢獻路徑上最可能發生的安靜失敗
+        # （新手最容易挑一個現成的 lens 名字），而判定所需的資料就在同一棵樹裡。
+        seen_keys = {}
+        dup = []
+        for i, r in enumerate(rows, start=2):
+            k = (r.get("key") or "").strip()
+            if k in seen_keys:
+                dup.append(f"第 {i} 列的 '{k}'（與第 {seen_keys[k]} 列重複）")
+            else:
+                seen_keys[k] = i
+        if dup:
+            errs.append(f"::error file={rel}::同一檔內 key 重複：{'、'.join(dup)} —— "
+                        "後面那條會被 harness 判為 ignored、一個 agent 都不會派，"
+                        "但這個檔案看起來仍有那麼多條 lens")
+            continue
+        if builtin_keys is not None:
+            clash = sorted(
+                k for k, i in seen_keys.items()
+                if k in builtin_keys.get(profile, set())
+                and not _truthy(rows[i - 2].get("override"))
+            )
+            if clash:
+                errs.append(
+                    f"::error file={rel}::{clash} 與 built-in 的同名 lens 撞名，且未標 override "
+                    f"—— harness 會判為 ignored，這些 lens 一個 agent 都不會派。"
+                    "要嘛改名，要嘛標 override=true 並在 PR 說明為何原本那條不夠用"
+                    "（override 會讓一條調校過的 built-in lens 消失，等於替所有人做這個決定）")
+                continue
+
         if known_profiles is not None and profile not in known_profiles:
             errs.append(
                 f"::error file={rel}::'{profile}' 不是既有 profile"
