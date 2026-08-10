@@ -128,11 +128,30 @@ def check_marketplace_sync(root, errs):
         src = entry.get("source")
         # #33 verify R4：先前用字串前綴 './' 當「在本 repo 內」的判準，少寫 './' 的
         # 相對路徑（"plugins/foo"）會被靜默跳過 —— 那正是最該檢查的 entry。
+        # #33 verify R6：先前是「三個遠端前綴的白名單，其餘一律當本 repo 相對路徑」——
+        # 一個**開放的否定判準**去界定一組封閉的遠端形式（正是 rules 那條
+        # 「能列舉的就列舉，不要寫總括判準」的鏡像失敗）。落在洞裡的常見形式：
+        # `ssh://git@host/owner/repo`、`github:owner/repo`、`file:///abs`、純 `owner/repo`
+        # —— 全部會走到 `pj.is_file()` 為 False → hard error「該處沒有 plugin.json」。
+        # 也就是 marketplace 一旦收錄任何第三方遠端 plugin（那正是 marketplace 的用途），
+        # CI 直接紅，訊息還把原因說成檔案不存在。
+        # 改成正面判定「這是不是本 repo 的相對路徑」，且**三態**而非二態：
+        # 是 → 納入閘門；明確是遠端 → 略過；判不出來 → 印 warning（不靜默、也不誤紅）。
         rel = None
         if isinstance(src, str):
-            if src.startswith(("http://", "https://", "git@")):
-                continue                       # 明確的遠端來源，本 repo 無從比對
-            rel = src[2:] if src.startswith("./") else src
+            if src.startswith("./"):
+                rel = src[2:]                      # 明確的本 repo 相對路徑
+            elif "://" in src or ":" in src:
+                continue                           # scheme / scp-like / `github:owner/repo`
+            elif src.startswith("/"):
+                rel = src                          # 絕對路徑 —— 交給下面的 containment 報錯
+            elif (repo / src.split("/", 1)[0]).is_dir():
+                rel = src                          # 第一段在本 repo 內存在 → 當相對路徑
+            else:
+                print(f"::warning file={mp}::判不出 {entry.get('name')} 的 source {src!r} "
+                      "是本 repo 路徑還是遠端來源 —— **未納入版本閘門**。"
+                      "本 repo 內的 plugin 請用 './' 開頭的相對路徑")
+                continue
         elif isinstance(src, dict) and src.get("source") in (None, "local", "path"):
             rel = src.get("path")
         if not rel:
@@ -197,6 +216,19 @@ def check_marketplace_sync(root, errs):
             )
         else:
             print(f"marketplace 版本一致：{entry.get('name')} {pj_ver} ✓")
+        # #33 verify R6：這道閘門先前只比對 version，對 description 完全無視 ——
+        # 而本 PR 自己就製造了那個漂移（plugin.json 換成 v2.23.0 的說明、marketplace
+        # 仍停在 v2.21.0），使用者看到的版本是 2.23.0、描述卻是兩版前的文字。
+        # 剛立起來的閘門對它自己造成的漂移是盲的。warning 而非 error：description 不同步
+        # 不會讓人裝不到東西（version 會），但兩份敘述指向不同版本區間仍是缺陷。
+        try:
+            pj_desc = json.loads(pj.read_text(encoding="utf-8")).get("description")
+        except (OSError, json.JSONDecodeError):
+            pj_desc = None
+        mp_desc = entry.get("description")
+        if pj_desc is not None and mp_desc is not None and pj_desc != mp_desc:
+            print(f"::warning file={mp}::{entry.get('name')} 的 description 兩處不同步 —— "
+                  "使用者在 /plugin 看到的是 marketplace 那份，可能在敘述舊版本的內容")
     if seen == 0:
         errs.append(f"::error file={mp}::沒有任何本 repo 內的 plugin 被檢查 —— 這個檢查形同虛設")
 
@@ -241,7 +273,7 @@ def check_bumped(root, errs, base, event=None):
             return
         if os.environ.get("GITHUB_ACTIONS") != "true":
             print("note: 本機執行且未給 --base —— bump 檢查未跑（CI 會跑）。"
-                  "要在本機驗這一條：--base <ref>")
+                  "要在本機驗這一條：--base <上游分支>（預設走 merge-base 語意）")
             return
         errs.append(
             "::error::CI 裡沒有 base ref，無法判斷「改了 lens 卻沒 bump」——"
@@ -249,16 +281,38 @@ def check_bumped(root, errs, base, event=None):
             "（pull_request 用 base.sha、push 用 event.before）"
         )
         return
-    rel = "plugins/pai-lenses/lenses"
+    # #33 verify R6：先前寫死 "plugins/pai-lenses/…"。`root` 與 `repo` 都已知，
+    # 導得出來卻選擇寫死 —— 實測 `git mv plugins/pai-lenses plugins/lens-pack` 之後，
+    # 下一個 commit 起每一次 lens 變更都印「無需 bump ✓」而完全不受守護。
+    # 位置耦合造成的假綠燈，正是本 PR 反覆在修的那一類。
+    pack_rel = root.resolve().relative_to(repo.resolve()).as_posix()
+    rel = f"{pack_rel}/lenses"
+    pj_rel = f"{pack_rel}/.claude-plugin/plugin.json"
     # #33 verify R4：先前只堵 returncode != 0。git 對「pathspec 指向 base 不存在的路徑」
     # 是成功 + 空輸出 —— 與「真的沒改」不可區分。先確認 base 這個 ref 本身存在。
     if subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"{base}^{{commit}}"],
                       cwd=repo, capture_output=True).returncode != 0:
-        errs.append(f"::error::base ref '{base}' 不在本地歷史內 —— bump 檢查沒有跑。"
-                    "CI 請確認 checkout 帶 fetch-depth: 0")
+        # #33 verify R6：先前訊息一律叫人「確認 checkout 帶 fetch-depth: 0」。但對
+        # push 事件最常見的成因是 **force-push**：舊 tip（event.before）已不被任何 ref
+        # 指到，`actions/checkout` 只 fetch ref 可達的物件，fetch-depth: 0 也拿不到它。
+        # 照那句建議做完全無效。誠實的處置是說清楚「這個情境無法判定」而不是給錯的補救。
+        if event == "push":
+            errs.append(
+                f"::error::base '{base}' 不在本地歷史內 —— bump 檢查**沒有跑**（不是「無需 bump」）。"
+                "push 事件最常見的成因是 force-push：舊 tip 已不被任何 ref 指到，"
+                "`actions/checkout` 只 fetch ref 可達的物件，`fetch-depth: 0` 也拿不到它。"
+                "**force-push 到 main 不在這道閘門的守備範圍**；請人工確認這次 push 有沒有動 lens")
+        else:
+            errs.append(f"::error::base ref '{base}' 不在本地歷史內 —— bump 檢查沒有跑。"
+                        "CI 請確認 checkout 帶 fetch-depth: 0")
         return
+    # #33 verify R6：先前 `--event` 缺省 → exact-tree。但本檔自己印的提示叫人在本機跑
+    # `--base main`，而 main 常常已經前進 —— 實測一個**完全沒碰 lenses/** 的分支照著做，
+    # 會拿到「lenses/ 改了（…code.csv）但版本沒有增加」的假失敗，還指名一個它沒動過的檔案。
+    # 缺省的問題是「我的分支引入了什麼」，那是 merge-base 語意；exact-tree 只在 push 事件
+    # （「這次 push 讓 main 變成什麼」）才是對的，而 CI 一律會傳 --event。
     cmp_base = base
-    if event == "pull_request":
+    if event != "push":
         mb = subprocess.run(["git", "merge-base", base, "HEAD"],
                             cwd=repo, capture_output=True, text=True)
         if mb.returncode != 0 or not mb.stdout.strip():
@@ -266,9 +320,10 @@ def check_bumped(root, errs, base, event=None):
                         "這不是「無需 bump」—— 是這道閘門沒有跑")
             return
         cmp_base = mb.stdout.strip()
-        print(f"bump 檢查基準：merge-base({base[:12]}, HEAD) = {cmp_base[:12]}（pull_request）")
+        print(f"bump 檢查基準：merge-base({base[:12]}, HEAD) = {cmp_base[:12]}"
+              f"（{event or '預設'}：問「這個分支引入了什麼」）")
     else:
-        print(f"bump 檢查基準：{base[:12]} 本身（{event or 'exact-tree'}）")
+        print(f"bump 檢查基準：{base[:12]} 本身（push：exact-tree）")
     # #33 verify R6：R5 把「變更清單」與「舊版本」統一到 cmp_base，但**漏了第三個讀取點**
     # —— `now` 當時是從工作目錄的 plugin.json 讀的。同一次執行裡 changed 看 committed
     # history、now 看 working tree，還是兩個基準。CI 裡兩者相同所以看不出來；但本檔自己
@@ -277,7 +332,6 @@ def check_bumped(root, errs, base, event=None):
     #   lenses/code.csv: 2 條 lens ✓                ← 同一次執行看到了那條新 lens
     # 現在三個讀取點全部取自 committed history，並且**先**把未 commit 的差異講出來 ——
     # 那句提示必須在「無變更」那條路徑上也印得到，否則假綠燈依舊。
-    pj_rel = "plugins/pai-lenses/.claude-plugin/plugin.json"
     dirty = subprocess.run(["git", "status", "--porcelain", "--", rel, pj_rel],
                            cwd=repo, capture_output=True, text=True)
     if dirty.returncode == 0 and dirty.stdout.strip():
@@ -302,15 +356,28 @@ def check_bumped(root, errs, base, event=None):
         errs.append(f"::error file={pj}::HEAD 上沒有 {pj_rel} —— 無法與 base 比較版本。"
                     "這不是「無需 bump」")
         return
-    now = json.loads(cur.stdout).get("version", "")
+    # #33 verify R6：這兩處 json.loads 先前沒有 try。plugin.json 壞掉時整支 crash，
+    # main() 的 `for e in errs: print(e)` 永遠到不了 —— check_version 與
+    # check_marketplace_sync 已寫進 errs 的 ::error 一條都印不出來（GitHub 只拿到裸
+    # traceback、零 annotation），而且後面兩項檢查整段被跳過。同一支檔案的其他函式
+    # 都小心地把 JSONDecodeError 收成 errs，唯獨這裡沒有。
+    try:
+        now = json.loads(cur.stdout).get("version", "")
+    except json.JSONDecodeError as e:
+        errs.append(f"::error file={pj}::HEAD 上的 {pj_rel} 不是合法 JSON：{e}")
+        return
     old = subprocess.run(
-        ["git", "show", f"{cmp_base}:plugins/pai-lenses/.claude-plugin/plugin.json"],
+        ["git", "show", f"{cmp_base}:{pj_rel}"],
         cwd=repo, capture_output=True, text=True)
     if old.returncode != 0:
-        print(f"note: base（{cmp_base[:12]}）沒有 plugins/pai-lenses/.claude-plugin/plugin.json —— "
+        print(f"note: base（{cmp_base[:12]}）沒有 {pj_rel} —— "
               "本次在新增整個 pack，無前一版可比。這是唯一合法的略過情境")
         return
-    prev = json.loads(old.stdout).get("version", "")
+    try:
+        prev = json.loads(old.stdout).get("version", "")
+    except json.JSONDecodeError as e:
+        errs.append(f"::error::base（{cmp_base[:12]}）上的 {pj_rel} 不是合法 JSON：{e}")
+        return
     tn, tp = version_tuple(now), version_tuple(prev)
     if tn is None or tp is None:
         errs.append(f"::error file={pj}::版本字串不是 semver（base={prev!r}、現在={now!r}），無法比較")
@@ -336,6 +403,13 @@ def check_lens_dir_shape(root, errs):
     good = []
     for p in sorted(d.iterdir()):
         rel = p.relative_to(root)
+        # #33 verify R6：先前用 `p.suffix != ".csv"` 判定，而 pathlib 對 dotfile 回傳空
+        # suffix（`Path(".DS_Store").suffix == ""`）→ 一個 .DS_Store 就讓整支 exit 1，
+        # 訊息還說它是「大小寫不同的 csv」。本 pack 自己的 .gitignore 就只有 .DS_Store
+        # 一行 —— 作者清楚知道 macOS 會生成它；CI 是乾淨 checkout 永遠碰不到，
+        # 只有「貢獻者本機跑同一支」這條本 PR 主打的路徑會被卡死。
+        if p.name.startswith("."):
+            continue
         if p.is_dir():
             errs.append(f"::error file={rel}::lenses/ 下不能有子目錄 —— consumer 只讀 "
                         "lenses/<profile>.csv 單層，放在這裡的 lens 不會被載入")
@@ -383,10 +457,23 @@ def check_csvs(root, errs, files):
     known_profiles = None
     if repo is not None:
         lister = repo / "plugins" / "parallel-ai-agents" / "bin" / "pai-list-profiles"
-        if lister.is_file():
+        # #33 verify R6：先前「工具不存在」是唯一的靜默路徑 —— known_profiles 留 None，
+        # 下面的 profile 名稱閘門整條蒸發且一個字都不印。同一支檔案對「拿不到 base ref」
+        # 與「工具跑失敗」都是 hard error，唯獨「工具不見了」靜默，語意不一致。
+        # 而 bin/pai-list-profiles 正是本 PR 新加的檔案，被改名／搬走完全可能。
+        if not lister.is_file():
+            errs.append(f"::error::找不到 {lister.relative_to(repo)} —— profile 名稱閘門沒有跑"
+                        "（這不是「檔名都合法」）。它是 PROFILES 的唯一真源查詢入口")
+        else:
             r = subprocess.run(["bash", str(lister)], capture_output=True, text=True)
             if r.returncode != 0:
                 errs.append(f"::error::無法取得 PROFILES 清單：{r.stderr.strip()}")
+            elif not r.stdout.split():
+                # rc=0 但空輸出 → known_profiles 會是空 set，於是**每一個** CSV 都被報
+                # 「不是既有 profile（真源 PROFILES 有：）」，清單還是空的 —— 讀者無從判斷
+                # 是自己寫錯還是抽取壞了。空輸出必然是抽取壞了，直接說。
+                errs.append("::error::pai-list-profiles 成功結束但沒有輸出任何 profile —— "
+                            "PROFILES 抽取壞了（harness 的區塊分隔線可能變了），閘門沒有跑")
             else:
                 known_profiles = {p.strip() for p in r.stdout.split() if p.strip()}
 
