@@ -1,6 +1,6 @@
 {
   "name": "parallel-ai-agents",
-  "description": "v2.23.0: pai-lenses 併回本 repo 為第二個 plugin（marketplace 改相對路徑）、三層 lens 疊加的文件與 CI 閘門補齊。層 ③ 的自動回流路徑另行處理（#39）。",
+  "description": "平行派發任務給多個 AI agent（Claude + Codex），獨立執行後交叉比對結果 —— distinct-lens reviewers + devil's-advocate 對抗 + 跨模型盲驗，merge/dedup 後報告。Codex 走直接 HTTP wrapper（bin/codex-call，Swift script）而非 codex exec subprocess，避開 hang 與 Python 版本飄移。v2.23.0: pai-lenses 併回本 repo 為第二個 plugin（marketplace 改相對路徑）、三層 lens 疊加的文件與 CI 閘門補齊。層 ③ 的自動回流路徑另行處理（#39）。",
   "version": "2.23.0",
   "author": {
     "name": "Che Cheng"

@@ -35,4 +35,4 @@ bump 版本時兩處必須一致。**這條對每一個 plugin 各自成立**，
 
 兩者不同步 → 使用者 `/plugin update` 會看到舊版或裝不到新功能，**而且沒有任何錯誤訊息**。
 
-**兩個 plugin 都有機械閘門守這條**：`plugins/pai-lenses/scripts/validate.py` 的 `check_marketplace_sync` 會逐一比對 marketplace.json 裡**每一個在本 repo 內的** plugin（不只 pai-lenses），CI job `pai-lenses-validate` 會跑。新增第三個 plugin 時自動涵蓋。
+**兩個 plugin 都有機械閘門守這條**：`plugins/pai-lenses/scripts/validate.py` 的 `check_marketplace_sync` 會逐一比對 marketplace.json 裡**每一個在本 repo 內的** plugin（不只 pai-lenses），CI job `manifests-and-lens-pack` 會跑。新增第三個 plugin 時自動涵蓋。

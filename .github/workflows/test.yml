@@ -124,6 +124,13 @@ jobs:
           # 所以缺了不會安靜消失；但報錯也不等於檢查過 —— 還是要把歷史抓齊。）
           fetch-depth: 0
 
+      # #33 verify R7：validate.py 有十餘道閘門卻零測試覆蓋 —— 所有錯誤分支只在
+      # CI 的 happy path 被執行（也就是都沒被執行）。六輪 verify 有超過二十個 finding
+      # 落在這一支，反覆出現的形狀是「閘門在某條件下安靜蒸發並印肯定式綠燈」，
+      # 那種缺陷用讀的抓不到。每條測試對應一個真實發生過的缺陷，且都做過 mutation。
+      - name: validate.py 自身的回歸測試（stdlib unittest，無額外依賴）
+        run: python3 scripts/test_validate.py
+
       # 檢查的內容不寫進 workflow 而放在 scripts/validate.py：`run: |` 區塊裡的
       # heredoc 一旦把內容放在第 0 欄就會跳出 YAML block scalar，workflow 靜默停止解析。
       - name: validate manifests + lens pack (每個 plugin 的版本／entry 雙向同步、改 lens 必 bump、profile 名稱、CSV 形狀與撞名)

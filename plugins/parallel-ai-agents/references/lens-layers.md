@@ -28,6 +28,12 @@
 > ⚠️ **`references/builtin-lenses.csv` 是 generated 的唯讀投影** —— 編它不改變任何行為。
 > 真源是 `PROFILES`。這個檔存在只為了讓人「看得到目前有哪些 lens」。
 
+> ⚠️ **lens 的 `focus`/`key` 是 prompt 指令文字，不是資料。** 它們逐字進 reviewer prompt
+> 的第一行且**不經 sentinel 包裹**（`reviewPrompt()`；同一支函式對 `contextBlock` 與
+> `priors` 都有包）。誰能寫 lens，誰就擁有 reviewer 的角色級指令權限，而 reviewer 有
+> Read/Bash。validator 只驗形狀，對 focus 的語意零判斷 —— **CI 綠燈不代表內容審過**。
+> 審 lens PR 請用審程式碼的標準。結構性修法（把 lens 文字也包進 sentinel）追蹤於 #36。
+
 > ⚠️ **層 ②③ 只在 Backend A（`Workflow` harness）生效。** 沒有 `Workflow` tool 的舊版
 > Claude Code 會 fallback 到 Backend B（legacy TeamCreate fan-out），那條路的 reviewer 是
 > 固定的一組 prompt，**collector 的結果不會進去，也不會有任何警告** —— 裝了 pack 與沒裝

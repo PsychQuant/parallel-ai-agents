@@ -37,13 +37,22 @@ def _truthy(value):
 
 
 def version_tuple(v):
-    """semver → 可比較的 tuple。prerelease/build 後綴一律忽略（只比 major.minor.patch）。
+    """semver → 可比較的 tuple。build 後綴忽略；prerelease 依 semver §11 排在同 core 正式版之前。
 
     #33 verify R4：先前 check_version 用 `^\\d+\\.\\d+\\.\\d+` 前綴比對放行 `0.3.0-rc1`，
     而 check_bumped 用 `int(x) for x in v.split('.')[:3]` 對同一字串炸掉（'0-rc1' 不是 int）
     → 兩個檢查對同一版本字串的認定不一致。統一走這裡。"""
     m = SEMVER.match(str(v or ""))
-    return tuple(int(g) for g in m.groups()) if m else None
+    if not m:
+        return None
+    core = tuple(int(g) for g in m.groups())
+    # #33 verify R7：先前只回 core，於是 `0.3.0-rc1 → 0.3.0`（rc 轉正式，最典型的發布
+    # 動作）與 `rc1 → rc2` 都被 `tn <= tp` 判為「版本沒有增加」。semver §11：有 prerelease
+    # 的版本**低於**同 core 的正式版。這裡只需要一個可比較的序，不需完整的 semver 排序
+    # 規則 —— 正式版標 1、prerelease 標 0 並附上識別碼（同 core 時以識別碼字串比較，
+    # rc1 < rc2 成立；rc9 vs rc10 這種數字字典序的邊角本檢查不涵蓋，見下方 note）。
+    pre = str(v).partition("+")[0].partition("-")[2]
+    return core + ((0, pre) if pre else (1, ""))
 
 
 def repo_root(root):
@@ -164,6 +173,11 @@ def check_marketplace_sync(root, errs):
         # 在本機綠、在 CI 紅；而且這支在 `on: pull_request` 下會跑，fork PR 完全控制
         # marketplace.json，等於拿未受信任字串去讀任意 <X>/.claude-plugin/plugin.json。
         # 判定必須是 error 而非 continue —— 靜默跳過正是本 PR 一路在修的病。
+        # #33 verify R7：登記必須在**所有** continue 之前。R6 把它放在 `..`／絕對路徑那道
+        # 檢查**之後**，還在註解裡宣稱「順序是刻意的，避免反向檢查再罵一次」—— 那句是假的：
+        # 實測 `source: "../evil"` 會同時得到「只能用相對路徑」與「沒有指向它的 entry」兩則
+        # error，後者是假訊息（有 entry，只是非法）。R6 只測了 symlink 那條（它在登記之後）。
+        claimed.add(pathlib.Path(os.path.normpath(repo_abs / rel)))
         if os.path.isabs(rel) or ".." in pathlib.PurePosixPath(rel).parts:
             errs.append(f"::error file={mp}::{entry.get('name')} 的 source 是 {src!r} —— "
                         "本 repo 內的 plugin 只能用不含 '..' 的相對路徑。"
@@ -175,12 +189,8 @@ def check_marketplace_sync(root, errs):
         # 版本閘門拿了 repo 外的 plugin.json 當來源並印「marketplace 版本一致：evil 9.9.9 ✓」。
         # 修法：對**最終要讀的那個檔**做判定；目錄那層也保留，兩層才涵蓋
         # 「目錄本身是 symlink」與「目錄合法但底下某層是 symlink」兩種形狀。
-        # 先登記「這個 entry 指名了哪個目錄」，再做 containment 判定。順序是刻意的：
-        # 被判非法的 entry 仍然算「有人指名」，否則下面的反向檢查會再報一次
-        # 「沒有指向它的 entry」—— 那句話是假的（有 entry，只是非法），而一個假訊息
-        # 會讓讀 CI log 的人去修錯的東西。normpath 而非 resolve：反向檢查那側枚舉的是
-        # repo 內的實際目錄，兩側必須用同一種正規化才比得起來。
-        claimed.add(pathlib.Path(os.path.normpath(repo_abs / rel)))
+        # 登記用 normpath 而非 resolve：反向檢查那側枚舉的是 repo 內的實際目錄，
+        # 兩側必須用同一種正規化才比得起來。
         resolved = (repo / rel).resolve()
         pj = (resolved / ".claude-plugin" / "plugin.json").resolve()
         outside = [p for p in (resolved, pj) if not _inside(p, repo_abs)]
@@ -200,6 +210,14 @@ def check_marketplace_sync(root, errs):
             continue
         seen += 1
         mp_ver = entry.get("version")
+        # #33 verify R7：先前只有 pack 自己的 check_version 驗 semver 格式，主 plugin 的
+        # 非 semver 版本一路綠燈 —— 與 root CLAUDE.md「這條對每一個 plugin 各自成立」不符。
+        # cache 目錄名不是 semver 時 consumer 的 glob 定位不到，那是逐 plugin 成立的失敗。
+        for label, val in (("plugin.json", pj_ver), ("marketplace.json", mp_ver)):
+            if val is not None and version_tuple(val) is None:
+                errs.append(f"::error file={mp}::{entry.get('name')} 的 {label} version "
+                            f"'{val}' 不是 semver —— cache 目錄名會退回 commit SHA 或 unknown，"
+                            "consumer 的 semver glob 定位不到這個 plugin")
         # #33 verify R4：先前 `mp_ver != pj_ver` 把「兩邊都沒有 version」判為一致並印 ✓ ——
         # 而那正是 pack README 說會讓 pack 靜默消失（cache 目錄名不是 semver）的條件。
         if pj_ver is None or mp_ver is None:
@@ -244,6 +262,30 @@ def check_marketplace_sync(root, errs):
             )
 
 
+
+def _find_pack_at(repo, ref, name):
+    """在 `ref` 的樹裡找 name 相符的 plugin.json 路徑（用來偵測 pack 改名）。找不到回 None。"""
+    if not name:
+        return None
+    ls = subprocess.run(["git", "ls-tree", "-r", "--name-only", ref],
+                        cwd=repo, capture_output=True, text=True)
+    if ls.returncode != 0:
+        return None
+    for path in ls.stdout.splitlines():
+        if not path.endswith(".claude-plugin/plugin.json"):
+            continue
+        blob = subprocess.run(["git", "show", f"{ref}:{path}"],
+                              cwd=repo, capture_output=True, text=True)
+        if blob.returncode != 0:
+            continue
+        try:
+            if json.loads(blob.stdout).get("name") == name:
+                return path
+        except json.JSONDecodeError:
+            continue
+    return None
+
+
 def check_bumped(root, errs, base, event=None):
     """改了 `lenses/*.csv` 就**必須** bump 版本（相對 base 增加），不只是「兩處一致」。
 
@@ -275,17 +317,31 @@ def check_bumped(root, errs, base, event=None):
             print("note: 本機執行且未給 --base —— bump 檢查未跑（CI 會跑）。"
                   "要在本機驗這一條：--base <上游分支>（預設走 merge-base 語意）")
             return
-        errs.append(
-            "::error::CI 裡沒有 base ref，無法判斷「改了 lens 卻沒 bump」——"
-            f"事件是 {event or '<unknown>'}，workflow 沒把 base 傳進來"
-            "（pull_request 用 base.sha、push 用 event.before）"
-        )
+        # #33 verify R7：先前一律說「workflow 沒把 base 傳進來」。但 push 事件的
+        # `event.before` 在**建立分支**與 **main 被重建**時是全零 SHA，workflow 依約定
+        # 傳空字串 —— 那不是設定壞了，是這個事件本來就沒有前一個狀態可比。
+        # 把責任推給 workflow 會讓人去改一個沒有壞的地方。
+        if event == "push":
+            errs.append(
+                "::error::push 事件拿不到 base（`event.before` 為全零）——**bump 檢查沒有跑**"
+                "（不是「無需 bump」）。全零通常代表這是新建立的分支，或 main 剛被重建；"
+                "兩種情況都沒有前一個狀態可比。若這次 push 動了 lens，請人工確認版本已 bump")
+        else:
+            errs.append(
+                "::error::CI 裡沒有 base ref，無法判斷「改了 lens 卻沒 bump」——"
+                f"事件是 {event or '<unknown>'}，workflow 沒把 base 傳進來"
+                "（pull_request 用 base.sha、push 用 event.before）")
         return
     # #33 verify R6：先前寫死 "plugins/pai-lenses/…"。`root` 與 `repo` 都已知，
     # 導得出來卻選擇寫死 —— 實測 `git mv plugins/pai-lenses plugins/lens-pack` 之後，
     # 下一個 commit 起每一次 lens 變更都印「無需 bump ✓」而完全不受守護。
     # 位置耦合造成的假綠燈，正是本 PR 反覆在修的那一類。
     pack_rel = root.resolve().relative_to(repo.resolve()).as_posix()
+    try:
+        pack_name = json.loads((root / ".claude-plugin" / "plugin.json")
+                               .read_text(encoding="utf-8")).get("name")
+    except (OSError, json.JSONDecodeError):
+        pack_name = None
     rel = f"{pack_rel}/lenses"
     pj_rel = f"{pack_rel}/.claude-plugin/plugin.json"
     # #33 verify R4：先前只堵 returncode != 0。git 對「pathspec 指向 base 不存在的路徑」
@@ -370,9 +426,21 @@ def check_bumped(root, errs, base, event=None):
         ["git", "show", f"{cmp_base}:{pj_rel}"],
         cwd=repo, capture_output=True, text=True)
     if old.returncode != 0:
-        print(f"note: base（{cmp_base[:12]}）沒有 {pj_rel} —— "
-              "本次在新增整個 pack，無前一版可比。這是唯一合法的略過情境")
-        return
+        # #33 verify R7：先前一律說「本次在新增整個 pack…這是唯一合法的略過情境」——
+        # **pack 改名的那個 commit 也走這條**，而那不是新增。先在 base 的樹裡找同名 pack；
+        # 找得到就是改名，用它的舊路徑比對，閘門照跑。找不到才是真的新增。
+        moved = _find_pack_at(repo, cmp_base, pack_name)
+        if moved:
+            print(f"note: pack 在 base 時位於 {moved}（本次改名為 {pack_rel}）—— 用舊路徑比對版本")
+            old = subprocess.run(["git", "show", f"{cmp_base}:{moved}"],
+                                 cwd=repo, capture_output=True, text=True)
+            if old.returncode != 0:
+                errs.append(f"::error::讀不到 base 上的 {moved} —— bump 檢查沒有跑")
+                return
+        else:
+            print(f"note: base（{cmp_base[:12]}）的樹裡找不到名為 '{pack_name}' 的 pack —— "
+                  "本次在新增整個 pack，無前一版可比。這是唯一合法的略過情境")
+            return
     try:
         prev = json.loads(old.stdout).get("version", "")
     except json.JSONDecodeError as e:
@@ -423,8 +491,15 @@ def check_lens_dir_shape(root, errs):
     return good
 
 
-def builtin_lens_keys(repo):
-    """{profile: {lens key, …}}，取自 `references/builtin-lenses.csv`。查不到回 None。
+def builtin_lens_keys(repo, errs):
+    """{profile: {lens key, …}}，取自 `references/builtin-lenses.csv`。讀不到就**報錯**。
+
+    #33 verify R7：先前讀不到回 `None`，呼叫端 `if builtin_keys is not None:` 於是整段
+    撞名判定跳過、**一個字都不印**，還印「N 條 lens ✓」exit 0 —— 一道剛立起來的閘門，
+    守不守得住取決於另一個檔案讀不讀得到，而失敗方向是肯定式綠燈。R6 在**同一個 commit**
+    裡才剛把 `pai-list-profiles` 的「工具不見了」從靜默升級為 hard error，理由逐字適用於
+    這裡，卻沒有一併改。第二條路徑更隱蔽：檔案讀得到但 header 缺 `profile` 欄時回的是
+    `{}` 而非 `None`，連上面那個保險都不觸發，每一列都被判為「沒撞名」。
 
     **為什麼這裡可以用那份投影，而 profile 存在性不行**（#33 verify R6，兩者不矛盾）：
     該檔由 `regen-builtin-lenses.sh` **逐 lens** 產生 —— 一條 lens 一列。所以
@@ -435,25 +510,40 @@ def builtin_lens_keys(repo):
         return None
     cat = repo / "plugins" / "parallel-ai-agents" / "references" / "builtin-lenses.csv"
     if not cat.is_file():
+        errs.append(f"::error::找不到 {cat.relative_to(repo)} —— **撞名閘門沒有跑**"
+                    "（這不是「沒有撞名」）。與 built-in 同 key 且未標 override 的 lens 會被 "
+                    "harness 判為 ignored、一個 agent 都不會派")
         return None
     out = {}
     try:
         with cat.open(newline="", encoding="utf-8-sig") as fh:
-            for r in csv.DictReader(fh):
+            reader = csv.DictReader(fh)
+            fields = list(reader.fieldnames or [])
+            if "profile" not in fields or "key" not in fields:
+                errs.append(f"::error file={cat.relative_to(repo)}::header 缺 profile 或 key 欄"
+                            f"（現在是 {fields}）—— 撞名閘門沒有跑。這個檔由 "
+                            "references/regen-builtin-lenses.sh 產生，格式變了要同步改這裡")
+                return None
+            for r in reader:
                 prof = (r.get("profile") or "").strip()
                 key = (r.get("key") or "").strip()
                 # 檔頭的 GENERATED 註解列會被 DictReader 當成資料列（CSV 無註解語法）。
                 if not prof or prof.startswith("#") or not key:
                     continue
                 out.setdefault(prof, set()).add(key)
-    except (OSError, UnicodeDecodeError, csv.Error):
+    except (OSError, UnicodeDecodeError, csv.Error) as e:
+        errs.append(f"::error file={cat.relative_to(repo)}::讀取失敗：{e} —— 撞名閘門沒有跑")
+        return None
+    if not out:
+        errs.append(f"::error file={cat.relative_to(repo)}::解析出 0 條 built-in lens —— "
+                    "撞名閘門形同虛設（catalog 空了或格式變了）")
         return None
     return out
 
 
 def check_csvs(root, errs, files):
     repo = repo_root(root)
-    builtin_keys = builtin_lens_keys(repo)
+    builtin_keys = builtin_lens_keys(repo, errs)
     known_profiles = None
     if repo is not None:
         lister = repo / "plugins" / "parallel-ai-agents" / "bin" / "pai-list-profiles"
@@ -563,6 +653,19 @@ def check_csvs(root, errs, files):
                 if k in builtin_keys.get(profile, set())
                 and not _truthy(rows[i - 2].get("override"))
             )
+            # #33 verify R7：標了 override 的撞名先前**完全不出聲**（連 warning 都沒有）——
+            # 一個純資料 PR 就能讓 built-in 的 `security` lens 從所有人的審閱裡消失，
+            # 而 CI 只印「N 條 lens ✓」。閘門保證那個決定是顯式的，但顯式 ≠ 被看見；
+            # reviewer 需要在 CI log 裡看到「這個 PR 刪掉了哪一條」。
+            overriding = sorted(
+                k for k, i in seen_keys.items()
+                if k in builtin_keys.get(profile, set())
+                and _truthy(rows[i - 2].get("override"))
+            )
+            if overriding:
+                print(f"::warning file={rel}::這個 PR 會**取代** built-in lens {overriding}"
+                      f"（profile '{profile}'）—— 原本那條會從所有使用者的審閱裡消失。"
+                      "請以「刪除既有 lens 的 PR」的標準審查：PR 描述必須說明原本那條為何不夠用")
             if clash:
                 errs.append(
                     f"::error file={rel}::{clash} 與 built-in 的同名 lens 撞名，且未標 override "
