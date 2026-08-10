@@ -15,8 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 `pai-lenses` 從獨立 repo 併回本 repo 成為第二個 plugin，並把三層 lens 疊加的文件與 CI 閘門補齊。
 
-> **範圍說明**：本版**不含**層 ③ 的自動回流工具。它原本在同一個 PR 裡，經七輪 6-AI verify
-> （HIGH 數 15 → 18 → 32 → 14 → 15 → 4 → 3）後拆出到 **#39**。R3 的 32 個 HIGH 有 **29 個**落在
+> **範圍說明**：本版**不含**層 ③ 的自動回流工具。它原本在同一個 PR 裡，經八輪 6-AI verify
+> （HIGH 數 15 → 18 → 32 → 14 → 15 → 4 → 3；R8 因 session limit 只有 1/6 agent 完成，
+> 不計入序列但其 CRITICAL 已修）後拆出到 **#39**。R3 的 32 個 HIGH 有 **29 個**落在
 > 回流工具上；剩下 3 個在 `validate.py`（**本版出貨的內容**，已於 R4 修掉）。
 > 收斂之後的 R4／R5／R6／R7 共 36 個 HIGH **全部**落在本版出貨的內容裡並已逐條修掉 ——
 > 也就是說「另一半很乾淨」從來不是收斂的理由（見下方 Fixed 段）。理由是**缺陷密度差了
@@ -65,13 +66,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **測試套件本身是套套邏輯 —— 已修，並改成可量測**（#33 verify R8 CRITICAL）。
+  `Fixture.run()` 寫死 `GITHUB_ACTIONS=""`，而 `check_bumped` 的 no-base 分支順序是
+  workflow_dispatch → **本機** → CI fail-loud，於是**每一條測試都走本機分支**，後面兩道
+  全被吃掉：整段「拿不到 base → fail-loud」（R4 的頭號修正）可以換成無條件 `return`
+  而 26 條全綠，而那條名義上守 workflow_dispatch 的測試實際命中的是本機分支。
+  **它自己犯了它 docstring 裡批判的錯。** 現在 `Fixture.run(ci=)` 參數化，四條分支各有測試。
+- **新增 `scripts/mutation_check.py`**（#33 verify R8）——「這套測試有多少鑑別力」先前只能
+  靠作者宣稱，現在是可機械回答的問題：逐一關掉 `validate.py` 的每道閘門，看測試抓不抓得到。
+  手動跑、不進 CI（37 個靶 × 全套 ≈ 5–8 分鐘，比照 `ensemble-eval` 的定位）。
+  它明寫兩個誠實邊界：**存活 ≠ 一定缺測試**（可能是 equivalent mutant）、
+  **只 mutate `if` 條件，零存活不等於測試完備**。並要求每個靶恰好命中一次 ——
+  R7 踩過 `replace(old, new, 1)` 打到註解而非程式碼的坑。
+- **測試從 26 條增為 46 條**（#33 verify R8）。R8 實測初版有 18 個閘門沒有測試網，逐一補上：
+  版本同步（`CLAUDE.md` 標為 CRITICAL 的那條）、兩邊都缺 version、`seen == 0` 保險、
+  description 漂移、header 重複欄位、focus 逗號未 quote（pack README 的頭號陷阱）、
+  整份複製 catalog 的 header、0 條 lens、`key` 以 `#` 開頭、`lenses/` 下子目錄、大寫 `.CSV`、
+  `lenses/` 目錄不存在、沒有合法 csv、lister rc=0 空輸出、catalog 解析出 0 條、
+  truthy 無法辨識、未知旗標。**量測結果：37 靶 → 35 殺掉 / 1 存活 / 0 靶壞**，
+  唯一存活經實測確認是 equivalent mutant。
+- **`main()` 的未知旗標改為 `return 2`**（#33 verify R8）。先前靜默丟棄 —— 本檔花大量篇幅
+  論證「靜默略過正是本 PR 一路在修的病」，未知旗標卻是唯一的例外：workflow 若把旗標打錯
+  （`--events`），validate 會以「沒有 base」的姿態繼續跑，安靜地換掉判準。
+- **pack 改名的測試補上 rc 斷言**（#33 verify R8）。先前只驗訊息措辭，而 CHANGELOG 宣稱的是
+  「用舊路徑比對、**閘門照跑**」—— 把版本比對整段跳過，那條測試照樣綠。
+- **pack README 的「CI 會檢查」清單改成完整表格**（#33 verify R8）。先前漏掉對貢獻者最重要
+  的兩道：改 lens 必 bump、撞名。諷刺的是本 PR 出貨的唯一一條 lens 就叫 `docs-vs-code`。
+
 - **`validate.py` 補上自己的回歸測試**（#33 verify R7，`scripts/test_validate.py`，26 條）。
   它有十餘道閘門卻**零測試覆蓋** —— 所有錯誤分支只在 CI 的 happy path 被執行（也就是都沒被
   執行）。六輪 verify 有超過二十個 finding 落在這一支，反覆出現的形狀是「閘門在某條件下安靜
   蒸發並印肯定式綠燈」，那種缺陷用讀的抓不到。每條測試對應一個**真實發生過**的缺陷、斷言
-  兩個方向，且十個 mutation 逐一確認轉紅。已接進 CI。
+  兩個方向。已接進 CI。
   （其中一個 mutation 一開始沒轉紅 —— 追下去發現是**我的 mutation 工具**打偏了：
   `replace(old, new, 1)` 命中的是註解裡的同一個字串。測試沒問題，靶錯了。）
+
+  > **更正（R8）**：這條原本寫「十個 mutation 逐一確認轉紅」，而 `test.yml` 註解與
+  > `test_validate.py` 開頭則寫「**都**做過 mutation」—— 兩者互相矛盾，而且都高估了。
+  > R8 實測：**20 個閘門 mutation 有 18 個存活**，包含 `CLAUDE.md` 標為 CRITICAL 的版本
+  > 同步閘門。見下方 R8 條目。
 - **撞名閘門的真源讀不到時改為報錯**（#33 verify R7）。`builtin_lens_keys()` 先前在
   catalog 缺檔／讀取失敗時回 `None`，呼叫端 `if builtin_keys is not None:` 於是整段跳過、
   **一個字都不印**，還印「N 條 lens ✓」exit 0。R6 在**同一個 commit** 裡才剛把

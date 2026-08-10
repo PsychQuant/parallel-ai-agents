@@ -715,6 +715,15 @@ def main():
                       file=sys.stderr)
                 return 2
             opts[flag] = argv[i + 1] or None
+    # #33 verify R8：先前無法辨識的旗標被靜默丟棄。本檔花了大量篇幅論證「靜默略過正是
+    # 本 PR 一路在修的病」，未知旗標卻是唯一的例外 —— workflow 若把旗標打錯（`--events`），
+    # validate 會以「沒有 base」的姿態繼續跑，安靜地換掉判準。
+    values = {v for v in opts.values() if v is not None}
+    unknown = [a for a in argv if a.startswith("-") and a not in opts and a not in values]
+    if unknown:
+        print("用法：validate.py [--base <ref>] [--event <github-event-name>]\n"
+              f"不認識的旗標：{unknown}", file=sys.stderr)
+        return 2
     base, event = opts["--base"], opts["--event"]
     root = pathlib.Path(__file__).resolve().parent.parent
     errs = []

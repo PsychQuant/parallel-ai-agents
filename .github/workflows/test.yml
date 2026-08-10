@@ -127,7 +127,10 @@ jobs:
       # #33 verify R7：validate.py 有十餘道閘門卻零測試覆蓋 —— 所有錯誤分支只在
       # CI 的 happy path 被執行（也就是都沒被執行）。六輪 verify 有超過二十個 finding
       # 落在這一支，反覆出現的形狀是「閘門在某條件下安靜蒸發並印肯定式綠燈」，
-      # 那種缺陷用讀的抓不到。每條測試對應一個真實發生過的缺陷，且都做過 mutation。
+      # 那種缺陷用讀的抓不到。每條測試對應一個真實發生過的缺陷。
+      # 這套測試自己的鑑別力**用 scripts/mutation_check.py 量**，不靠宣稱（#33 verify R8：
+      # 初版的 20 個閘門 mutation 有 18 個存活，而當時三處文件都寫著「都做過 mutation」）。
+      # mutation_check.py 手動跑、不進 CI —— 37 個靶 × 全套測試要 5-8 分鐘。
       - name: validate.py 自身的回歸測試（stdlib unittest，無額外依賴）
         run: python3 scripts/test_validate.py
 
