@@ -67,7 +67,7 @@ class Fixture:
         git(self.repo, "-c", "commit.gpgsign=false", "commit", "-qm", msg)
         return git(self.repo, "rev-parse", "HEAD").stdout.strip()
 
-    def run(self, *args, ci=False):
+    def run(self, *args, ci=False, script="plugins/pai-lenses/scripts/validate.py"):
         """回傳 (rc, 合併後的輸出)。validate.py 把 error 印到 stdout（GitHub annotation）。
 
         `ci` 是**必要的參數，不是方便**（#33 verify R8 CRITICAL）：`check_bumped` 的
@@ -77,7 +77,7 @@ class Fixture:
         `return` 而 26 條測試全綠，而名義上守 workflow_dispatch 的那條測試實際命中的是
         本機分支，是**套套邏輯的綠燈**。正是本檔開頭批判的那種測試。"""
         r = subprocess.run(
-            [sys.executable, str(self.repo / "plugins/pai-lenses/scripts/validate.py"), *args],
+            [sys.executable, str(self.repo / script), *args],
             cwd=self.repo, capture_output=True, text=True,
             env={**os.environ, "GITHUB_ACTIONS": "true" if ci else ""})
         return r.returncode, r.stdout + r.stderr
@@ -300,17 +300,15 @@ class ValidateTest(unittest.TestCase):
         git(self.fx.repo, "mv", "plugins/pai-lenses", "plugins/lens-pack")
         self.fx.set_entry("pai-lenses", source="./plugins/lens-pack")
         self.fx.commit("改名")
-        r = subprocess.run(
-            [sys.executable, str(self.fx.repo / "plugins/lens-pack/scripts/validate.py"),
-             "--base", base, "--event", "push"],
-            cwd=self.fx.repo, capture_output=True, text=True,
-            env={**os.environ, "GITHUB_ACTIONS": ""})
-        out = r.stdout + r.stderr
+        # 走 fx.run 而非自組 subprocess：R8 的 CRITICAL 根因就是環境在兩個地方各建一次，
+        # 留一個平行入口等於把同一個坑重新挖好。改名後 script 路徑變了，用 script= 指定。
+        rc, out = self.fx.run("--base", base, "--event", "push",
+                              script="plugins/lens-pack/scripts/validate.py")
         self.assertNotIn("新增整個 pack", out, f"改名不是新增：\n{out}")
         self.assertIn("改名", out, out)
         # R8 MEDIUM：先前只斷言訊息措辭。CHANGELOG 宣稱的是「用舊路徑比對，**閘門照跑**」——
         # 那句話要成立，就必須在這個 fixture（版本沒 bump）看到閘門真的擋下來。
-        self.assertEqual(r.returncode, 1, f"閘門必須照跑：\n{out}")
+        self.assertEqual(rc, 1, f"閘門必須照跑：\n{out}")
         self.assertIn("版本沒有增加", out)
 
     def test_missing_base_ref_is_error_not_silent_skip(self):
