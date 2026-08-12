@@ -2,7 +2,26 @@
 
 - **日期**：2026-07-29
 - **相關 issue**：[PsychQuant/parallel-ai-agents#24](https://github.com/PsychQuant/parallel-ai-agents/issues/24)（agents/lens 設定更新現況盤點）
-- **狀態**：設計已確認；§10 的唯一未驗證前提已於 2026-08-01 驗證成立，待寫實作計畫
+- **狀態**：⚠️ **部分已被推翻 —— 本檔為歷史紀錄，不是現行設計**
+
+> ## ⚠️ D1 / D7 已於 2026-08 撤回（#33 / PR #34）
+>
+> 本檔第 68 行的 **D1「lens 抽成獨立 repo」** 與第 75 行的 **D7「lens pack 與本 repo 為平行
+> repo」**，連同「D1 補述：獨立 repo 的兩個理由」，**已經被推翻**。pack 現在住在
+> `plugins/pai-lenses/`。
+>
+> 推翻的理由：`bin/pai-collect-lens-layers` 的 `PACK_PLUGIN` **寫死單一 pack 名**、只 glob
+> `*/pai-lenses` —— 架構從一開始就只認一個官方 pack，不是多 pack 生態。因此 D1 補述的
+> 「理由二：外部貢獻的出口成本」不但不成立，**反過來是障礙**（層 ③ 想回流時，判定目標層
+> 與開 PR 都得跨兩個 repo）。完整說明見
+> [`plugins/pai-lenses/README.md`](../../../plugins/pai-lenses/README.md) 的「為什麼不是獨立 repo」。
+>
+> **另一條也已失效**：第 93 行 D7 反駁欄的「CI 整合測試應以 fixture CSV 測試，不應吃真實
+> lens repo」。併回後 `test/pai-collect-lens-layers.bats` 刻意新增了一個讀**真實 pack** 的
+> 整合錨點 —— 那是刻意接受的耦合，理由寫在該檔檔頭。
+>
+> 其餘決策（D2–D6、D8：三層疊加的語意、override、provenance 行、CSV 契約）仍然成立，
+> 且已實作。**判斷現行契約請看 `references/lens-layers.md`，不要看本檔。**
 
 ---
 

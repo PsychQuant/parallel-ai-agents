@@ -43,6 +43,7 @@ R7 有一個 mutation 一直沒轉紅，差點被判定成「那條測試是套�
 所以下面每個靶都要求**在檔案中恰好出現一次**，不唯一就直接報錯而不是默默替換第一個。
 mutation test 本身也需要被驗證有沒有真的打中。
 """
+import argparse
 import pathlib
 import subprocess
 import sys
@@ -110,8 +111,8 @@ MUTATIONS = [
      '    if True:\n        return core + (1,)'),
     ("未 commit warning", "    if dirty.returncode == 0 and dirty.stdout.strip():",
      "    if False:"),
-    ("pack 改名偵測", "        moved = _find_pack_at(repo, cmp_base, pj_rel, pack_name)",
-     "        moved = None"),
+    ("pack 改名偵測", "    moved_pj = _find_pack_at(repo, cmp_base, pj_rel, pack_name)",
+     "    moved_pj = None"),
     ("bump 比較（tn <= tp）", "    elif tn <= tp:", "    elif False:"),
     ("entry name 缺席", "        if not ent_name:", "        if False:"),
     ("entry name 與 plugin.json 不符", "        elif pj_name and ent_name != pj_name:",
@@ -126,6 +127,18 @@ MUTATIONS = [
     ("plugins 元素不是 dict", "        if not isinstance(entry, dict):", "        if False:"),
     ("--event choices", 'ap.add_argument("--event", metavar="<github-event-name>", choices=EVENTS,',
      'ap.add_argument("--event", metavar="<github-event-name>",'),
+    ("check_version 的 semver 閘門", "    if version_tuple(version) is None:", "    if False:"),
+    ("rcN prerelease warning", "        if risky:", "        if False:"),
+    ("lenses/ 目錄本身的 containment", "        if not _inside(d.resolve(), repo_abs):",
+     "        if False:"),
+    ("catalog 的 containment", "    if not _inside(cat.resolve(), repo.resolve()):",
+     "    if False:"),
+    ("check_bumped 的 now 型別守衛", "    if now_obj is None:", "    if False and now_obj is None:"),
+    ("check_bumped 的 prev 型別守衛", "    if prev_obj is None:",
+     "    if False and prev_obj is None:"),
+    ("純改名不算 lens 變更", '        if parts[0] == "R100":', "        if False:"),
+    ("反向檢查的 name 交叉比對", "            if culprit is not None:", "            if False:"),
+    ("workflow-command 消毒", '    t = t.replace("::", "∷")', "    t = t"),
 ]
 
 
@@ -152,8 +165,14 @@ def check_targets_only():
     broken = []
     for name, old, _new in MUTATIONS:
         if old == "__SPECIAL_NOBASE__":
-            if "    if not base:\n" not in src:
-                broken.append((name, "special anchor 找不到"))
+            # #33 verify R10 M5：先前只驗兩個 anchor 的其中一個、而且沒驗唯一性 ——
+            # 於是它印「全部恰好命中一次」時，另一個 anchor（一句**註解**）可能早就
+            # 被改掉了。`_apply` 用 `index()` 找兩個 anchor，兩個都得在、都得唯一。
+            for anchor in ("    if not base:\n",
+                           '    # #33 verify R6：先前寫死 "plugins/pai-lenses/…"'):
+                n = src.count(anchor)
+                if n != 1:
+                    broken.append((name, f"special anchor {anchor!r:.40} 出現 {n} 次（需 1 次）"))
             continue
         n = src.count(old)
         if n != 1:
@@ -170,7 +189,19 @@ def check_targets_only():
 
 
 def main():
-    if "--check-targets" in sys.argv[1:]:
+    # #33 verify R10 M6：先前是 `if "--check-targets" in sys.argv[1:]` —— 手寫解析，
+    # 打錯旗標（`--check-target`）會被靜默忽略，然後**直接跑十分鐘的就地改寫迴圈**。
+    # R9 才剛把 validate.py 的同一種解析拆掉，理由逐字適用於這裡。
+    ap = argparse.ArgumentParser(
+        prog="mutation_check.py",
+        description="量測 test_validate.py 的鑑別力：逐一關掉 validate.py 的判定條件。")
+    ap.add_argument("--check-targets", action="store_true",
+                    help="只驗每個靶是否恰好命中一次（秒級，CI 會跑），不執行 mutation")
+    try:
+        args = ap.parse_args()
+    except SystemExit as e:
+        return e.code if isinstance(e.code, int) else 2
+    if args.check_targets:
         return check_targets_only()
     # #33 verify R9 M15：先前沒有綠底線前置檢查。測試套件本身是紅的時候（例如有人正在
     # 改 validate.py 改到一半），**每一個 mutation 都會被判為「殺掉」** —— harness 回報
