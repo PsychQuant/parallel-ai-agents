@@ -15,11 +15,13 @@
 mutation」。**那三句話會讓下一個維護者以為改動 `validate.py` 有測試網接著。**
 
 現在用 `scripts/mutation_check.py` 量：跑一次就知道哪些閘門沒有測試網。
-**最近一次量測：37 個靶，35 殺掉、1 存活、0 靶壞**；唯一存活的「catalog 缺檔」經實測
-確認是 *equivalent mutant*（拿掉那道 `is_file()` 前置檢查後，`cat.open()` 仍拋 `OSError`
-被同一個 `except` 接住並報同一語意的錯、同樣 rc=1 —— 縱深防禦，不是缺口）。
+**最近一次量測（R9 後）：46 個靶，45 殺掉、1 存活、0 靶壞**；唯一存活的「catalog 缺檔」
+經實測確認是 *equivalent mutant*（拿掉那道 `is_file()` 前置檢查後，`cat.open()` 仍拋
+`OSError` 被同一個 `except` 接住並報同一語意的錯、同樣 rc=1 —— 縱深防禦，不是缺口）。
 
 > 這個數字**會過期**。判準不是相信這段話，而是跑一次 `mutation_check.py`。
+> CI 會跑 `--check-targets`（秒級），所以「靶清單與程式碼漂移」擋得住；
+> 但「測試抓不抓得到」仍要手動跑完整輪。
 
 跑法：`python3 scripts/test_validate.py`（在 pack 目錄下），或 `python3 -m unittest`。
 """
@@ -47,17 +49,21 @@ class Fixture:
     def __init__(self):
         self.dir = pathlib.Path(tempfile.mkdtemp(prefix="pai-validate-"))
         self.repo = self.dir / "repo"
-        # 只複製閘門會碰到的部分，避免每個 test 都拷貝整棵樹（含 .git）
-        for rel in (".claude-plugin",
-                    "plugins/pai-lenses",
-                    "plugins/parallel-ai-agents/.claude-plugin",
-                    "plugins/parallel-ai-agents/bin",
-                    "plugins/parallel-ai-agents/workflows",
-                    "plugins/parallel-ai-agents/references",
-                    "plugins/parallel-ai-agents/skills"):
-            src, dst = REPO / rel, self.repo / rel
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(src, dst, symlinks=True)
+        # #33 verify R9 M21：先前用**寫死的目錄清單**，而 `.claude-plugin/marketplace.json`
+        # 是整份複製進來的 —— 新增第三個 plugin 時 entry 進了 fixture、目錄沒進，
+        # 於是**所有 assertGreen 測試同時轉紅**，訊息還指著一個在真實 repo 裡明明存在的
+        # 路徑。諷刺的是那正是 root CLAUDE.md 這次新寫的賣點：「新增第三個 plugin 時
+        # 自動涵蓋」—— 閘門確實自動涵蓋，測試 harness 不會。改成**枚舉 plugins/ 底下的
+        # 每一個目錄**，只跳過與閘門無關又肥大的子樹。
+        skip = {"eval", "test", "docs", "node_modules", "__pycache__", ".git"}
+        (self.repo / "plugins").mkdir(parents=True, exist_ok=True)
+        shutil.copytree(REPO / ".claude-plugin", self.repo / ".claude-plugin", symlinks=True)
+        for plugin_dir in sorted((REPO / "plugins").iterdir()):
+            if not plugin_dir.is_dir() or plugin_dir.name in skip:
+                continue
+            shutil.copytree(
+                plugin_dir, self.repo / "plugins" / plugin_dir.name, symlinks=True,
+                ignore=shutil.ignore_patterns(*skip))
         git(self.repo, "init", "-q", ".")
         git(self.repo, "config", "user.email", "t@t")
         git(self.repo, "config", "user.name", "t")
@@ -371,9 +377,15 @@ class ValidateTest(unittest.TestCase):
         self.assertRed(contains="缺 version")
 
     def test_no_in_repo_plugin_checked_is_error(self):
-        """`seen == 0` 保險：一個沒有檢查到任何東西的閘門是形同虛設，不是通過。"""
-        self.fx.set_entry("pai-lenses", source="https://example.com/a")
-        self.fx.set_entry("parallel-ai-agents", source="https://example.com/b")
+        """`seen == 0` 保險：一個沒有檢查到任何東西的閘門是形同虛設，不是通過。
+
+        entry 名稱**動態枚舉**，不寫死 —— 寫死兩個名字的話，新增第三個 plugin 就會讓
+        這條測試紅掉（它的 source 仍是本地、`seen` 不為 0），而那是測試不夠 general，
+        不是產品有問題。這條測試自己就是 M21 那類脆弱性的一個實例。"""
+        def all_remote(d):
+            for i, e in enumerate(d["plugins"]):
+                e["source"] = f"https://example.com/{i}"
+        self.fx.edit_json(".claude-plugin/marketplace.json", all_remote)
         self.assertRed(contains="形同虛設")
 
     def test_description_drift_warns(self):
@@ -442,11 +454,168 @@ class ValidateTest(unittest.TestCase):
         cat.write_text("profile,key,focus,needsSrt\n", encoding="utf-8")
         self.assertRed(contains="0 條 built-in lens")
 
-    def test_unknown_flag_is_usage_error(self):
-        """R8：未知旗標先前被靜默丟棄 —— workflow 打錯旗標會安靜地換掉判準。"""
-        rc, out = self.fx.run("--events", "push")
-        self.assertEqual(rc, 2, out)
-        self.assertIn("不認識的旗標", out)
+    def test_malformed_argv_is_always_a_usage_error(self):
+        """argv 的每一個洞，後果都是**安靜地換掉判準**（R8 起，R9 補完）。
+
+        R8 只讓未知**旗標**（`-` 開頭）fail-loud —— 那是同一個缺陷的一半，因為 workflow
+        實際傳的是旗標**值**。R9 實測：漏打 `--event`（`--base <sha> push`）時 `push` 被當
+        位置參數丟棄、event 變 None → 走 merge-base 而非 exact-tree，在 force-push 情境下
+        印出 `無需 bump ✓` exit 0，而正確呼叫報「版本沒有增加」exit 1。
+        **R5 修掉的漏檢經由 argv 層原樣復活。** 現在一律由 argparse 擋。"""
+        for args, label in [
+            (("--events", "push"), "未知旗標"),
+            (("--base", "HEAD", "push"), "漏打 --event（值變成位置參數）"),
+            (("--event", "--base", "HEAD"), "旗標值是另一個旗標"),
+            (("--event", "pusch"), "--event 不在列舉內"),
+            (("--base", "HEAD", "garbage"), "多餘的位置參數"),
+            (("--base",), "旗標缺值"),
+        ]:
+            with self.subTest(case=label):
+                rc, out = self.fx.run(*args)
+                self.assertEqual(rc, 2, f"{label} 必須是用法錯誤：\n{out}")
+
+    def test_event_semantics_differ_between_push_and_default(self):
+        """`--event` 的語意分流是本 PR 兩個世代修正的核心，先前**零測試覆蓋**（R9 H11）。
+
+        建構 force-push 的分岔歷史：A 有 lens L1；B（舊 main tip）改成 L2 並 bump；
+        force-push 後的新 tip C 由 A 長出（L2 被回退、版本退回）。
+        `--event push` 問「這次 push 讓 main 變成什麼」→ exact-tree → 看得到回退；
+        缺省（merge-base）問「這個分支引入了什麼」→ 相對 A 沒有變更。
+        兩個方向都要斷言，只驗其一的話把語意接反了也不會被抓到。"""
+        self.fx.write_lenses('key,focus\nL1,"第一版"\n')
+        a = self.fx.commit("A")
+        self.fx.write_lenses('key,focus\nL2,"第二版"\n')
+        self.fx.edit_json("plugins/pai-lenses/.claude-plugin/plugin.json",
+                          lambda d: d.__setitem__("version", "0.3.0"))
+        self.fx.set_entry("pai-lenses", version="0.3.0")
+        b = self.fx.commit("B（舊 main tip）")
+        git(self.fx.repo, "checkout", "-q", a)
+        git(self.fx.repo, "checkout", "-qb", "forced")
+
+        self.assertRed(("--base", b, "--event", "push"), contains="版本沒有增加",
+                       msg="push＝exact-tree，必須看見 lens 被回退")
+        out = self.assertGreen(("--base", b), msg="缺省＝merge-base，相對 A 確實沒有變更")
+        self.assertIn("merge-base", out)
+
+    # ---- entry 身分（R9 H2/M13：`name` 先前只出現在錯誤訊息裡，從不參與判定）----
+    def test_entry_name_must_match_plugin_json_name(self):
+        """訊息必須指名**哪一種**問題：缺 name 與 name 打錯的下游後果不同（一個是沒有名字
+        可裝、一個是裝錯名字），只斷言 rc=1 的話把兩條分支合成一條也不會被抓到。"""
+        for label, fn, expect in (
+            ("缺 name", lambda e: e.pop("name", None), "沒有 name"),
+            ("name 打錯", lambda e: e.update(name="pai-lense"), "不一致"),
+        ):
+            with self.subTest(case=label):
+                fx = Fixture(); self.addCleanup(fx.cleanup)
+                def edit(d, fn=fn):
+                    for e in d["plugins"]:
+                        if str(e.get("source", "")).endswith("pai-lenses"):
+                            fn(e)
+                fx.edit_json(".claude-plugin/marketplace.json", edit)
+                rc, out = fx.run()
+                self.assertEqual(rc, 1, f"{label}：\n{out}")
+                self.assertIn(expect, out, f"{label} 的訊息要指名問題：\n{out}")
+
+    def test_duplicate_entry_name_is_error(self):
+        self.fx.add_entry("pai-lenses", "./plugins/pai-lenses", version="0.2.0")
+        self.assertRed(contains="entry name 'pai-lenses' 重複", msg="同名 entry")
+
+    def test_two_entries_pointing_at_the_same_dir_is_error(self):
+        """名字不同、source 相同 —— 只有這個形狀能單獨驗到路徑重複那道檢查。
+        先前的測試同時撞名又撞路徑，撞名那道就把它蓋掉了（#33 verify R9 mutation 存活）。"""
+        self.fx.add_entry("some-other-name", "./plugins/pai-lenses", version="0.2.0")
+        self.assertRed(contains="指向同一個目錄")
+
+    # ---- lenses/ 的讀取面（R9 H1/M17 + H5）----
+    def test_symlink_in_lenses_is_rejected_without_leaking_content(self):
+        secret = self.fx.dir / "secret.txt"
+        secret.write_text("TOP-SECRET-FIRST-LINE\n", encoding="utf-8")
+        (self.fx.repo / "plugins/pai-lenses/lenses/leak.csv").symlink_to(secret)
+        out = self.assertRed(contains="不能有 symlink")
+        self.assertNotIn("TOP-SECRET", out, "目標檔內容不可進 CI annotation")
+
+    def test_hidden_files_are_triaged_into_three_kinds(self):
+        """封閉列舉的三種處置各驗一次（#33 verify R9）：已知 OS 產物靜默略過、
+        隱藏的 `.csv` 報錯（它看起來像 lens 但不會被載入）、其他未知隱藏檔印 warning
+        而不是把整支擋掉。只驗前兩種的話，第三種被改成 error 也不會被抓到。"""
+        lenses = self.fx.repo / "plugins/pai-lenses/lenses"
+        (lenses / ".DS_Store").write_bytes(b"\x00")
+        self.assertGreen(msg="OS 產物照舊略過")
+
+        (lenses / ".foo").write_text("x", encoding="utf-8")
+        out = self.assertGreen(msg="未知隱藏檔不該擋下整支")
+        self.assertIn("不認識的隱藏檔", out)
+        (lenses / ".foo").unlink()
+
+        (lenses / ".lecture.csv").write_text('key,focus\nx,"y"\n', encoding="utf-8")
+        self.assertRed(contains="隱藏的 .csv")
+
+    # ---- manifest 型別（R9 H7：R6 M5 的第二個站點）----
+    def test_valid_json_of_wrong_type_does_not_crash(self):
+        """R6 M5 只覆蓋語法壞掉的 JSON。合法 JSON 但不是物件會拋 AttributeError ——
+        不在任何 except 裡，整支 crash，已累積的 annotation 一條都印不出來。"""
+        for rel, label in (
+            ("plugins/pai-lenses/.claude-plugin/plugin.json", "pack plugin.json"),
+            ("plugins/parallel-ai-agents/.claude-plugin/plugin.json", "主 plugin.json"),
+            (".claude-plugin/marketplace.json", "marketplace.json"),
+        ):
+            with self.subTest(file=label):
+                fx = Fixture(); self.addCleanup(fx.cleanup)
+                (fx.repo / rel).write_text("[]", encoding="utf-8")
+                rc, out = fx.run()
+                self.assertEqual(rc, 1, out)
+                self.assertNotIn("Traceback", out, f"{label} 不該是裸 traceback：\n{out}")
+                self.assertIn("::error", out, f"{label} 必須留下 annotation：\n{out}")
+
+    def test_marketplace_plugins_of_wrong_type_does_not_crash(self):
+        self.fx.edit_json(".claude-plugin/marketplace.json",
+                          lambda d: d.__setitem__("plugins", ["pai-lenses"]))
+        out = self.assertRed()
+        self.assertNotIn("Traceback", out)
+
+    def test_plugins_not_a_list_gives_one_clear_error_not_a_cascade(self):
+        """`plugins` 是 dict 時，沒有前置守衛也不會 crash —— `for entry in plugins` 會迭代
+        key，每個 key 都不是 dict，於是報一串「元素不是物件」。rc 相同、也沒有 traceback，
+        所以只斷言 rc 的測試分辨不出來。這道守衛的價值是**一則說對原因的訊息**。"""
+        self.fx.edit_json(".claude-plugin/marketplace.json",
+                          lambda d: d.__setitem__("plugins", {"pai-lenses": {}}))
+        out = self.assertRed(contains="`plugins` 必須是陣列")
+        self.assertEqual(out.count("::error"), 1, f"應該只有一則訊息：\n{out}")
+
+    # ---- 改名偵測（R9 H8：先前綁在 plugin.json 的 name 上）----
+    def test_rename_with_simultaneous_plugin_name_change_is_still_detected(self):
+        """目錄改名同時改 plugin 名是很常見的一個 PR。先前 `_find_pack_at` 只比 `name`，
+        於是整條偵測失效並印「這是唯一合法的略過情境」—— 那句話在這條路徑上是假的。"""
+        base = self.fx.commit("base")
+        git(self.fx.repo, "mv", "plugins/pai-lenses", "plugins/lens-pack")
+        self.fx.edit_json("plugins/lens-pack/.claude-plugin/plugin.json",
+                          lambda d: d.__setitem__("name", "lens-pack"))
+        def ent(d):
+            for e in d["plugins"]:
+                if e.get("name") == "pai-lenses":
+                    e.update(name="lens-pack", source="./plugins/lens-pack")
+        self.fx.edit_json(".claude-plugin/marketplace.json", ent)
+        (self.fx.repo / "plugins/lens-pack/lenses/code.csv").write_text(
+            'key,focus\nnew,"改名後新增，沒 bump"\n', encoding="utf-8")
+        self.fx.commit("改名 + 改 plugin 名 + 加 lens，不 bump")
+        rc, out = self.fx.run("--base", base, "--event", "push",
+                              script="plugins/lens-pack/scripts/validate.py")
+        self.assertNotIn("新增整個 pack", out, f"改名不是新增：\n{out}")
+        self.assertEqual(rc, 1, f"閘門必須照跑：\n{out}")
+        self.assertIn("版本沒有增加", out)
+
+    # ---- semver 嚴格度與 prerelease 排序（R9 H4）----
+    def test_semver_is_strict_and_prerelease_ordering_follows_spec(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("v", str(PACK / "scripts/validate.py"))
+        v = importlib.util.module_from_spec(spec); spec.loader.exec_module(v)
+        for bad in ("01.2.3", "1.2.3-", "1.2.3+", "1.2.3\n", "v1.2.3", "1.2"):
+            self.assertIsNone(v.version_tuple(bad), f"{bad!r} 不該被當成合法 semver")
+        self.assertIsNotNone(v.version_tuple("1.2.3-alpha.1+build.5"))
+        # semver §11：prerelease < 同 core 正式版；數字段按整數比較
+        self.assertLess(v.version_tuple("1.0.0-rc.1"), v.version_tuple("1.0.0"))
+        self.assertLess(v.version_tuple("1.0.0-beta.2"), v.version_tuple("1.0.0-beta.11"))
+        self.assertLess(v.version_tuple("1.0.0-alpha"), v.version_tuple("1.0.0-alpha.1"))
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

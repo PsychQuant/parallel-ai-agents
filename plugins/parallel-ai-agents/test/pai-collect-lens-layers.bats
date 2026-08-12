@@ -4,8 +4,19 @@
 # 層 ① built-in 不在這裡 —— 它活在 harness 的 PROFILES 裡，這支只負責
 # lens pack（層 ②）與 user（層 ③）。所以本檔不斷言任何 builtin 層。
 #
-# 鐵律：全部用 BATS_TEST_TMPDIR 自建的假 cache 與假 user 目錄，
-# 絕不讀真實 lens pack 或開發機的 ~/.claude/pai-lenses/。
+# 鐵律（兩條，界線明確 —— #33 verify R9 M23 修正）：
+#
+# 1. **絕不讀開發機的 `~/.claude/pai-lenses/`。** 那是使用者的私人層，讀它會讓測試結果
+#    取決於誰在跑，且無法在 CI 重現。這條沒有例外。
+# 2. **單元測試全部用 BATS_TEST_TMPDIR 自建的假 cache 與假 pack。**
+#
+# **一個明確的例外**：檔案末的「整合錨點（#33）」刻意把**本 repo 的真實**
+# `plugins/pai-lenses/` 複製進假 cache —— 它要抓的正是「pack 的實際內容壞掉 / 併回後
+# collector 定位不到」，用假 pack 就驗不到那件事。代價是主 plugin 的 bats 套件從此
+# 依賴 `plugins/pai-lenses/lenses/*.csv` 的內容，純資料 PR 會影響它；這是刻意接受的耦合。
+#
+# 先前這裡寫的是「絕不讀真實 lens pack」，而同一個 commit 新增的整合錨點就在讀 ——
+# 一句已經為假的不變式比沒有更糟：下一個人會據以判斷「這裡不能碰真實 pack」而繞路。
 
 setup() {
   BIN="${BATS_TEST_DIRNAME}/../bin/pai-collect-lens-layers"
