@@ -15,7 +15,8 @@
 mutation」。**那三句話會讓下一個維護者以為改動 `validate.py` 有測試網接著。**
 
 現在用 `scripts/mutation_check.py` 量：跑一次就知道哪些閘門沒有測試網。
-**最近一次量測（R9 後）：46 個靶，45 殺掉、1 存活、0 靶壞**；唯一存活的「catalog 缺檔」
+**最近一次量測（R10 後）：55 個靶，52 殺掉、3 存活、0 靶壞** —— 三個存活逐條實測後，
+兩個是真缺口（已補測試，現在會轉紅），只有下面那個是 equivalent mutant；唯一存活的「catalog 缺檔」
 經實測確認是 *equivalent mutant*（拿掉那道 `is_file()` 前置檢查後，`cat.open()` 仍拋
 `OSError` 被同一個 `except` 接住並報同一語意的錯、同樣 rc=1 —— 縱深防禦，不是缺口）。
 
@@ -152,6 +153,13 @@ class ValidateTest(unittest.TestCase):
                 rc, out = fx.run()
                 self.assertEqual(rc, 1, out)
                 self.assertIn("semver", out)
+                if name == "pai-lenses":
+                    # #33 verify R10 H6：`check_version`（pack 自己那道）與
+                    # `check_marketplace_sync` 的 per-plugin semver 檢查對同一份輸入都會叫，
+                    # 所以只斷言「semver」的話，把 check_version 整道拿掉仍然全綠 ——
+                    # 實測 57/57 通過。要釘住它，就得斷言**只有它會印的那句話**。
+                    self.assertIn("需要 semver version", out,
+                                  f"check_version 自己那道閘門必須有話說：\n{out}")
 
     # ---- 反向檢查（R6 H1 / DA：有目錄沒 entry 先前全綠）----
     def test_plugin_dir_without_marketplace_entry_is_error(self):
@@ -312,10 +320,15 @@ class ValidateTest(unittest.TestCase):
                               script="plugins/lens-pack/scripts/validate.py")
         self.assertNotIn("新增整個 pack", out, f"改名不是新增：\n{out}")
         self.assertIn("改名", out, out)
-        # R8 MEDIUM：先前只斷言訊息措辭。CHANGELOG 宣稱的是「用舊路徑比對，**閘門照跑**」——
-        # 那句話要成立，就必須在這個 fixture（版本沒 bump）看到閘門真的擋下來。
-        self.assertEqual(rc, 1, f"閘門必須照跑：\n{out}")
-        self.assertIn("版本沒有增加", out)
+        # #33 verify R10 M3 更正：這裡先前斷言 `rc == 1` + 「版本沒有增加」——
+        # 而這個 fixture 是**純改名**（一個 lens 字元都沒動）。也就是說這條測試
+        # **把一個假陽性寫成了預期行為**：舊實作的變更清單那一側是 rename-blind，
+        # 把搬移看成「每個 lens 都是新增」，於是要求為一次純目錄搬移 bump 版本。
+        # M3 修掉那個假陽性之後，正確的預期是綠燈 + 明說偵測到純改名。
+        # 「閘門照跑」由手足測試 test_rename_with_simultaneous_plugin_name_change…
+        # 與 test_pure_rename_does_not_demand_a_bump 的第二段負責（那兩個有真的改內容）。
+        self.assertEqual(rc, 0, f"純改名不該要求 bump：\n{out}")
+        self.assertIn("純目錄改名", out)
 
     def test_missing_base_ref_is_error_not_silent_skip(self):
         self.assertRed(("--base", "0" * 40, "--event", "push"), contains="不在本地歷史內")
@@ -540,7 +553,11 @@ class ValidateTest(unittest.TestCase):
         而不是把整支擋掉。只驗前兩種的話，第三種被改成 error 也不會被抓到。"""
         lenses = self.fx.repo / "plugins/pai-lenses/lenses"
         (lenses / ".DS_Store").write_bytes(b"\x00")
-        self.assertGreen(msg="OS 產物照舊略過")
+        out = self.assertGreen(msg="OS 產物照舊略過")
+        # #33 verify R10 H7：先前只斷言 rc=0 —— 把白名單整條拿掉，`.DS_Store` 會落到
+        # 「不認識的隱藏檔」那條印一則 warning，rc 仍是 0，**測試照樣綠**。
+        # 白名單的價值是「**靜默**略過已知 OS 產物」，所以測試必須斷言靜默。
+        self.assertNotIn(".DS_Store", out, f"已知 OS 產物必須靜默略過：\n{out}")
 
         (lenses / ".foo").write_text("x", encoding="utf-8")
         out = self.assertGreen(msg="未知隱藏檔不該擋下整支")
@@ -616,6 +633,129 @@ class ValidateTest(unittest.TestCase):
         self.assertLess(v.version_tuple("1.0.0-rc.1"), v.version_tuple("1.0.0"))
         self.assertLess(v.version_tuple("1.0.0-beta.2"), v.version_tuple("1.0.0-beta.11"))
         self.assertLess(v.version_tuple("1.0.0-alpha"), v.version_tuple("1.0.0-alpha.1"))
+
+    def test_check_bumped_json_sites_also_guard_type(self):
+        """#33 verify R10 H2/M11：R9 把三個 JSON 讀取點改走 `load_obj`，漏了 `check_bumped`
+        裡的兩個。而先前那條「型別不對不 crash」的測試**結構上到不了那裡** —— 它不帶
+        `--base`，bump 檢查根本沒跑。要驗到就必須造出「有 base、lens 有變更、
+        然後 plugin.json 是非 dict」的路徑。"""
+        base = self.fx.commit("base")
+        self.fx.write_lenses('key,focus\nperf,"新 lens"\n')
+        (self.fx.repo / "plugins/pai-lenses/.claude-plugin/plugin.json").write_text(
+            '["not","an","object"]', encoding="utf-8")
+        self.fx.commit("改 lens + 把 plugin.json 換成陣列")
+        rc, out = self.fx.run("--base", base, "--event", "push")
+        self.assertNotIn("Traceback", out, f"不該是裸 traceback：\n{out}")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("::error", out, f"必須留下 annotation：\n{out}")
+
+    def test_lenses_dir_itself_cannot_be_a_symlink_out_of_repo(self):
+        """#33 verify R10 H4：R9 的 symlink 守衛只作用在 `lenses/` 的**條目**上，
+        目錄自己是 symlink 時整個逃逸 —— 實測會把 repo 外目錄的檔名逐一印進 annotation，
+        並讀取其中的檔案把第一行印出來。"""
+        outside = self.fx.dir / "outside"
+        outside.mkdir()
+        (outside / "secret.csv").write_text("SECRET-HEADER-LINE\n", encoding="utf-8")
+        lenses = self.fx.repo / "plugins/pai-lenses/lenses"
+        shutil.rmtree(lenses)
+        lenses.symlink_to(outside, target_is_directory=True)
+        out = self.assertRed(contains="落在 repo 外")
+        self.assertNotIn("SECRET-HEADER-LINE", out, "目標檔內容不可進 CI annotation")
+        self.assertNotIn("secret.csv", out, "repo 外的檔名也不可外洩")
+
+    def test_prerelease_with_glued_digits_warns(self):
+        """`rc9` 這種把數字黏在字母後面的 identifier，semver 規定按 ASCII 比較 ——
+        於是 `rc9 > rc10`，遞增發布會被 bump 閘門擋下。程式碼合規，但陷阱要顯性化。"""
+        self.fx.edit_json("plugins/pai-lenses/.claude-plugin/plugin.json",
+                          lambda d: d.__setitem__("version", "0.3.0-rc9"))
+        self.fx.set_entry("pai-lenses", version="0.3.0-rc9")
+        out = self.assertGreen(msg="rcN 合法，只是有陷阱")
+        self.assertIn("把數字黏在字母後面", out)
+
+    def test_pure_rename_does_not_demand_a_bump(self):
+        """#33 verify R10 M3：改名偵測先前只讓「舊版本」rename-aware，變更清單那一側
+        仍用新路徑 —— 於是一次**純目錄搬移**（lens 內容零變動）被要求 bump。
+        兩個方向都驗：純改名放行、改名時真的改了內容仍要擋。"""
+        base = self.fx.commit("base")
+        git(self.fx.repo, "mv", "plugins/pai-lenses", "plugins/lens-pack")
+        def ent(d):
+            for e in d["plugins"]:
+                if e.get("name") == "pai-lenses":
+                    e["source"] = "./plugins/lens-pack"
+        self.fx.edit_json(".claude-plugin/marketplace.json", ent)
+        self.fx.commit("純改名")
+        script = "plugins/lens-pack/scripts/validate.py"
+        rc, out = self.fx.run("--base", base, "--event", "push", script=script)
+        self.assertEqual(rc, 0, f"純改名不該要求 bump：\n{out}")
+        self.assertIn("純目錄改名", out)
+
+        (self.fx.repo / "plugins/lens-pack/lenses/code.csv").write_text(
+            'key,focus\nnew,"改名時也改了內容"\n', encoding="utf-8")
+        self.fx.commit("再改 lens")
+        rc, out = self.fx.run("--base", base, "--event", "push", script=script)
+        self.assertEqual(rc, 1, f"改名 + 真的改了內容仍要擋：\n{out}")
+        self.assertIn("版本沒有增加", out)
+
+    def test_entry_with_wrong_source_says_fix_the_entry_not_add_one(self):
+        """#33 verify R10 M4：source 形式不合時，反向檢查先前報「沒有指向它的 entry」——
+        那會把維護者導向「再加一條 entry」這個**錯誤修法**，而真正的問題是既有那條寫錯了。
+        真的缺 entry 時仍要說「沒有指向它的 entry」，兩者不可混。"""
+        def bad_src(d):
+            for e in d["plugins"]:
+                if e.get("name") == "pai-lenses":
+                    e["source"] = "pluginz/pai-lenses"
+        self.fx.edit_json(".claude-plugin/marketplace.json", bad_src)
+        out = self.assertRed(contains="要修的是那條 entry 的 source")
+        self.assertNotIn("沒有指向它的 entry", out)
+
+        fx2 = Fixture(); self.addCleanup(fx2.cleanup)
+        fx2.drop_entry("pai-lenses")
+        rc2, out2 = fx2.run()
+        self.assertEqual(rc2, 1, out2)
+        self.assertIn("沒有指向它的 entry", out2, "真的缺 entry 時訊息不可被前一條蓋掉")
+
+    def test_untrusted_content_cannot_inject_workflow_commands(self):
+        """#33 verify R10 M8：CSV 的引號欄位可含真正的換行。未消毒地插進 `::warning::`
+        就能多出一行 `::stop-commands::` —— runner 會停止解析後續所有 workflow command，
+        包含 validator 自己排隊的每一條 `::error::`。job 仍紅，但 PR 上零 annotation：
+        把本 PR 一路在建的 fail-loud 降級成 fail-silent。"""
+        self.fx.write_lenses(
+            'key,focus,needsSrt,override\n'
+            'perf,"x","y\n::stop-commands::zzz\n::error file=innocent.py,line=1::forged",\n')
+        rc, out = self.fx.run()
+        for line in out.splitlines():
+            self.assertFalse(line.strip().startswith("::stop-commands::"),
+                             f"不可產生 ::stop-commands:: 行：\n{out}")
+        self.assertNotIn("::error file=innocent.py", out, "不可偽造指向其他檔案的 annotation")
+
+    def test_catalog_symlink_cannot_leak_content(self):
+        """#33 verify R10：symlink 洩漏的第三個站點 —— catalog（`builtin-lenses.csv`）。
+        **rc 兩邊都是 1**（缺檔／讀不到都會報「撞名閘門沒有跑」），差別只在目標檔內容有沒有
+        被印進 annotation。只斷言 rc 的測試分辨不出來，所以這裡斷言的是**外洩本身**。"""
+        outside = self.fx.dir / "outside.csv"
+        outside.write_text("SECRET-CATALOG-HEADER\n", encoding="utf-8")
+        cat = self.fx.repo / "plugins/parallel-ai-agents/references/builtin-lenses.csv"
+        cat.unlink()
+        cat.symlink_to(outside)
+        out = self.assertRed(contains="落在 repo 外")
+        self.assertNotIn("SECRET-CATALOG-HEADER", out, "目標檔內容不可進 CI annotation")
+
+    def test_base_side_manifest_of_wrong_type_also_guarded(self):
+        """`check_bumped` 有**兩個** JSON 讀取點：HEAD 那側與 base 那側。
+        先前的測試只把 HEAD 的 plugin.json 換成陣列，結構上到不了 base 那側 ——
+        「兩個站點」的第二個仍然沒有測試網（#33 verify R10 mutation 存活）。"""
+        (self.fx.repo / "plugins/pai-lenses/.claude-plugin/plugin.json").write_text(
+            '["not","an","object"]', encoding="utf-8")
+        base = self.fx.commit("base 的 plugin.json 是陣列")
+        self.fx.edit_json(".claude-plugin/marketplace.json", lambda d: None)
+        (self.fx.repo / "plugins/pai-lenses/.claude-plugin/plugin.json").write_text(
+            '{"name":"pai-lenses","version":"0.3.0"}\n', encoding="utf-8")
+        self.fx.write_lenses('key,focus\nperf,"新 lens"\n')
+        self.fx.commit("修好 plugin.json + 改 lens")
+        rc, out = self.fx.run("--base", base, "--event", "push")
+        self.assertNotIn("Traceback", out, f"base 那側也不該是裸 traceback：\n{out}")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("::error", out)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

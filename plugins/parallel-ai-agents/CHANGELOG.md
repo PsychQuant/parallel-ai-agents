@@ -15,8 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 `pai-lenses` 從獨立 repo 併回本 repo 成為第二個 plugin，並把三層 lens 疊加的文件與 CI 閘門補齊。
 
-> **範圍說明**：本版**不含**層 ③ 的自動回流工具。它原本在同一個 PR 裡，經九輪 6-AI verify
-> （HIGH 數 15 → 18 → 32 → 14 → 15 → 4 → 3 → R8 降級 → **11**；R8 只有 1/6 agent 完成，
+> **範圍說明**：本版**不含**層 ③ 的自動回流工具。它原本在同一個 PR 裡，經十輪 6-AI verify
+> （HIGH 數 15 → 18 → 32 → 14 → 15 → 4 → 3 → R8 降級 → 11 → **7**；R8 只有 1/6 agent 完成，
 > 不計入序列但其 CRITICAL 已修。R9 的 11 個 HIGH 偏高是因為四個 core lens **從未審過**
 > R8 之後新增的 `scripts/`，那是那批程式碼的第一次真正審閱）後拆出到 **#39**。R3 的 32 個 HIGH 有 **29 個**落在
 > 回流工具上；剩下 3 個在 `validate.py`（**本版出貨的內容**，已於 R4 修掉）。
@@ -36,6 +36,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   判定目標層與開 PR 都得跨兩個 repo。舊 repo 已封存並在 README 指向新位置。
 - 其 `validate.yml` 併入 root `test.yml` 為獨立 job（`manifests-and-lens-pack`）——
   併入後落在 `plugins/` 下的 workflow 不會被 GitHub 執行，故移除以免誤導。
+- **主 plugin 的 `description` 不再累積歷代 release note**，只保留功能敘述 + 當版一行。
+  > **揭露（#33 verify R10 M9）**：這個動作刪掉了 v2.19.0–v2.22.0 五版的註記，而那些是使用者
+  > 在 `/plugin` 清單裡看得到的唯一版本說明（CHANGELOG 不在 plugin UI 裡）。先前 Fixed 段
+  > 只寫「接回功能敘述」，讀起來像單純還原，**沒有揭露刪除** —— 本 PR 一路在抓的
+  > 「修一半的宣稱」在變更紀錄層的鏡像。歷史註記從此以 CHANGELOG 為準。
+  > 本 PR 新立的 description-drift 閘門對此結構上是盲的（它只比對兩份是否相同）。
 
 ### Added
 
@@ -80,6 +86,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   > **量測（R9 後）：46 個靶 → 45 殺掉 / 1 存活 / 0 靶壞**（R8 後是 36→35/1/0）。
   > 唯一存活的「catalog 缺檔」經實測確認是 equivalent mutant。
   > 五個存活裡有三個是**真缺口**（行為確實不同），已逐條補測試；判讀靠實測不靠推論。
+
+- **R9 的兩個修正又是半成品**（#33 verify R10 HIGH）—— 而且是**同一輪之內**沒掃到手足：
+  - `load_obj()` 只改了三個 JSON 讀取點，**漏了 `check_bumped` 裡的兩個**。非 dict 的
+    plugin.json 仍讓整支 crash、零 annotation。同一個 commit 裡還在隔壁替 `pack_name` 加了
+    `isinstance` 守衛 —— 想到過，只補了一處。`load_obj` 的 `is_text` 參數正是為此而加，
+    而它在 R9 出貨時**零呼叫端使用**。
+  - symlink 守衛只作用在 `lenses/` 的**條目**上，**目錄自己是 symlink 時整個逃逸** ——
+    實測會把 repo 外目錄的檔名逐一印進 CI annotation，並讀取其中的檔案把第一行印出來。
+    第三個站點在 catalog（`builtin-lenses.csv`）的讀取。三處現在都做 `_inside` 判定。
+- **`version_tuple` 的 R9 註解對自己的守備範圍作了假陳述**（#33 verify R10 HIGH）。
+  它寫「`1.0.0-rc10 → 1.0.0-rc9` 的閘門逃逸現在修掉了」—— **實測兩個方向一個都沒變**：
+  `rcN` 是單一個 alphanumeric identifier，逐 identifier 比較之後仍落在同一個 ASCII 比較上，
+  與 R7 的整段字串比較逐字等價。就 semver 2.0.0 而言那是**對的**（`rc9 > rc10`），
+  所以程式碼不改；改的是註解，並新增 warning 把 `rcN` 這個陷阱顯性化
+  （`rc9 → rc10` 這個正常的遞增發布會被 bump 閘門擋下，請改用 `rc.9` / `rc.10`）。
+- **兩道閘門出貨時零鑑別力**（#33 verify R10 HIGH，DA 抓到）：`check_version` 自己的 semver
+  閘門被 `check_marketplace_sync` 的同類檢查遮蔽（整道拿掉，57/57 全綠）；
+  `OS_ARTIFACTS` 白名單的測試只斷言 rc=0，**從不斷言「靜默」**（拿掉白名單，`.DS_Store`
+  改成印一則 warning，rc 仍是 0）。兩者現在斷言的是**只有它會印的那句話**與**靜默本身**。
+- **`lenses/` 純改名被誤判為「改了但沒 bump」**（#33 verify R10 M3）。改名偵測先前只讓
+  「舊版本」那一側 rename-aware，**變更清單那一側仍用新路徑** —— 同一次執行裡
+  rename-aware vs rename-blind，與 R5/R6 反覆在修的「兩個基準」同形。
+  > 連帶更正一條測試：`test_pack_rename_…` 先前斷言純改名應該 `rc=1`「版本沒有增加」——
+  > **它把這個假陽性寫成了預期行為**。M3 修掉之後那條斷言必須跟著翻面。
+- **未消毒的 PR 內容可注入 GitHub workflow command**（#33 verify R10 M8）。CSV 的引號欄位
+  可含真正的換行，於是能多出一行 `::stop-commands::` —— runner 會**停止解析後續所有
+  workflow command**，包含 validator 自己排隊的每一條 `::error::`。job 仍紅，但 PR 上零
+  annotation：把本 PR 一路在建的 **fail-loud 降級成 fail-silent**；還能偽造指向無辜檔案的
+  annotation。六處輸出通道改走新的 `wc()`（換行 → `⏎`、`::` → `∷`、超長截斷）。
+- **反向檢查的訊息會把人導向錯誤的修法**（#33 verify R10 M4）。entry 的 source 形式不合時
+  （打錯路徑、dict 缺 `path`），先前報「marketplace.json 裡沒有指向它的 entry」——
+  **那句話會讓維護者再加一條 entry**，而真正的問題是既有那條寫錯了。現在按**名字**交叉比對後
+  說出真正的原因；真的缺 entry 時訊息不變。
+- **設計 spec 加上 superseded banner**（#33 verify R10 HIGH ×2）。
+  `docs/superpowers/specs/2026-07-29-lens-pack-externalization-design.md` 的狀態仍寫
+  「設計已確認…待寫實作計畫」，而它的 **D1（獨立 repo）／D7（平行 repo）已被本 PR 推翻**，
+  連 D7 反駁欄的「CI 整合測試不應吃真實 lens repo」也被本 PR 新增的整合錨點推翻。
+  更糟的是 `lens-layers.md` 仍把它指為契約來源。兩處都已標註。
+  這正是本 PR 自己寫下的判準：**一句已經為假的不變式比沒有更糟**。
+- **`mutation_check.py` 自己的三個問題**（#33 verify R10 M5/M6）：`--check-targets` 對特殊靶
+  只驗了兩個 anchor 的其中一個、且沒驗唯一性（而未驗的那個是一句**註解**）；
+  它自己還在用 R9 剛從 `validate.py` 拆掉的手寫 argv 解析（打錯旗標會靜默忽略，
+  然後直接跑十分鐘的就地改寫迴圈）。兩者都改。
 
 - **argv 解析改用 argparse**（#33 verify R9 HIGH）。手寫解析的每一個洞，後果都是**安靜地
   換掉判準**，而 R8 只修了「未知**旗標**」那一半 —— workflow 實際傳的是旗標**值**。

@@ -152,4 +152,6 @@ security,"（取代內建的 security lens）……",,true
 - `references/builtin-lenses.csv` — 層 ① 的唯讀 catalog（**編它不改變任何行為**；真源是 `PROFILES`）
 - `bin/pai-collect-lens-layers` — 層 ②③ 的蒐集器
 - `bin/pai-parse-lens-csv` — CSV 解析的單一真相源
-- 設計 spec：`docs/superpowers/specs/2026-07-29-lens-pack-externalization-design.md`（D1–D8）
+- 設計 spec（**歷史紀錄**）：`docs/superpowers/specs/2026-07-29-lens-pack-externalization-design.md`
+  —— **D1／D7（獨立 repo、平行 repo）與 D7 反駁欄的「不應吃真實 lens repo」已於 #33 推翻**，
+  該檔頂部有 superseded banner。D2–D6／D8 仍成立。**現行契約以本檔為準。**
