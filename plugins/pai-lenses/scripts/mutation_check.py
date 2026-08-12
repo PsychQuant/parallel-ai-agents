@@ -138,7 +138,10 @@ MUTATIONS = [
      "    if False and prev_obj is None:"),
     ("純改名不算 lens 變更", '        if parts[0] == "R100":', "        if False:"),
     ("反向檢查的 name 交叉比對", "            if culprit is not None:", "            if False:"),
-    ("workflow-command 消毒", '    t = t.replace("::", "∷")', "    t = t"),
+    ("workflow-command 消毒（值層）", '    t = t.replace("::", "∷")', "    t = t"),
+    ("workflow-command 消毒（輸出邊界）",
+     '    t = str(line).replace("\\r\\n", "⏎").replace("\\n", "⏎").replace("\\r", "⏎")',
+     "    t = str(line)"),
 ]
 
 

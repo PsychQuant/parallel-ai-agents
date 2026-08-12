@@ -15,7 +15,7 @@
 mutation」。**那三句話會讓下一個維護者以為改動 `validate.py` 有測試網接著。**
 
 現在用 `scripts/mutation_check.py` 量：跑一次就知道哪些閘門沒有測試網。
-**最近一次量測（R10 後）：55 個靶，52 殺掉、3 存活、0 靶壞** —— 三個存活逐條實測後，
+**最近一次量測（R10 後）：56 個靶**（數字與存活清單請跑一次 `mutation_check.py`） —— 三個存活逐條實測後，
 兩個是真缺口（已補測試，現在會轉紅），只有下面那個是 equivalent mutant；唯一存活的「catalog 缺檔」
 經實測確認是 *equivalent mutant*（拿掉那道 `is_file()` 前置檢查後，`cat.open()` 仍拋
 `OSError` 被同一個 `except` 接住並報同一語意的錯、同樣 rc=1 —— 縱深防禦，不是缺口）。
@@ -713,6 +713,24 @@ class ValidateTest(unittest.TestCase):
         rc2, out2 = fx2.run()
         self.assertEqual(rc2, 1, out2)
         self.assertIn("沒有指向它的 entry", out2, "真的缺 entry 時訊息不可被前一條蓋掉")
+
+    def test_filename_cannot_inject_workflow_commands(self):
+        """git 允許檔名含換行，而檔名會被插進幾乎每一則 annotation。
+
+        #33 verify R10（作者自查）：R10 的第一版修法是在**個別呼叫點**包 `wc()` ——
+        包了六處，而實際有約四十處插入攻擊者可控的值。**那個修法本身就是「同類只修一處」，
+        只是規模更大。** 現在改成在**唯一的輸出出口** `emit()` 消毒：workflow command 必須
+        從行首解析，所以保證一行永遠是一行就夠了。這條測試走的是 CSV 欄位以外的路徑，
+        用來釘住「邊界修法涵蓋所有站點」這個性質。"""
+        evil = (self.fx.repo / "plugins/pai-lenses/lenses"
+                / "bad\n::stop-commands::zzz\n::error file=innocent.py,line=1::forged.txt")
+        evil.write_text("x", encoding="utf-8")
+        rc, out = self.fx.run()
+        for line in out.splitlines():
+            self.assertFalse(line.startswith("::stop-commands::"),
+                             f"檔名不可注入 workflow command：\n{out}")
+            self.assertFalse(line.startswith("::error file=innocent.py"),
+                             f"不可偽造指向其他檔案的 annotation：\n{out}")
 
     def test_untrusted_content_cannot_inject_workflow_commands(self):
         """#33 verify R10 M8：CSV 的引號欄位可含真正的換行。未消毒地插進 `::warning::`
