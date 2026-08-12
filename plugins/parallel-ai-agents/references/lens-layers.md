@@ -33,6 +33,12 @@
 > `priors` 都有包）。誰能寫 lens，誰就擁有 reviewer 的角色級指令權限，而 reviewer 有
 > Read/Bash。validator 只驗形狀，對 focus 的語意零判斷 —— **CI 綠燈不代表內容審過**。
 > 審 lens PR 請用審程式碼的標準。結構性修法（把 lens 文字也包進 sentinel）追蹤於 #36。
+>
+> **禁止的是封閉的四類**（改變存取範圍或回報範圍），不是「任何祈使句」——
+> 指示 reviewer 在**審閱標的內**用 Read/Grep 查證是允許且被推薦的。
+> 完整列舉見 [`plugins/pai-lenses/README.md`](../../pai-lenses/README.md) 的
+> 「界線：封閉列舉，不是總括判準」。先前這裡與 pack README 都寫成總括禁令，
+> 而本 repo 出貨的唯一一條 lens 就違反它（#33 verify R9）。
 
 > ⚠️ **層 ②③ 只在 Backend A（`Workflow` harness）生效。** 沒有 `Workflow` tool 的舊版
 > Claude Code 會 fallback 到 Backend B（legacy TeamCreate fan-out），那條路的 reviewer 是

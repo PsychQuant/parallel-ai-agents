@@ -18,9 +18,10 @@
 
 ## 用法
 
-    python3 scripts/mutation_check.py
+    python3 scripts/mutation_check.py                  # 完整量測（慢）
+    python3 scripts/mutation_check.py --check-targets  # 只驗靶還對得上（秒級，CI 會跑）
 
-**手動跑，不進 CI**（36 個 mutation × 全套測試 ≈ 5–8 分鐘；比照 `ensemble-eval` 的定位）。
+**手動跑，不進 CI**（一輪 = 靶數 × 全套測試，目前約 10 分鐘；比照 `ensemble-eval` 的定位）。
 改動 `validate.py` 的閘門、或新增閘門之後跑一次；存活清單就是待補的測試。
 
 ## 兩個誠實邊界
@@ -30,6 +31,10 @@
    `except` 接住並報同一類錯 —— 那是縱深防禦，不是缺口。判讀存活清單要逐條看。
 2. **這支只 mutate `if` 條件。** 它不動運算式、邊界值、訊息內容，所以「零存活」**不等於**
    測試完備。它回答的是一個窄而具體的問題：**每一道閘門被整段拿掉時，有沒有東西會叫。**
+3. **靶清單是手維護的，它相對閘門集合的完備性沒有機械保證**（#33 verify R9 M24）。
+   新增一道閘門卻忘了加靶 → 照樣「0 靶壞」+ 高殺率，而那道閘門其實沒被量到。
+   對沖的是靶壞會 fail-loud：改動被 mutate 的那幾行時靶會對不上，逼你回來更新。
+   **新增閘門時請一併加靶**；`main()` 的回傳值對「靶壞」是 1，不是 0。
 
 ## 一個踩過的坑
 
@@ -101,14 +106,26 @@ MUTATIONS = [
      '    if subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"{base}^{{commit}}"],',
      '    if False and subprocess.run(["git", "rev-parse", "--verify", "--quiet", '
      'f"{base}^{{commit}}"],'),
-    ("prerelease 排序", '    return core + ((0, pre) if pre else (1, ""))', "    return core"),
+    ("prerelease 排序", '    if m["pre"] is None:\n        return core + (1,)',
+     '    if True:\n        return core + (1,)'),
     ("未 commit warning", "    if dirty.returncode == 0 and dirty.stdout.strip():",
      "    if False:"),
-    ("pack 改名偵測", "        moved = _find_pack_at(repo, cmp_base, pack_name)",
+    ("pack 改名偵測", "        moved = _find_pack_at(repo, cmp_base, pj_rel, pack_name)",
      "        moved = None"),
     ("bump 比較（tn <= tp）", "    elif tn <= tp:", "    elif False:"),
-    ("未知旗標 fail-loud", "    if unknown:\n        print(\"用法：validate.py",
-     "    if False:\n        print(\"用法：validate.py"),
+    ("entry name 缺席", "        if not ent_name:", "        if False:"),
+    ("entry name 與 plugin.json 不符", "        elif pj_name and ent_name != pj_name:",
+     "        elif False:"),
+    ("entry name 重複", "            if ent_name in entry_names:", "            if False:"),
+    ("兩個 entry 指向同一目錄", "        if resolved in claimed_paths:", "        if False:"),
+    ("lenses/ 下 symlink", "        if p.is_symlink():", "        if False:"),
+    ("隱藏的 .csv", '        if p.name.startswith(".") and p.suffix == ".csv":',
+     "        if False:"),
+    ("manifest 型別不是 dict", "    if not isinstance(obj, dict):", "    if False:"),
+    ("plugins 不是 list", "    if not isinstance(plugins, list):", "    if False:"),
+    ("plugins 元素不是 dict", "        if not isinstance(entry, dict):", "        if False:"),
+    ("--event choices", 'ap.add_argument("--event", metavar="<github-event-name>", choices=EVENTS,',
+     'ap.add_argument("--event", metavar="<github-event-name>",'),
 ]
 
 
@@ -124,7 +141,47 @@ def _apply(name, old, new, src):
     return src.replace(old, new)
 
 
+def check_targets_only():
+    """只驗每個靶是否恰好命中一次 —— 秒級，可以進 CI（#33 verify R9 M11/M24）。
+
+    完整的 mutation 量測太慢（靶數 × 全套測試 ≈ 十分鐘），不適合每個 PR 跑。但**靶清單
+    相對 validate.py 的漂移**是可以便宜擋住的：有人改動被 mutate 的那幾行、或搬走一道閘門，
+    靶就對不上。先前這件事只有在有人手動跑整輪時才會發現，而「忘了跑」是預設。
+    """
+    src = VALIDATE.read_text(encoding="utf-8")
+    broken = []
+    for name, old, _new in MUTATIONS:
+        if old == "__SPECIAL_NOBASE__":
+            if "    if not base:\n" not in src:
+                broken.append((name, "special anchor 找不到"))
+            continue
+        n = src.count(old)
+        if n != 1:
+            broken.append((name, f"在 validate.py 中出現 {n} 次（需恰好 1 次）"))
+    if broken:
+        print(f"::error::mutation 靶清單與 validate.py 漂移了（{len(broken)} 個對不上）—— "
+              "改動閘門時請一併更新 scripts/mutation_check.py 的 MUTATIONS")
+        for n, why in broken:
+            print(f"  - {n} | {why}")
+        return 1
+    print(f"mutation 靶清單 {len(MUTATIONS)} 個全部恰好命中一次 ✓"
+          "（這只驗靶解析得到，不代表測試抓得到 —— 那要跑完整輪）")
+    return 0
+
+
 def main():
+    if "--check-targets" in sys.argv[1:]:
+        return check_targets_only()
+    # #33 verify R9 M15：先前沒有綠底線前置檢查。測試套件本身是紅的時候（例如有人正在
+    # 改 validate.py 改到一半），**每一個 mutation 都會被判為「殺掉」** —— harness 回報
+    # 漂亮的「0 存活」，而它其實什麼都沒量到。這是它自己版本的「肯定式綠燈」。
+    print("前置：確認未 mutate 的測試套件是綠的 …", flush=True)
+    pre = subprocess.run([sys.executable, str(TESTS)], cwd=PACK, capture_output=True, text=True)
+    if pre.returncode != 0:
+        print("✗ 基準測試就沒過 —— 先把測試修綠再量 mutation，"
+              "否則每個 mutation 都會被誤判為『殺掉』。\n" + pre.stdout[-2000:] + pre.stderr[-2000:])
+        return 1
+
     original = VALIDATE.read_text(encoding="utf-8")
     survived, killed, broken = [], [], []
     try:
@@ -144,6 +201,14 @@ def main():
                                 capture_output=True, text=True).returncode
             (survived if rc == 0 else killed).append(name)
             print(("  存活 " if rc == 0 else "  殺掉 ") + name, flush=True)
+    except BaseException:
+        # #33 verify R9 M16：只有 finally 保護時，SIGINT/SIGTERM 或當機會把 `if False:`
+        # 留在正式的 validate.py 裡 —— 一個被 mutate 過的 validator 看起來完全正常。
+        # 這裡明確印出還原提示，讓「檔案現在可能是壞的」不會靜默。
+        VALIDATE.write_text(original, encoding="utf-8")
+        print("\n⚠ 中斷 —— 已把 validate.py 還原。若程序被強制砍掉未跑到這裡，"
+              "請執行 `git checkout -- scripts/validate.py` 確認。", flush=True)
+        raise
     finally:
         VALIDATE.write_text(original, encoding="utf-8")
 

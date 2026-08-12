@@ -6,13 +6,14 @@
 
 用 stdlib `csv` —— 與 consumer 的 `pai-parse-lens-csv` 同一個模組、同一套 quoting 規則。
 
-用法：validate.py [--base <ref>] [--event <github-event-name>]
-  --base   用來判斷「改了 lens 卻沒 bump 版本」。CI 傳 PR base 或 push 的 before SHA。
-  --event  觸發事件名（`pull_request` / `push` / `workflow_dispatch`）。決定 base 的
-           比較語意，以及「拿不到 base」時該報錯還是只留一行紀錄。
+用法：validate.py [--base <ref>] [--event {pull_request,push,workflow_dispatch}]
+
+參數由 argparse 解析（#33 verify R9）—— 未知旗標、未知位置參數、缺值、`--event` 不在
+列舉內，全部 exit 2。手寫解析的每一個洞後果都是**安靜地換掉判準**，而不是報錯。
 
 退出碼：0 全部通過；1 有錯；2 用法錯。
 """
+import argparse
 import csv
 import json
 import os
@@ -21,10 +22,19 @@ import re
 import subprocess
 import sys
 
-SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$")
+# #33 verify R9：先前是 `^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$` 搭 `match()` —— `$` 接受尾端
+# 換行、`01.2.3` 前導零、`1.2.3-`／`1.2.3+` 空後綴全部放行，而這道閘門的**整個理由**
+# 就是「cache 目錄名必須是 semver」。改用 semver 官方文法 + `fullmatch()`。
+SEMVER = re.compile(
+    r"(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)"
+    r"(?:-(?P<pre>(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)"
+    r"(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?"
+    r"(?:\+(?P<build>[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?")
 TRUTHY = ("1", "true", "yes")
 FALSY = ("", "0", "false", "no")
 KNOWN_COLS = ("key", "focus", "needsSrt", "override")
+# 封閉列舉，不是判準：只略過這些已知的 OS 產物（#33 verify R9）。
+OS_ARTIFACTS = (".DS_Store", ".gitkeep", ".gitignore", "Thumbs.db")
 
 
 def _truthy(value):
@@ -42,17 +52,47 @@ def version_tuple(v):
     #33 verify R4：先前 check_version 用 `^\\d+\\.\\d+\\.\\d+` 前綴比對放行 `0.3.0-rc1`，
     而 check_bumped 用 `int(x) for x in v.split('.')[:3]` 對同一字串炸掉（'0-rc1' 不是 int）
     → 兩個檢查對同一版本字串的認定不一致。統一走這裡。"""
-    m = SEMVER.match(str(v or ""))
+    m = SEMVER.fullmatch(str(v or ""))
     if not m:
         return None
-    core = tuple(int(g) for g in m.groups())
+    core = (int(m["major"]), int(m["minor"]), int(m["patch"]))
     # #33 verify R7：先前只回 core，於是 `0.3.0-rc1 → 0.3.0`（rc 轉正式，最典型的發布
     # 動作）與 `rc1 → rc2` 都被 `tn <= tp` 判為「版本沒有增加」。semver §11：有 prerelease
-    # 的版本**低於**同 core 的正式版。這裡只需要一個可比較的序，不需完整的 semver 排序
-    # 規則 —— 正式版標 1、prerelease 標 0 並附上識別碼（同 core 時以識別碼字串比較，
-    # rc1 < rc2 成立；rc9 vs rc10 這種數字字典序的邊角本檢查不涵蓋，見下方 note）。
-    pre = str(v).partition("+")[0].partition("-")[2]
-    return core + ((0, pre) if pre else (1, ""))
+    # 的版本**低於**同 core 的正式版。
+    # #33 verify R9：R7 的修法用**整段字串**比較 prerelease，註解只承認了假失敗那一側
+    # （「rc9 vs rc10 的邊角不涵蓋」）—— 但同一個缺陷的另一側是**閘門逃逸**：
+    # `1.0.0-rc10 → 1.0.0-rc9` 字串序判為「有增加」，一次真正的 prerelease 降版就這樣通過。
+    # 註解描述的邊界比實際邊界窄，本身就是本 PR 反覆在修的「宣稱與程式碼不符」。
+    # 現在照 semver §11 逐 identifier 比較：數字段按整數、非數字段按 ASCII、
+    # 數字段低於非數字段、identifier 較少者較低（其餘皆相等時）。
+    if m["pre"] is None:
+        return core + (1,)                       # 正式版高於任何同 core 的 prerelease
+    ids = []
+    for part in m["pre"].split("."):
+        ids.append((0, int(part), "") if part.isdigit() else (1, 0, part))
+    return core + (0, tuple(ids))
+
+
+
+def load_obj(path_or_text, label, errs, *, is_text=False):
+    """讀 JSON 並確認是 dict。回傳 dict 或 None（已把原因寫進 errs）。
+
+    #33 verify R9：先前各處只捕捉 `json.JSONDecodeError`，於是**合法 JSON 但型別不是
+    dict**（`[]`、`"x"`、`3`）會在 `.get()` 上拋 `AttributeError` —— 不在任何 except 裡，
+    整支 crash，`main()` 印 errs 的迴圈永遠到不了。後果與 R6 M5 逐字相同（GitHub 只拿到
+    裸 traceback、零 annotation），而 R6 的測試餵的是語法壞掉的 JSON，走的是另一條 except，
+    所以抓不到。這是同一個缺陷的第二個站點。"""
+    try:
+        raw = path_or_text if is_text else pathlib.Path(path_or_text).read_text(encoding="utf-8")
+        obj = json.loads(raw)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
+        errs.append(f"::error file={label}::讀取失敗：{e}")
+        return None
+    if not isinstance(obj, dict):
+        errs.append(f"::error file={label}::內容是合法 JSON 但不是物件"
+                    f"（是 {type(obj).__name__}）—— manifest 必須是 JSON object")
+        return None
+    return obj
 
 
 def repo_root(root):
@@ -89,11 +129,10 @@ def collector_wiring(repo, profile):
 
 def check_version(root, errs):
     manifest = root / ".claude-plugin" / "plugin.json"
-    try:
-        version = json.loads(manifest.read_text(encoding="utf-8")).get("version", "")
-    except (OSError, json.JSONDecodeError) as e:
-        errs.append(f"::error file={manifest}::讀不到或不是合法 JSON：{e}")
+    d = load_obj(manifest, manifest, errs)
+    if d is None:
         return
+    version = d.get("version", "")
     print(f"version = {version or '<missing>'}")
     if version_tuple(version) is None:
         errs.append(
@@ -125,15 +164,24 @@ def check_marketplace_sync(root, errs):
         print("note: 不在 monorepo 內 —— 略過 marketplace 版本一致檢查")
         return
     mp = repo / ".claude-plugin" / "marketplace.json"
-    try:
-        plugins = json.loads(mp.read_text(encoding="utf-8")).get("plugins", [])
-    except (OSError, json.JSONDecodeError) as e:
-        errs.append(f"::error file={mp}::讀取失敗：{e}")
+    mp_obj = load_obj(mp, mp, errs)
+    if mp_obj is None:
+        return
+    plugins = mp_obj.get("plugins", [])
+    if not isinstance(plugins, list):
+        errs.append(f"::error file={mp}::`plugins` 必須是陣列（現在是 {type(plugins).__name__}）"
+                    " —— 迭代 dict 會拿到 key、迭代字串會拿到字元，兩者都會讓下游誤判")
         return
     repo_abs = repo.resolve()
     seen = 0
-    claimed = set()   # 有 entry 指名的 plugin 目錄（含被判非法者）
+    claimed = set()
+    entry_names = set()
+    claimed_paths = set()   # 有 entry 指名的 plugin 目錄（含被判非法者）
     for entry in plugins:
+        if not isinstance(entry, dict):
+            errs.append(f"::error file={mp}::`plugins` 的元素必須是物件"
+                        f"（有一個是 {type(entry).__name__}：{entry!r}）")
+            continue
         src = entry.get("source")
         # #33 verify R4：先前用字串前綴 './' 當「在本 repo 內」的判準，少寫 './' 的
         # 相對路徑（"plugins/foo"）會被靜默跳過 —— 那正是最該檢查的 entry。
@@ -203,11 +251,33 @@ def check_marketplace_sync(root, errs):
             errs.append(f"::error file={mp}::{entry.get('name')} 的 source 指向 {src}，"
                         "但該處沒有 .claude-plugin/plugin.json")
             continue
-        try:
-            pj_ver = json.loads(pj.read_text(encoding="utf-8")).get("version")
-        except (OSError, json.JSONDecodeError) as e:
-            errs.append(f"::error file={pj}::讀取失敗：{e}")
+        pj_obj = load_obj(pj, pj, errs)
+        if pj_obj is None:
             continue
+        pj_ver = pj_obj.get("version")
+        # #33 verify R9：先前 `entry.get("name")` 只出現在錯誤訊息字串裡，**從未參與判定** ——
+        # 於是「entry 名字錯了」這個最貼近使用者症狀的形狀完全不在守備範圍：把 name 刪掉或
+        # 打成 `pai-lense`，版本與路徑都對，validator 印 ✓、反向檢查也因目錄已被 claim 而通過，
+        # 而使用者 `/plugin install pai-lenses@…` 裝不到。root CLAUDE.md 把版本同步標為
+        # CRITICAL 並宣稱「機械閘門守這條」—— 那句話漏掉了身分這一半。
+        ent_name, pj_name = entry.get("name"), pj_obj.get("name")
+        if not ent_name:
+            errs.append(f"::error file={mp}::有一個指向 {rel} 的 entry 沒有 name —— "
+                        "使用者 `/plugin install <name>@<marketplace>` 沒有名字可用")
+        elif pj_name and ent_name != pj_name:
+            errs.append(f"::error file={mp}::entry name '{ent_name}' 與 {rel} 的 "
+                        f"plugin.json name '{pj_name}' 不一致 —— 兩者必須相同，"
+                        "否則使用者用哪一個名字都可能裝不到")
+        if ent_name:
+            if ent_name in entry_names:
+                errs.append(f"::error file={mp}::entry name '{ent_name}' 重複 —— "
+                            "後出現的會蓋掉先出現的，你以為裝到的可能是另一個")
+            entry_names.add(ent_name)
+        if resolved in claimed_paths:
+            errs.append(f"::error file={mp}::有兩個 entry 指向同一個目錄 {rel} —— "
+                        "無法判斷哪一個才是那個 plugin 的 entry")
+        claimed_paths.add(resolved)
+
         seen += 1
         mp_ver = entry.get("version")
         # #33 verify R7：先前只有 pack 自己的 check_version 驗 semver 格式，主 plugin 的
@@ -263,8 +333,42 @@ def check_marketplace_sync(root, errs):
 
 
 
-def _find_pack_at(repo, ref, name):
-    """在 `ref` 的樹裡找 name 相符的 plugin.json 路徑（用來偵測 pack 改名）。找不到回 None。"""
+def _find_pack_at(repo, ref, pj_rel, name):
+    """找出 `pj_rel` 這個檔在 `ref` 時的舊路徑（用來偵測 pack 改名）。找不到回 None。
+
+    #33 verify R9：R7 的版本只靠 `plugin.json` 的 `name` 欄比對，而 validate.py 從頭到尾
+    **沒有任何地方驗證 `name`**。於是「目錄改名 + 同時改 plugin 名」（很常見的一個 PR）
+    或 `name` 缺席，改名偵測整條失效 —— 實測 rc=0，印出「本次在新增整個 pack…**這是唯一
+    合法的略過情境**」，而那句話在這條路徑上是假的，會讓 reviewer 停止追問。
+
+    改成**先問 git**：`git diff --name-status -M` 的 rename detection 是按內容相似度，
+    不依賴檔案裡的任何欄位。git 認不出來時（改動太大）才退回 name 比對當第二來源。"""
+    # 偵測 pack **目錄**的改名，不是單一檔案的：plugin.json 內容常常跟著改
+    # （改目錄通常也改 plugin 名），git 就把它判成 A+D 而非 R —— 但同一次改名裡
+    # 其他檔案（README/LICENSE/scripts）仍是 R100。取多數決還原舊的 pack 根目錄。
+    pack_rel = pj_rel[: -len("/.claude-plugin/plugin.json")]
+    dt = subprocess.run(["git", "diff", "--name-status", "-M", ref, "HEAD"],
+                        cwd=repo, capture_output=True, text=True)
+    if dt.returncode == 0:
+        votes = {}
+        for line in dt.stdout.splitlines():
+            parts = line.split("\t")
+            if len(parts) != 3 or not parts[0].startswith("R"):
+                continue
+            old_path, new_path = parts[1], parts[2]
+            prefix = pack_rel + "/"
+            if not new_path.startswith(prefix):
+                continue
+            suffix = new_path[len(prefix):]
+            if old_path.endswith("/" + suffix):
+                old_pack = old_path[: -(len(suffix) + 1)]
+                votes[old_pack] = votes.get(old_pack, 0) + 1
+        if votes:
+            old_pack = max(votes, key=votes.get)
+            candidate = f"{old_pack}/.claude-plugin/plugin.json"
+            if subprocess.run(["git", "cat-file", "-e", f"{ref}:{candidate}"],
+                              cwd=repo, capture_output=True).returncode == 0:
+                return candidate
     if not name:
         return None
     ls = subprocess.run(["git", "ls-tree", "-r", "--name-only", ref],
@@ -279,10 +383,11 @@ def _find_pack_at(repo, ref, name):
         if blob.returncode != 0:
             continue
         try:
-            if json.loads(blob.stdout).get("name") == name:
-                return path
+            obj = json.loads(blob.stdout)
         except json.JSONDecodeError:
             continue
+        if isinstance(obj, dict) and obj.get("name") == name:
+            return path
     return None
 
 
@@ -338,8 +443,8 @@ def check_bumped(root, errs, base, event=None):
     # 位置耦合造成的假綠燈，正是本 PR 反覆在修的那一類。
     pack_rel = root.resolve().relative_to(repo.resolve()).as_posix()
     try:
-        pack_name = json.loads((root / ".claude-plugin" / "plugin.json")
-                               .read_text(encoding="utf-8")).get("name")
+        _pk = json.loads((root / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
+        pack_name = _pk.get("name") if isinstance(_pk, dict) else None
     except (OSError, json.JSONDecodeError):
         pack_name = None
     rel = f"{pack_rel}/lenses"
@@ -429,7 +534,7 @@ def check_bumped(root, errs, base, event=None):
         # #33 verify R7：先前一律說「本次在新增整個 pack…這是唯一合法的略過情境」——
         # **pack 改名的那個 commit 也走這條**，而那不是新增。先在 base 的樹裡找同名 pack；
         # 找得到就是改名，用它的舊路徑比對，閘門照跑。找不到才是真的新增。
-        moved = _find_pack_at(repo, cmp_base, pack_name)
+        moved = _find_pack_at(repo, cmp_base, pj_rel, pack_name)
         if moved:
             print(f"note: pack 在 base 時位於 {moved}（本次改名為 {pack_rel}）—— 用舊路徑比對版本")
             old = subprocess.run(["git", "show", f"{cmp_base}:{moved}"],
@@ -476,7 +581,30 @@ def check_lens_dir_shape(root, errs):
         # 訊息還說它是「大小寫不同的 csv」。本 pack 自己的 .gitignore 就只有 .DS_Store
         # 一行 —— 作者清楚知道 macOS 會生成它；CI 是乾淨 checkout 永遠碰不到，
         # 只有「貢獻者本機跑同一支」這條本 PR 主打的路徑會被卡死。
+        # #33 verify R9：但 R6 的修法是「所有 dotfile 一律忽略」—— 一個總括判準吃掉了
+        # 一個封閉列舉（正是 rules/common-spec-prose-enumeration.md 點名的形狀）。
+        # `.lecture.csv` 這種明顯是 lens 的檔案會靜默消失：consumer 不載入隱藏檔，
+        # 而 validator 因為 good 非空仍然 exit 0。改成白名單 OS artifact。
+        if p.name in OS_ARTIFACTS:
+            continue
+        if p.name.startswith(".") and p.suffix == ".csv":
+            errs.append(f"::error file={rel}::隱藏的 .csv —— consumer 只讀 "
+                        "lenses/<profile>.csv，點開頭的檔案不會被載入。"
+                        "要嘛改名（去掉前面的點），要嘛刪掉")
+            continue
         if p.name.startswith("."):
+            print(f"::warning file={rel}::lenses/ 下有不認識的隱藏檔 —— 已略過。"
+                  "若它其實是 lens，改名（去掉前面的點）才會被載入")
+            continue
+        # #33 verify R9：`check_marketplace_sync` 花了兩輪把 containment 修到「實際要讀的
+        # 那個檔」，但**同一支檔案讀 lens CSV 的路徑完全沒有對應防護** —— 檔案型 symlink 的
+        # `is_dir()` 為 False、suffix 為 `.csv`，直接進 good，隨後 `path.open()` 跟隨到
+        # repo 外。此 job 掛在 `on: pull_request`，fork 完全控制 repo 內容；而
+        # 「header 必須含 key 與 focus（現在是 {fieldnames}）」這類訊息還會把目標檔第一行
+        # 原文印進 CI annotation。同類洞只修一半，正是本 PR 反覆出現的形狀。
+        if p.is_symlink():
+            errs.append(f"::error file={rel}::lenses/ 下不能有 symlink —— "
+                        "它會讓 validator 讀到 repo 外的檔案，並可能把該檔內容印進 CI log")
             continue
         if p.is_dir():
             errs.append(f"::error file={rel}::lenses/ 下不能有子目錄 —— consumer 只讀 "
@@ -704,27 +832,36 @@ def check_csvs(root, errs, files):
                     print(f"::warning file={rel}::{col}='{r[col]}' 不是可辨識的真假值 —— 會被當成 false")
 
 
+EVENTS = ("pull_request", "push", "workflow_dispatch")
+
+
 def main():
-    argv = sys.argv[1:]
-    opts = {"--base": None, "--event": None}
-    for flag in opts:
-        if flag in argv:
-            i = argv.index(flag)
-            if i + 1 >= len(argv):
-                print("用法：validate.py [--base <ref>] [--event <github-event-name>]",
-                      file=sys.stderr)
-                return 2
-            opts[flag] = argv[i + 1] or None
-    # #33 verify R8：先前無法辨識的旗標被靜默丟棄。本檔花了大量篇幅論證「靜默略過正是
-    # 本 PR 一路在修的病」，未知旗標卻是唯一的例外 —— workflow 若把旗標打錯（`--events`），
-    # validate 會以「沒有 base」的姿態繼續跑，安靜地換掉判準。
-    values = {v for v in opts.values() if v is not None}
-    unknown = [a for a in argv if a.startswith("-") and a not in opts and a not in values]
-    if unknown:
-        print("用法：validate.py [--base <ref>] [--event <github-event-name>]\n"
-              f"不認識的旗標：{unknown}", file=sys.stderr)
-        return 2
-    base, event = opts["--base"], opts["--event"]
+    # #33 verify R9：手寫的 argv 解析有一串洞，而每一個洞的後果都是**安靜地換掉判準**：
+    #   - 位置參數完全不檢查 —— 漏打 `--event`（`--base <sha> push`）時 `push` 被丟棄、
+    #     event 變 None → 走 merge-base 而非 exact-tree。實測在 force-push 情境下印出
+    #     `無需 bump ✓` exit 0，而正確呼叫報「版本沒有增加」exit 1。**R5 修掉的漏檢
+    #     經由 argv 層原樣復活。**
+    #   - 旗標值不檢查是不是另一個旗標 —— `--event --base <sha>` 讓 event 變成字串
+    #     `"--base"`，仍然「合法」。
+    #   - `--event` 的值不受任何約束 —— `--event pusch` 靜默走非 push 語意。
+    #   - 重複旗標只取第一次，其餘靜默忽略。
+    # R8 只讓未知**旗標**（`-` 開頭）fail-loud，那是同一個缺陷的一半：workflow 實際傳的
+    # 是旗標**值**，而值那一側仍然靜默。改用 argparse 並對 --event 設 choices，
+    # 未知旗標／未知位置參數／缺值／非法 event 全部由它回 2。
+    ap = argparse.ArgumentParser(
+        prog="validate.py", add_help=True,
+        description="驗證這個 lens pack 可被 parallel-ai-agents 正確消費。")
+    ap.add_argument("--base", metavar="<ref>",
+                    help="判斷「改了 lens 卻沒 bump」的比較基準（CI 傳 PR base 或 push 的 before SHA）")
+    ap.add_argument("--event", metavar="<github-event-name>", choices=EVENTS,
+                    help=f"觸發事件名（{' / '.join(EVENTS)}）。決定 base 的比較語意，"
+                         "以及拿不到 base 時該報錯還是留紀錄")
+    try:
+        args = ap.parse_args()
+    except SystemExit as e:
+        # argparse 對用法錯誤回 2、對 --help 回 0；兩者都照它的意思走。
+        return e.code if isinstance(e.code, int) else 2
+    base, event = args.base or None, args.event
     root = pathlib.Path(__file__).resolve().parent.parent
     errs = []
     check_version(root, errs)

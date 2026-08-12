@@ -15,11 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 `pai-lenses` 從獨立 repo 併回本 repo 成為第二個 plugin，並把三層 lens 疊加的文件與 CI 閘門補齊。
 
-> **範圍說明**：本版**不含**層 ③ 的自動回流工具。它原本在同一個 PR 裡，經八輪 6-AI verify
-> （HIGH 數 15 → 18 → 32 → 14 → 15 → 4 → 3；R8 因 session limit 只有 1/6 agent 完成，
-> 不計入序列但其 CRITICAL 已修）後拆出到 **#39**。R3 的 32 個 HIGH 有 **29 個**落在
+> **範圍說明**：本版**不含**層 ③ 的自動回流工具。它原本在同一個 PR 裡，經九輪 6-AI verify
+> （HIGH 數 15 → 18 → 32 → 14 → 15 → 4 → 3 → R8 降級 → **11**；R8 只有 1/6 agent 完成，
+> 不計入序列但其 CRITICAL 已修。R9 的 11 個 HIGH 偏高是因為四個 core lens **從未審過**
+> R8 之後新增的 `scripts/`，那是那批程式碼的第一次真正審閱）後拆出到 **#39**。R3 的 32 個 HIGH 有 **29 個**落在
 > 回流工具上；剩下 3 個在 `validate.py`（**本版出貨的內容**，已於 R4 修掉）。
-> 收斂之後的 R4／R5／R6／R7 共 36 個 HIGH **全部**落在本版出貨的內容裡並已逐條修掉 ——
+> 收斂之後的 R4／R5／R6／R7／R9 共 47 個 HIGH **全部**落在本版出貨的內容裡並已逐條修掉 ——
 > 也就是說「另一半很乾淨」從來不是收斂的理由（見下方 Fixed 段）。理由是**缺陷密度差了
 > 一個量級**，且回流工具連三輪不收斂（每輪的修法都讓 HIGH 變多）。拆開之後：使用者現在
 > 裝得到層 ②，回流工具在自己的 issue 裡從頭想。三輪換來的 29 條缺陷清單已逐條寫進 #39 當規格。
@@ -66,6 +67,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **測試 harness 自己的三個脆弱點**（#33 verify R9 MEDIUM）：`Fixture` 的複製清單寫死
+  （新增第三個 plugin 會讓**所有 assertGreen 同時轉紅**，訊息還指著真實 repo 裡存在的路徑 ——
+  諷刺的是那正是 root `CLAUDE.md` 這次的賣點「新增第三個 plugin 時自動涵蓋」：閘門會，
+  harness 不會）；`seen == 0` 那條測試把 plugin 名寫死；`pai-collect-lens-layers.bats` 檔頭的
+  鐵律「絕不讀真實 lens pack」在同一個 commit 新增的整合錨點裡就已為假。
+  **一句已經為假的不變式比沒有更糟** —— 下一個人會據以判斷而繞路。三處都改了。
+- **CI 新增 `mutation_check.py --check-targets`**（#33 verify R9 M11/M24）。完整量測太慢
+  （靶數 × 全套 ≈ 十分鐘）不進 CI，但**靶清單相對 `validate.py` 的漂移**秒級就能擋：
+  改動被 mutate 的那幾行、或搬走一道閘門，靶就對不上。先前這件事只有在有人手動跑整輪時
+  才會發現，而「忘了跑」是預設。
+  > **量測（R9 後）：46 個靶 → 45 殺掉 / 1 存活 / 0 靶壞**（R8 後是 36→35/1/0）。
+  > 唯一存活的「catalog 缺檔」經實測確認是 equivalent mutant。
+  > 五個存活裡有三個是**真缺口**（行為確實不同），已逐條補測試；判讀靠實測不靠推論。
+
+- **argv 解析改用 argparse**（#33 verify R9 HIGH）。手寫解析的每一個洞，後果都是**安靜地
+  換掉判準**，而 R8 只修了「未知**旗標**」那一半 —— workflow 實際傳的是旗標**值**。
+  實測：漏打 `--event`（`--base <sha> push`）時 `push` 被當位置參數丟棄、event 變 `None`
+  → 走 merge-base 而非 exact-tree，在 force-push 情境下印出 `無需 bump ✓` exit 0，
+  而正確呼叫報「版本沒有增加」exit 1。**R5 修掉的漏檢經由 argv 層原樣復活。**
+  另外 `--event --base <sha>` 會讓 event 變成字串 `"--base"`、`--event pusch` 靜默走非
+  push 語意、重複旗標只取第一個。現在未知旗標／未知位置參數／缺值／`--event` 不在
+  `choices` 內全部 exit 2。`--event` 的語意分流本身也補了雙向測試（先前**零覆蓋**）。
+- **合法 JSON 但型別不對的 manifest 不再讓 validator crash**（#33 verify R9 HIGH）。
+  R6 M5 的修正與其測試都只覆蓋**語法**壞掉的 JSON；`[]` / `"x"` / `3` 會在 `.get()` 上拋
+  `AttributeError`，不在任何 `except` 裡 → 整支 crash，`main()` 印 errs 的迴圈永遠到不了。
+  後果與 R6 M5 逐字相同（GitHub 只拿到裸 traceback、零 annotation）。**同一個缺陷的第二個
+  站點**，三處讀取都改走共用的 `load_obj()`，並驗 `plugins` 是 list、其元素是 dict。
+- **`lenses/` 的讀取面補上 containment**（#33 verify R9 HIGH）。`check_marketplace_sync`
+  花了 R5→R6 兩輪把 containment 修到「實際要讀的那個檔」，而**同一支檔案讀 lens CSV 的
+  路徑完全沒有對應防護** —— 檔案型 symlink 的 `is_dir()` 為 False、suffix 是 `.csv`，
+  直接被當成 lens 讀進去。此 job 掛在 `on: pull_request`，fork 完全控制 repo 內容，
+  而「header 必須含 key 與 focus（現在是 …）」這類訊息會把目標檔第一行印進 CI annotation。
+  已驗證修正後目標檔內容不會外洩。
+- **dotfile 從「一律略過」改為白名單**（#33 verify R9 HIGH）。R6 為了修 `.DS_Store` 的假陽性
+  套了總括判準，於是 `.lecture.csv` 這種明顯是 lens 的檔案會**靜默消失**（consumer 不載入
+  隱藏檔，而 validator 因為 `good` 非空仍 exit 0）—— 一個總括判準吃掉封閉列舉，
+  正是 `common-spec-prose-enumeration.md` 點名的形狀。現在只略過已知 OS 產物，
+  隱藏的 `.csv` 報錯，其他未知隱藏檔印 warning。
+- **marketplace entry 的身分納入判定**（#33 verify R9 HIGH）。先前 `entry.get("name")`
+  **只出現在錯誤訊息字串裡，從未參與判定** —— 把 name 刪掉或打成 `pai-lense`，版本與路徑
+  都對，validator 印 ✓、反向檢查也因目錄已被 claim 而通過，而使用者裝不到。
+  現在要求 entry name 非空且等於該 `plugin.json` 的 `name`，並檢查 name 與 source 路徑各自唯一。
+- **semver 改用官方文法 + `fullmatch`，prerelease 依 §11 逐 identifier 比較**
+  （#33 verify R9 HIGH）。先前的正則接受 `01.2.3`、`1.2.3-`、`1.2.3+`、尾端換行 ——
+  而這道閘門的**整個理由**就是「cache 目錄名必須是 semver」。prerelease 先前整段字串比較，
+  R7 的註解只承認了假失敗那一側（`rc9` vs `rc10`），沒承認**閘門逃逸**那一側。
+  > 附帶更正：R9 把 `1.0.0-rc10 → 1.0.0-rc9` 列為「降版通過閘門」。**依 semver §11 那是
+  > 正確行為** —— 含字母的 identifier 按 ASCII 比較，`rc10 < rc9`。正確的寫法是 `rc.9`／
+  > `rc.10`（點分隔，數字段按整數比較），現在處理正確。照規格走，不照直覺改。
+- **pack 改名偵測改用 git 的 rename detection**（#33 verify R9 HIGH）。R7 的版本只比
+  `plugin.json` 的 `name`，而 validate.py **從頭到尾沒有任何地方驗證 `name`**。
+  「目錄改名 + 同時改 plugin 名」（很常見的一個 PR）或 `name` 缺席時，偵測整條失效並印出
+  「本次在新增整個 pack…**這是唯一合法的略過情境**」—— 那句話在這條路徑上是假的，
+  會讓 reviewer 停止追問。現在先問 `git diff --name-status -M`，按**目錄**還原舊路徑
+  （plugin.json 內容常跟著改而被判成 A+D，但同批其他檔案仍是 R100），git 認不出來才退回 name 比對。
+- **pack README 的 lens 撰寫界線改為封閉列舉**（#33 verify R9 HIGH ×2）。同一份 README
+  前面推薦「明講要用工具查證（用 Read/Grep 實際打開檔案核對）」，後面禁止「**任何**指向
+  reviewer 自身行為的祈使句（讀取檔案、…）」—— 兩句互相抵消，而本 repo 出貨的唯一一條
+  lens（`docs-vs-code`）正好踩在中間。README 自稱「在 #36 落地之前這一節是唯一的防線」，
+  而一條由互斥規則構成的防線無法做任何判定。現在明列**四類禁止**（改變存取範圍或回報範圍：
+  讀審閱標的外的路徑、指示不要回報某類 finding、輸出到別處、覆寫其他指令），
+  並**明確允許**在審閱標的內用 Read/Grep 查證。判準是範圍有沒有被改變，不是語氣是不是祈使。
+- **mutation harness 補上綠底線前置檢查與中斷保護**（#33 verify R9 MEDIUM）。測試套件本身
+  是紅的時候，**每一個 mutation 都會被判為「殺掉」** —— harness 回報漂亮的「0 存活」而其實
+  什麼都沒量到，那是它自己版本的「肯定式綠燈」。另外只有 `finally` 保護時，中斷會把
+  `if False:` 留在正式的 `validate.py` 裡。靶清單也補上 R9 新增的十道閘門。
+- **`main()` 未知旗標、`py_compile` 清單、pack README 的閘門表**三處都從「寫死清單」改掉
+  （#33 verify R9 MEDIUM）：`mutation_check.py` 先前**在任何地方都沒被語法檢查**（改 glob）；
+  README 的閘門表補上七道並改寫為「完整清單以 `scripts/validate.py` 為準」。
+
 - **測試套件本身是套套邏輯 —— 已修，並改成可量測**（#33 verify R8 CRITICAL）。
   `Fixture.run()` 寫死 `GITHUB_ACTIONS=""`，而 `check_bumped` 的 no-base 分支順序是
   workflow_dispatch → **本機** → CI fail-loud，於是**每一條測試都走本機分支**，後面兩道
@@ -90,8 +161,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   （`--events`），validate 會以「沒有 base」的姿態繼續跑，安靜地換掉判準。
 - **pack 改名的測試補上 rc 斷言**（#33 verify R8）。先前只驗訊息措辭，而 CHANGELOG 宣稱的是
   「用舊路徑比對、**閘門照跑**」—— 把版本比對整段跳過，那條測試照樣綠。
-- **pack README 的「CI 會檢查」清單改成完整表格**（#33 verify R8）。先前漏掉對貢獻者最重要
-  的兩道：改 lens 必 bump、撞名。諷刺的是本 PR 出貨的唯一一條 lens 就叫 `docs-vs-code`。
+- **pack README 的「CI 會檢查」清單補上最重要的兩道**（#33 verify R8）：改 lens 必 bump、撞名。
+  諷刺的是本 PR 出貨的唯一一條 lens 就叫 `docs-vs-code`。
+
+  > **更正（R9）**：這條原本寫「改成**完整**表格」—— 逐條對照後至少還漏七道
+  > （子目錄、大寫 `.CSV`、目錄不存在、header 重複欄位、整份複製 catalog 的 header、
+  > marketplace source 的 containment、lenses/ 下的 symlink 與隱藏 `.csv`）。
+  > **補了兩道最重要的就宣告完整**，與 R8 那個 CRITICAL 是同一形狀的第三次。
+  > 表格已補齊並改寫為「完整清單以 `scripts/validate.py` 為準」。
 
 - **`validate.py` 補上自己的回歸測試**（#33 verify R7，`scripts/test_validate.py`，26 條）。
   它有十餘道閘門卻**零測試覆蓋** —— 所有錯誤分支只在 CI 的 happy path 被執行（也就是都沒被

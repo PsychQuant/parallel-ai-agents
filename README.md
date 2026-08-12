@@ -27,6 +27,10 @@ Claude Code marketplace，散發 **平行多 AI agent 審閱** plugin。
 > **`pai-lenses` 是選配但建議裝。** 沒裝時 ensemble 只會用 harness 內建的 lens ——
 > 不會報錯、不會警告（缺席是靜默的，這是刻意設計），所以**「沒裝」與「裝了但沒生效」
 > 從輸出上看不出差別**。報表的 provenance 行會列出實際載入了哪幾層，可據此確認。
+>
+> ⚠️ **層 ②③ 只在 Backend A（`Workflow` harness）生效。** 沒有 `Workflow` tool 的舊版
+> Claude Code 會 fallback 到 Backend B（legacy TeamCreate fan-out），那條路的 reviewer 是
+> 固定的一組 prompt —— **裝了 `pai-lenses` 也不會生效，且同樣沒有警告**。
 
 安裝後可用的 skill：
 

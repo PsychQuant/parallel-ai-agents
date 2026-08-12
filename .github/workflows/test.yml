@@ -130,9 +130,22 @@ jobs:
       # 那種缺陷用讀的抓不到。每條測試對應一個真實發生過的缺陷。
       # 這套測試自己的鑑別力**用 scripts/mutation_check.py 量**，不靠宣稱（#33 verify R8：
       # 初版的 20 個閘門 mutation 有 18 個存活，而當時三處文件都寫著「都做過 mutation」）。
-      # mutation_check.py 手動跑、不進 CI —— 37 個靶 × 全套測試要 5-8 分鐘。
+      # mutation_check.py 手動跑、不進 CI（一輪 = 靶數 × 全套測試，約十分鐘）——
+      # 這裡刻意不寫靶數，寫了就會過期，而過期的數字正是本 PR 一路在修的東西。
+      # #33 verify R9 M20：py_compile 的寫死清單只涵蓋主 plugin 的兩支，本 pack 新增的
+      # 三支 Python 只有 validate.py / test_validate.py 因為被執行而間接驗過語法，
+      # mutation_check.py **在任何地方都沒被語法檢查**。用 glob 而非清單。
+      - name: py_compile（pack 內所有 Python）
+        run: python3 -m py_compile scripts/*.py
+
       - name: validate.py 自身的回歸測試（stdlib unittest，無額外依賴）
         run: python3 scripts/test_validate.py
+
+      # 完整的 mutation 量測太慢（靶數 × 全套 ≈ 十分鐘），不進 CI。但**靶清單相對
+      # validate.py 的漂移**便宜就能擋：改動被 mutate 的那幾行、或搬走一道閘門，靶就對不上。
+      # 先前這只有在有人手動跑整輪時才會發現，而「忘了跑」是預設（#33 verify R9 M11/M24）。
+      - name: mutation 靶清單沒有漂移（秒級；完整量測仍是手動）
+        run: python3 scripts/mutation_check.py --check-targets
 
       # 檢查的內容不寫進 workflow 而放在 scripts/validate.py：`run: |` 區塊裡的
       # heredoc 一旦把內容放在第 0 欄就會跳出 YAML block scalar，workflow 靜默停止解析。
