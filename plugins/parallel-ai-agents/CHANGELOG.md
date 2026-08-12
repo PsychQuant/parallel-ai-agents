@@ -114,7 +114,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   可含真正的換行，於是能多出一行 `::stop-commands::` —— runner 會**停止解析後續所有
   workflow command**，包含 validator 自己排隊的每一條 `::error::`。job 仍紅，但 PR 上零
   annotation：把本 PR 一路在建的 **fail-loud 降級成 fail-silent**；還能偽造指向無辜檔案的
-  annotation。六處輸出通道改走新的 `wc()`（換行 → `⏎`、`::` → `∷`、超長截斷）。
+  annotation。
+
+  > **作者自查的更正**：R10 的第一版修法是在**個別呼叫點**包 `wc()` —— 我包了六處，
+  > 而枚舉之後發現**約四十處**插入了攻擊者可控的值（git 檔名可以含換行、marketplace.json
+  > 的字串、CSV 衍生的 key 與欄位…）。**那個修法本身就是本 PR 一路在抓的「同類只修一處」，
+  > 只是規模更大。** 正確的形狀是在**邊界**消毒：workflow command 必須從**行首**開始解析，
+  > 所以只要保證「一行永遠是一行」就夠了。現在所有 `::error` / `::warning` / `::notice`
+  > 都走唯一的出口 `emit()`，一個地方做完，不需要再問「我有沒有漏掉某個站點」。
+  > 新增的測試走**檔名**這條先前完全沒防到的路徑（`wc()` 版本擋不住它）。
 - **反向檢查的訊息會把人導向錯誤的修法**（#33 verify R10 M4）。entry 的 source 形式不合時
   （打錯路徑、dict 缺 `path`），先前報「marketplace.json 裡沒有指向它的 entry」——
   **那句話會讓維護者再加一條 entry**，而真正的問題是既有那條寫錯了。現在按**名字**交叉比對後

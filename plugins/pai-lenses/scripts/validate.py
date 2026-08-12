@@ -82,6 +82,26 @@ def version_tuple(v):
 
 
 
+def emit(line):
+    """**所有 workflow-command 輸出的唯一出口。**
+
+    #33 verify R10（作者自查）：R10 的第一版修法是在**個別呼叫點**包 `wc()` —— 我包了六處，
+    而實際上有約四十處插入了攻擊者可控的值（git 檔名可以含換行、marketplace.json 的字串、
+    CSV 衍生的 key/欄位…）。**那個修法本身就是這個 PR 一路在抓的「同類只修一處」，
+    只是規模更大。**
+
+    正確的形狀是在**邊界**消毒，不是在每個呼叫點：GitHub 的 workflow command 必須從**行首**
+    開始解析，所以只要保證一行永遠是一行，`::stop-commands::` 就注入不進來。這裡把整行的
+    CR/LF 換成 `⏎` 並限長 —— 一個地方做完，不需要再問「我有沒有漏掉某個站點」。
+
+    行內的 `::` 保持原樣：它是 annotation 格式的一部分（`::error file=x::msg`），
+    而且不在行首就構不成新的 command。"""
+    t = str(line).replace("\r\n", "⏎").replace("\n", "⏎").replace("\r", "⏎")
+    if len(t) > 4000:
+        t = t[:4000] + "…（截斷）"
+    print(t)
+
+
 def wc(value, limit=200):
     """把攻擊者可控的字串消毒成可安全插進 GitHub workflow-command 行的形式。
 
@@ -168,7 +188,7 @@ def check_version(root, errs):
         risky = [x for x in m["pre"].split(".")
                  if not x.isdigit() and any(c.isdigit() for c in x)]
         if risky:
-            print(f"::warning file={manifest}::prerelease identifier {risky} 把數字黏在字母後面 —— "
+            emit(f"::warning file={manifest}::prerelease identifier {risky} 把數字黏在字母後面 —— "
                   "semver §11 對這種 identifier 按 ASCII 比較，於是 `rc9` 排在 `rc10` **之後**，"
                   "遞增發布會被 bump 閘門擋下。請改用點分隔（`rc.9` / `rc.10`），數字段才會按整數比較")
     if version_tuple(version) is None:
@@ -251,7 +271,7 @@ def check_marketplace_sync(root, errs):
             elif (repo / src.split("/", 1)[0]).is_dir():
                 rel = src                          # 第一段在本 repo 內存在 → 當相對路徑
             else:
-                print(f"::warning file={mp}::判不出 {entry.get('name')} 的 source {src!r} "
+                emit(f"::warning file={mp}::判不出 {entry.get('name')} 的 source {src!r} "
                       "是本 repo 路徑還是遠端來源 —— **未納入版本閘門**。"
                       "本 repo 內的 plugin 請用 './' 開頭的相對路徑")
                 continue
@@ -361,7 +381,7 @@ def check_marketplace_sync(root, errs):
             pj_desc = None
         mp_desc = entry.get("description")
         if pj_desc is not None and mp_desc is not None and pj_desc != mp_desc:
-            print(f"::warning file={mp}::{entry.get('name')} 的 description 兩處不同步 —— "
+            emit(f"::warning file={mp}::{entry.get('name')} 的 description 兩處不同步 —— "
                   "使用者在 /plugin 看到的是 marketplace 那份，可能在敘述舊版本的內容")
     if seen == 0:
         errs.append(f"::error file={mp}::沒有任何本 repo 內的 plugin 被檢查 —— 這個檢查形同虛設")
@@ -473,7 +493,7 @@ def check_bumped(root, errs, base, event=None):
         # 會直接把 fail-loud 拿掉，連 PR/push 的守備一起失去。改成看事件與執行環境分流：
         # 手動觸發／本機執行留可見紀錄（那不是發布事件），CI 的 PR/push 拿不到才是設定壞了。
         if event == "workflow_dispatch":
-            print("::notice::手動觸發（workflow_dispatch）沒有 base ref —— bump 檢查本次未執行。"
+            emit("::notice::手動觸發（workflow_dispatch）沒有 base ref —— bump 檢查本次未執行。"
                   "它守的是 PR 與 push 的發布路徑，手動重跑不是發布事件")
             return
         if os.environ.get("GITHUB_ACTIONS") != "true":
@@ -557,7 +577,7 @@ def check_bumped(root, errs, base, event=None):
         # porcelain v1 = 2 個狀態字元 + 1 個空白 + 路徑。**不可**先 strip() 整個 stdout：
         # 那會吃掉第一行的前導空白（` M path` → `M path`），ln[3:] 就多切一個字元。
         paths = [ln[3:] for ln in dirty.stdout.splitlines() if len(ln) > 3]
-        print("::warning::工作目錄有未 commit 的變更，bump 檢查**只涵蓋已 commit 的內容**："
+        emit("::warning::工作目錄有未 commit 的變更，bump 檢查**只涵蓋已 commit 的內容**："
               + ", ".join(paths))
     # #33 verify R10 M3：改名偵測先前只讓「舊版本」那一側 rename-aware，**變更清單這一側
     # 用的仍是新路徑** —— pack 目錄一改名，舊路徑下的每個 lens 在新路徑上都算「新增」，
@@ -688,7 +708,7 @@ def check_lens_dir_shape(root, errs):
                         "要嘛改名（去掉前面的點），要嘛刪掉")
             continue
         if p.name.startswith("."):
-            print(f"::warning file={rel}::lenses/ 下有不認識的隱藏檔 —— 已略過。"
+            emit(f"::warning file={rel}::lenses/ 下有不認識的隱藏檔 —— 已略過。"
                   "若它其實是 lens，改名（去掉前面的點）才會被載入")
             continue
         # #33 verify R9：`check_marketplace_sync` 花了兩輪把 containment 修到「實際要讀的
@@ -892,7 +912,7 @@ def check_csvs(root, errs, files):
                 and _truthy(rows[i - 2].get("override"))
             )
             if overriding:
-                print(f"::warning file={rel}::這個 PR 會**取代** built-in lens {overriding}"
+                emit(f"::warning file={rel}::這個 PR 會**取代** built-in lens {overriding}"
                       f"（profile '{profile}'）—— 原本那條會從所有使用者的審閱裡消失。"
                       "請以「刪除既有 lens 的 PR」的標準審查：PR 描述必須說明原本那條為何不夠用")
             if clash:
@@ -916,11 +936,11 @@ def check_csvs(root, errs, files):
         # 這段是**啟發式提示**，不是事實判定 —— 見 collector_wiring() 的註解。
         own, wired = collector_wiring(repo, profile)
         if own is None:
-            print(f"::warning file={rel}::profile '{profile}' 沒有 ensemble-{profile}-review "
+            emit(f"::warning file={rel}::profile '{profile}' 沒有 ensemble-{profile}-review "
                   f"這支專屬 skill —— 這裡的 lens 只會在 /ensemble-compose --base {profile} "
                   f"時被載入")
         elif wired is False:
-            print(f"::warning file={rel}::在 `/{own}` 的 SKILL.md 裡找不到 "
+            emit(f"::warning file={rel}::在 `/{own}` 的 SKILL.md 裡找不到 "
                   f"pai-collect-lens-layers 的呼叫 —— 若確實沒接，這裡的 lens 不會出現在"
                   f"它的審閱裡，只會在 /ensemble-compose --base {profile} 時被載入"
                   f"（那是該 skill 的接線缺口，追蹤於 #40，不是本 pack 的問題）。"
@@ -930,7 +950,7 @@ def check_csvs(root, errs, files):
             for col in ("override", "needsSrt"):
                 raw = (r.get(col) or "").strip().lower()
                 if raw and raw not in TRUTHY + FALSY:
-                    print(f"::warning file={rel}::{col}='{wc(r[col])}' 不是可辨識的真假值 —— 會被當成 false")
+                    emit(f"::warning file={rel}::{col}='{wc(r[col])}' 不是可辨識的真假值 —— 會被當成 false")
 
 
 EVENTS = ("pull_request", "push", "workflow_dispatch")
@@ -972,7 +992,7 @@ def main():
     if files:
         check_csvs(root, errs, files)
     for e in errs:
-        print(e)
+        emit(e)
     return 1 if errs else 0
 
 
