@@ -23,7 +23,9 @@ jobs:
         # shellcheck 已預裝在 ubuntu-latest runner
 
       - name: shellcheck
-        run: shellcheck bin/pai-build-diff bin/pai-parse-verdict bin/pai-iter-commit
+        # 寫死清單的形式本身是問題（下一個新增的 script 預設不會被檢查）—— 追蹤於 #30。
+        # 這裡先把本 PR 新增的 pai-list-profiles 補進來，不留一支未檢查的新腳本。
+        run: shellcheck bin/pai-build-diff bin/pai-parse-verdict bin/pai-iter-commit bin/pai-list-profiles
 
       - name: py_compile
         run: python3 -m py_compile bin/pai-parse-lens-csv bin/pai-collect-lens-layers
@@ -98,3 +100,84 @@ jobs:
           fi
           grep -q '^ok' "$TAP" || { echo "::error::no tests ran (empty glob or bats bail-out)"; exit 1; }
           exit "$rc"
+
+  manifests-and-lens-pack:
+    # 名稱刻意不叫 `pai-lenses-validate`（#33 verify R6）：這支跑的
+    # `check_marketplace_sync` 檢查的是 **repo 內每一個 plugin** 的 manifest —— 包含主
+    # plugin —— 不只是 lens pack。掛在一個以 pack 命名的 job 底下會讓人以為主 plugin 的
+    # 版本閘門不存在。**指令碼本身仍住在 pack 裡**（`plugins/pai-lenses/scripts/validate.py`）
+    # —— 那是刻意的取捨：貢獻者要能在本機跑同一支。代價是主 plugin 的 manifest 閘門實作在
+    # 一個資料 pack 底下，這個位置耦合尚未解決，改名只是讓它在 CI 介面上不再誤導。
+    #
+    # 併回本 repo 前，這個檢查住在 PsychQuant/pai-lenses 自己的 validate.yml。併入後該檔
+    # 落在 plugins/pai-lenses/.github/ —— GitHub 只執行 repo root 的 .github/workflows/，
+    # 所以它形同失效。改掛成本 repo 的獨立 job。
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugins/pai-lenses
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # fetch-depth: 0 是必要的 —— 預設 shallow clone 只有一個 commit，base SHA
+          # 不在本地歷史裡，bump 檢查就跑不了。（validate.py 現在對此**報錯**而非略過，
+          # 所以缺了不會安靜消失；但報錯也不等於檢查過 —— 還是要把歷史抓齊。）
+          fetch-depth: 0
+
+      # #33 verify R7：validate.py 有十餘道閘門卻零測試覆蓋 —— 所有錯誤分支只在
+      # CI 的 happy path 被執行（也就是都沒被執行）。六輪 verify 有超過二十個 finding
+      # 落在這一支，反覆出現的形狀是「閘門在某條件下安靜蒸發並印肯定式綠燈」，
+      # 那種缺陷用讀的抓不到。每條測試對應一個真實發生過的缺陷。
+      # 這套測試自己的鑑別力**用 scripts/mutation_check.py 量**，不靠宣稱（#33 verify R8：
+      # 初版的 20 個閘門 mutation 有 18 個存活，而當時三處文件都寫著「都做過 mutation」）。
+      # mutation_check.py 手動跑、不進 CI（一輪 = 靶數 × 全套測試，約十分鐘）——
+      # 這裡刻意不寫靶數，寫了就會過期，而過期的數字正是本 PR 一路在修的東西。
+      # #33 verify R9 M20：py_compile 的寫死清單只涵蓋主 plugin 的兩支，本 pack 新增的
+      # 三支 Python 只有 validate.py / test_validate.py 因為被執行而間接驗過語法，
+      # mutation_check.py **在任何地方都沒被語法檢查**。用 glob 而非清單。
+      - name: py_compile（pack 內所有 Python）
+        run: python3 -m py_compile scripts/*.py
+
+      - name: validate.py 自身的回歸測試（stdlib unittest，無額外依賴）
+        run: python3 scripts/test_validate.py
+
+      # 完整的 mutation 量測太慢（靶數 × 全套 ≈ 十分鐘），不進 CI。但**靶清單相對
+      # validate.py 的漂移**便宜就能擋：改動被 mutate 的那幾行、或搬走一道閘門，靶就對不上。
+      # 先前這只有在有人手動跑整輪時才會發現，而「忘了跑」是預設（#33 verify R9 M11/M24）。
+      - name: mutation 靶清單沒有漂移（秒級；完整量測仍是手動）
+        run: python3 scripts/mutation_check.py --check-targets
+
+      # 檢查的內容不寫進 workflow 而放在 scripts/validate.py：`run: |` 區塊裡的
+      # heredoc 一旦把內容放在第 0 欄就會跳出 YAML block scalar，workflow 靜默停止解析。
+      - name: validate manifests + lens pack (每個 plugin 的版本／entry 雙向同步、改 lens 必 bump、profile 名稱、CSV 形狀與撞名)
+        # --base 讓 validate 能判斷「改了 lenses/*.csv 卻沒 bump 版本」——
+        # 只驗「兩處一致」守不住這個（#33 verify R2 H5/H10）。
+        # base SHA 走 env 而非直接內插進 run（workflow-injection 的標準防護形狀）。
+        # push 事件沒有 pull_request.base.sha —— 先前那條路會讓 validate 不帶 --base，
+        # 而「改了 lens 必須 bump」這道閘門在 push-to-main 上就結構性不存在（#33 verify R4）。
+        # push 改用 event.before；首次 push / force-push 後它可能是全零 SHA，那時傳空字串。
+        # --event 一併傳進去（#33 verify R5）：它決定兩件事 ——
+        #   (1) base 的比較語意：push 用 base 本身做兩點 exact-tree 比較（問「這次 push
+        #       讓 main 變成什麼」），其餘收斂成 merge-base（問「這個分支引入了什麼」）。
+        #       先前變更清單用三點、舊版本用 `git show base:`，是兩個不同基準。
+        #       **注意 force-push 不在守備範圍**（#33 verify R6）：舊 tip 不被任何 ref 指到，
+        #       actions/checkout 拿不到它，validate 會 fail-loud 說「沒有跑」而非假裝比較過。
+        #   (2) 沒有 base 時該報錯還是留紀錄：workflow_dispatch **結構上**兩個 base 都沒有，
+        #       R4 的無條件 fail-loud 讓它永遠紅 —— 一個不可能綠的檢查，下一個人會直接把
+        #       fail-loud 拿掉，連 PR/push 的守備一起賠掉。
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          BASE="$PR_BASE"
+          if [ -z "$BASE" ] && [ -n "$PUSH_BEFORE" ] \
+             && [ "$PUSH_BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            BASE="$PUSH_BEFORE"
+          fi
+          if [ -n "$BASE" ]; then
+            python3 scripts/validate.py --base "$BASE" --event "$EVENT_NAME"
+          else
+            echo "::warning::沒有可用的 base ref（事件 $EVENT_NAME）—— 交給 validate 判定"
+            python3 scripts/validate.py --event "$EVENT_NAME"
+          fi
