@@ -485,8 +485,8 @@ Agent:
 RUNDIR=$("$CLAUDE_PLUGIN_ROOT/bin/pai-codex-review" start \
   --wrapper "$CLAUDE_PLUGIN_ROOT/bin/codex-call" \
   --model "$CODEX_MODEL" --effort "$CODEX_EFFORT" \
-  --service-tier fast --max-time 600 \
-  --instructions "你是嚴謹的審閱者，用繁體中文輸出。" \
+  --service-tier fast --max-time 900 \
+  --instructions "你是嚴謹的學術論文審閱者，從 methodology、writing、reference 三個角度審閱。用中文輸出。" \
   --artifact "$ARTIFACT")     # 只傳 path；bytes 不進命令列也不進 agent context
 
 # 用「分開的 tool call」輪詢 —— 每次呼叫本身就是 progress 事件。

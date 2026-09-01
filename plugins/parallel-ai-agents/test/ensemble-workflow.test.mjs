@@ -301,14 +301,21 @@ test('#37 T6 輪詢是分開的 tool call，且明說 shell 變數不跨呼叫',
 // 這種 path 會被執行。model / effort 更是完全沒 quote。兩者皆為 CRITICAL。
 // 正解：POSIX 單引號（內部 ' → '\'' ），單引號內不做任何展開。
 
-const EVIL = "/tmp/$(touch /tmp/pwned)`id`;rm -rf /"
+// #47 verify F4: 舊 payload 沒有單引號 —— 而 `'` 是 shQuote() **唯一**需要處理的
+// 字元。實測把 shQuote 換成完全不跳脫的版本，舊的 T7 仍全過。護欄涵蓋不到唯一
+// 會壞掉的分支，就不是護欄。
+const EVIL = "/tmp/x'; touch /tmp/pwned; echo '$(touch /tmp/pwned2)`id`;rm -rf /"
 
 test('#37fu T7 artifact path 以 POSIX 單引號傳遞，$(...) 不會被 shell 展開', async () => {
   const p = await codexPromptFor({ profile: 'code', diffFile: EVIL })
   assert.ok(!p.includes(`"${EVIL}"`),
     'artifact path 出現在雙引號內 —— $(...) 在雙引號中仍會執行（CRITICAL）')
-  assert.ok(p.includes(`'/tmp/$(touch /tmp/pwned)\`id\`;rm -rf /'`),
-    'artifact path 沒有被 POSIX 單引號包住')
+  // 正向斷言：完整比對 shQuote 應產生的字面（含 ' → '\'' 的關閉-跳脫-重開）
+  const expected = "'" + EVIL.replace(/'/g, "'\\''") + "'"
+  assert.ok(p.includes(`--artifact ${expected}`),
+    `artifact path 沒有被正確 POSIX 單引號化。期望片段：--artifact ${expected}`)
+  // 內含單引號的 payload 必須產生 '\'' 序列 —— 這是唯一有邏輯的分支
+  assert.ok(p.includes("'\\''"), "shQuote 沒有對內含的單引號做 '\\'' 跳脫")
 })
 
 test('#37fu T8 model / effort 也必須 quote（caller 可控值）', async () => {
@@ -316,10 +323,15 @@ test('#37fu T8 model / effort 也必須 quote（caller 可控值）', async () =
     profile: 'code', diffFile: '/tmp/d.diff',
     codexModel: 'm; touch /tmp/pwned2', codexEffort: 'e$(id)',
   })
-  assert.ok(!/--model\s+m;/.test(p),
-    '--model 的值未 quote —— caller 可注入指令（CRITICAL）')
-  assert.ok(!/--effort\s+e\$\(/.test(p),
-    '--effort 的值未 quote —— caller 可注入指令（CRITICAL）')
+  // #47 verify F3: 舊版兩條都是**否定式**斷言（只排除裸值形態），實測把 shQuote
+  // 換回被判為 CRITICAL 的 JSON.stringify()，兩條仍全過 —— 守 CRITICAL 的測試
+  // 擋不住那個 CRITICAL 回歸。改成正向比對完整 argv 片段。
+  assert.ok(p.includes(`--model 'm; touch /tmp/pwned2'`),
+    '--model 沒有被單引號化成單一 argv（JSON.stringify() 的雙引號形式會讓否定式斷言誤放行）')
+  assert.ok(p.includes(`--effort 'e$(id)'`),
+    '--effort 沒有被單引號化成單一 argv')
+  assert.ok(!p.includes('"m; touch /tmp/pwned2"'),
+    '出現雙引號形式 —— 那是 JSON.stringify() 的產物，$(...) 在雙引號內仍會執行')
 })
 
 test('#37fu T9 管線交給 bin/ 腳本，不在 prompt 裡手寫 shell', async () => {
@@ -330,6 +342,27 @@ test('#37fu T9 管線交給 bin/ 腳本，不在 prompt 裡手寫 shell', async 
     assert.ok(!p.includes(handRolled),
       `prompt 仍手寫 shell 管線（命中 "${handRolled}"）—— mktemp/背景/輪詢/清理應由腳本負責`)
   }
+})
+
+test('#47 F7 自訂 wrapper（basename 非 codex-call）→ fail-closed，不得拿別人的 binary 跑 start', async () => {
+  const p = await codexPromptFor({ profile: 'code', diffFile: '/tmp/d.diff',
+                                   codexCallPath: '/opt/acme/reviewer-wrapper' })
+  assert.ok(!p.includes("'/opt/acme/reviewer-wrapper' start"),
+    '把 consumer 的自訂 wrapper 當成 helper 執行 start —— 破壞 #20 凍結契約')
+  assert.ok(/cross-model pass incomplete/.test(p),
+    'fail-closed 時應指示回 INFO finding，而非靜默猜路徑')
+})
+
+test('#47 F7b 顯式 codexReviewPath 可覆寫推導', async () => {
+  const p = await codexPromptFor({ profile: 'code', diffFile: '/tmp/d.diff',
+                                   codexCallPath: '/opt/acme/reviewer-wrapper',
+                                   codexReviewPath: '/opt/acme/pai-codex-review' })
+  assert.ok(p.includes("'/opt/acme/pai-codex-review' start"), '顯式 helper 路徑未生效')
+})
+
+test('#47 F19 --max-time 也走 shQuote（兌現「所有值皆單引號化」）', async () => {
+  const p = await codexPromptFor({ profile: 'code', diffFile: '/tmp/d.diff' })
+  assert.ok(/--max-time '\d+'/.test(p), '--max-time 未單引號化')
 })
 
 let pass = 0

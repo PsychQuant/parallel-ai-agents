@@ -11,6 +11,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.22.3] - 2026-09-02
+
+### Fixed
+
+修掉 PR #47 第一輪 6-AI verify（5/6 ensemble）判定的 **8 個 blocking**，外加一個在修復過程中自己抓到、比那 8 個都嚴重的 bug。
+
+**修復過程中自己抓到的（不在 verify findings 內）：**
+
+- **`start` 其實是阻塞的 —— 非阻塞設計被靜默廢掉。** supervisor 子 shell 繼承了 stdout；呼叫端用 `RUNDIR=$(pai-codex-review start ...)`（文件教的寫法）時，command substitution 會**等到所有持有該 pipe 的程序結束**才返回 ⇒ `start` 阻塞到整個 codex run 跑完。呼叫端照樣拿到 RUNDIR，只是要等十分鐘。修法：supervisor 的 stdout/stderr 導向 `supervisor.log`、stdin 導自 `/dev/null`。實測 `start` 從「阻塞整個 run」變成 **0 秒返回**。
+
+**verify 判定的 8 個 blocking：**
+
+- **F1 旗標缺值 → 無限迴圈掛死。** `shift 2` 在只剩 1 個參數時**失敗且不位移**，而腳本無 `set -e` ⇒ `while` 永久空轉。5 個獨立 reviewer 全部實測到 `timeout` exit 124。**這正是 #37 要消滅的 no-progress 類別，被搬進了取代 prompt 的腳本自己身上。** 修法：`need_value()` 守衛。
+- **F2 bash 3.2 + 省略 `--service-tier` ⇒ `start` exit 0 但 wrapper 從未執行。** 空陣列展開在 bash < 4.4 + `set -u` 是 unbound；錯誤發生在背景子 shell，父 shell 照樣印 RUNDIR、exit 0 ⇒ **跨模型票靜默消失而報告看起來正常**。macOS 內建 `/bin/bash` 就是 3.2.57。修法：`${TIER_ARGS[@]+"${TIER_ARGS[@]}"}`，並新增一個**直接用 `/bin/bash` 執行**的 bats case。
+- **F3 T8 是假綠燈。** 兩條都是否定式斷言；實測把 `shQuote` 換回被判為 CRITICAL 的 `JSON.stringify()`，**T8 仍全過** —— 守 CRITICAL 的測試擋不住那個 CRITICAL 回歸。改為正向比對完整 argv 片段。
+- **F4 T7 的 payload 不含單引號** —— 而 `'` 是 `shQuote()` **唯一**需要處理的字元。實測把 shQuote 換成完全不跳脫的版本，T7 仍全過。改為含 `'` 的 payload + 正向比對完整跳脫序列。
+- **F5 `finish()` 的輸出走可預測 sibling path 且跟隨 symlink → 任意檔案覆寫。** `${RUNDIR}.result.md` 在 world-writable `/tmp` 上是跨使用者覆寫原語。修法：預設改用 `mktemp`（不可預測）＋ 寫入前拒 symlink。
+- **F6 `poll`/`abort` 接受任意 RUNDIR ⇒「任意 PID kill ＋ 任意目錄 `rm -rf`」。** PID 完全未驗證。修法：PID 必須是正整數，且 RUNDIR 必須帶本腳本寫的 `.pai-run` marker。
+- **F7 helper 路徑推導破壞 #20 凍結契約。** `wrapper.replace(/codex-call$/, …)` 對自訂 wrapper 退化成 `reviewer === wrapper` ⇒ 拿 consumer 的 binary 執行我們的 `start` 子命令。修法：只在 basename **恰好**是 `codex-call` 時推導，否則要求顯式 `codexReviewPath`，取不到就 **fail-closed** 回 INFO finding，不猜路徑。
+- **F8 不檢查 wrapper 的 exit status。** 只看輸出非空 ⇒ 寫出半截錯誤再非零退出會被當成 `DONE`。修法：supervisor 記錄 `$?`，`DONE` 同時要求 status=0 與非空輸出。
+
+**一併修掉的 MEDIUM：**
+
+- **F14** 輸出搬移失敗不再被 `|| true` 吞掉（回 FAILED 並保留 RUNDIR 供診斷）
+- **F15** `deadline` 損毀 → **fail-closed**（kill + TIMEOUT）。舊版讓 `[` 報錯後落到 `RUNNING`，等於總期限被靜默停用
+- **F19** `--max-time` 也走 `shQuote()`，兌現「所有值皆單引號化」的宣稱
+- **R5** `codexReviewPath` 補進 args 契約 docblock
+- **R7** academic SKILL.md 的 `--max-time` 改回 **900**（引擎 `codexMaxTime: 900`）＋ 學術專用 instructions。上一版誤植成 600 與通用字串，讓**同一份文件自相矛盾**（214 行寫 900、488 行寫 600）
+
+### Notes
+
+- **測試也修了兩個假綠燈**：舊的 orphan / abort 測試從未真的驗到「殺掉一個還在跑的程序」（`start` 阻塞讓被測程序在斷言前就結束了）；F15 舊版靠 stderr 混進 `$output` 而意外通過。
+- **仍在射程外（誠實邊界）**：artifact 的 symlink 拒絕只守路徑最後一段，parent-dir symlink 與 TOCTOU 需要「一次安全 open + fstat」才能根治；`abort` 目前仍無呼叫端（engine 的 `.catch()` 只記 `ok:false`）。兩者列為後續。
+
 ## [2.22.2] - 2026-09-01
 
 ### Fixed

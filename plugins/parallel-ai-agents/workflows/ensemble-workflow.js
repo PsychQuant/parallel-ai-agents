@@ -27,6 +27,9 @@
  *   diffFile     : string | null                     — diff path (code profile; read by agents)
  *   replicas     : integer                           — independent instances per base lens (default 1)
  *   codexEnabled : boolean                           — run the cross-model Codex lens (code/academic)
+ *   codexReviewPath: string | null                   — absolute path to bin/pai-codex-review (#47 F7);
+ *                                                       omit ONLY when codexCallPath's basename is
+ *                                                       exactly `codex-call` (then it is derived)
  *   codexCallPath: string | null                     — absolute path to bin/codex-call (skill: ${CLAUDE_PLUGIN_ROOT}/bin/codex-call); avoids PATH fragility
  *   codexModel   : string | null                     — model for the cross-model codex leg (fallback default = release-time snapshot of codex-pro governance, #23; ALL first-party skills + external consumers pass their resolved value)
  *   codexEffort  : string | null                     — reasoning effort for the codex leg (default 'xhigh')
@@ -436,7 +439,13 @@ function codexPrompt(profile, A) {
   // an LLM to assemble it is what produced #37's follow-up findings (2 CRITICAL injections,
   // shell vars that cannot survive between tool calls, orphan processes, unbounded polling).
   // Same single-source-of-truth doctrine as bin/pai-build-diff.
-  const reviewer = A.codexReviewPath || wrapper.replace(/codex-call$/, 'pai-codex-review')
+  // #47 verify F7: deriving the helper by rewriting the wrapper's basename BREAKS the
+  // frozen external-consumer contract (#20). A consumer passing a legitimate custom
+  // wrapper — say /opt/acme/reviewer-wrapper — got `reviewer === wrapper`, so we would
+  // invoke THEIR binary with our `start` subcommand. Derive ONLY from the exact name we
+  // ship; anything else must pass codexReviewPath explicitly, or the leg fails closed.
+  const derivable = /(^|\/)codex-call$/.test(wrapper)
+  const reviewer = A.codexReviewPath || (derivable ? wrapper.replace(/codex-call$/, 'pai-codex-review') : '')
   const instr = A.codexInstructions || profile.codexInstructions || '你是嚴謹的審閱者，用繁體中文輸出，逐點標注嚴重性。'
   const maxTime = Number(A.codexMaxTime) || profile.codexMaxTime || 600 // academic papers need longer (input length + heavier reasoning)
   const codexModel = A.codexModel || 'gpt-5.6-sol'   // #22 caller-governed; fallback = governance SNAPSHOT (#23) — authoritative source is codex-pro defaults.json, pai skills resolve live per references/codex-governance.md
@@ -449,10 +458,22 @@ function codexPrompt(profile, A) {
     '--model', shQuote(codexModel),
     '--effort', shQuote(codexEffort),
     '--service-tier', shQuote('fast'),
-    '--max-time', String(maxTime),
+    '--max-time', shQuote(String(maxTime)),
     '--instructions', shQuote(instr),
     artifactPath ? '--artifact ' + shQuote(artifactPath) : '',
   ].filter(Boolean).join(' ')
+  if (!reviewer) {
+    // Fail closed, loudly. Silently falling back to a bare `pai-codex-review` on $PATH
+    // is exactly the fragility the engine warns about a few lines up.
+    return [
+      `The cross-model Codex leg cannot run for this invocation: the helper path could not be`,
+      `resolved. args.codexCallPath was ${JSON.stringify(wrapper)}, whose basename is not`,
+      `\`codex-call\`, and args.codexReviewPath was not supplied. Do NOT guess a path and do`,
+      `NOT run anything.`,
+      `Return EXACTLY one finding: {severity:"INFO", title:"cross-model pass incomplete", file:null,`,
+      `body:"pai-codex-review helper path unresolved (pass args.codexReviewPath); cross-model lens did not run"}.`,
+    ].join('\n\n')
+  }
   return [
     `You are the cross-model verifier in a ${profile.title} ensemble. Use Codex (${codexModel}, a different model family) as a BLIND reviewer, then convert its output into findings. Do NOT mention the Claude reviewers or feed Codex their findings — Codex stays a blind cross-model vote.`,
     DATA_GUARD,
