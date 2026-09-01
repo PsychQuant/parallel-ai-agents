@@ -221,6 +221,81 @@ test('#29 stats.lensProvenance 記錄 added / overridden / ignored', async () =>
   assert.equal(byKey.perf.action, 'added', JSON.stringify(prov))
 })
 
+// ── #37 codex leg：artifact 不得經過 wrapper agent 的 context ────────────────
+// #37 的成因：codexPrompt 要 agent 先「讀」 artifact、再把它「寫」回暫存檔，
+// 同一份 bytes 兩次過 context（實測 ~976k token）。tool call 之間的模型延遲
+// 因此超過 runtime 的 180s no-progress 門檻，leg 被判 stall、從零重試五次。
+// 另一半：codex-call 是最長 600s 的阻塞呼叫，600 > 180 ⇒ 結構上保證觸發。
+
+const captureCodex = () => {
+  const seen = []
+  const impl = async (prompt, o) => {
+    if (o && o.label === 'codex') seen.push(String(prompt))
+    return { findings: [] }
+  }
+  return { seen, impl }
+}
+
+const codexPromptFor = async (args) => {
+  const { seen, impl } = captureCodex()
+  await runEnsemble({ codexEnabled: true, codexCallPath: '/bin/codex-call', ...args }, impl)
+  assert.equal(seen.length, 1, 'codex leg 沒有被派發')
+  return seen[0]
+}
+
+test('#37 T1 codex leg 不再被指示把 artifact 讀進自己的 context', async () => {
+  const p = await codexPromptFor({ profile: 'code', diffFile: '/tmp/d.diff' })
+  for (const phrase of [
+    'to get the content under review',
+    'read it fully with your file-read tool',
+    'read it from this file with your file-read tool',
+  ]) {
+    assert.ok(!p.includes(phrase),
+      `codex prompt 仍要求讀 artifact 進 context（命中 "${phrase}"）—— 這正是 #37 的成因`)
+  }
+})
+
+test('#37 T2 codex leg 用只傳 path 的串接組 prompt，且 instructions 在 artifact 之前', async () => {
+  const p = await codexPromptFor({ profile: 'code', diffFile: '/tmp/d.diff' })
+  assert.match(p, /cat\s+"\$INSTR_FILE"\s+"\$ARTIFACT_FILE"\s*>\s*"\$PROMPT_FILE"/,
+    'path-only 串接缺席或順序錯（instructions 必須在 artifact 之前）')
+  assert.ok(p.includes('--prompt-file "$PROMPT_FILE"'), 'wrapper 沒有吃組好的 prompt 檔')
+})
+
+test('#37 T3 byte-interpolation 的注入禁令仍在（安全回歸護欄）', async () => {
+  const p = await codexPromptFor({ profile: 'code', diffFile: '/tmp/d.diff' })
+  assert.ok(p.includes('echo/printf/heredoc'),
+    '禁令消失了 —— 放寬措辭時把硬化規則一起拆了')
+  assert.ok(p.includes('command-injection'),
+    '禁令沒說明為什麼，未來會被當成可有可無的規則刪掉')
+})
+
+test('#37 T4 Claude lens 仍被要求讀 artifact（過度編輯的回歸護欄）', async () => {
+  const { seen, impl } = captureLenses()
+  await runEnsemble({ profile: 'code', diffFile: '/tmp/d.diff', codexEnabled: false }, impl)
+  assert.ok(seen.length > 0, 'reviewer lens 沒有被派發')
+  assert.ok(seen.every((s) => s.prompt.includes('file-read tool')),
+    'Claude lens 的讀取指示被誤刪 —— 它們必須讀 artifact 才能審（那一半見 #44）')
+})
+
+test('#37 T5 無 artifact 時不組空的 cat，直接用 instructions 檔', async () => {
+  const p = await codexPromptFor({ profile: 'code' })
+  assert.ok(!p.includes('cat "$INSTR_FILE"'),
+    '沒有 artifact 卻仍組 cat —— 會串接一個不存在的路徑')
+  assert.ok(p.includes('--prompt-file "$INSTR_FILE"'),
+    '無 artifact 時應直接把 instructions 當 prompt 檔')
+})
+
+test('#37 T6 codex-call 以背景執行 + 輪詢，不阻塞單一命令', async () => {
+  const p = await codexPromptFor({ profile: 'code', diffFile: '/tmp/d.diff' })
+  assert.ok(/BACKGROUND/i.test(p),
+    '沒有背景執行指示 —— 阻塞呼叫最長 600s > 180s 門檻，結構上必被判 stall')
+  assert.ok(p.includes('kill -0'),
+    '沒有輪詢存活的方式，agent 無從得知何時完成')
+  assert.ok(/separate tool call/i.test(p),
+    '沒有交代輪詢必須是分開的 tool call（那才是 progress 事件）')
+})
+
 let pass = 0
 let fail = 0
 for (const t of tests) {

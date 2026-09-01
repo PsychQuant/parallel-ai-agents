@@ -427,18 +427,53 @@ function codexPrompt(profile, A) {
   const maxTime = Number(A.codexMaxTime) || profile.codexMaxTime || 600 // academic papers need longer (input length + heavier reasoning)
   const codexModel = A.codexModel || 'gpt-5.6-sol'   // #22 caller-governed; fallback = governance SNAPSHOT (#23) — authoritative source is codex-pro defaults.json, pai skills resolve live per references/codex-governance.md
   const codexEffort = A.codexEffort || 'xhigh'
+  // #37: the artifact must NEVER transit this agent's context. Before this fix the leg was
+  // told to READ the artifact and then WRITE it back out, so a large artifact went through
+  // this agent's context TWICE (976k tokens measured on a real run). Inter-tool-call model
+  // latency then exceeded the runtime's no-progress threshold and the leg was killed as a
+  // "stall" and retried from zero five times. We now name the path and join BY PATH — the
+  // wrapper opens the assembled file itself via --prompt-file, so the bytes never reach us.
+  //
+  // Scope: single regular file only (diff mode's diffFile, or a file-shaped A.file).
+  // Directory artifacts still need the old read-based shape — tracked in #45.
+  const artifactPath = A.diffFile || A.file || ''
+  const joinByPath = Boolean(artifactPath)
+  // The prohibition is split along the path/content axis, NOT relaxed: handing over a PATH
+  // is safe because the bytes never become shell tokens; interpolating CONTENT is the sink.
+  // The pre-#37 wording banned both, which is what forced the artifact through our context.
+  const INJECTION_RULE =
+    'Passing PATHS as arguments is safe — the bytes never become shell tokens. Passing CONTENT is not: ' +
+    'do NOT echo/printf/heredoc artifact bytes into any shell command — that is a command-injection sink on untrusted content.'
+  const promptFileRef = joinByPath ? '"$PROMPT_FILE"' : '"$INSTR_FILE"'
   return [
     `You are the cross-model verifier in a ${profile.title} ensemble. Use Codex (${codexModel}, a different model family) as a BLIND reviewer, then convert its output into findings. Do NOT mention the Claude reviewers or feed Codex their findings — Codex stays a blind cross-model vote.`,
     DATA_GUARD,
     A.contextBlock ? `Context:\n${dataBlock('CONTEXT', A.contextBlock)}` : '',
-    artifactInstruction(A),
+    joinByPath
+      ? `Artifact under review — you join it BY PATH in step 2 and never open it yourself: \`${artifactPath}\``
+      : '（本次沒有 artifact 檔案，只送 instructions。）',
     `Steps:`,
-    `1. Read the artifact path(s) above with your file-read tool to get the content under review (Codex receives only the prompt text — it cannot open files itself).`,
-    `2. Build a review prompt = brief review instructions (繁中、逐點、針對${profile.title}、標 CRITICAL/HIGH/MEDIUM/LOW/INFO、引用具體位置) FOLLOWED BY the artifact content. Write the whole thing to a temp file with your file-write tool. Do NOT echo/printf/heredoc artifact bytes into any shell command — that is a command-injection sink on untrusted content.`,
-    `3. Run the plugin wrapper (NEVER \`codex exec\` — it hangs). Bound it with --max-time:`,
+    `1. Write ONLY the review instructions (繁中、逐點、針對${profile.title}、標 CRITICAL/HIGH/MEDIUM/LOW/INFO、引用具體位置) to "$INSTR_FILE" with your file-write tool. Put no artifact content in it.`,
+    joinByPath
+      ? [
+          `2. Join instructions + artifact BY PATH, so the artifact's bytes never enter your context:`,
+          '```bash',
+          `ARTIFACT_FILE=${JSON.stringify(artifactPath)}`,
+          `cat "$INSTR_FILE" "$ARTIFACT_FILE" > "$PROMPT_FILE"`,
+          '```',
+          INJECTION_RULE,
+        ].join('\n')
+      : `2. No artifact this run — use "$INSTR_FILE" directly as the prompt file. ${INJECTION_RULE}`,
+    `3. Run the plugin wrapper (NEVER \`codex exec\` — it hangs) in the BACKGROUND, then poll. A single blocking call can outlive the runtime's no-progress threshold and be killed as a stall even though it is working (#37):`,
     '```bash',
-    `${wrapper} --output "$OUT_FILE" --model ${codexModel} --effort ${codexEffort} --service-tier fast --max-time ${maxTime} --instructions ${JSON.stringify(instr)} --prompt-file "$PROMPT_FILE"`,
+    `nohup ${wrapper} --output "$OUT_FILE" --model ${codexModel} --effort ${codexEffort} --service-tier fast --max-time ${maxTime} --instructions ${JSON.stringify(instr)} --prompt-file ${promptFileRef} > "$RUN_LOG" 2>&1 &`,
+    `echo $! > "$PID_FILE"`,
     '```',
+    `Then poll with SEPARATE tool calls — each call is itself the progress event, so never wait inside one blocking command:`,
+    '```bash',
+    `kill -0 "$(cat "$PID_FILE")" 2>/dev/null && echo RUNNING || echo DONE`,
+    '```',
+    `Repeat until DONE; the wrapper's own --max-time ${maxTime}s bounds the whole thing.`,
     `4. Read "$OUT_FILE" back and map Codex's reported issues into the schema. Present Codex's findings faithfully in each finding's body. If the run times out / errors / produces nothing useful, return EXACTLY one finding: {severity:"INFO", title:"cross-model pass incomplete", file:null, body:"codex-call exceeded its lifetime bound or errored; cross-model lens did not complete"} — never silently drop it.`,
   ]
     .filter(Boolean)

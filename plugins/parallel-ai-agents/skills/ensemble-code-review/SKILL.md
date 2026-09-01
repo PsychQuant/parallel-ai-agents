@@ -297,17 +297,32 @@ Agent:
 #### 2b. Codex（背景執行 — 直接 HTTP，繞過 codex CLI subprocess）
 
 ```bash
-codex-call \
+# 1) 只把 review instructions 寫進 $INSTR_FILE —— 不含任何 artifact 內容
+# 2) 只傳 path 串接：artifact 的 bytes 既不進 agent 的 context，也不進命令列
+cat "$INSTR_FILE" "$ARTIFACT_FILE" > "$PROMPT_FILE"
+
+# 3) 背景執行 —— 單一阻塞呼叫會超過 runtime 的 no-progress 門檻而被判 stall（#37）
+nohup codex-call \
   --output "{output_file}" \
   --model "$CODEX_MODEL" \
   --effort xhigh \
   --service-tier fast \
   --max-time 600 \
-  --instructions "你是嚴謹的程式碼審閱者，用中文輸出。" << 'EOF'
-{codex_prompt}
-EOF
+  --instructions "你是嚴謹的程式碼審閱者，用中文輸出。" << 'EOF' \
+  --prompt-file "$PROMPT_FILE" > "$RUN_LOG" 2>&1 &
+echo $! > "$PID_FILE"
+
+# 4) 用「分開的 tool call」輪詢 —— 每一次呼叫本身就是 progress 事件
+kill -0 "$(cat "$PID_FILE")" 2>/dev/null && echo RUNNING || echo DONE
 ```
 
+> **為什麼不用 heredoc 餵 prompt（#37）**：`<< 'EOF' {codex_prompt} EOF` 會把 artifact 的內容
+> 帶進命令字串，而且逼 agent 先把 artifact 讀進自己的 context 才組得出來。實測一次 run 因此
+> 燒到 976k token，tool call 之間的模型延遲超過 runtime 的 180s no-progress 門檻，整條 leg 被
+> 判成 stall、從零重試五次。改成只傳 path 的 `cat` 串接後，bytes 完全不經過 agent。
+> **注意這不是把注入禁令放寬**：傳 path 當參數安全（bytes 不會變成 shell token），把 content
+> 內插進命令（`echo` / `printf` / heredoc）仍然禁止。
+>
 > **為什麼不用 `codex exec`**：subprocess 偶爾會 hang（stdin/stdout pipe 互鎖、tty 問題），等 10 分鐘 timeout 才能繼續。`codex-call` 是 plugin 自帶 wrapper（`bin/codex-call`，Swift script，安裝時自動加入 PATH），直接 HTTP POST 到 `chatgpt.com/backend-api/codex/responses`，仍走你的 ChatGPT 訂閱 OAuth — 但 `--max-time` 是硬性保證，不會 hang。
 >
 > **Fast mode**：傳 `--service-tier fast`，wrapper 內部會翻譯成 backend 接受的 `priority`（codex CLI 內部也是這樣翻譯）。Fast = 1.5× 速度、2.5× credit（gpt-5.x）；ensemble 場景值得，因為 user 在等。

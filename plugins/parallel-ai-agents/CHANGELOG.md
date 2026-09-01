@@ -11,6 +11,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.22.1] - 2026-09-01
+
+### Fixed
+
+- **Codex leg 不再讓 artifact 兩次經過 agent context，並改為背景執行 + 輪詢（#37）。**
+  cross-model leg 曾連續 4 次 ensemble run 沒完成，失敗全部來自 runtime 的 stall
+  detector（非 API error）：單次嘗試燒 976k token、145 次 tool call、72 分鐘才被殺，
+  再從零重試五次。成因有兩條獨立路徑：
+
+  1. `codexPrompt()` 要 agent 先「讀」 artifact、再把它「寫」回暫存檔 —— 同一份 bytes
+     兩次過 context。逼它這樣做的是注入禁令措辭過寬：它連**只傳 path** 的 `cat` 串接也
+     一起禁掉，而 `bin/codex-call` 本來就支援 `--prompt-file`。現在改成
+     `cat "$INSTR_FILE" "$ARTIFACT_FILE" > "$PROMPT_FILE"`，artifact 零次進 agent context。
+  2. `codex-call` 是最長 600 s 的**阻塞**呼叫，期間零 tool call。600 > 180 ⇒ 與 context
+     大小無關，結構上保證觸發 detector。現在改為背景啟動 + 以**分開的 tool call** 輪詢，
+     每次輪詢本身就是 progress 事件。
+
+  **注意這不是把安全規則放寬**：禁令沿 path/content 軸重寫 —— 傳 path 當參數安全
+  （bytes 不會變成 shell token），把 content 內插進命令（`echo` / `printf` / heredoc）
+  仍然禁止。`test/ensemble-workflow.test.mjs` 新增 6 個斷言，其中 T3 是這條規則的回歸護欄、
+  T4 守住 Claude lens 仍必須讀 artifact（不被過度編輯波及）。
+
+### Known limitations
+
+- 本修法**不會讓 Codex 變快**，它消除的是「重試五次」的乘數與 token 膨脹。實測極短 prompt
+  的往返 `xhigh` 約 4 s、`medium` 約 3 s —— 基礎延遲不是瓶頸，輸入量才是。
+- **Claude lens agent 的同類 stall 未解**（#44）：它們必須把 artifact 讀進 context 才能審，
+  沒有 file-only 旁路。
+- **目錄型 artifact 仍走舊的 read-based 路徑**（#45）：需先決定排除規則／順序／大小上限。
+- runtime 的 stall threshold 與 retry-from-zero 策略不在本 repo 控制範圍（#37 的 Residue）。
+
 ## [2.22.0] - 2026-08-04
 
 ### Added
