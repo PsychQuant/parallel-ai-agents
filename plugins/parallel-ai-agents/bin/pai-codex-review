@@ -1,0 +1,173 @@
+#!/usr/bin/env bash
+# pai-codex-review — codex leg 的管線單一真相源（#37 follow-up）
+#
+# 把 instructions + artifact 組成 prompt 檔、以背景方式跑 codex-call、讓呼叫端用
+# 分開的 poll 逐次查詢，並保證清理與總期限。
+#
+# 用法：
+#   pai-codex-review start --wrapper <codex-call> --model <m> --effort <e> \
+#                          --max-time <s> --instructions <text> \
+#                          [--artifact <file>] [--service-tier <t>]
+#       → stdout 印出 RUNDIR（一行）；立即返回，不阻塞。
+#   pai-codex-review poll <RUNDIR> [--output <file>]
+#       → stdout 印出 RUNNING / "DONE <path>" / FAILED / TIMEOUT（一行）；立即返回。
+#         DONE 時把結果搬到 --output（預設 <RUNDIR>.result.md）並清掉 RUNDIR。
+#   pai-codex-review abort <RUNDIR>
+#       → kill 子程序並清掉 RUNDIR。
+#
+# 退出碼：
+#   0  正常（start 成功 / poll 成功回報狀態，含 RUNNING）
+#   1  參數錯誤 / 前置條件不符（artifact 不是可讀的一般檔案、RUNDIR 不存在等）
+#   2  codex-call 失敗（poll 回 FAILED 時併用）
+#   3  超過總期限（poll 回 TIMEOUT 時併用；子程序已被 kill，無 orphan）
+#
+# 為什麼存在（#37 follow-up 的六個 findings 共同根因）：
+#   2.22.1 把 mktemp / cat / nohup / 輪詢 / 清理全部**手寫進 prompt 字串**讓 LLM
+#   組 shell。後果：(a) `JSON.stringify()` 被當成 shell escaping —— 它不是，雙引號
+#   內 $(...) 照樣執行；(b) model/effort 完全沒 quote；(c) shell 變數不跨 tool call，
+#   $PID_FILE 在下一次呼叫根本不存在；(d) nohup 留 orphan；(e) 輪詢無總期限，可能
+#   永遠產生 progress 而永不 stall；(f) 宣稱只收 regular file 卻不驗證。
+#   全部是「讓 LLM 寫 shell」造成的。本腳本把管線收回程式碼，比照 bin/pai-build-diff
+#   的單一真相源戒律：要改管線就改這裡並更新 test/pai-codex-review.bats。
+#
+# 狀態存在 RUNDIR 的檔案裡，不靠 shell 變數 —— 這是 (c) 的正解，也讓 poll 能是
+# 分開的 tool call（每次呼叫本身就是 runtime 眼中的 progress 事件）。
+
+set -uo pipefail
+
+err() { printf '%s\n' "$*" >&2; }
+usage() { sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; }
+
+SUB="${1:-}"
+case "$SUB" in
+  -h|--help) usage; exit 0 ;;
+  start|poll|abort) shift ;;
+  *) err "用法錯誤：第一個參數必須是 start / poll / abort"; usage >&2; exit 1 ;;
+esac
+
+# ─────────────────────────────── start ───────────────────────────────
+if [ "$SUB" = "start" ]; then
+  WRAPPER=""; MODEL=""; EFFORT=""; MAXTIME=""; INSTRUCTIONS=""; ARTIFACT=""; TIER=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --wrapper)      WRAPPER="${2:-}"; shift 2 ;;
+      --model)        MODEL="${2:-}"; shift 2 ;;
+      --effort)       EFFORT="${2:-}"; shift 2 ;;
+      --max-time)     MAXTIME="${2:-}"; shift 2 ;;
+      --instructions) INSTRUCTIONS="${2:-}"; shift 2 ;;
+      --artifact)     ARTIFACT="${2:-}"; shift 2 ;;
+      --service-tier) TIER="${2:-}"; shift 2 ;;
+      *) err "未知參數：$1"; exit 1 ;;
+    esac
+  done
+
+  [ -n "$WRAPPER" ] || { err "--wrapper 必填"; exit 1; }
+  [ -x "$WRAPPER" ] || { err "--wrapper 不是可執行檔：$WRAPPER"; exit 1; }
+  [ -n "$MODEL" ] && [ -n "$EFFORT" ] || { err "--model 與 --effort 必填"; exit 1; }
+  case "$MAXTIME" in
+    ''|*[!0-9]*) err "--max-time 必須是正整數，得到：$MAXTIME"; exit 1 ;;
+  esac
+  [ "$MAXTIME" -gt 0 ] || { err "--max-time 必須 > 0"; exit 1; }
+
+  # finding #6：宣稱只收 regular file 就要真的驗證（目錄／FIFO／symlink 皆拒）
+  if [ -n "$ARTIFACT" ]; then
+    [ -f "$ARTIFACT" ] || { err "--artifact 不是一般檔案：$ARTIFACT"; exit 1; }
+    [ -r "$ARTIFACT" ] || { err "--artifact 不可讀：$ARTIFACT"; exit 1; }
+    [ -L "$ARTIFACT" ] && { err "--artifact 是 symlink，拒絕（防 follow-symlink 洩漏）：$ARTIFACT"; exit 1; }
+  fi
+
+  RUNDIR="$(mktemp -d -t pai-codex-review.XXXXXX)" || { err "mktemp -d 失敗"; exit 1; }
+
+  # instructions 用 printf 寫檔 —— 不經 shell 展開，內容任意皆安全
+  printf '%s\n\n' "$INSTRUCTIONS" > "$RUNDIR/instr.txt" || { err "寫 instructions 失敗"; rm -rf "$RUNDIR"; exit 1; }
+
+  # 只傳 path 的串接：artifact 的 bytes 不經任何命令列，也不經任何 agent 的 context
+  if [ -n "$ARTIFACT" ]; then
+    cat "$RUNDIR/instr.txt" "$ARTIFACT" > "$RUNDIR/prompt.txt" || { err "組 prompt 失敗"; rm -rf "$RUNDIR"; exit 1; }
+  else
+    cp "$RUNDIR/instr.txt" "$RUNDIR/prompt.txt" || { err "組 prompt 失敗"; rm -rf "$RUNDIR"; exit 1; }
+  fi
+
+  # deadline 存檔（finding #5：輪詢必須有總期限）。grace 給 codex-call 自己收尾。
+  printf '%s\n' "$(( $(date +%s) + MAXTIME + 30 ))" > "$RUNDIR/deadline"
+
+  # 背景執行。所有值都是 argv 元素、不經 shell 再解析一次 —— 無注入面。
+  TIER_ARGS=()
+  [ -n "$TIER" ] && TIER_ARGS=(--service-tier "$TIER")
+  "$WRAPPER" --output "$RUNDIR/out.md" --model "$MODEL" --effort "$EFFORT" \
+             "${TIER_ARGS[@]}" --max-time "$MAXTIME" \
+             --instructions "$INSTRUCTIONS" --prompt-file "$RUNDIR/prompt.txt" \
+             > "$RUNDIR/run.log" 2>&1 &
+  printf '%s\n' "$!" > "$RUNDIR/pid"
+
+  printf '%s\n' "$RUNDIR"
+  exit 0
+fi
+
+# ──────────────────────────── poll / abort ────────────────────────────
+RUNDIR="${1:-}"
+[ -n "$RUNDIR" ] || { err "需要 RUNDIR 參數"; exit 1; }
+[ -d "$RUNDIR" ] || { err "RUNDIR 不存在：$RUNDIR"; exit 1; }
+[ -f "$RUNDIR/pid" ] || { err "RUNDIR 缺 pid 檔，不是本腳本建立的：$RUNDIR"; exit 1; }
+shift
+
+PID="$(cat "$RUNDIR/pid")"
+
+kill_child() {
+  # finding #4：不留 orphan。先 TERM，給 2 秒，再 KILL。
+  kill "$PID" 2>/dev/null || return 0
+  for _ in 1 2 3 4; do
+    kill -0 "$PID" 2>/dev/null || return 0
+    sleep 0.5
+  done
+  kill -9 "$PID" 2>/dev/null || true
+}
+
+if [ "$SUB" = "abort" ]; then
+  kill_child
+  rm -rf "$RUNDIR"
+  printf 'ABORTED\n'
+  exit 0
+fi
+
+OUTFILE="${RUNDIR}.result.md"   # 預設放 RUNDIR 旁邊（RUNDIR 本身會被清掉）
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --output) OUTFILE="${2:-}"; shift 2 ;;
+    *) err "未知參數：$1"; exit 1 ;;
+  esac
+done
+
+finish() {  # $1=狀態字串 $2=退出碼
+  if [ -n "$OUTFILE" ] && [ -f "$RUNDIR/out.md" ]; then
+    cat "$RUNDIR/out.md" > "$OUTFILE" 2>/dev/null || true
+  fi
+  [ -n "$OUTFILE" ] && [ -f "$RUNDIR/run.log" ] && \
+    cat "$RUNDIR/run.log" > "${OUTFILE}.log" 2>/dev/null || true
+  rm -rf "$RUNDIR"
+  # DONE 時把結果路徑一併印出 —— 呼叫端不必自己組路徑
+  if [ "$1" = "DONE" ]; then
+    printf 'DONE %s\n' "$OUTFILE"
+  else
+    printf '%s\n' "$1"
+  fi
+  exit "$2"
+}
+
+if kill -0 "$PID" 2>/dev/null; then
+  # 還活著 —— 但先看有沒有超過總期限
+  NOW="$(date +%s)"
+  DEADLINE="$(cat "$RUNDIR/deadline" 2>/dev/null || echo 0)"
+  if [ "$NOW" -gt "$DEADLINE" ]; then
+    kill_child
+    finish "TIMEOUT" 3
+  fi
+  printf 'RUNNING\n'
+  exit 0
+fi
+
+# 已結束：有非空輸出才算成功
+if [ -s "$RUNDIR/out.md" ]; then
+  finish "DONE" 0
+fi
+finish "FAILED" 2

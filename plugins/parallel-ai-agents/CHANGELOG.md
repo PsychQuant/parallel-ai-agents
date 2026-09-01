@@ -11,6 +11,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.22.2] - 2026-09-01
+
+### Fixed
+
+- **codex leg 的管線收進 `bin/pai-codex-review`，修掉 2.22.1 引入的 2 個 CRITICAL 與 4 個 HIGH。**
+  2.22.1 為了讓 artifact 不經 agent context，把 mktemp／`cat`／`nohup`／輪詢／清理
+  **手寫進 prompt 字串**讓 LLM 組 shell。一次 cross-model review 抓到六個問題，全部源於
+  這個決定：
+
+  1. **CRITICAL** — `JSON.stringify(artifactPath)` 被當成 shell escaping。它是 JSON
+     表示法，**不是** POSIX quoting，而 shell 的雙引號內 `$(...)` 照樣執行 ⇒
+     `/tmp/$(touch /tmp/pwned)` 會被執行。
+  2. **CRITICAL** — `--model ${codexModel} --effort ${codexEffort}` 完全沒 quote，
+     caller 可控值可直接注入。
+  3. **HIGH** — `$INSTR_FILE` / `$PID_FILE` 等從未初始化，且 **shell 變數不跨 tool call**
+     ⇒ 「分開 tool call 輪詢」的設計根本跑不起來。
+  4. **HIGH** — `nohup` 讓程序脫離流程，取消／重試留下 orphan。
+  5. **HIGH** — 輪詢沒有總期限，可能無限產生 progress 而**永不觸發 stall**（比原本更糟）。
+  6. **HIGH** — 宣稱只收 regular file 卻不驗證，破壞既有目錄／無效路徑行為。
+
+  修法比照 `bin/pai-build-diff` 的單一真相源戒律：管線收進 `bin/pai-codex-review`
+  （`start` / `poll` / `abort` 三個子命令，狀態存 run dir 的**檔案**而非 shell 變數，
+  自帶總期限與 kill、shellcheck 乾淨、13 個 bats）。JS 端只發一條**參數已 POSIX 單引號化**
+  的命令；`shQuote()` 取代 `JSON.stringify()`。
+
+  `ensemble-workflow.test.mjs` 由 6 個斷言增至 9 個：新增 T7（path 單引號化、`$(...)` 不展開）、
+  T8（model／effort 已 quote）、T9（管線必須委派給 helper、prompt 內不得出現手寫 shell）。
+  T2／T3 改寫為結構性斷言 —— 舊版靠「請勿 echo/printf/heredoc」的**文字禁令**，那守不住
+  新寫的那行 shell 本身；現在 agent 沒有任何需要它組裝的地方。
+
+### Notes
+
+- **這批問題是被跳過的 verify 關卡該抓的。** 2.22.1 在 PR checklist 上留著未勾的
+  `- [ ] Verify` 就 merge 了；六個 findings 是事後跑 cross-model review 才浮出來的。
+
 ## [2.22.1] - 2026-09-01
 
 ### Fixed

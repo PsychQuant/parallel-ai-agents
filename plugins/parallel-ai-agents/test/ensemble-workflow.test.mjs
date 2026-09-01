@@ -255,19 +255,22 @@ test('#37 T1 codex leg 不再被指示把 artifact 讀進自己的 context', asy
   }
 })
 
-test('#37 T2 codex leg 用只傳 path 的串接組 prompt，且 instructions 在 artifact 之前', async () => {
+test('#37 T2 artifact 以 path 交給 helper（--artifact），不經 prompt 內容', async () => {
   const p = await codexPromptFor({ profile: 'code', diffFile: '/tmp/d.diff' })
-  assert.match(p, /cat\s+"\$INSTR_FILE"\s+"\$ARTIFACT_FILE"\s*>\s*"\$PROMPT_FILE"/,
-    'path-only 串接缺席或順序錯（instructions 必須在 artifact 之前）')
-  assert.ok(p.includes('--prompt-file "$PROMPT_FILE"'), 'wrapper 沒有吃組好的 prompt 檔')
+  assert.ok(p.includes("--artifact '/tmp/d.diff'"),
+    'artifact 沒有以 quoted path 交給 helper')
+  assert.ok(!p.includes('file-write tool'),
+    'prompt 仍要 agent 自己寫 prompt 檔 —— 組裝應由 helper 負責')
 })
 
-test('#37 T3 byte-interpolation 的注入禁令仍在（安全回歸護欄）', async () => {
+test('#37 T3 prompt 完全不叫 agent 組 shell（結構性保證，取代舊的文字禁令）', async () => {
   const p = await codexPromptFor({ profile: 'code', diffFile: '/tmp/d.diff' })
-  assert.ok(p.includes('echo/printf/heredoc'),
-    '禁令消失了 —— 放寬措辭時把硬化規則一起拆了')
-  assert.ok(p.includes('command-injection'),
-    '禁令沒說明為什麼，未來會被當成可有可無的規則刪掉')
+  // 舊版靠「請勿 echo/printf/heredoc」這種文字禁令；那守不住我自己新寫的那行 shell。
+  // 現在 agent 只執行 helper 給的兩條完整命令，沒有任何需要它組裝的地方。
+  for (const verb of ['cat ', 'heredoc', "<< 'EOF'", 'mktemp', '> "$', 'printf ']) {
+    assert.ok(!p.includes(verb),
+      `prompt 仍含要 agent 自己組的 shell 構造（命中 "${verb}"）`)
+  }
 })
 
 test('#37 T4 Claude lens 仍被要求讀 artifact（過度編輯的回歸護欄）', async () => {
@@ -278,22 +281,55 @@ test('#37 T4 Claude lens 仍被要求讀 artifact（過度編輯的回歸護欄�
     'Claude lens 的讀取指示被誤刪 —— 它們必須讀 artifact 才能審（那一半見 #44）')
 })
 
-test('#37 T5 無 artifact 時不組空的 cat，直接用 instructions 檔', async () => {
+test('#37 T5 無 artifact 時不帶 --artifact', async () => {
   const p = await codexPromptFor({ profile: 'code' })
-  assert.ok(!p.includes('cat "$INSTR_FILE"'),
-    '沒有 artifact 卻仍組 cat —— 會串接一個不存在的路徑')
-  assert.ok(p.includes('--prompt-file "$INSTR_FILE"'),
-    '無 artifact 時應直接把 instructions 當 prompt 檔')
+  assert.ok(!p.includes('--artifact'), '沒有 artifact 卻仍傳 --artifact')
+  assert.ok(p.includes('pai-codex-review'), '仍應委派給 helper')
 })
 
-test('#37 T6 codex-call 以背景執行 + 輪詢，不阻塞單一命令', async () => {
+test('#37 T6 輪詢是分開的 tool call，且明說 shell 變數不跨呼叫', async () => {
   const p = await codexPromptFor({ profile: 'code', diffFile: '/tmp/d.diff' })
-  assert.ok(/BACKGROUND/i.test(p),
-    '沒有背景執行指示 —— 阻塞呼叫最長 600s > 180s 門檻，結構上必被判 stall')
-  assert.ok(p.includes('kill -0'),
-    '沒有輪詢存活的方式，agent 無從得知何時完成')
-  assert.ok(/separate tool call/i.test(p),
-    '沒有交代輪詢必須是分開的 tool call（那才是 progress 事件）')
+  assert.ok(/separate tool call/i.test(p), '沒有交代輪詢必須是分開的 tool call')
+  assert.ok(/FRESH shell/i.test(p),
+    '沒有警告 shell 變數不跨 tool call —— 那是 2.22.1 讓輪詢完全跑不起來的原因')
+  assert.ok(p.includes(' poll '), '沒有 poll 子命令')
+})
+
+// ── #37 follow-up：prompt 內插進 shell 的值必須是 shell-safe ──────────────────
+// 2.22.1 用 JSON.stringify() 當 shell escaping —— 那是 JSON 表示法，不是 POSIX
+// quoting。shell 的雙引號內 $(...) 照樣執行，所以 `/tmp/$(touch /tmp/pwned)`
+// 這種 path 會被執行。model / effort 更是完全沒 quote。兩者皆為 CRITICAL。
+// 正解：POSIX 單引號（內部 ' → '\'' ），單引號內不做任何展開。
+
+const EVIL = "/tmp/$(touch /tmp/pwned)`id`;rm -rf /"
+
+test('#37fu T7 artifact path 以 POSIX 單引號傳遞，$(...) 不會被 shell 展開', async () => {
+  const p = await codexPromptFor({ profile: 'code', diffFile: EVIL })
+  assert.ok(!p.includes(`"${EVIL}"`),
+    'artifact path 出現在雙引號內 —— $(...) 在雙引號中仍會執行（CRITICAL）')
+  assert.ok(p.includes(`'/tmp/$(touch /tmp/pwned)\`id\`;rm -rf /'`),
+    'artifact path 沒有被 POSIX 單引號包住')
+})
+
+test('#37fu T8 model / effort 也必須 quote（caller 可控值）', async () => {
+  const p = await codexPromptFor({
+    profile: 'code', diffFile: '/tmp/d.diff',
+    codexModel: 'm; touch /tmp/pwned2', codexEffort: 'e$(id)',
+  })
+  assert.ok(!/--model\s+m;/.test(p),
+    '--model 的值未 quote —— caller 可注入指令（CRITICAL）')
+  assert.ok(!/--effort\s+e\$\(/.test(p),
+    '--effort 的值未 quote —— caller 可注入指令（CRITICAL）')
+})
+
+test('#37fu T9 管線交給 bin/ 腳本，不在 prompt 裡手寫 shell', async () => {
+  const p = await codexPromptFor({ profile: 'code', diffFile: '/tmp/d.diff' })
+  assert.ok(p.includes('pai-codex-review'),
+    '沒有委派給 bin/pai-codex-review —— 管線仍手寫在 prompt 裡（違反 pai-build-diff 的單一真相源戒律）')
+  for (const handRolled of ['nohup ', 'kill -0', 'cat "$INSTR_FILE"', 'echo $!']) {
+    assert.ok(!p.includes(handRolled),
+      `prompt 仍手寫 shell 管線（命中 "${handRolled}"）—— mktemp/背景/輪詢/清理應由腳本負責`)
+  }
 })
 
 let pass = 0
