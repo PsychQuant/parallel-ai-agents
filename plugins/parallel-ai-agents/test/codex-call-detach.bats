@@ -18,6 +18,8 @@ setup() {
   TMP="$(mktemp -d)"
   export HOME_ORIG="$HOME"
   # 隔離 base：contract §3 說 base 在 $HOME 之下，測試用假 HOME 免得污染真的
+  # 注意：HOME 只隔離 run base，不隔離憑證（AUTH_FILE 走 passwd db，round 4 R4-6）——擋住測試打線上
+  # API 的唯一機制是 --_selftest-*；任何沒帶 selftest 旗標的 detach／同步呼叫都會真的發 HTTPS。
   export HOME="$TMP/home"; mkdir -p "$HOME"
   BASE="$HOME/.cache/codex-call/runs"
 }
@@ -222,6 +224,8 @@ wait_terminal() {  # $1=id → 設 POLL_OUT / POLL_RC
   run "$BIN" --detach --_selftest-sleep 1 --instructions i "p"
   [ "$status" -ne 0 ]
   [[ "$output" == *"symlink"* ]] || [[ "$output" == *"refusing"* ]]
+  [ ! -e "$TMP/elsewhere/runs" ]                      # R4-S4：拒絕前不在不受信目標下建任何東西
+  [[ "$output" != *"could not remove"* ]]              # R4-S4：沒建過的 run 目錄不該有誤導的清理 warning
 }
 
 @test "R3-Sec-H1 lock 檔被換成指向 victim 持鎖檔的 hard link → abort 拒絕、victim 存活" {
@@ -234,7 +238,11 @@ wait_terminal() {  # $1=id → 設 POLL_OUT / POLL_RC
 ' "$(date +%s)" > "$BASE/$aid/meta.json"
   ln "$BASE/$vid/lock" "$BASE/$aid/lock"
   run "$BIN" --abort "$aid"
+  [ "$status" -eq 1 ]; [ -d "$BASE/$aid" ]            # R4-S1：完整性失敗 = exit 1、不清 run（fail-closed）
   kill -0 "$vpid"                                     # victim 必須還活著（st_nlink==2 → 拒絕）
+  run "$BIN" --poll "$aid"
+  [ "$status" -eq 1 ]; [ -d "$BASE/$aid" ]            # poll 同理：不判為終止、不刪、不孤兒化任何 worker
+  kill -0 "$vpid"
   rm -f "$BASE/$aid/lock"                             # 拆掉硬連結，victim 的 lock 回到 nlink==1
   "$BIN" --abort "$vid" >/dev/null 2>&1 || true
 }
@@ -321,7 +329,7 @@ wait_terminal() {  # $1=id → 設 POLL_OUT / POLL_RC
   printf '{"output":"%s","max_time":30,"started_at":%s}\n' "$TMP/stale.out" "$(date +%s)" > "$BASE/$sid.done/meta.json"
   printf '0\n' > "$BASE/$sid.done/status"
   touch -t 202001010000 "$BASE/$sid.done"
-  run "$BIN" --poll "$sid"
+  run "$BIN" --poll "$sid" --_selftest-claim-age 0    # ctime 無法用 touch 偽造，用測試 hook 把門檻壓到 0
   [ "$status" -eq 0 ]; [ "$output" = "DONE $TMP/stale.out" ]
   [ ! -d "$BASE/$sid.done" ]
   mkdir -p "$BASE/$sid.done"
@@ -362,6 +370,120 @@ wait_terminal() {  # $1=id → 設 POLL_OUT / POLL_RC
   [ "$status" -eq 0 ]
   [ ! -e "$BASE/$old" ]; [ ! -e "$BASE/$old.done" ]; [ ! -e "$BASE/$old.out.md" ]
   [ -d "$BASE/$new" ]; [ -f "$BASE/$new.out.md" ]; [ -d "$BASE/not-a-run" ]; [ -d "$BASE/$live" ]
+}
+
+@test "R4-L1 status token 依 (domain, code)：NSURLErrorDomain/-1001 與 codex-call/408 → TIMEOUT；其餘 → code" {
+  run "$BIN" --_selftest-classify NSURLErrorDomain -1001; [ "$status" -eq 0 ]; [[ "$output" == TIMEOUT* ]]
+  run "$BIN" --_selftest-classify codex-call 408;         [[ "$output" == TIMEOUT* ]]
+  run "$BIN" --_selftest-classify codex-call 3;           [[ "$output" == "3 probe"* ]]
+  run "$BIN" --_selftest-classify NSURLErrorDomain -1009; [[ "$output" == "-1009 probe"* ]]
+}
+
+@test "R4-L2 rename 因非併發原因失敗（uchg → EPERM）→ exit 1、訊息不說 concurrent、run 原地保留" {
+  xid="$(printf 'l%.0s' $(seq 1 32))"; mkdir -p "$BASE/$xid"
+  printf '{"output":"/tmp/nope","max_time":30,"started_at":%s}\n' "$(date +%s)" > "$BASE/$xid/meta.json"
+  printf '0\n' > "$BASE/$xid/status"
+  chflags uchg "$BASE/$xid"
+  run "$BIN" --poll "$xid"
+  chflags nouchg "$BASE/$xid"
+  [ "$status" -eq 1 ]; [[ "$output" == *"cannot claim"* ]]; [[ "$output" != *"concurrent poll"* ]]; [[ "$output" == *"retrying will not help"* ]]
+  [ -d "$BASE/$xid" ]
+}
+
+@test "R4-L3 .done 殘留但無 status（清理中斷）→ 清掉並回 unknown exit 1，不翻成 FAILED" {
+  sid="$(printf 'm%.0s' $(seq 1 32))"; mkdir -p "$BASE/$sid.done"
+  printf '{"output":"/tmp/nope","max_time":30,"started_at":%s}\n' "$(date +%s)" > "$BASE/$sid.done/meta.json"
+  run "$BIN" --poll "$sid" --_selftest-claim-age 0
+  [ "$status" -eq 1 ]; [[ "$output" == *"unknown run id"* ]]; [[ "$output" != *FAILED* ]]
+  [ ! -d "$BASE/$sid.done" ]
+}
+
+@test "R4-L6 meta 損毀時非 DONE 終態仍清除預設輸出檔（路徑可推導）" {
+  run "$BIN" --detach --_selftest-sleep 1 --instructions i "p"; id="$output"
+  sleep 3
+  [ -s "$BASE/$id.out.md" ]
+  printf '9 boom\n' > "$BASE/$id/status"; printf 'garbage\n' > "$BASE/$id/meta.json"
+  run "$BIN" --poll "$id"
+  [ "$status" -eq 2 ]
+  [ ! -e "$BASE/$id.out.md" ]
+}
+
+@test "R4-S1 宣告的邊界：rename() 保留 inode——victim 持鎖檔被搬進 lock 時三檢查全過，abort 會殺掉它（契約 §4 明寫）" {
+  run "$BIN" --detach --_selftest-sleep 60 --instructions i "victim"
+  vid="$output"; vpid=$(pgrep -f -- "--_worker $vid" | head -1)
+  aid="$(printf 'n%.0s' $(seq 1 32))"; mkdir -p "$BASE/$aid"
+  printf '{"output":"/tmp/x","max_time":30,"started_at":%s}\n' "$(date +%s)" > "$BASE/$aid/meta.json"
+  mv "$BASE/$vid/lock" "$BASE/$aid/lock"
+  run "$BIN" --abort "$aid"
+  [ "$status" -eq 0 ]; [[ "$output" == *ABORTED* ]]
+  sleep 1; run kill -0 "$vpid"; [ "$status" -ne 0 ]     # victim 被殺：同 uid／HOME 注入之外不承諾的邊界
+}
+
+@test "R4-S2 base 上層 0755 且 chmod 失敗（uchg）→ detach exit 1，不印 id" {
+  mkdir -p "$BASE"; chmod 755 "$HOME/.cache/codex-call"; chflags uchg "$HOME/.cache/codex-call"
+  run "$BIN" --detach --_selftest-sleep 1 --instructions i "p"
+  chflags nouchg "$HOME/.cache/codex-call"
+  [ "$status" -ne 0 ]; [[ "$output" == *"chmod failed"* ]]; [[ ! "$output" =~ ^[A-Za-z0-9]{32}$ ]]
+}
+
+@test "Codex-R4-1 claim 年齡以 ctime 計：mtime 極舊但剛 rename 的 .done 是活的 claim → concurrent exit 1，不接手" {
+  cid="$(printf 'o%.0s' $(seq 1 32))"; mkdir -p "$BASE/$cid.done"
+  printf 'x\n' > "$TMP/c.out"
+  printf '{"output":"%s","max_time":30,"started_at":%s}\n' "$TMP/c.out" "$(date +%s)" > "$BASE/$cid.done/meta.json"
+  printf '0\n' > "$BASE/$cid.done/status"
+  touch -t 202001010000 "$BASE/$cid.done"               # mtime 舊、ctime 新：舊判準會接手並 DONE
+  run "$BIN" --poll "$cid"
+  [ "$status" -eq 1 ]; [[ "$output" == *"concurrent poll"* ]]
+  [ -d "$BASE/$cid.done" ]
+}
+
+@test "Codex-R4-3 worker 拿鎖前卡住超過 20 s → detach exit 1、worker 被終止、無 orphan、run 已清" {
+  S=$(date +%s)
+  run "$BIN" --detach --_selftest-sleep 1 --_selftest-prelock-sleep 40 --instructions i "p"
+  E=$(date +%s)
+  [ "$status" -ne 0 ]; [[ ! "$output" =~ ^[A-Za-z0-9]{32}$ ]]
+  [ $((E - S)) -lt 35 ]
+  sleep 1
+  run pgrep -f -- "--_worker"; [ "$status" -ne 0 ]      # 沒有任何 worker 活著
+  [ -z "$(ls -A "$BASE" 2>/dev/null)" ]
+}
+
+@test "Codex-R4-14 worker.log 尾段真的是尾段：30 行只留最後幾行" {
+  run "$BIN" --detach --_selftest-sleep 1 --_selftest-fail --instructions i "p"; id="$output"
+  sleep 3
+  for i in $(seq -w 1 30); do printf 'line%s\n' "$i" >> "$BASE/$id/worker.log"; done
+  run "$BIN" --poll "$id"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *line30* ]]; [[ "$output" != *line01* ]]
+}
+
+@test "R4-S6 worker.log 尾段進 stderr 前過 sanitizer：ESC / OSC 不得出現在 poll 輸出" {
+  run "$BIN" --detach --_selftest-sleep 1 --_selftest-fail --instructions i "p"; id="$output"
+  sleep 3
+  printf 'PRE\033[2J\033]0;title\007 INJECT\n' >> "$BASE/$id/worker.log"
+  run "$BIN" --poll "$id"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"worker.log tail"* ]]; [[ "$output" == *INJECT* ]]
+  [[ "$output" != *$'\033'* ]]
+}
+
+@test "R4-R1 --poll --wait N 在 codex-call 內阻塞（不用 shell sleep）：RUNNING 時等滿 N，終態提早返回；--wait 只配 --poll" {
+  run "$BIN" --detach --_selftest-sleep 8 --instructions i "p"; id="$output"
+  S=$(date +%s); run "$BIN" --poll "$id" --wait 3; E=$(date +%s)
+  [ "$status" -eq 0 ]; [ "$output" = "RUNNING" ]; [ $((E - S)) -ge 3 ]
+  S=$(date +%s); run "$BIN" --poll "$id" --wait 60; E=$(date +%s)
+  [ "$status" -eq 0 ]; [[ "$output" == DONE\ * ]]; [ $((E - S)) -lt 30 ]
+  run "$BIN" --detach --wait 5 --_selftest-sleep 1 --instructions i "p"; [ "$status" -ne 0 ]
+  run "$BIN" --poll "$id" --wait 500; [ "$status" -ne 0 ]
+}
+
+@test "R4-3b worker 提早退出不再沉默：status 已存在／run 不存在時 stderr（production 即 worker.log）有原因" {
+  run "$BIN" --detach --_selftest-sleep 1 --instructions i "p"; id="$output"
+  sleep 3
+  run /usr/bin/swift "$BIN" --_worker "$id"                       # status 已在 → 拒絕重放
+  [ "$status" -eq 1 ]; [[ "$output" == *"refusing to replay"* ]]
+  run /usr/bin/swift "$BIN" --_worker "$(printf 'z%.0s' $(seq 1 32))"   # run 目錄不存在
+  [ "$status" -eq 1 ]; [[ "$output" == *"run directory missing"* ]]
 }
 
 @test "既有同步路徑不受影響（--selftest-error-extract 仍可用）" {

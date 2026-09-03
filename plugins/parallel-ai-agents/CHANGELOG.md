@@ -68,13 +68,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   且無人持鎖的 `<id>` / `<id>.done` / `<id>.out.md`（含 `prompt.txt`，即 artifact 的完整副本）。
 - `FAILED` 終態把 `worker.log` 尾段附進 stderr——那正是 #37 抱怨看不到的診斷。
 
+### Fixed（round 4 verify：四方一致 FAIL，全部修於同版）
+
+- **輪詢節奏收進 codex-call**：`--poll <id> --wait N`（1–120 s）在工具內部阻塞、每秒重查持鎖者與期限、
+  終態提早返回。round 3 的 `sleep 30; --poll` 在 Claude Code 的 Bash tool 上**被工具層拒絕**（實測
+  `Blocked: sleep 30 …`），agent 只剩高速輪詢、`until` 迴圈（= stall detector 會殺的形狀）或放棄三條路。
+  engine 與兩份 SKILL.md 改用 `--wait 30`，node 測試斷言 prompt 不含 shell `sleep`。
+- **逾時判定依 (domain, code)**：`--max-time` 到期的主要路徑是 URLSession 自己的 timer
+  （`NSURLErrorDomain/-1001`，比 semaphore 兜底早 5 s），worker 原本只認 `codex-call/408`，真逾時被寫成
+  `FAILED -1001` exit 2——與 round 3 的 `hasPrefix("3")` 同型缺陷換了一端。新增隱藏 `--_selftest-classify`
+  讓 bats 打到 catch 分支。
+- **lock 完整性失敗 fail-closed**：三態 `LockState`（unlocked／held／untrusted）；完整性檢查失敗時 poll／abort
+  exit 1、不發訊號、run 原地保留，GC 也跳過（原本被折疊成「未持鎖」→ 判為終止、刪 run、把活的 worker 孤兒化）。
+  契約 §4 改成量得到的邊界：`rename()` 保留 inode，把 victim 持鎖檔搬進 lock 可過三檢查，bats 鎖住這個宣告的邊界。
+- **`.done` claim 年齡改用 ctime**：`rename` 不動目錄 mtime（實測），舊判準會把剛 claim 的 `.done` 當 stale 讓第二個
+  poll 接手；無 `status` 的 `.done` 是清理中斷殘留 → 清掉回 unknown，不再把已回報的 DONE 翻成 FAILED。
+- **readiness 逾時先終止 worker**（SIGTERM→SIGKILL→等退出→再查鎖→才清；殺不死則 run 保留並說明）；driver 退出後
+  多等 2 s 再判死（`p` 追的是 swift driver，exec-into-interpreter 是工具鏈事實不是不變式）；`killHolder` 兩輪收斂。
+- worker 六條提早 `exit(1)` 各補一行原因、`finish()` 寫 status 失敗也 log——契約承諾的 `worker.log` 尾段不再在最需要時是空的；
+  尾段改為**真的從檔尾**有界讀最後 12 行並過 sanitizer（原本 `clampToBudget` 取的是頭）。
+- `hardenBase`：`chmod` 失敗 throw（原本被吞掉，「強制 0700」曾是 best-effort）；先驗上層再建 `runs/`；`~/.cache` 本身的歸屬寫進契約。
+- `rename` 失敗依 errno 分流（EPERM 不再說「concurrent — retry」）；meta 損毀時預設輸出路徑可推導仍清除；`setsid` 失敗記 log。
+- 文件：`rm -f '<path>'` 加引號、三處「agent 不組任何 shell」改為三條命令的誠實描述、兩份 SKILL.md 補 step 3／4；DATA_GUARD 涵蓋
+  codex-call 的 stderr；契約 §2 首句與 handshake 對齊、§6 三列與 prompt-injection 段落分開、`HOME` 只隔離 run base 不隔離憑證。
+
 ### Removed
 
 - `bin/pai-codex-review` 與 `test/pai-codex-review.bats`（從未進 main）。
 
 ### Tests
 
-- 新增 `test/codex-call-detach.bats`（macOS job，**31 個 case**；round 3 後從 12 增至 31）：detach 立即返回、poll RUNNING→DONE、
+- 新增 `test/codex-call-detach.bats`（macOS job，**43 個 case**；round 3 後 12 → 31，round 4 後 → 43，每個新案例先驗 RED）：detach 立即返回、poll RUNNING→DONE、
   `--output` 直寫、abort 殺持鎖者且無 orphan、FAILED、status 缺失 fail-closed、poll 端兜底 TIMEOUT、
   **偽造 id／偽造 run 目錄不對任何程序發訊號**、併發 poll 原子 claim、參數錯誤同步浮現、同步路徑不變。
   走**同一條** detach／lock／poll／abort 路徑，只以 `--_selftest-*` 把 HTTP 換成 sleep + 寫檔。

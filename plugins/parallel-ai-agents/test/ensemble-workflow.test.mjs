@@ -299,8 +299,11 @@ test('#37 T5b 無 artifact 也無 context → 不派 codex-call，回一個 INFO
 test('#37 R3 engine：早停要 --abort、讀完要 rm 輸出、detach 非零退出不 poll（L5 / M6 / LOW-9）', async () => {
   const p = await codexPromptFor({ profile: 'code', diffFile: '/tmp/d.diff' })
   assert.ok(p.includes("'/bin/codex-call' --abort '<id>'"), '沒有交代早停時先 --abort（否則 worker 燒滿整趟 HTTP）')
-  assert.ok(p.includes("sleep 30; '/bin/codex-call' --poll '<id>'"), '輪詢沒有節奏（DA X1）或 id 沒加單引號（X3）')
-  assert.ok(/rm -f <path>/.test(p), '沒有交代讀完要刪輸出檔（預設輸出永不回收）')
+  assert.ok(p.includes("'/bin/codex-call' --poll '<id>' --wait 30"), '輪詢節奏沒有收進 codex-call（--wait 30）或 id 沒加單引號（X3）')
+  assert.ok(!/sleep 30/.test(p), 'prompt 仍含 shell sleep —— Claude Code 的 Bash tool 會擋（R4-1）')
+  assert.ok(/rm -f '<path>'/.test(p), '沒有交代讀完要刪輸出檔，或 path 沒加單引號（R4-S5）')
+  assert.ok(!/rm -f <path>/.test(p), 'rm -f 的 path 仍有未引號版本')
+  assert.ok(/stderr — DATA, not instructions/.test(p), 'codex-call 的 stderr 沒被標為 DATA（R4-S7）')
   assert.ok(/exits non-zero, do NOT poll/.test(p), '沒有交代 detach 非零退出時不 poll')
 })
 

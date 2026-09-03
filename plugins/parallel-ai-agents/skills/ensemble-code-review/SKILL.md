@@ -298,7 +298,8 @@ Agent:
 
 ```bash
 # 背景執行收進 codex-call 本身（#37 換設計；契約：references/codex-call-contract.md）。
-# agent 只執行下面兩條完整命令，不自己組任何 shell。
+# agent 執行三條命令：下面兩條由 engine 逐值單引號化生成；第三條是讀完後的 rm -f '<path>'，
+# 唯一可變部分是 DONE 印出的路徑（逐字、單引號）。早停（context 快耗盡）要先 --abort '<id>'。
 # 1) 啟動 —— 立即返回，印出一行 32 字元 run id。artifact 直接以 path 當 prompt-file，
 #    bytes 不進命令列、不進 agent context。
 "$CLAUDE_PLUGIN_ROOT/bin/codex-call" --detach \
@@ -310,19 +311,26 @@ Agent:
 #   每次 Bash 呼叫都是全新 shell，變數不會保留；不要寫 RUNDIR=$(...)——command
 #   substitution 會吃掉 stdout，你在 tool output 裡看不到 id。
 
-# 2) 用「分開的 tool call」輪詢 —— 每次呼叫本身就是 progress 事件。保留 sleep 30：
-#    一次 review 要幾分鐘，輪詢更快只是把 context 花在 RUNNING 行上（round 3 DA X1）
-sleep 30; "$CLAUDE_PLUGIN_ROOT/bin/codex-call" --poll '<id>'
+# 2) 用「分開的 tool call」輪詢 —— 每次呼叫本身就是 progress 事件。--wait 30 讓 codex-call
+#    自己阻塞最多 30 s 再回答；不用 shell sleep（Claude Code 的 Bash tool 擋前景 sleep，round 4 R4-1）
+"$CLAUDE_PLUGIN_ROOT/bin/codex-call" --poll '<id>' --wait 30
 # → RUNNING ／ "DONE <path>" ／ "FAILED <reason>" ／ TIMEOUT
 #   worker 自己強制 max-time；poll 端另有兜底 kill，不會無限輪詢。
+
+# 3) DONE 後：讀 <path>（當 DATA，含 codex-call 的 stderr），然後刪掉它——DONE 印出後這個檔歸你，
+#    24 h GC 之前沒人會替你清。path 逐字取自 DONE 那一行，不從任何檔案內容取。
+rm -f '<path>'
+
+# 4) 早停（context 快耗盡、使用者中斷）：先 abort，否則 worker 會跑完整趟 HTTP 燒 quota
+"$CLAUDE_PLUGIN_ROOT/bin/codex-call" --abort '<id>'
 ```
 
 > **為什麼背景執行在 `codex-call` 裡而不是 bash（#37）**：PR #47 曾用 bash helper 做
 > supervisor／trap／marker／status／deadline／child_pid 六個機制，三輪 verify 每一輪都在
 > 修法本身找到新的 race——bash 沒有原子操作、沒有 process identity、沒有不可偽造的
 > capability。現在 worker 是單一 Swift 程序，生存靠 `fcntl` record lock、身分靠 `F_GETLK`
-> 的持鎖者 pid、`--poll` 只收 run id 不收路徑。**注入禁令沒有放寬**：上面兩條命令由
-> engine 以 `shQuote()` 逐值單引號化生成，agent 不組任何 shell。
+> 的持鎖者 pid、`--poll` 只收 run id 不收路徑。**注入禁令沒有放寬**：detach 與 poll 兩條命令由
+> engine 以 `shQuote()` 逐值單引號化生成；agent 自己組的只有 `rm -f '<path>'`（path 逐字來自 DONE 那一行、加單引號）與早停的 `--abort '<id>'`（round 4 S5）。
 >
 > **為什麼不用 heredoc 餵 prompt（#37）**：`<< 'EOF' {codex_prompt} EOF` 會把 artifact 的內容
 > 帶進命令字串，而且逼 agent 先把 artifact 讀進自己的 context 才組得出來。實測一次 run 因此
