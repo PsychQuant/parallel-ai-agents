@@ -297,28 +297,31 @@ Agent:
 #### 2b. Codex（背景執行 — 直接 HTTP，繞過 codex CLI subprocess）
 
 ```bash
-# 管線交給 bin/pai-codex-review（單一真相源，比照 bin/pai-build-diff）。
-# agent 只執行下面兩條完整命令，不自己組任何 shell —— 那是 #37 follow-up
-# 兩個 CRITICAL 注入的根因。
-RUNDIR=$("$CLAUDE_PLUGIN_ROOT/bin/pai-codex-review" start \
-  --wrapper "$CLAUDE_PLUGIN_ROOT/bin/codex-call" \
+# 背景執行收進 codex-call 本身（#37 換設計；契約：references/codex-call-contract.md）。
+# agent 只執行下面兩條完整命令，不自己組任何 shell。
+# 1) 啟動 —— 立即返回，印出一行 32 字元 run id。artifact 直接以 path 當 prompt-file，
+#    bytes 不進命令列、不進 agent context。
+"$CLAUDE_PLUGIN_ROOT/bin/codex-call" --detach \
   --model "$CODEX_MODEL" --effort "$CODEX_EFFORT" \
   --service-tier fast --max-time 600 \
   --instructions "你是嚴謹的審閱者，用繁體中文輸出。" \
-  --artifact "$ARTIFACT")     # 只傳 path；bytes 不進命令列也不進 agent context
+  --prompt-file "$ARTIFACT"
+# → 從這一次 tool call 的輸出讀 id，記在你自己的回覆文字裡。
+#   每次 Bash 呼叫都是全新 shell，變數不會保留；不要寫 RUNDIR=$(...)——command
+#   substitution 會吃掉 stdout，你在 tool output 裡看不到 id。
 
-# 用「分開的 tool call」輪詢 —— 每次呼叫本身就是 progress 事件。
-# RUNDIR 記在你自己的回覆文字裡：每次 Bash 呼叫都是全新 shell，變數不會保留。
-"$CLAUDE_PLUGIN_ROOT/bin/pai-codex-review" poll <RUNDIR>
-# → RUNNING ／ "DONE <path>" ／ FAILED ／ TIMEOUT（helper 自帶總期限與 kill，不會無限輪詢）
+# 2) 用「分開的 tool call」輪詢 —— 每次呼叫本身就是 progress 事件
+"$CLAUDE_PLUGIN_ROOT/bin/codex-call" --poll <id>
+# → RUNNING ／ "DONE <path>" ／ "FAILED <reason>" ／ TIMEOUT
+#   worker 自己強制 max-time；poll 端另有兜底 kill，不會無限輪詢。
 ```
 
-> **為什麼管線在腳本裡而不是 prompt 裡（#37 follow-up）**：2.22.1 曾把 mktemp／`cat`／
-> `nohup`／輪詢／清理**手寫進 prompt 字串**讓 LLM 組 shell，結果一次拿到 2 CRITICAL +
-> 4 HIGH：`JSON.stringify()` 被當成 shell escaping（它不是，雙引號內 `$(...)` 照樣執行）、
-> model／effort 完全沒 quote、shell 變數不跨 tool call 導致輪詢根本跑不起來、`nohup`
-> 留 orphan、輪詢無總期限、宣稱只收 regular file 卻不驗證。**全部源於「讓 LLM 寫 shell」**。
-> 現在比照 `bin/pai-build-diff` 收進 `bin/pai-codex-review`（shellcheck + 13 個 bats）。
+> **為什麼背景執行在 `codex-call` 裡而不是 bash（#37）**：PR #47 曾用 bash helper 做
+> supervisor／trap／marker／status／deadline／child_pid 六個機制，三輪 verify 每一輪都在
+> 修法本身找到新的 race——bash 沒有原子操作、沒有 process identity、沒有不可偽造的
+> capability。現在 worker 是單一 Swift 程序，生存靠 `fcntl` record lock、身分靠 `F_GETLK`
+> 的持鎖者 pid、`--poll` 只收 run id 不收路徑。**注入禁令沒有放寬**：上面兩條命令由
+> engine 以 `shQuote()` 逐值單引號化生成，agent 不組任何 shell。
 >
 > **為什麼不用 heredoc 餵 prompt（#37）**：`<< 'EOF' {codex_prompt} EOF` 會把 artifact 的內容
 > 帶進命令字串，而且逼 agent 先把 artifact 讀進自己的 context 才組得出來。實測一次 run 因此

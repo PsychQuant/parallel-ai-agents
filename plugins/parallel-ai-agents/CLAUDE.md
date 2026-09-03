@@ -38,16 +38,6 @@ ensemble（以 code profile 為例）
 - **Codex OAuth token**（`~/.codex/auth.json`）— 由 codex CLI 在首次登入時建立。本 plugin 自帶 wrapper `bin/codex-call` 直接讀這個檔案、走 OAuth refresh + HTTP 直連 `chatgpt.com/backend-api`，不再 spawn `codex exec` subprocess（避免 stdin/stdout pipe 互鎖造成的 hang）
 - Swift toolchain（Xcode CLT 內建；用 `#!/usr/bin/swift` shebang **釘 CLT swift**，第一次跑會 compile cache）。⚠️ 不用 `#!/usr/bin/env swift` —— env 會解到 PATH 上第一個 swift（如 swiftly / Homebrew 安裝的版本），破壞「就用內建 CLT swift」的確定性假設。
 
-## bin/pai-codex-review
-
-codex leg 的**管線單一真相源**（`start` / `poll` / `abort`）。組 prompt 檔、背景跑
-`codex-call`、讓呼叫端以分開的 `poll` 查詢，並保證清理與總期限。
-
-**為什麼存在**：管線一旦手寫進 prompt 讓 LLM 組 shell，就會拿到注入（`JSON.stringify()`
-不是 shell escaping）、跨 tool call 不存在的 shell 變數、orphan 程序、無期限輪詢。
-比照 `bin/pai-build-diff`：**要改管線就改這裡並更新 `test/pai-codex-review.bats`，
-不要在 prompt 裡重寫 inline。**
-
 ## bin/codex-call
 
 Swift script wrapper，取代原本的 `codex exec --full-auto`。設計目的：
@@ -61,6 +51,7 @@ Swift script wrapper，取代原本的 `codex exec --full-auto`。設計目的�
 | service_tier=fast | CLI 接受（內部翻譯成 priority）| **接受 `fast`/`priority`/`flex`**，內部翻譯與 codex CLI 一致 |
 | Cold start | ~50ms (subprocess) | ~1.5s（swift compile + cache）|
 | 依賴 | `codex` CLI 安裝 | macOS 內建 swift（Xcode CLT）|
+| 背景執行 | 無 | **`--detach` / `--poll <id>` / `--abort <id>`**（#37）：worker 是單一程序，生存靠 `fcntl` record lock、身分靠 `F_GETLK` 持鎖者 pid、只收 CSPRNG run id 不收路徑。契約：`references/codex-call-contract.md` |
 
 範例：
 

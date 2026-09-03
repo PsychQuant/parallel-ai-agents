@@ -11,74 +11,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [2.22.3] - 2026-09-02
+## [2.23.0] - 2026-09-03
 
-### Fixed
+### Changed
 
-修掉 PR #47 第一輪 6-AI verify（5/6 ensemble）判定的 **8 個 blocking**，外加一個在修復過程中自己抓到、比那 8 個都嚴重的 bug。
+- **Codex leg 的背景執行收進 `bin/codex-call` 本身（`--detach` / `--poll` / `--abort`），退役 bash helper。**
+  #37 的根因是 codex leg 一通最長 600 s 的阻塞呼叫超過 Workflow runtime 的 180 s
+  no-progress 門檻，且 artifact 兩次經過 agent context。PR #47 先用 bash helper
+  （`bin/pai-codex-review`）做背景執行，**三輪 verify（2.22.1 → 2.22.2 → 2.22.3，皆未進 main）
+  每一輪都在修法本身找到新的 blocking**：supervisor 子 shell、trap 轉殺、marker 檔、status 檔、
+  deadline 檔、child_pid 檔——六個機制各自帶 race。round 2 的結論：這是在用 bash 重新發明
+  process supervision，而 bash 沒有原子操作、沒有 process identity、沒有不可偽造的 capability。
 
-**修復過程中自己抓到的（不在 verify findings 內）：**
+  現在 worker 是**單一 Swift 程序**（`codex-call` 以 `--_worker` 重新執行自己，它就是那通 HTTP
+  呼叫，無 subprocess）：
+  - **生存**：worker 對 `<run>/lock` 持有 `fcntl(F_SETLK)` record lock 直到結束
+  - **身分**：`--poll`／`--abort` 用 `F_GETLK` 取得**此刻**持鎖者的 pid，發訊號只對它——不從任何檔案讀 pid，PID 重用不可能誤殺。（實測 `flock()` 鎖在 macOS 的 `F_GETLK` 下 `l_pid = -1`，故用 `fcntl`）
+  - **capability**：只接受 32 字元 CSPRNG run id，解析到 `~/.cache/codex-call/runs/<id>`（0700）。**不接受路徑**——round 2 證明「接受任意目錄 + 檔案存在性檢查」等於任意 PID kill／`rm -rf` 原語
+  - **原子性**：terminal 清理以 `rename(run, run.done)` claim，併發 poll 只有一個回 terminal
+  - **期限**：worker 自己強制 `--max-time`；poll 端兜底 `max-time + 60 s` 才 kill；meta 損毀 fail-closed
+  - **stdio 不繼承**：`Process` 的 stdio 明確指派——round 1 在 bash 裡自抓的「`$(... start)` 阻塞到 run 結束」在這裡結構上不會發生
+  - 既有同步路徑**逐 byte 不變**（codex-pro producer skills 不受影響）
 
-- **`start` 其實是阻塞的 —— 非阻塞設計被靜默廢掉。** supervisor 子 shell 繼承了 stdout；呼叫端用 `RUNDIR=$(pai-codex-review start ...)`（文件教的寫法）時，command substitution 會**等到所有持有該 pipe 的程序結束**才返回 ⇒ `start` 阻塞到整個 codex run 跑完。呼叫端照樣拿到 RUNDIR，只是要等十分鐘。修法：supervisor 的 stdout/stderr 導向 `supervisor.log`、stdin 導自 `/dev/null`。實測 `start` 從「阻塞整個 run」變成 **0 秒返回**。
+- **`references/codex-call-contract.md` 新增（回應 #35）**：`codex-call` 至此有 documented STABLE
+  surface——旗標、exit code、run id 格式、base 路徑、四種 poll 狀態、威脅模型、穩定性承諾。
+  breaking change 需 major bump + migration note。
 
-**verify 判定的 8 個 blocking：**
+- engine `codexPrompt()` 改為兩條命令（`--detach` / `--poll <id>`），所有值 `shQuote()` 單引號化，
+  agent 不組任何 shell。移除 `codexReviewPath` arg（隨 helper 退役）。
 
-- **F1 旗標缺值 → 無限迴圈掛死。** `shift 2` 在只剩 1 個參數時**失敗且不位移**，而腳本無 `set -e` ⇒ `while` 永久空轉。5 個獨立 reviewer 全部實測到 `timeout` exit 124。**這正是 #37 要消滅的 no-progress 類別，被搬進了取代 prompt 的腳本自己身上。** 修法：`need_value()` 守衛。
-- **F2 bash 3.2 + 省略 `--service-tier` ⇒ `start` exit 0 但 wrapper 從未執行。** 空陣列展開在 bash < 4.4 + `set -u` 是 unbound；錯誤發生在背景子 shell，父 shell 照樣印 RUNDIR、exit 0 ⇒ **跨模型票靜默消失而報告看起來正常**。macOS 內建 `/bin/bash` 就是 3.2.57。修法：`${TIER_ARGS[@]+"${TIER_ARGS[@]}"}`，並新增一個**直接用 `/bin/bash` 執行**的 bats case。
-- **F3 T8 是假綠燈。** 兩條都是否定式斷言；實測把 `shQuote` 換回被判為 CRITICAL 的 `JSON.stringify()`，**T8 仍全過** —— 守 CRITICAL 的測試擋不住那個 CRITICAL 回歸。改為正向比對完整 argv 片段。
-- **F4 T7 的 payload 不含單引號** —— 而 `'` 是 `shQuote()` **唯一**需要處理的字元。實測把 shQuote 換成完全不跳脫的版本，T7 仍全過。改為含 `'` 的 payload + 正向比對完整跳脫序列。
-- **F5 `finish()` 的輸出走可預測 sibling path 且跟隨 symlink → 任意檔案覆寫。** `${RUNDIR}.result.md` 在 world-writable `/tmp` 上是跨使用者覆寫原語。修法：預設改用 `mktemp`（不可預測）＋ 寫入前拒 symlink。
-- **F6 `poll`/`abort` 接受任意 RUNDIR ⇒「任意 PID kill ＋ 任意目錄 `rm -rf`」。** PID 完全未驗證。修法：PID 必須是正整數，且 RUNDIR 必須帶本腳本寫的 `.pai-run` marker。
-- **F7 helper 路徑推導破壞 #20 凍結契約。** `wrapper.replace(/codex-call$/, …)` 對自訂 wrapper 退化成 `reviewer === wrapper` ⇒ 拿 consumer 的 binary 執行我們的 `start` 子命令。修法：只在 basename **恰好**是 `codex-call` 時推導，否則要求顯式 `codexReviewPath`，取不到就 **fail-closed** 回 INFO finding，不猜路徑。
-- **F8 不檢查 wrapper 的 exit status。** 只看輸出非空 ⇒ 寫出半截錯誤再非零退出會被當成 `DONE`。修法：supervisor 記錄 `$?`，`DONE` 同時要求 status=0 與非空輸出。
+### Removed
 
-**一併修掉的 MEDIUM：**
+- `bin/pai-codex-review` 與 `test/pai-codex-review.bats`（從未進 main）。
 
-- **F14** 輸出搬移失敗不再被 `|| true` 吞掉（回 FAILED 並保留 RUNDIR 供診斷）
-- **F15** `deadline` 損毀 → **fail-closed**（kill + TIMEOUT）。舊版讓 `[` 報錯後落到 `RUNNING`，等於總期限被靜默停用
-- **F19** `--max-time` 也走 `shQuote()`，兌現「所有值皆單引號化」的宣稱
-- **R5** `codexReviewPath` 補進 args 契約 docblock
-- **R7** academic SKILL.md 的 `--max-time` 改回 **900**（引擎 `codexMaxTime: 900`）＋ 學術專用 instructions。上一版誤植成 600 與通用字串，讓**同一份文件自相矛盾**（214 行寫 900、488 行寫 600）
+### Tests
 
-### Notes
+- 新增 `test/codex-call-detach.bats`（macOS job，12 個 case）：detach 立即返回、poll RUNNING→DONE、
+  `--output` 直寫、abort 殺持鎖者且無 orphan、FAILED、status 缺失 fail-closed、poll 端兜底 TIMEOUT、
+  **偽造 id／偽造 run 目錄不對任何程序發訊號**、併發 poll 原子 claim、參數錯誤同步浮現、同步路徑不變。
+  走**同一條** detach／lock／poll／abort 路徑，只以 `--_selftest-*` 把 HTTP 換成 sleep + 寫檔。
+- `test/ensemble-workflow.test.mjs` 改為新契約（28 個）；補 `--instructions` 與 wrapper 路徑的
+  `shQuote()` 正向斷言（round 2 指出零覆蓋）。
 
-- **測試也修了兩個假綠燈**：舊的 orphan / abort 測試從未真的驗到「殺掉一個還在跑的程序」（`start` 阻塞讓被測程序在斷言前就結束了）；F15 舊版靠 stderr 混進 `$output` 而意外通過。
-- **仍在射程外（誠實邊界）**：artifact 的 symlink 拒絕只守路徑最後一段，parent-dir symlink 與 TOCTOU 需要「一次安全 open + fstat」才能根治；`abort` 目前仍無呼叫端（engine 的 `.catch()` 只記 `ok:false`）。兩者列為後續。
+### Known limitations（誠實邊界）
 
-## [2.22.2] - 2026-09-01
-
-### Fixed
-
-- **codex leg 的管線收進 `bin/pai-codex-review`，修掉 2.22.1 引入的 2 個 CRITICAL 與 4 個 HIGH。**
-  2.22.1 為了讓 artifact 不經 agent context，把 mktemp／`cat`／`nohup`／輪詢／清理
-  **手寫進 prompt 字串**讓 LLM 組 shell。一次 cross-model review 抓到六個問題，全部源於
-  這個決定：
-
-  1. **CRITICAL** — `JSON.stringify(artifactPath)` 被當成 shell escaping。它是 JSON
-     表示法，**不是** POSIX quoting，而 shell 的雙引號內 `$(...)` 照樣執行 ⇒
-     `/tmp/$(touch /tmp/pwned)` 會被執行。
-  2. **CRITICAL** — `--model ${codexModel} --effort ${codexEffort}` 完全沒 quote，
-     caller 可控值可直接注入。
-  3. **HIGH** — `$INSTR_FILE` / `$PID_FILE` 等從未初始化，且 **shell 變數不跨 tool call**
-     ⇒ 「分開 tool call 輪詢」的設計根本跑不起來。
-  4. **HIGH** — `nohup` 讓程序脫離流程，取消／重試留下 orphan。
-  5. **HIGH** — 輪詢沒有總期限，可能無限產生 progress 而**永不觸發 stall**（比原本更糟）。
-  6. **HIGH** — 宣稱只收 regular file 卻不驗證，破壞既有目錄／無效路徑行為。
-
-  修法比照 `bin/pai-build-diff` 的單一真相源戒律：管線收進 `bin/pai-codex-review`
-  （`start` / `poll` / `abort` 三個子命令，狀態存 run dir 的**檔案**而非 shell 變數，
-  自帶總期限與 kill、shellcheck 乾淨、13 個 bats）。JS 端只發一條**參數已 POSIX 單引號化**
-  的命令；`shQuote()` 取代 `JSON.stringify()`。
-
-  `ensemble-workflow.test.mjs` 由 6 個斷言增至 9 個：新增 T7（path 單引號化、`$(...)` 不展開）、
-  T8（model／effort 已 quote）、T9（管線必須委派給 helper、prompt 內不得出現手寫 shell）。
-  T2／T3 改寫為結構性斷言 —— 舊版靠「請勿 echo/printf/heredoc」的**文字禁令**，那守不住
-  新寫的那行 shell 本身；現在 agent 沒有任何需要它組裝的地方。
-
-### Notes
-
-- **這批問題是被跳過的 verify 關卡該抓的。** 2.22.1 在 PR checklist 上留著未勾的
-  `- [ ] Verify` 就 merge 了；六個 findings 是事後跑 cross-model review 才浮出來的。
+- **codex-pro 的 vendored 快照仍是 2.22.1 之前的 `codex-call`**，須在該 repo 另行 re-vendor
+  （其 openspec spec 規定 byte-for-byte snapshot；觸及 `provenance.json` ×3、`THIRD_PARTY_NOTICES` ×2、
+  `tests/codex-runtime.sh` pinned 值、`codex-pro-call` 的 `EXPECTED_SHA256`）。
+- 同一 uid 的攻擊者在威脅模型之外（base 是 0700，同 uid 本來就能 kill 你的任何程序）。
+- Claude lens 的同類 stall（#44）、目錄型 artifact（#45）、`xhigh` 治理（#43）、
+  `response.completed` 的 tier／usage 可觀測性——皆不在本版。
+- Swift script 每次啟動約 1.5 s compile cache；poll 是分開 tool call、間隔數十秒，屬雜訊。
 
 ## [2.22.1] - 2026-09-01
 

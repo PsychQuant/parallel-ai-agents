@@ -17,6 +17,7 @@
 import Foundation
 #if canImport(Darwin)
 import Darwin
+import Security   // SecRandomCopyBytes — CSPRNG run ids for --detach (#37)
 #endif
 
 // MARK: - Configuration
@@ -439,9 +440,215 @@ func streamCodex(prompt: String, outputFile: String, model: String, effort: Stri
     log("wrote \(collector.accumulated.count) chars to \(outputFile)")
 }
 
+// MARK: - Background mode (#37): --detach / --_worker / --poll / --abort
+//
+// Why this lives HERE and not in a bash helper: PR #47 spent three rounds trying to
+// supervise this process from bash (supervisor subshell, trap, marker file, status
+// file, deadline file, child_pid file) and every round's verify found a new race in
+// the previous round's fix. bash has no atomic ops, no process identity and no
+// unforgeable capability. This process has all three:
+//   identity   — the worker holds a fcntl(F_SETLK) record lock on <run>/lock for its
+//                whole life; F_GETLK reports the pid holding it RIGHT NOW. (flock()
+//                locks report l_pid = -1 on BSD/macOS — measured — which is the only
+//                reason fcntl is used instead.)
+//   capability — --poll/--abort accept a 32-char CSPRNG run id, resolved under
+//                $HOME/.cache/codex-call/runs (0700). Never a path.
+//   atomicity  — terminal cleanup is claimed with rename(run, run.done).
+// Contract: references/codex-call-contract.md (#35).
+
+let RUN_ID_ALPHABET = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789")
+
+func runsBase() -> String {
+    let home = ProcessInfo.processInfo.environment["HOME"] ?? NSHomeDirectory()
+    return home + "/.cache/codex-call/runs"
+}
+
+func validRunId(_ s: String) -> Bool {
+    s.count == 32 && s.allSatisfy { RUN_ID_ALPHABET.contains($0) }
+}
+
+func newRunId() -> String {
+    var bytes = [UInt8](repeating: 0, count: 32)
+    guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess
+    else { die("CSPRNG unavailable") }
+    // 256 % 62 == 8 → a slight modulo bias; irrelevant for an unguessable id, noted for honesty.
+    return String(bytes.map { RUN_ID_ALPHABET[Int($0) % RUN_ID_ALPHABET.count] })
+}
+
+func runDir(_ id: String) -> String { runsBase() + "/" + id }
+
+func ensureDir(_ path: String) throws {
+    try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true,
+                                            attributes: [.posixPermissions: 0o700])
+}
+
+func readMeta(_ dir: String) -> [String: Any]? {
+    guard let d = FileManager.default.contents(atPath: dir + "/meta.json"),
+          let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return nil }
+    return j
+}
+
+func writeText(_ s: String, to path: String) throws {
+    try s.write(toFile: path, atomically: true, encoding: .utf8)
+}
+
+/// pid currently holding the record lock on <dir>/lock; nil if unlocked or no lock file.
+/// The prober holds no lock of its own, so closing its fd is safe.
+func lockHolder(_ dir: String) -> pid_t? {
+    let fd = open(dir + "/lock", O_RDWR)
+    guard fd >= 0 else { return nil }
+    defer { close(fd) }
+    var fl = flock()
+    fl.l_type = Int16(F_WRLCK); fl.l_whence = Int16(SEEK_SET); fl.l_start = 0; fl.l_len = 0
+    guard fcntl(fd, F_GETLK, &fl) == 0, fl.l_type != Int16(F_UNLCK) else { return nil }
+    return fl.l_pid
+}
+
+func removeRun(_ dir: String) { try? FileManager.default.removeItem(atPath: dir) }
+
+/// Validates the id and that its run directory exists. Never touches anything else.
+func resolveRun(_ id: String) -> String {
+    guard validRunId(id) else { die("invalid run id (expected 32 alphanumerics): \(id)") }
+    let dir = runDir(id)
+    var isDir: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: dir, isDirectory: &isDir), isDir.boolValue
+    else { die("unknown run id: \(id)") }
+    return dir
+}
+
+/// SIGTERM the lock holder, wait up to `graceSeconds`, then SIGKILL if it still holds the lock.
+/// Every signal targets the pid F_GETLK reports at that instant — never a pid read from a file.
+func killHolder(_ dir: String, graceSeconds: Int = 2) {
+    guard let pid = lockHolder(dir) else { return }
+    kill(pid, SIGTERM)
+    for _ in 0..<(graceSeconds * 4) {
+        usleep(250_000)
+        if lockHolder(dir) == nil { return }
+    }
+    if let still = lockHolder(dir) { kill(still, SIGKILL) }
+}
+
+// --- worker: hidden, spawned by --detach. Single process; it IS the HTTP call. ---
+func runWorker(id: String) -> Never {
+    guard validRunId(id) else { exit(1) }
+    let dir = runDir(id)
+    guard FileManager.default.fileExists(atPath: dir) else { exit(1) }
+    let fd = open(dir + "/lock", O_RDWR | O_CREAT, 0o600)
+    guard fd >= 0 else { exit(1) }
+    var fl = flock()
+    fl.l_type = Int16(F_WRLCK); fl.l_whence = Int16(SEEK_SET); fl.l_start = 0; fl.l_len = 0
+    guard fcntl(fd, F_SETLK, &fl) == 0 else { exit(1) }   // another worker holds it → refuse
+    // `fd` is intentionally never closed: fcntl locks are released when ANY fd to the
+    // file is closed by this process. Do not open <run>/lock again in this process.
+    guard let meta = readMeta(dir), let output = meta["output"] as? String else { exit(1) }
+    func finish(_ status: String) -> Never {
+        try? writeText(status + "\n", to: dir + "/status")
+        exit(0)
+    }
+    if let s = meta["selftest_sleep"] as? Int {   // test hook: same path, no HTTP
+        sleep(UInt32(max(0, s)))
+        if meta["selftest_fail"] as? Bool == true { finish("9 selftest failure") }
+        do { try writeText("SELFTEST\n", to: output) } catch { finish("1 cannot write output") }
+        finish("0")
+    }
+    guard let prompt = try? String(contentsOfFile: dir + "/prompt.txt", encoding: .utf8)
+    else { finish("1 prompt missing") }
+    do {
+        try streamCodex(prompt: prompt, outputFile: output,
+                        model: meta["model"] as? String ?? "gpt-5.6-sol",
+                        effort: meta["effort"] as? String ?? "xhigh",
+                        serviceTier: meta["service_tier"] as? String ?? "",
+                        maxTime: meta["max_time"] as? Int ?? 600,
+                        instructions: meta["instructions"] as? String ?? "")
+        finish("0")
+    } catch let e as NSError {
+        let msg = clampToBudget(sanitizeBackendText(e.localizedDescription), maxBytes: 300, maxLines: 3)
+        finish(e.code == 408 ? "3 \(msg)" : "\(e.code) \(msg)")   // 3 = timeout, per contract
+    }
+}
+
+func doPoll(id: String) -> Never {
+    let dir = resolveRun(id)
+    let meta = readMeta(dir)
+    if let holder = lockHolder(dir) {
+        // Still running. Bounded by max_time + grace; corrupt meta ⇒ fail-closed (kill), never "RUNNING forever".
+        let now = Int(Date().timeIntervalSince1970)
+        guard let m = meta, let started = m["started_at"] as? Int, let maxT = m["max_time"] as? Int else {
+            kill(holder, SIGKILL); usleep(200_000); removeRun(dir); print("TIMEOUT"); exit(3)
+        }
+        if now - started > maxT + (m["grace"] as? Int ?? 60) {
+            kill(holder, SIGKILL); usleep(200_000); removeRun(dir); print("TIMEOUT"); exit(3)
+        }
+        print("RUNNING"); exit(0)
+    }
+    // Not running: claim the terminal state atomically so two concurrent polls can't both clean up.
+    let done = dir + ".done"
+    guard rename(dir, done) == 0 else { die("run \(id) already claimed by a concurrent poll") }
+    let status = (try? String(contentsOfFile: done + "/status", encoding: .utf8))?
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    let output = meta?["output"] as? String
+    removeRun(done)
+    if status == "0", let out = output,
+       let size = (try? FileManager.default.attributesOfItem(atPath: out))?[.size] as? Int, size > 0 {
+        print("DONE \(out)"); exit(0)
+    }
+    if let s = status, s.hasPrefix("3") { print("TIMEOUT"); exit(3) }
+    print("FAILED \(status ?? "status missing")"); exit(2)   // missing status ⇒ fail-closed
+}
+
+func doAbort(id: String) -> Never {
+    let dir = resolveRun(id)
+    killHolder(dir)
+    removeRun(dir)
+    print("ABORTED"); exit(0)
+}
+
+func doDetach(_ a: Args, prompt: String) -> Never {
+    let id = newRunId()
+    let dir = runDir(id)
+    do {
+        try ensureDir(runsBase())
+        try ensureDir(dir)
+        let output = a.output ?? runsBase() + "/" + id + ".out.md"
+        try writeText(prompt, to: dir + "/prompt.txt")
+        var meta: [String: Any] = [
+            "output": output, "max_time": a.maxTime,
+            "started_at": Int(Date().timeIntervalSince1970),
+            "grace": a.selftestGrace ?? 60,
+            "model": a.model, "effort": a.effort, "service_tier": a.serviceTier,
+            "instructions": a.instructions,
+        ]
+        if let s = a.selftestSleep { meta["selftest_sleep"] = s; meta["selftest_fail"] = a.selftestFail }
+        try JSONSerialization.data(withJSONObject: meta).write(to: URL(fileURLWithPath: dir + "/meta.json"))
+        // stdio MUST NOT be inherited: a caller doing `$(codex-call --detach …)` would
+        // otherwise block until the worker exits — the exact bug round 1 found in the bash helper.
+        FileManager.default.createFile(atPath: dir + "/worker.log", contents: nil,
+                                       attributes: [.posixPermissions: 0o600])
+        let logFH = FileHandle(forWritingAtPath: dir + "/worker.log") ?? FileHandle.nullDevice
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/swift")
+        p.arguments = [CommandLine.arguments[0], "--_worker", id]
+        p.standardOutput = logFH
+        p.standardError  = logFH
+        p.standardInput  = FileHandle.nullDevice
+        try p.run()   // not waited on — the worker outlives us by design
+    } catch {
+        removeRun(dir)
+        die("detach failed: \(error.localizedDescription)")
+    }
+    print(id); exit(0)
+}
+
 // MARK: - Argument parsing
 
 struct Args {
+    var detach = false
+    var workerId: String?          // hidden — spawned by --detach
+    var pollId: String?
+    var abortId: String?
+    var selftestSleep: Int?        // hidden test hooks — see contract §7
+    var selftestFail = false
+    var selftestGrace: Int?
     var output: String?
     var model: String = "gpt-5.6-sol"  // governance SNAPSHOT (#23) — authoritative: codex-pro references/defaults.json; callers SHOULD pass --model
     var effort: String = "xhigh"
@@ -475,6 +682,13 @@ func parseArgs() -> Args {
         // HTTP. Exists because CODEX_URL is a hardcoded constant with no injection
         // point, so the extraction chain is otherwise untestable from bats.
         case "--selftest-error-extract": a.selftestErrorExtract = next()
+        case "--detach": a.detach = true
+        case "--_worker": a.workerId = next()
+        case "--poll": a.pollId = next()
+        case "--abort": a.abortId = next()
+        case "--_selftest-sleep": a.selftestSleep = Int(next()) ?? 0
+        case "--_selftest-fail": a.selftestFail = true
+        case "--_selftest-grace": a.selftestGrace = Int(next()) ?? 60
         case "--help", "-h":
             print("""
             codex-call — direct HTTP wrapper for chatgpt.com/backend-api
@@ -484,6 +698,12 @@ func parseArgs() -> Args {
                          [--service-tier ""] [--max-time 600]
                          [--instructions TEXT]
                          [--prompt-file FILE | PROMPT]
+
+            Background mode (#37 — contract: references/codex-call-contract.md):
+              codex-call --detach [--output FILE] [same flags] [--prompt-file FILE | PROMPT]
+                         → prints a 32-char run id and returns immediately
+              codex-call --poll  <id>   → RUNNING | DONE <path> | FAILED <reason> | TIMEOUT
+              codex-call --abort <id>   → ABORTED
 
             If no PROMPT and no --prompt-file is given, reads prompt from stdin.
 
@@ -512,7 +732,10 @@ if let raw = a.selftestErrorExtract {
     exit(0)
 }
 
-guard let output = a.output else { die("--output is required") }
+// Background-mode dispatch (#37). These need no --output and no prompt of their own.
+if let id = a.workerId { runWorker(id: id) }
+if let id = a.pollId   { doPoll(id: id) }
+if let id = a.abortId  { doAbort(id: id) }
 
 let prompt: String
 if let pf = a.promptFile {
@@ -527,6 +750,10 @@ if let pf = a.promptFile {
 if prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
     die("empty prompt")
 }
+
+if a.detach { doDetach(a, prompt: prompt) }   // validated synchronously above; never returns
+
+guard let output = a.output else { die("--output is required") }
 
 do {
     try streamCodex(prompt: prompt, outputFile: output, model: a.model, effort: a.effort,
