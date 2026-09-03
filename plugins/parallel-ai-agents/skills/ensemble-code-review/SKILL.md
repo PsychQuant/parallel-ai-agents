@@ -310,8 +310,9 @@ Agent:
 #   每次 Bash 呼叫都是全新 shell，變數不會保留；不要寫 RUNDIR=$(...)——command
 #   substitution 會吃掉 stdout，你在 tool output 裡看不到 id。
 
-# 2) 用「分開的 tool call」輪詢 —— 每次呼叫本身就是 progress 事件
-"$CLAUDE_PLUGIN_ROOT/bin/codex-call" --poll <id>
+# 2) 用「分開的 tool call」輪詢 —— 每次呼叫本身就是 progress 事件。保留 sleep 30：
+#    一次 review 要幾分鐘，輪詢更快只是把 context 花在 RUNNING 行上（round 3 DA X1）
+sleep 30; "$CLAUDE_PLUGIN_ROOT/bin/codex-call" --poll '<id>'
 # → RUNNING ／ "DONE <path>" ／ "FAILED <reason>" ／ TIMEOUT
 #   worker 自己強制 max-time；poll 端另有兜底 kill，不會無限輪詢。
 ```

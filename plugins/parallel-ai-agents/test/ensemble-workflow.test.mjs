@@ -281,11 +281,27 @@ test('#37 T4 Claude lens 仍被要求讀 artifact（過度編輯的回歸護欄�
     'Claude lens 的讀取指示被誤刪 —— 它們必須讀 artifact 才能審（那一半見 #44）')
 })
 
-test('#37 T5 無 artifact 時不帶 --prompt-file，改給一個 quoted positional prompt', async () => {
-  const p = await codexPromptFor({ profile: 'code' })
+test('#37 T5 無 artifact 但有 context 時：context 本身成為 quoted positional prompt（R3-L8）', async () => {
+  const p = await codexPromptFor({ profile: 'code', contextBlock: 'ctx-only 文字 with \'quote\'' })
   assert.ok(!p.includes('--prompt-file'), '沒有 artifact 卻仍傳 --prompt-file')
   assert.ok(p.includes('--detach'), '仍應走 --detach')
-  assert.ok(/'No artifact[^']*'/.test(p), '無 artifact 時應給 quoted positional prompt，否則 codex-call 會 die("empty prompt")')
+  assert.ok(p.includes("ctx-only 文字 with '\\''quote'\\''"), 'context 沒有被當成 positional prompt 交給 codex-call（或沒經 shQuote）')
+  assert.ok(!/review only the context block you were given/i.test(p), '仍在叫 Codex 審一個它拿不到的 context block')
+})
+
+test('#37 T5b 無 artifact 也無 context → 不派 codex-call，回一個 INFO skipped finding（R3-L8）', async () => {
+  const p = await codexPromptFor({ profile: 'code' })
+  assert.ok(!p.includes('--detach'), '沒有東西可審卻仍要跑 codex-call')
+  assert.ok(/Do NOT run codex-call/.test(p), '沒有明說不要跑')
+  assert.ok(/cross-model pass skipped/.test(p), '沒有指定 skipped 的 INFO finding')
+})
+
+test('#37 R3 engine：早停要 --abort、讀完要 rm 輸出、detach 非零退出不 poll（L5 / M6 / LOW-9）', async () => {
+  const p = await codexPromptFor({ profile: 'code', diffFile: '/tmp/d.diff' })
+  assert.ok(p.includes("'/bin/codex-call' --abort '<id>'"), '沒有交代早停時先 --abort（否則 worker 燒滿整趟 HTTP）')
+  assert.ok(p.includes("sleep 30; '/bin/codex-call' --poll '<id>'"), '輪詢沒有節奏（DA X1）或 id 沒加單引號（X3）')
+  assert.ok(/rm -f <path>/.test(p), '沒有交代讀完要刪輸出檔（預設輸出永不回收）')
+  assert.ok(/exits non-zero, do NOT poll/.test(p), '沒有交代 detach 非零退出時不 poll')
 })
 
 test('#37 T6 用 --poll <id> 分開 tool call 輪詢，且明說 id 來自 tool output、shell 變數不跨呼叫', async () => {
