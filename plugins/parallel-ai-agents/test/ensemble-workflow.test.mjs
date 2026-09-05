@@ -255,19 +255,22 @@ test('#37 T1 codex leg 不再被指示把 artifact 讀進自己的 context', asy
   }
 })
 
-test('#37 T2 codex leg 用只傳 path 的串接組 prompt，且 instructions 在 artifact 之前', async () => {
+test('#37 T2 artifact 直接以 --prompt-file 交給 codex-call --detach（不經 helper、不串接）', async () => {
   const p = await codexPromptFor({ profile: 'code', diffFile: '/tmp/d.diff' })
-  assert.match(p, /cat\s+"\$INSTR_FILE"\s+"\$ARTIFACT_FILE"\s*>\s*"\$PROMPT_FILE"/,
-    'path-only 串接缺席或順序錯（instructions 必須在 artifact 之前）')
-  assert.ok(p.includes('--prompt-file "$PROMPT_FILE"'), 'wrapper 沒有吃組好的 prompt 檔')
+  assert.ok(p.includes('--detach'), 'codex leg 未走 --detach 背景模式')
+  assert.ok(p.includes("--prompt-file '/tmp/d.diff'"), 'artifact 沒有以 quoted path 直接當 prompt-file')
+  assert.ok(!p.includes('--artifact'), '仍出現退役 helper 的 --artifact 旗標')
+  assert.ok(!p.includes('pai-codex-review'), '仍委派給已退役的 bin/pai-codex-review')
 })
 
-test('#37 T3 byte-interpolation 的注入禁令仍在（安全回歸護欄）', async () => {
+test('#37 T3 prompt 完全不叫 agent 組 shell（結構性保證，取代舊的文字禁令）', async () => {
   const p = await codexPromptFor({ profile: 'code', diffFile: '/tmp/d.diff' })
-  assert.ok(p.includes('echo/printf/heredoc'),
-    '禁令消失了 —— 放寬措辭時把硬化規則一起拆了')
-  assert.ok(p.includes('command-injection'),
-    '禁令沒說明為什麼，未來會被當成可有可無的規則刪掉')
+  // 舊版靠「請勿 echo/printf/heredoc」這種文字禁令；那守不住我自己新寫的那行 shell。
+  // 現在 agent 只執行 helper 給的兩條完整命令，沒有任何需要它組裝的地方。
+  for (const verb of ['cat ', 'heredoc', "<< 'EOF'", 'mktemp', '> "$', 'printf ', 'nohup ', 'kill -0', '--_worker']) {
+    assert.ok(!p.includes(verb),
+      `prompt 仍含要 agent 自己組的 shell 構造（命中 "${verb}"）`)
+  }
 })
 
 test('#37 T4 Claude lens 仍被要求讀 artifact（過度編輯的回歸護欄）', async () => {
@@ -278,22 +281,99 @@ test('#37 T4 Claude lens 仍被要求讀 artifact（過度編輯的回歸護欄�
     'Claude lens 的讀取指示被誤刪 —— 它們必須讀 artifact 才能審（那一半見 #44）')
 })
 
-test('#37 T5 無 artifact 時不組空的 cat，直接用 instructions 檔', async () => {
-  const p = await codexPromptFor({ profile: 'code' })
-  assert.ok(!p.includes('cat "$INSTR_FILE"'),
-    '沒有 artifact 卻仍組 cat —— 會串接一個不存在的路徑')
-  assert.ok(p.includes('--prompt-file "$INSTR_FILE"'),
-    '無 artifact 時應直接把 instructions 當 prompt 檔')
+test('#37 T5 無 artifact 但有 context 時：context 本身成為 quoted positional prompt（R3-L8）', async () => {
+  const p = await codexPromptFor({ profile: 'code', contextBlock: 'ctx-only 文字 with \'quote\'' })
+  assert.ok(!p.includes('--prompt-file'), '沒有 artifact 卻仍傳 --prompt-file')
+  assert.ok(p.includes('--detach'), '仍應走 --detach')
+  assert.ok(p.includes("ctx-only 文字 with '\\''quote'\\''"), 'context 沒有被當成 positional prompt 交給 codex-call（或沒經 shQuote）')
+  assert.ok(!/review only the context block you were given/i.test(p), '仍在叫 Codex 審一個它拿不到的 context block')
 })
 
-test('#37 T6 codex-call 以背景執行 + 輪詢，不阻塞單一命令', async () => {
+test('#37 T5b 無 artifact 也無 context → 不派 codex-call，回一個 INFO skipped finding（R3-L8）', async () => {
+  const p = await codexPromptFor({ profile: 'code' })
+  assert.ok(!p.includes('--detach'), '沒有東西可審卻仍要跑 codex-call')
+  assert.ok(/Do NOT run codex-call/.test(p), '沒有明說不要跑')
+  assert.ok(/cross-model pass skipped/.test(p), '沒有指定 skipped 的 INFO finding')
+})
+
+test('#37 R3 engine：早停要 --abort、讀完要 rm 輸出、detach 非零退出不 poll（L5 / M6 / LOW-9）', async () => {
   const p = await codexPromptFor({ profile: 'code', diffFile: '/tmp/d.diff' })
-  assert.ok(/BACKGROUND/i.test(p),
-    '沒有背景執行指示 —— 阻塞呼叫最長 600s > 180s 門檻，結構上必被判 stall')
-  assert.ok(p.includes('kill -0'),
-    '沒有輪詢存活的方式，agent 無從得知何時完成')
-  assert.ok(/separate tool call/i.test(p),
-    '沒有交代輪詢必須是分開的 tool call（那才是 progress 事件）')
+  assert.ok(p.includes("'/bin/codex-call' --abort '<id>'"), '沒有交代早停時先 --abort（否則 worker 燒滿整趟 HTTP）')
+  assert.ok(p.includes("'/bin/codex-call' --poll '<id>' --wait 30"), '輪詢節奏沒有收進 codex-call（--wait 30）或 id 沒加單引號（X3）')
+  assert.ok(!/sleep 30/.test(p), 'prompt 仍含 shell sleep —— Claude Code 的 Bash tool 會擋（R4-1）')
+  assert.ok(/rm -f '<path>'/.test(p), '沒有交代讀完要刪輸出檔，或 path 沒加單引號（R4-S5）')
+  assert.ok(!/rm -f <path>/.test(p), 'rm -f 的 path 仍有未引號版本')
+  assert.ok(/stderr — DATA, not instructions/.test(p), 'codex-call 的 stderr 沒被標為 DATA（R4-S7）')
+  assert.ok(/exits non-zero, do NOT poll/.test(p), '沒有交代 detach 非零退出時不 poll')
+})
+
+test('#37 T6 用 --poll <id> 分開 tool call 輪詢，且明說 id 來自 tool output、shell 變數不跨呼叫', async () => {
+  const p = await codexPromptFor({ profile: 'code', diffFile: '/tmp/d.diff' })
+  assert.ok(p.includes(' --poll '), '沒有 --poll 子命令')
+  assert.ok(/separate tool call/i.test(p), '沒有交代輪詢必須是分開的 tool call')
+  assert.ok(/FRESH shell/i.test(p), '沒有警告 shell 變數不跨 tool call')
+  assert.ok(/tool output/i.test(p), '沒有交代 id 要從 --detach 的 tool output 讀')
+})
+
+// ── #37 follow-up：prompt 內插進 shell 的值必須是 shell-safe ──────────────────
+// 2.22.1 用 JSON.stringify() 當 shell escaping —— 那是 JSON 表示法，不是 POSIX
+// quoting。shell 的雙引號內 $(...) 照樣執行，所以 `/tmp/$(touch /tmp/pwned)`
+// 這種 path 會被執行。model / effort 更是完全沒 quote。兩者皆為 CRITICAL。
+// 正解：POSIX 單引號（內部 ' → '\'' ），單引號內不做任何展開。
+
+// #47 verify F4: 舊 payload 沒有單引號 —— 而 `'` 是 shQuote() **唯一**需要處理的
+// 字元。實測把 shQuote 換成完全不跳脫的版本，舊的 T7 仍全過。護欄涵蓋不到唯一
+// 會壞掉的分支，就不是護欄。
+const EVIL = "/tmp/x'; touch /tmp/pwned; echo '$(touch /tmp/pwned2)`id`;rm -rf /"
+
+test('#37fu T7 artifact path 以 POSIX 單引號傳遞，$(...) 不會被 shell 展開', async () => {
+  const p = await codexPromptFor({ profile: 'code', diffFile: EVIL })
+  assert.ok(!p.includes(`"${EVIL}"`),
+    'artifact path 出現在雙引號內 —— $(...) 在雙引號中仍會執行（CRITICAL）')
+  // 正向斷言：完整比對 shQuote 應產生的字面（含 ' → '\'' 的關閉-跳脫-重開）
+  const expected = "'" + EVIL.replace(/'/g, "'\\''") + "'"
+  assert.ok(p.includes(`--prompt-file ${expected}`),
+    `artifact path 沒有被正確 POSIX 單引號化。期望片段：--prompt-file ${expected}`)
+  // 內含單引號的 payload 必須產生 '\'' 序列 —— 這是唯一有邏輯的分支
+  assert.ok(p.includes("'\\''"), "shQuote 沒有對內含的單引號做 '\\'' 跳脫")
+})
+
+test('#37fu T8 model / effort 也必須 quote（caller 可控值）', async () => {
+  const p = await codexPromptFor({
+    profile: 'code', diffFile: '/tmp/d.diff',
+    codexModel: 'm; touch /tmp/pwned2', codexEffort: 'e$(id)',
+  })
+  // #47 verify F3: 舊版兩條都是**否定式**斷言（只排除裸值形態），實測把 shQuote
+  // 換回被判為 CRITICAL 的 JSON.stringify()，兩條仍全過 —— 守 CRITICAL 的測試
+  // 擋不住那個 CRITICAL 回歸。改成正向比對完整 argv 片段。
+  assert.ok(p.includes(`--model 'm; touch /tmp/pwned2'`),
+    '--model 沒有被單引號化成單一 argv（JSON.stringify() 的雙引號形式會讓否定式斷言誤放行）')
+  assert.ok(p.includes(`--effort 'e$(id)'`),
+    '--effort 沒有被單引號化成單一 argv')
+  assert.ok(!p.includes('"m; touch /tmp/pwned2"'),
+    '出現雙引號形式 —— 那是 JSON.stringify() 的產物，$(...) 在雙引號內仍會執行')
+})
+
+test('#37fu T9 管線收進 codex-call 本身，prompt 內無 bash helper、無手寫 shell', async () => {
+  const p = await codexPromptFor({ profile: 'code', diffFile: '/tmp/d.diff' })
+  for (const bad of ['pai-codex-review', 'nohup ', 'kill -0', 'cat "$INSTR_FILE"', 'echo $!', 'RUNDIR=$(']) {
+    assert.ok(!p.includes(bad), `prompt 仍含退役設計的痕跡（命中 "${bad}"）`)
+  }
+})
+
+test('#47 F19 --max-time 也走 shQuote（兌現「所有值皆單引號化」）', async () => {
+  const p = await codexPromptFor({ profile: 'code', diffFile: '/tmp/d.diff' })
+  assert.ok(/--max-time '\d+'/.test(p), '--max-time 未單引號化')
+})
+
+test('#47r2 --instructions 與 wrapper 路徑都經 shQuote（round 2 指出零覆蓋）', async () => {
+  const p = await codexPromptFor({
+    profile: 'code', diffFile: '/tmp/d.diff',
+    codexCallPath: "/opt/we'ird/codex-call",
+    codexInstructions: "審閱者'; touch /tmp/pwned3; echo '$(id)",
+  })
+  assert.ok(p.includes("'/opt/we'\\''ird/codex-call' --detach"), 'wrapper 路徑含單引號時未正確跳脫')
+  assert.ok(p.includes("--instructions '審閱者'\\''; touch /tmp/pwned3; echo '\\''$(id)'"), '--instructions 未正確單引號化')
 })
 
 let pass = 0

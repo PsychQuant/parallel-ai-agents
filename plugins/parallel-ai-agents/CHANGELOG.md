@@ -11,6 +11,138 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.23.0] - 2026-09-03
+
+### Changed
+
+- **Codex leg 的背景執行收進 `bin/codex-call` 本身（`--detach` / `--poll` / `--abort`），退役 bash helper。**
+  #37 的根因是 codex leg 一通最長 600 s 的阻塞呼叫超過 Workflow runtime 的 180 s
+  no-progress 門檻，且 artifact 兩次經過 agent context。PR #47 先用 bash helper
+  （`bin/pai-codex-review`）做背景執行，**三輪 verify（2.22.1 → 2.22.2 → 2.22.3，皆未進 main）
+  每一輪都在修法本身找到新的 blocking**：supervisor 子 shell、trap 轉殺、marker 檔、status 檔、
+  deadline 檔、child_pid 檔——六個機制各自帶 race。round 2 的結論：這是在用 bash 重新發明
+  process supervision，而 bash 沒有原子操作、沒有 process identity、沒有不可偽造的 capability。
+
+  現在 worker 是**單一 Swift 程序**（`codex-call` 以 `--_worker` 重新執行自己，它就是那通 HTTP
+  呼叫，無 subprocess）：
+  - **生存**：worker 對 `<run>/lock` 持有 `fcntl(F_SETLK)` record lock 直到結束
+  - **身分**：`--poll`／`--abort` 用 `F_GETLK` 取得**此刻**持鎖者的 pid，發訊號只對它——不從任何檔案讀 pid，PID 重用不可能誤殺。（實測 `flock()` 鎖在 macOS 的 `F_GETLK` 下 `l_pid = -1`，故用 `fcntl`）
+  - **capability**：只接受 32 字元 CSPRNG run id，解析到 `~/.cache/codex-call/runs/<id>`（0700）。**不接受路徑**——round 2 證明「接受任意目錄 + 檔案存在性檢查」等於任意 PID kill／`rm -rf` 原語
+  - **原子性**：terminal 清理以 `rename(run, run.done)` claim，併發 poll 只有一個回 terminal
+  - **期限**：worker 自己強制 `--max-time`；poll 端兜底 `max-time + 60 s` 才 kill；meta 損毀 fail-closed
+  - **stdio 不繼承**：`Process` 的 stdio 明確指派——round 1 在 bash 裡自抓的「`$(... start)` 阻塞到 run 結束」在這裡結構上不會發生
+  - 既有同步路徑**逐 byte 不變**（codex-pro producer skills 不受影響）
+
+- **`references/codex-call-contract.md` 新增（回應 #35）**：`codex-call` 至此有 documented STABLE
+  surface——旗標、exit code、run id 格式、base 路徑、四種 poll 狀態、威脅模型、穩定性承諾。
+  breaking change 需 major bump + migration note。
+
+- engine `codexPrompt()` 改為兩條 engine 生成的命令（`--detach` / `--poll <id> --wait 30`，所有值 `shQuote()`
+  單引號化）加兩條 agent 自組的命令（讀完後 `rm -f '<path>'`、早停 `--abort '<id>'`；round 4／5）。
+  移除 `codexReviewPath` arg（隨 helper 退役）。
+
+### Fixed（round 3 verify：5:0 FAIL + Devil's Advocate，全部修於同版）
+
+- **startup race（唯一 CRITICAL 根因，四方各算一次）**：`--detach` 返回後有 0.6–1.0 s 無人持鎖，
+  `--poll` 會把健康的 run 判成 `FAILED status missing` 並刪除、`--abort` 印 `ABORTED` 卻留下 orphan。
+  修法是 **readiness handshake**：id 只在 worker **已寫出 status 或已持鎖**之後才印出（上限 20 s，
+  worker 先退出且無 status → 同步 exit 1、附 `worker.log` 尾段）。「還沒開始」與「已經跑完」是兩個
+  不同的答案——第一版 handshake 把它們壓成同一個，DA 實測 `--_selftest-sleep 0` 12 次 11 次把已完成
+  的 run 判成沒啟動並刪掉結果；修正後 12/12。
+- **status token**：`doPoll` 原用 `hasPrefix("3")` 分類，`NSError code 3`（`auth.json` 缺 tokens）與 3xx
+  被報成可重試的 `TIMEOUT`。worker 改寫 token `TIMEOUT`，poll 比對整個 token。
+- **測試無牙齒**（round 2 finding 4/5 同型第三度復發）：`! pgrep` 在 bats 中段被 errexit 豁免、
+  路徑穿越 fixture 沒建出目標 → `validRunId` 零覆蓋。兩處改為 `run …; [ $status -ne 0 ]` 與真實 fixture。
+- **契約誠實化**：§1 同步路徑順序以條件式 guard 還原（缺 `--output` 時先報錯、不先讀 prompt）；
+  §4 的「不可能」改成量到的邊界（`F_GETLK` 與 `kill` 之間存在微秒級視窗）；§2 / §6 標為**封閉列舉**並
+  明寫「不得依性質相似類推」，§6 補第三列「caller 環境完整性（`HOME` / base）」。
+- lock 檔完整性（`O_NOFOLLOW` + `fstat`：一般檔案、`nlink == 1`、owner 是當前 uid）；
+  base 硬化（`hardenBase`：symlink / 非目錄 / 非本 uid 擁有 → 同步 exit 1，宣告為行為）；
+  worker 不可重放（status 已存在 → 拒絕）；poll 的 timeout / meta 損毀路徑經 `killHolder` 並確認鎖已釋放；
+  `removeRun` 失敗不再被吞（abort 清不掉 → `FAILED` exit 2）；預設輸出檔在非 DONE 終態清除；
+  worker `setsid()`；re-exec 用 realpath；模式旗標互斥；stale `.done`（>60 s）接手；
+  `--detach` 的 `--max-time` 必須正整數；`--_selftest-grace` 需與 `--_selftest-sleep` 並用。
+- **engine / skills**：無 artifact 時 context block 本身成為 positional prompt（原本叫 Codex 審一個它拿不到
+  的 block）、兩者皆無則不派 leg；step 2 加 `sleep 30` 輪詢節奏；`DONE` 後輸出檔轉為 caller 所有、讀完要刪；
+  早停要 `--abort`；detach 非零退出不 poll；`'<id>'` 單引號。
+- **回收**：`--abort` 是盡力而為的早停路徑（agent 被硬殺時做不到），所以 `--detach` 每次先回收 >24 h
+  且無人持鎖的 `<id>` / `<id>.done` / `<id>.out.md`（含 `prompt.txt`，即 artifact 的完整副本）。
+- `FAILED` 終態把 `worker.log` 尾段附進 stderr——那正是 #37 抱怨看不到的診斷。
+
+### Fixed（round 4 verify：四方一致 FAIL，全部修於同版）
+
+- **輪詢節奏收進 codex-call**：`--poll <id> --wait N`（1–120 s）在工具內部阻塞、每秒重查持鎖者與期限、
+  終態提早返回。round 3 的 `sleep 30; --poll` 在 Claude Code 的 Bash tool 上**被工具層拒絕**（實測
+  `Blocked: sleep 30 …`），agent 只剩高速輪詢、`until` 迴圈（= stall detector 會殺的形狀）或放棄三條路。
+  engine 與兩份 SKILL.md 改用 `--wait 30`，node 測試斷言 prompt 不含 shell `sleep`。
+- **逾時判定依 (domain, code)**：`--max-time` 到期的主要路徑是 URLSession 自己的 timer
+  （`NSURLErrorDomain/-1001`，比 semaphore 兜底早 5 s），worker 原本只認 `codex-call/408`，真逾時被寫成
+  `FAILED -1001` exit 2——與 round 3 的 `hasPrefix("3")` 同型缺陷換了一端。新增隱藏 `--_selftest-classify`
+  讓 bats 打到 catch 分支。
+- **lock 完整性失敗 fail-closed**：三態 `LockState`（unlocked／held／untrusted）；完整性檢查失敗時 poll／abort
+  exit 1、不發訊號、run 原地保留，GC 也跳過（原本被折疊成「未持鎖」→ 判為終止、刪 run、把活的 worker 孤兒化）。
+  契約 §4 改成量得到的邊界：`rename()` 保留 inode，把 victim 持鎖檔搬進 lock 可過三檢查，bats 鎖住這個宣告的邊界。
+- **`.done` claim 年齡改用 ctime**：`rename` 不動目錄 mtime（實測），舊判準會把剛 claim 的 `.done` 當 stale 讓第二個
+  poll 接手；無 `status` 的 `.done` 是清理中斷殘留 → 清掉回 unknown，不再把已回報的 DONE 翻成 FAILED。
+- **readiness 逾時先終止 worker**（SIGTERM→SIGKILL→等退出→再查鎖→才清；殺不死則 run 保留並說明）；driver 退出後
+  多等 2 s 再判死（`p` 追的是 swift driver，exec-into-interpreter 是工具鏈事實不是不變式）；`killHolder` 兩輪收斂。
+- worker 六條提早 `exit(1)` 各補一行原因、`finish()` 寫 status 失敗也 log——契約承諾的 `worker.log` 尾段不再在最需要時是空的；
+  尾段改為**真的從檔尾**有界讀最後 12 行並過 sanitizer（原本 `clampToBudget` 取的是頭）。
+- `hardenBase`：`chmod` 失敗 throw（原本被吞掉，「強制 0700」曾是 best-effort）；先驗上層再建 `runs/`；`~/.cache` 本身的歸屬寫進契約。
+- `rename` 失敗依 errno 分流（EPERM 不再說「concurrent — retry」）；meta 損毀時預設輸出路徑可推導仍清除；`setsid` 失敗記 log。
+- 文件：`rm -f '<path>'` 加引號、三處「agent 不組任何 shell」改為三條命令的誠實描述、兩份 SKILL.md 補 step 3／4；DATA_GUARD 涵蓋
+  codex-call 的 stderr；契約 §2 首句與 handshake 對齊、§6 三列與 prompt-injection 段落分開、`HOME` 只隔離 run base 不隔離憑證。
+
+### Fixed（round 5 verify：五方一致 FAIL，全部修於同版）
+
+- **`--wait` 迴圈把 lock 三態折回兩態**（五方都抓到）：untrusted 在 wait 視窗內被當「已終止」→ 刪 run、孤兒化 worker。
+  迴圈改為窮舉三態，untrusted 與無 `--wait` 的路徑同一個答案（exit 1、run 保留）；終態 claim 前再查一次。
+- **`--wait 0` 溜過全部驗證**（用值當旗標存在性的 proxy），同步路徑因此真的發 HTTPS → 欄位改 `Int?`，
+  `--wait` 不得配 `--detach`。
+- **接手 stale `.done` 缺原子 claim**（1/20 雙 DONE）與 **`--abort` 不參與 claim**（曾 7/12 對成功的 run 偽造 FAILED）→
+  依 round 5 DA 的結構建議一次收掉：終態處理只剩單一 `claimTerminal`（`--poll`／`--wait`／`--abort`／接手共用），接手以
+  `.done` 內的 `O_EXCL` 標記為 claim、**不引入第三種目錄名**；`lockHolder() -> pid_t?` 整個刪除，12 個呼叫點改為 `switch`
+  窮舉三態（Swift 編譯器強制），「無法判斷」在任何路徑都不再被讀成「已結束」。
+- **`lstat` 失敗折進「沒有 lock」**（EACCES／EIO 等被當已結束）→ 只有 ENOENT 算沒有，其餘為「無法檢查」→ exit 1。
+- **`removeDefaultOutput` 信任 `meta.output`** → 同 uid 寫 base 可遞迴刪任意目錄；改為只 `unlink` 可推導的
+  `<base>/<id>.out.md`。契約 §6 第二列的傷害上界改寫。
+- `rename` ENOENT 分流（另一個 poll claim vs abort／GC 已刪，兩者皆不建議 retry）；GC 對 `.done` 用 mtime／ctime 較新者；
+  abort 撞上 poll 的 claim 不再誤報 `could not remove`；readiness 逾時先殺持鎖者再殺 driver；
+  `--wait N` 不再超過 N；`setsid` 移除（對 group leader 依定義必失敗，存活靠 Foundation 的獨立 pgid）；
+  `openOurLock` 回傳原因，不再印陳舊 errno。
+- `tailOfFile`：`O_NOFOLLOW`＋一般檔案檢查＋`O_NONBLOCK`（FIFO 曾讓 poll 無限阻塞）、保留尾端位元組、剝除 bidi／Tags／BOM。
+- `--_selftest-claim-age` 只對 selftest run 生效；契約 §7 補三個隱藏旗標；`--help` 補 `--wait`；§2 的 exit-1 答案列舉補齊。
+- 測試：`Codex-R4-3` 的 `pgrep -f -- "--_worker"` 改為只數本 checkout 的 worker（曾因同機其他 codex-call 6/6 假 RED）；
+  `--wait 500` 斷言改用活 id 並比對訊息；補 worker 提早退出四條 log、GC 對 untrusted 舊 run、abort 撞 prelock 的案例；
+  teardown 先 `chflags -R nouchg`。detach bats 43 → 63。
+
+### Removed
+
+- `bin/pai-codex-review` 與 `test/pai-codex-review.bats`（從未進 main）。
+
+### Tests
+
+- 新增 `test/codex-call-detach.bats`（macOS job，**63 個 case**；round 3 後 12 → 31，round 4 後 → 43，round 5 後 → 63）。
+  誠實邊界：round 5 新增的 20 個案例中 13 個在無修法的 build 上確認為 RED；7 個是護欄型、在修法前也綠——
+  `R5-L2`（雙 DONE 機率約 1/20，三輪抓不到）、`R5-S3`（併發形狀與 security lens 量到的 `--wait 20` 不同）、`R5-L8`、`R5-L9`、
+  `R5-F2b`／`R5-F2d`、`R5-F4`——它們守的是上界與不變式，不宣稱能區分修法前後。：detach 立即返回、poll RUNNING→DONE、
+  `--output` 直寫、abort 殺持鎖者且無 orphan、FAILED、status 缺失 fail-closed、poll 端兜底 TIMEOUT、
+  **偽造 id／偽造 run 目錄不對任何程序發訊號**、併發 poll 原子 claim、參數錯誤同步浮現、同步路徑不變。
+  走**同一條** detach／lock／poll／abort 路徑，只以 `--_selftest-*` 把 HTTP 換成 sleep + 寫檔。
+- `test/ensemble-workflow.test.mjs` 改為新契約（**30 個**）；補 `--instructions` 與 wrapper 路徑的
+  `shQuote()` 正向斷言（round 2 指出零覆蓋）。
+
+### Known limitations（誠實邊界）
+
+- **codex-pro 的 vendored 快照仍是 2.22.1 之前的 `codex-call`**，須在該 repo 另行 re-vendor
+  （其 openspec spec 規定 byte-for-byte snapshot；觸及 `provenance.json` ×3、`THIRD_PARTY_NOTICES` ×2、
+  `tests/codex-runtime.sh` pinned 值、`codex-pro-call` 的 `EXPECTED_SHA256`）。
+- 威脅模型是封閉列舉的三列（同 uid／caller 環境完整性／跨 uid）：同 uid 與 `HOME` 注入在模型之外；lock 完整性與 base 硬化把「寫得到 base」的傷害縮到「殺自己的 worker」，但不把它們宣稱為提權防禦。
+- Claude lens 的同類 stall（#44）、目錄型 artifact（#45）、`xhigh` 治理（#43）、
+  `response.completed` 的 tier／usage 可觀測性——皆不在本版。**issue #37 Expected 第 3 點（leg 被放棄時回報已花成本）
+  依賴後者，明確延後至該獨立 issue**；本版 leg 缺席時的 integrity finding 只標記缺席、不含 token 數（round 5 D-1）。
+- Swift script 每次啟動約 1.5 s compile cache；poll 是分開 tool call、間隔數十秒，屬雜訊。
+
 ## [2.22.1] - 2026-09-01
 
 ### Fixed

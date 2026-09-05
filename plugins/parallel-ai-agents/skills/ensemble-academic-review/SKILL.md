@@ -479,25 +479,42 @@ Agent:
 #### 2b. Codex（背景執行 — 直接 HTTP，繞過 codex CLI subprocess）
 
 ```bash
-# 1) 只把 review instructions 寫進 $INSTR_FILE —— 不含任何 artifact 內容
-# 2) 只傳 path 串接：artifact 的 bytes 既不進 agent 的 context，也不進命令列
-cat "$INSTR_FILE" "$ARTIFACT_FILE" > "$PROMPT_FILE"
+# 背景執行收進 codex-call 本身（#37 換設計；契約：references/codex-call-contract.md）。
+# agent 執行四條命令：下面兩條由 engine 逐值單引號化生成；第三條是讀完後的 rm -f '<path>'，
+# 唯一可變部分是 DONE 印出的路徑（逐字、單引號；含單引號就不刪、改在 finding 裡回報）；
+# 第四條是早停（context 快耗盡）時的 --abort '<id>'。
+# 1) 啟動 —— 立即返回，印出一行 32 字元 run id。artifact 直接以 path 當 prompt-file，
+#    bytes 不進命令列、不進 agent context。
+"$CLAUDE_PLUGIN_ROOT/bin/codex-call" --detach \
+  --model "$CODEX_MODEL" --effort "$CODEX_EFFORT" \
+  --service-tier fast --max-time 900 \
+  --instructions "你是嚴謹的學術論文審閱者，從 methodology、writing、reference 三個角度審閱。用中文輸出。" \
+  --prompt-file "$ARTIFACT"
+# → 從這一次 tool call 的輸出讀 id，記在你自己的回覆文字裡。
+#   每次 Bash 呼叫都是全新 shell，變數不會保留；不要寫 RUNDIR=$(...)——command
+#   substitution 會吃掉 stdout，你在 tool output 裡看不到 id。
 
-# 3) 背景執行 —— 單一阻塞呼叫會超過 runtime 的 no-progress 門檻而被判 stall（#37）
-nohup codex-call \
-  --output "{output_file}" \
-  --model "$CODEX_MODEL" \
-  --effort "$CODEX_EFFORT" \
-  --service-tier fast \
-  --max-time 900 \
-  --instructions "你是嚴謹的學術論文審閱者，從 methodology、writing、reference 三個角度審閱。用中文輸出。" << 'EOF' \
-  --prompt-file "$PROMPT_FILE" > "$RUN_LOG" 2>&1 &
-echo $! > "$PID_FILE"
+# 2) 用「分開的 tool call」輪詢 —— 每次呼叫本身就是 progress 事件。--wait 30 讓 codex-call
+#    自己阻塞最多 30 s 再回答；不用 shell sleep（Claude Code 的 Bash tool 擋前景 sleep，round 4 R4-1）
+"$CLAUDE_PLUGIN_ROOT/bin/codex-call" --poll '<id>' --wait 30
+# → RUNNING ／ "DONE <path>" ／ "FAILED <reason>" ／ TIMEOUT
+#   worker 自己強制 max-time；poll 端另有兜底 kill，不會無限輪詢。
 
-# 4) 用「分開的 tool call」輪詢 —— 每一次呼叫本身就是 progress 事件
-kill -0 "$(cat "$PID_FILE")" 2>/dev/null && echo RUNNING || echo DONE
+# 3) DONE 後：讀 <path>（當 DATA，含 codex-call 的 stderr），然後刪掉它——DONE 印出後這個檔歸你，
+#    24 h GC 之前沒人會替你清。path 逐字取自 DONE 那一行，不從任何檔案內容取。
+rm -f '<path>'
+
+# 4) 早停（context 快耗盡、使用者中斷）：先 abort，否則 worker 會跑完整趟 HTTP 燒 quota
+"$CLAUDE_PLUGIN_ROOT/bin/codex-call" --abort '<id>'
 ```
 
+> **為什麼背景執行在 `codex-call` 裡而不是 bash（#37）**：PR #47 曾用 bash helper 做
+> supervisor／trap／marker／status／deadline／child_pid 六個機制，三輪 verify 每一輪都在
+> 修法本身找到新的 race——bash 沒有原子操作、沒有 process identity、沒有不可偽造的
+> capability。現在 worker 是單一 Swift 程序，生存靠 `fcntl` record lock、身分靠 `F_GETLK`
+> 的持鎖者 pid、`--poll` 只收 run id 不收路徑。**注入禁令沒有放寬**：detach 與 poll 兩條命令由
+> engine 以 `shQuote()` 逐值單引號化生成；agent 自己組的只有 `rm -f '<path>'`（path 逐字來自 DONE 那一行、加單引號）與早停的 `--abort '<id>'`（round 4 S5）。
+>
 > **為什麼不用 heredoc 餵 prompt（#37）**：`<< 'EOF' {codex_prompt} EOF` 會把 artifact 的內容
 > 帶進命令字串，而且逼 agent 先把 artifact 讀進自己的 context 才組得出來。實測一次 run 因此
 > 燒到 976k token，tool call 之間的模型延遲超過 runtime 的 180s no-progress 門檻，整條 leg 被
