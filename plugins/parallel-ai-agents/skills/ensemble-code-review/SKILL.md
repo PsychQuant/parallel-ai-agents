@@ -298,8 +298,9 @@ Agent:
 
 ```bash
 # 背景執行收進 codex-call 本身（#37 換設計；契約：references/codex-call-contract.md）。
-# agent 執行三條命令：下面兩條由 engine 逐值單引號化生成；第三條是讀完後的 rm -f '<path>'，
-# 唯一可變部分是 DONE 印出的路徑（逐字、單引號）。早停（context 快耗盡）要先 --abort '<id>'。
+# agent 執行四條命令：下面兩條由 engine 逐值單引號化生成；第三條是讀完後的 rm -f '<path>'，
+# 唯一可變部分是 DONE 印出的路徑（逐字、單引號；含單引號就不刪、改在 finding 裡回報）；
+# 第四條是早停（context 快耗盡）時的 --abort '<id>'。
 # 1) 啟動 —— 立即返回，印出一行 32 字元 run id。artifact 直接以 path 當 prompt-file，
 #    bytes 不進命令列、不進 agent context。
 "$CLAUDE_PLUGIN_ROOT/bin/codex-call" --detach \

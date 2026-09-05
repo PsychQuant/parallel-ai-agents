@@ -532,43 +532,58 @@ func writeText(_ s: String, to path: String) throws {
 /// R3-Sec-H1: the lock FILE itself must be ours, a regular file, and not multiply linked.
 /// A hard link / symlink from <run>/lock to a file some victim holds an fcntl lock on made
 /// F_GETLK report the VICTIM pid, and --abort killed it (measured). Refuse such a file.
-func openOurLock(_ dir: String, flags: Int32) -> Int32? {
+/// Returns the fd, or nil plus the REASON (L-R5-10: callers used to print a stale errno).
+func openOurLock(_ dir: String, flags: Int32) -> (fd: Int32?, why: String, err: Int32) {
     let fd = open(dir + "/lock", flags | O_NOFOLLOW, 0o600)
-    guard fd >= 0 else { return nil }
+    guard fd >= 0 else { let e = errno; return (nil, "open: " + String(cString: strerror(e)), e) }
     var st = stat()
-    guard fstat(fd, &st) == 0,
-          (st.st_mode & S_IFMT) == S_IFREG,
-          st.st_nlink == 1,
-          st.st_uid == getuid()
-    else { close(fd); log("lock file integrity check failed in \(dir) — refusing to trust it"); return nil }
-    return fd
+    guard fstat(fd, &st) == 0 else { let e = errno; close(fd); return (nil, "fstat: " + String(cString: strerror(e)), e) }
+    if (st.st_mode & S_IFMT) != S_IFREG { close(fd); return (nil, "integrity: not a regular file", 0) }
+    if st.st_nlink != 1 { close(fd); return (nil, "integrity: link count \(st.st_nlink) != 1", 0) }
+    if st.st_uid != getuid() { close(fd); return (nil, "integrity: owned by uid \(st.st_uid), not \(getuid())", 0) }
+    return (fd, "", 0)
 }
 
 /// R4-S1: "no lock file", "lock file we refuse to trust" and "lock held" are THREE answers.
 /// Collapsing the second into the first made an integrity failure look like a finished run:
 /// poll deleted it and orphaned a live worker (fail-open for the lifecycle, measured).
-enum LockState { case unlocked, held(pid_t), untrusted }
+enum LockState { case unlocked, held(pid_t), untrusted(String) }
 
 func lockState(_ dir: String) -> LockState {
     var st = stat()
-    if lstat(dir + "/lock", &st) != 0 { return .unlocked }          // never started, or cleaned
-    guard let fd = openOurLock(dir, flags: O_RDWR) else { return .untrusted }   // symlink/link/…
+    if lstat(dir + "/lock", &st) != 0 {
+        // L-R5-4: only ENOENT means "no lock file". EACCES / ELOOP / EIO / … mean "cannot
+        // inspect" — a fourth answer that must NOT be folded into "already finished".
+        let e = errno
+        return e == ENOENT ? .unlocked : .untrusted("cannot inspect lock: " + String(cString: strerror(e)))
+    }
+    let (fdOpt, why, err) = openOurLock(dir, flags: O_RDWR)
+    guard let fd = fdOpt else {
+        return err == ENOENT ? .unlocked : .untrusted(why)   // removed between lstat and open ⇒ finished
+    }
     defer { close(fd) }
     var fl = flock()
     fl.l_type = Int16(F_WRLCK); fl.l_whence = Int16(SEEK_SET); fl.l_start = 0; fl.l_len = 0
-    guard fcntl(fd, F_GETLK, &fl) == 0 else { return .untrusted }
+    guard fcntl(fd, F_GETLK, &fl) == 0 else { return .untrusted("F_GETLK: " + String(cString: strerror(errno))) }
     return fl.l_type == Int16(F_UNLCK) ? .unlocked : .held(fl.l_pid)
 }
 
-func lockHolder(_ dir: String) -> pid_t? {
-    if case .held(let pid) = lockState(dir) { return pid }
-    return nil
+/// ACTION 1 (round 5 DA §5): `lockHolder(_:) -> pid_t?` is GONE. It answered "no holder" for both
+/// "finished" and "cannot tell", and 12 call sites read that nil as "finished" — the single
+/// mechanism behind B1-after-loop, B4, S4, Codex #1 and Codex #2. The two honest questions:
+///
+///   lockReleasedForSure — may I treat this run as over?  "cannot tell" is never yes.
+///   `switch lockState(dir)` — every other consumer must name what it does with `.untrusted`.
+func lockReleasedForSure(_ dir: String) -> Bool {
+    if case .unlocked = lockState(dir) { return true }
+    return false
 }
+
 
 /// Refuse to act on a run whose lock file we do not trust: no signal, no cleanup, exit 1.
 func refuseIfUntrusted(_ dir: String) {
-    if case .untrusted = lockState(dir) {
-        die("lock file in \(dir) failed the integrity check — refusing to act; run left in place (see contract §4)")
+    if case .untrusted(let why) = lockState(dir) {
+        die("lock file in \(dir) cannot be trusted or inspected (\(why)) — refusing to act; run left in place (see contract §4)")
     }
 }
 
@@ -582,21 +597,72 @@ func removeRun(_ dir: String) -> Bool {
 /// R3-H8: when --output was defaulted, the file lives beside the run and is OURS to clean
 /// on any non-DONE terminal state. A caller-supplied --output is never touched.
 func removeDefaultOutput(_ meta: [String: Any]?, id: String) {
-    // R4-L6: meta unreadable ⇒ fall back to the derivable default path. A caller-supplied
-    // --output lives elsewhere and is never touched; a missing default file is a no-op.
-    let out: String
-    if let m = meta {
-        guard m["default_output"] as? Bool == true, let o = m["output"] as? String else { return }
-        out = o
-    } else {
-        out = runsBase() + "/" + id + ".out.md"
+    // R4-L6 / R5-S2: the ONLY path this tool ever deletes on a caller's behalf is the derivable
+    // <base>/<id>.out.md — never a path read from meta.json (a same-uid writer could point that
+    // at any directory, and removeItem is recursive: measured). meta only tells us whether the
+    // output was caller-supplied (then it is never touched). unlink() cannot recurse.
+    if let m = meta, m["default_output"] as? Bool != true { return }
+    let out = runsBase() + "/" + id + ".out.md"
+    var st = stat()
+    guard lstat(out, &st) == 0, (st.st_mode & S_IFMT) == S_IFREG else { return }
+    _ = unlink(out)
+}
+
+/// ACTION 2 (round 5 DA §5): the ONE place a run's terminal state is claimed. --poll, the --wait
+/// loop, --abort and stale adoption all come here, so "exactly one caller reports a terminal
+/// state" (contract §2) is enforced by one function rather than promised in prose. Three ways to
+/// lose the race, each with its own answer — none of them "retry" (L-R5-5).
+enum ClaimResult {
+    case claimed(String)     // we own this directory now; nobody else will report it
+    case takenByOther        // another poll/abort owns it — the terminal state goes to that caller
+    case gone                // aborted or garbage-collected between our probe and the claim
+    case failed(String)      // rename failed for a reason retrying cannot fix
+}
+
+/// A stale <id>.done is adopted by creating a marker inside it with O_EXCL — atomic, and it does
+/// NOT introduce a third directory name (DA 4.1/4.2: <id>.claim.<pid> made resolveRun and the GC
+/// blind, and a substring test on the full path silently disabled claiming under some $HOMEs).
+/// A marker older than the staleness threshold means that adopter died too: take it over.
+let CLAIM_MARKER = "/.claimed"
+/// The marker's own staleness is a FIXED 60 s and is deliberately NOT the (hook-overridable)
+/// .done threshold: `--_selftest-claim-age 0` would otherwise let every adopter delete the
+/// marker and re-claim — the exact double-DONE this function exists to prevent. The marker is a
+/// file we create ourselves, so its mtime is its creation time (no rename involved) and a test
+/// can age it with `touch`.
+let CLAIM_MARKER_STALE_SECONDS: TimeInterval = 60
+
+func claimTerminal(_ id: String, dir: String) -> ClaimResult {
+    if dir.hasSuffix(".done") {
+        let marker = dir + CLAIM_MARKER
+        var mst = stat()
+        if lstat(marker, &mst) == 0 {
+            let age = Date().timeIntervalSince1970 - (TimeInterval(mst.st_mtimespec.tv_sec) + TimeInterval(mst.st_mtimespec.tv_nsec) / 1e9)
+            if age <= CLAIM_MARKER_STALE_SECONDS { return .takenByOther }
+            _ = unlink(marker)   // the previous adopter died as well — recoverable by design
+        }
+        let fd = open(marker, O_CREAT | O_EXCL | O_WRONLY | O_NOFOLLOW, 0o600)
+        guard fd >= 0 else { return errno == ENOENT ? .gone : .takenByOther }
+        close(fd)
+        return .claimed(dir)
     }
-    try? FileManager.default.removeItem(atPath: out)
+    let done = dir + ".done"
+    guard rename(dir, done) == 0 else {
+        let err = errno
+        if err == ENOENT {
+            // L-R5-5: ENOENT means EITHER another poll claimed it OR --abort / GC removed it.
+            // Neither is worth a retry — the old "retry" advice sent agents to "unknown run id".
+            var dst = stat()
+            return lstat(done, &dst) == 0 ? .takenByOther : .gone
+        }
+        return .failed(String(cString: strerror(err)))
+    }
+    return .claimed(done)
 }
 
 /// Codex R4 #1: claim age is measured on the .done ctime (rename updates ctime, never mtime).
 /// Overridable ONLY through the hidden --_selftest-claim-age hook (ctime cannot be forged by touch).
 var CLAIM_STALE_SECONDS: TimeInterval = 60
+var CLAIM_STALE_OVERRIDDEN = false   // R5-S6: the hook must not touch a production run
 
 /// Validates the id and that its run directory exists. Never touches anything else.
 func resolveRun(_ id: String) -> String {
@@ -605,27 +671,31 @@ func resolveRun(_ id: String) -> String {
     var isDir: ObjCBool = false
     if FileManager.default.fileExists(atPath: dir, isDirectory: &isDir), isDir.boolValue { return dir }
     // R3-L10: a poll that died between rename(dir → dir.done) and cleanup left the id "unknown"
-    // forever. A .done older than 60 s cannot be a live concurrent claim (claim → cleanup is
-    // milliseconds) — adopt it; a fresh one IS a live claim, and we say so instead of "unknown".
+    // forever. A .done whose claim is older than the threshold cannot be a live consumer
+    // (claim → cleanup is milliseconds) — hand it back so claimTerminal can adopt it.
     let done = dir + ".done"
     if FileManager.default.fileExists(atPath: done, isDirectory: &isDir), isDir.boolValue {
         // Codex R4 #1: a directory's mtime is its last entry change (e.g. the worker writing
         // status), which can be minutes before the claim — rename() leaves it untouched, so a
-        // .done claimed a millisecond ago could look "stale". rename() DOES update ctime
-        // (measured), so ctime is the claim time.
+        // .done claimed a millisecond ago could look "stale". rename() DOES update ctime.
         var dst = stat()
         let claimAge: TimeInterval = lstat(done, &dst) == 0
-            ? Date().timeIntervalSince1970 - TimeInterval(dst.st_ctimespec.tv_sec) : 0
+            ? Date().timeIntervalSince1970 - (TimeInterval(dst.st_ctimespec.tv_sec) + TimeInterval(dst.st_ctimespec.tv_nsec) / 1e9) : 0
         if claimAge > CLAIM_STALE_SECONDS {
+            if CLAIM_STALE_OVERRIDDEN, readMeta(done)?["selftest_sleep"] == nil {
+                die("--_selftest-claim-age is a test hook — refused: run \(id) is not a selftest run")   // R5-S6
+            }
             // R4-L3: removeItem is recursive and non-atomic. A stale .done that still has its
             // status was claimed but never finished; one WITHOUT status is what a half-finished
             // cleanup leaves behind — its result was already reported, so re-reporting it
             // (as "FAILED status missing") would contradict the DONE the caller already saw.
-            if FileManager.default.fileExists(atPath: done + "/status") { return done }
-            _ = removeRun(done)
-            die("unknown run id: \(id) (a leftover of an interrupted cleanup was removed)")
+            guard FileManager.default.fileExists(atPath: done + "/status") else {
+                _ = removeRun(done)
+                die("unknown run id: \(id) (a leftover of an interrupted cleanup was removed)")
+            }
+            return done
         }
-        die("run \(id) is being claimed by a concurrent poll — retry")
+        die("run \(id) is being claimed by a concurrent poll — its terminal state will be reported to that caller; do not retry")
     }
     die("unknown run id: \(id)")
 }
@@ -633,15 +703,15 @@ func resolveRun(_ id: String) -> String {
 /// SIGTERM the lock holder, wait up to `graceSeconds`, then SIGKILL if it still holds the lock.
 /// Every signal targets the pid F_GETLK reports at that instant — never a pid read from a file.
 func killHolder(_ dir: String, graceSeconds: Int = 2) {
-    guard let pid = lockHolder(dir) else { return }
+    guard case .held(let pid) = lockState(dir) else { return }   // ACTION 1: never signal on a guess
     kill(pid, SIGTERM)
     for _ in 0..<(graceSeconds * 4) {
         usleep(250_000)
-        if lockHolder(dir) == nil { return }
+        if lockReleasedForSure(dir) { return }
     }
-    if let still = lockHolder(dir) {
+    if case .held(let still) = lockState(dir) {
         kill(still, SIGKILL)
-        for _ in 0..<8 { usleep(125_000); if lockHolder(dir) == nil { return } }   // Codex R4 #10
+        for _ in 0..<8 { usleep(125_000); if lockReleasedForSure(dir) { return } }   // Codex R4 #10
     }
 }
 
@@ -649,21 +719,48 @@ func killHolder(_ dir: String, graceSeconds: Int = 2) {
 /// F_SETLK) must be signalled too, not reported as "did not terminate" without ever being sent
 /// anything. Bounded to two rounds.
 func killHolderConverged(_ dir: String) -> Bool {
-    for _ in 0..<2 { killHolder(dir); if lockHolder(dir) == nil { return true } }
-    return lockHolder(dir) == nil
+    // Codex R4 #10 + ACTION 1: two bounded rounds, and `.untrusted` never counts as success.
+    for _ in 0..<2 { killHolder(dir); if lockReleasedForSure(dir) { return true } }
+    return lockReleasedForSure(dir)
 }
 
 /// Codex R4 #14: "tail" must be a tail — clampToBudget keeps the HEAD. Bounded read from the
 /// end of the file, last `maxLines` lines, sanitized, then clamped.
+/// R5-S10: bidi overrides, Tags-block and BOM survive sanitizeBackendText (which the byte-
+/// identical synchronous path owns and must not change). The background tail strips them too.
+func stripInvisibleUnicode(_ s: String) -> String {
+    var out = String.UnicodeScalarView()
+    for u in s.unicodeScalars {
+        let v = u.value
+        let drop = (0x200B...0x200F).contains(v) || (0x202A...0x202E).contains(v) || (0x2066...0x2069).contains(v)
+            || v == 0xFEFF || (0xE0000...0xE007F).contains(v)
+        if !drop { out.append(u) }
+    }
+    return String(out)
+}
+
+/// Codex R4 #14 / R5-S5: a bounded, non-following read of the END of a regular file. The same
+/// integrity discipline as the lock file: O_NOFOLLOW, S_ISREG, O_NONBLOCK — a FIFO or a symlink
+/// to a device planted at <run>/worker.log must not hang or flood --poll (measured).
 func tailOfFile(_ path: String, maxLines: Int, maxBytes: Int) -> String {
-    guard let fh = FileHandle(forReadingAtPath: path) else { return "" }
-    defer { fh.closeFile() }
-    let size = fh.seekToEndOfFile()
-    let want = UInt64(maxBytes * 4)
-    fh.seek(toFileOffset: size > want ? size - want : 0)
-    let raw = String(decoding: fh.readDataToEndOfFile(), as: UTF8.self)
+    let fd = open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
+    guard fd >= 0 else { return "" }
+    defer { close(fd) }
+    var st = stat()
+    guard fstat(fd, &st) == 0, (st.st_mode & S_IFMT) == S_IFREG else { return "" }
+    let size = Int(st.st_size)
+    let want = maxBytes * 4
+    let start = max(0, size - want)
+    var buf = [UInt8](repeating: 0, count: min(want, size))
+    let n = buf.withUnsafeMutableBytes { pread(fd, $0.baseAddress, $0.count, off_t(start)) }
+    guard n > 0 else { return "" }
+    let raw = String(decoding: buf[0..<n], as: UTF8.self)
     let lines = raw.split(separator: "\n", omittingEmptySubsequences: false).suffix(maxLines)
-    return clampToBudget(sanitizeBackendText(lines.joined(separator: "\n")), maxBytes: maxBytes, maxLines: maxLines)
+    var joined = lines.joined(separator: "\n")
+    if joined.utf8.count > maxBytes {   // Codex R5: a tail keeps the END — drop leading bytes, not trailing ones
+        joined = String(decoding: Array(joined.utf8).suffix(maxBytes), as: UTF8.self)
+    }
+    return clampToBudget(stripInvisibleUnicode(sanitizeBackendText(joined)), maxBytes: maxBytes, maxLines: maxLines)
 }
 
 /// R4-L1: TIMEOUT is decided by (domain, code), never by a bare code number. URLSession's own
@@ -679,9 +776,10 @@ func statusToken(for e: NSError) -> String {
 
 // --- worker: hidden, spawned by --detach. Single process; it IS the HTTP call. ---
 func runWorker(id: String) -> Never {
-    if setsid() == -1 {   // R3-H9: own session — outlive the launcher's process group / terminal SIGHUP
-        log("warning: setsid failed: \(String(cString: strerror(errno))) — worker stays in the launcher's session")   // Codex R4 #11
-    }
+    // R3-H9 / L-R5-8: Foundation's Process already makes this child a process-group leader, and
+    // setsid(2) is DEFINED to fail with EPERM for a group leader (measured: 100 %). A separate
+    // pgid is what actually shields the worker from the launcher's terminal SIGHUP (delivered to
+    // the foreground group only); a separate *session* was never achievable and is not promised.
     // R4-3b (requirements): every early exit below used to be silent, so the worker.log tail the
     // contract promises was EMPTY exactly when a leg failed to launch. Say why before leaving.
     guard validRunId(id) else { log("worker: invalid run id"); exit(1) }
@@ -691,13 +789,14 @@ func runWorker(id: String) -> Never {
     // would re-fire the HTTP call, burn quota and overwrite status). status present ⇒ refuse.
     if FileManager.default.fileExists(atPath: dir + "/status") { log("worker: status already present — refusing to replay"); exit(1) }
     if let n = readMeta(dir)?["selftest_prelock"] as? Int, n > 0 { sleep(UInt32(n)) }   // Codex R4 #3 hook
-    guard let fd = openOurLock(dir, flags: O_RDWR | O_CREAT) else {   // R3-Sec-H1
-        log("worker: cannot open or trust the lock file: \(String(cString: strerror(errno)))"); exit(1)
-    }
+    let (lockFd, lockWhy, _) = openOurLock(dir, flags: O_RDWR | O_CREAT)   // R3-Sec-H1
+    guard let fd = lockFd else { log("worker: cannot open or trust the lock file: \(lockWhy)"); exit(1) }
     var fl = flock()
     fl.l_type = Int16(F_WRLCK); fl.l_whence = Int16(SEEK_SET); fl.l_start = 0; fl.l_len = 0
     guard fcntl(fd, F_SETLK, &fl) == 0 else {   // another worker holds it → refuse
-        log("worker: lock already held by pid \(lockHolder(dir) ?? -1) — refusing to run twice"); exit(1)
+        if case .held(let other) = lockState(dir) { log("worker: lock already held by pid \(other) — refusing to run twice") }
+        else { log("worker: could not take the lock and cannot identify the holder — refusing to run twice") }
+        exit(1)
     }
     // `fd` is intentionally never closed: fcntl locks are released when ANY fd to the
     // file is closed by this process. Do not open <run>/lock again in this process.
@@ -733,26 +832,36 @@ func doPoll(id: String, wait: Int = 0) -> Never {
     let dir = resolveRun(id)
     refuseIfUntrusted(dir)   // R4-S1
     let meta = readMeta(dir)
+    func deadlineExceeded() -> Bool {
+        guard let m = meta, let started = m["started_at"] as? Int, let maxT = m["max_time"] as? Int else { return false }
+        return Int(Date().timeIntervalSince1970) - started > maxT + (m["grace"] as? Int ?? 60)
+    }
     if wait > 0 {
         // R4-1 (requirements): the Claude Code Bash tool blocks a foreground `sleep`, so the
         // polling cadence has to live INSIDE this call. Re-probe once a second; leave early on
-        // any terminal state; hand an exceeded deadline to the normal path below (it terminates).
+        // any terminal state; hand an exceeded deadline to the path below (it terminates).
         let until = Date().addingTimeInterval(TimeInterval(wait))
-        while Date() < until {
-            guard case .held = lockState(dir) else { break }
-            if let m = meta, let started = m["started_at"] as? Int, let maxT = m["max_time"] as? Int,
-               Int(Date().timeIntervalSince1970) - started > maxT + (m["grace"] as? Int ?? 60) { break }
-            sleep(1)
+        waitLoop: while true {
+            let remaining = until.timeIntervalSinceNow
+            if remaining <= 0 { break }
+            switch lockState(dir) {
+            case .untrusted(let why):   // L-R5-3: the same answer as the no-wait path — never "finished"
+                die("lock file in \(dir) cannot be trusted or inspected (\(why)) — refusing to act; run left in place (see contract §4)")
+            case .unlocked: break waitLoop
+            case .held: break
+            }
+            if deadlineExceeded() { break }
+            usleep(UInt32(max(0.05, min(1.0, remaining)) * 1_000_000))   // L-R5-9: never overrun N
         }
     }
-    if let holder = lockHolder(dir) {
+    switch lockState(dir) {   // ACTION 1: `.untrusted` cannot slip through as "finished" any more
+    case .untrusted(let why):
+        die("lock file in \(dir) cannot be trusted or inspected (\(why)) — refusing to act; run left in place (see contract §4)")
+    case .held:
         // Still running. Bounded by max_time + grace; corrupt meta ⇒ fail-closed (kill), never "RUNNING forever".
-        let now = Int(Date().timeIntervalSince1970)
-        // R3-H2/H3: never signal a pid captured earlier; killHolder re-reads F_GETLK right
-        // before each signal and waits for the lock to actually drop. If it will not drop we
-        // say so instead of claiming the run was cleared.
+        // R3-H2/H3: never signal a pid captured earlier; killHolder re-reads F_GETLK right before
+        // each signal and waits for the lock to actually drop.
         func terminate(_ reason: String) -> Never {
-            _ = holder
             if !killHolderConverged(dir) {
                 log("\(reason): worker did not release the lock after SIGTERM/SIGKILL — run left in place at \(dir)")
                 print("FAILED worker did not terminate"); exit(2)
@@ -760,22 +869,22 @@ func doPoll(id: String, wait: Int = 0) -> Never {
             removeDefaultOutput(meta, id: id)
             removeRun(dir); print("TIMEOUT"); exit(3)
         }
-        guard let m = meta, let started = m["started_at"] as? Int, let maxT = m["max_time"] as? Int else {
-            terminate("meta corrupt (fail-closed)")
+        guard let m = meta, m["started_at"] as? Int != nil, m["max_time"] as? Int != nil else {
+            terminate("meta corrupt (fail-closed)")   // deadlineExceeded() reads the same fields
         }
-        if now - started > maxT + (m["grace"] as? Int ?? 60) { terminate("deadline exceeded") }
+        _ = m
+        if deadlineExceeded() { terminate("deadline exceeded") }
         print("RUNNING"); exit(0)
+    case .unlocked:
+        break
     }
-    // Not running: claim the terminal state atomically so two concurrent polls can't both clean up.
-    let done = dir.hasSuffix(".done") ? dir : dir + ".done"   // R3-L10: adopted stale claim is already .done
-    if done != dir {
-        guard rename(dir, done) == 0 else {
-            // R4-L2: "another poll took it" and "rename failed for some other reason" are two
-            // answers. Only ENOENT means concurrent; anything else will not succeed on retry.
-            let err = errno
-            if err == ENOENT { die("run \(id) already claimed by a concurrent poll") }
-            die("cannot claim run \(id): \(String(cString: strerror(err))) — no other poll is involved; retrying will not help")
-        }
+    // ACTION 2: one owner for the terminal state.
+    let done: String
+    switch claimTerminal(id, dir: dir) {
+    case .claimed(let d): done = d
+    case .takenByOther: die("run \(id) was claimed by a concurrent poll or abort — its terminal state was reported to that caller; do not retry")
+    case .gone: die("run \(id) is gone — aborted or garbage-collected; do not retry")
+    case .failed(let why): die("cannot claim run \(id): \(why) — no other poll is involved; retrying will not help")
     }
     let status = (try? String(contentsOfFile: done + "/status", encoding: .utf8))?
         .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -796,35 +905,61 @@ func doPoll(id: String, wait: Int = 0) -> Never {
 }
 
 func doAbort(id: String) -> Never {
-    let dir = resolveRun(id)
-    refuseIfUntrusted(dir)   // R4-S1
-    let meta = readMeta(dir)
+    let resolved = resolveRun(id)
+    refuseIfUntrusted(resolved)   // R4-S1
+    let meta = readMeta(resolved)
+    // R5-S3 / ACTION 2: abort takes part in the SAME claim protocol as poll. A poll that beat us
+    // owns the terminal state and will report it — there is nothing left for us to abort.
+    let dir: String
+    switch claimTerminal(id, dir: resolved) {
+    case .claimed(let d): dir = d
+    case .takenByOther:
+        log("abort: run already claimed by a concurrent poll — its terminal state goes to that caller")
+        print("ABORTED"); exit(0)
+    case .gone: print("ABORTED"); exit(0)
+    case .failed(let why): die("cannot claim run \(id) for abort: \(why)")
+    }
     if !killHolderConverged(dir) {
         log("abort: worker did not release the lock — run left in place at \(dir)")
         print("FAILED worker did not terminate"); exit(2)
     }
     removeDefaultOutput(meta, id: id)   // R3-H8
     // R3-M5 (requirements): a run dir we could not remove is not "aborted" — say so.
-    guard removeRun(dir) else { print("FAILED could not remove run dir \(dir)"); exit(2) }
+    guard removeRun(dir) else {
+        // L-R5-7: nothing left to clean is success, not a cleanup failure.
+        if !FileManager.default.fileExists(atPath: dir) { print("ABORTED"); exit(0) }
+        print("FAILED could not remove run dir \(dir)"); exit(2)
+    }
     print("ABORTED"); exit(0)
 }
 
-/// R4-GC (DA K6/X4): --abort has no production caller, so a run abandoned mid-poll (agent
+/// R4-GC (DA K6/X4): --abort is best-effort (engine step 4) and unavailable when the agent is
+/// hard-killed, so a run abandoned mid-poll (agent
 /// killed, context exhausted) would otherwise live forever — together with prompt.txt, a full
 /// copy of the artifact. Sweep entries older than `olderThan` that nobody holds a lock on.
 /// Only run-id-shaped names are touched: <id>, <id>.done, <id>.out.md.
-func gcStaleRuns(olderThan: TimeInterval = 24 * 3600) {
+/// DA 3.3: a claimed .done is aged by ctime, which no test can forge — so "an abandoned claim is
+/// eventually reclaimed" had zero coverage. The threshold is overridable ONLY together with
+/// --_selftest-sleep (same gating discipline as the other hooks).
+var GC_AGE_SECONDS: TimeInterval = 24 * 3600
+
+func gcStaleRuns(olderThan: TimeInterval = GC_AGE_SECONDS) {
     let base = runsBase()
     guard let names = try? FileManager.default.contentsOfDirectory(atPath: base) else { return }
-    let now = Date()
+    let now = Date().timeIntervalSince1970
     for name in names {
         let stem = String(name.prefix(32))            // 32 = validRunId's length
         let suffix = String(name.dropFirst(32))
         guard validRunId(stem), ["", ".done", ".out.md"].contains(suffix) else { continue }
         let path = base + "/" + name
-        guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
-              let mtime = attrs[.modificationDate] as? Date,
-              now.timeIntervalSince(mtime) > olderThan else { continue }
+        // L-R5-6: a claim is aged by ctime (rename updates it, not mtime). The GC must not use an
+        // older clock than the claim path, or it deletes a .done that was claimed a moment ago.
+        var pst = stat()
+        guard lstat(path, &pst) == 0 else { continue }
+        let age = now - (suffix == ".done"
+            ? max(TimeInterval(pst.st_mtimespec.tv_sec), TimeInterval(pst.st_ctimespec.tv_sec))
+            : TimeInterval(pst.st_mtimespec.tv_sec))
+        guard age > olderThan else { continue }
         var isDir: ObjCBool = false
         if FileManager.default.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue {
             switch lockState(path) {
@@ -876,15 +1011,17 @@ func doDetach(_ a: Args, prompt: String) -> Never {
         // a worker that finishes inside one 50 ms tick has released the lock and written status.
         // Ready = terminal (status exists) OR running (lock held). Order matters: status first.
         let terminal = { FileManager.default.fileExists(atPath: dir + "/status") }
+        // ACTION 1: readiness means the worker HOLDS the lock. "cannot inspect" is not readiness.
+        let isHeld = { if case .held = lockState(dir) { return true } else { return false } }
         var ready = false
         for _ in 0..<400 {                                  // 400 × 50 ms = 20 s
-            if terminal() || lockHolder(dir) != nil { ready = true; break }
+            if terminal() || isHeld() { ready = true; break }
             if !p.isRunning {
                 // R4-L4: `p` is the swift *driver*. On this toolchain it execs into the interpreter
                 // so its pid IS the worker — a toolchain fact, not our invariant. A forked driver
                 // would exit before the worker locks; give it 2 s before believing "exited".
                 for _ in 0..<40 {
-                    if terminal() || lockHolder(dir) != nil { ready = true; break }
+                    if terminal() || isHeld() { ready = true; break }
                     usleep(50_000)
                 }
                 if !ready { ready = terminal() }
@@ -896,11 +1033,12 @@ func doDetach(_ a: Args, prompt: String) -> Never {
             // Codex R4 #3: a worker that is merely slow (cold compile, SIGSTOP, load) must not be
             // left alive with its run deleted underneath it — terminate, wait, re-check the lock,
             // and only then clean. If it will not die, keep the run and say so.
+            if isHeld() { _ = killHolderConverged(dir) }   // L-R5-12: the holder first, not just the driver
             if p.isRunning { p.terminate() }
             for _ in 0..<40 { if !p.isRunning { break }; usleep(50_000) }
             if p.isRunning { kill(p.processIdentifier, SIGKILL); for _ in 0..<20 { if !p.isRunning { break }; usleep(50_000) } }
             let logTail = tailOfFile(dir + "/worker.log", maxLines: 12, maxBytes: 1200)   // R4-S6 + Codex #14
-            if lockHolder(dir) != nil {
+            if !lockReleasedForSure(dir) {
                 die("detach failed: worker did not become ready and could not be terminated — run left in place at \(dir)\n" + logTail)
             }
             removeRun(dir); removeDefaultOutput(meta, id: id)
@@ -938,7 +1076,8 @@ struct Args {
     var selftestClassify: (String, Int)?  // hidden test hook (R4-L1): --_selftest-classify DOMAIN CODE
     var selftestPrelockSleep: Int?        // hidden test hook (Codex R4 #3): worker sleeps BEFORE locking
     var selftestClaimAge: Int?            // hidden test hook (Codex R4 #1): override the 60 s .done claim age
-    var pollWait: Int = 0                 // --poll <id> --wait N: block inside codex-call (R4-1)
+    var selftestGcAge: Int?               // hidden test hook (DA 3.3): override the 24 h GC age
+    var pollWait: Int?                    // --poll <id> [--wait N]      # --wait: block inside codex-call up to N s (1-120); never use a shell sleep --wait N: block inside codex-call (R4-1); nil = flag absent
 }
 
 func parseArgs() -> Args {
@@ -966,6 +1105,7 @@ func parseArgs() -> Args {
         case "--_selftest-classify": let d = next(); a.selftestClassify = (d, Int(next()) ?? 0)
         case "--_selftest-prelock-sleep": a.selftestPrelockSleep = Int(next()) ?? 0
         case "--_selftest-claim-age": a.selftestClaimAge = Int(next()) ?? 60
+        case "--_selftest-gc-age": a.selftestGcAge = Int(next()) ?? 0
         case "--wait": a.pollWait = Int(next()) ?? -1
         case "--detach": a.detach = true
         case "--_worker": a.workerId = next()
@@ -1028,14 +1168,20 @@ if modes > 1 { die("choose exactly one of --detach / --poll / --abort") }
 if a.selftestSleep != nil && !a.detach { die("--_selftest-sleep requires --detach") }
 // R3-L9: the test-only grace override must not be reachable from a production detach.
 if a.selftestGrace != nil && a.selftestSleep == nil { die("--_selftest-grace requires --_selftest-sleep") }
+if let g = a.selftestGcAge {
+    guard a.selftestSleep != nil else { die("--_selftest-gc-age requires --_selftest-sleep") }
+    GC_AGE_SECONDS = TimeInterval(max(0, g))
+}
 if a.selftestPrelockSleep != nil && a.selftestSleep == nil { die("--_selftest-prelock-sleep requires --_selftest-sleep") }
 if let n = a.selftestClaimAge {
     guard a.pollId != nil || a.abortId != nil else { die("--_selftest-claim-age requires --poll or --abort") }
-    CLAIM_STALE_SECONDS = TimeInterval(max(0, n))
+    CLAIM_STALE_SECONDS = TimeInterval(max(0, n)); CLAIM_STALE_OVERRIDDEN = true
 }
-if a.pollWait != 0 {   // R4-1: cadence lives inside the call — never a shell sleep
-    guard a.pollId != nil else { die("--wait requires --poll") }
-    guard (1...120).contains(a.pollWait) else { die("--wait must be 1…120 seconds") }
+if let w = a.pollWait {   // R4-1: cadence lives inside the call — never a shell sleep
+    // L-R5-1: presence is the field being non-nil, never "value != default" — `--wait 0` used to
+    // slip past every check and let the synchronous path fire a real HTTPS call.
+    guard a.pollId != nil, !a.detach else { die("--wait requires --poll (and cannot be combined with --detach)") }
+    guard (1...120).contains(w) else { die("--wait must be 1…120 seconds") }
 }
 // R3-L7: garbage / 0 / negative --max-time used to be swallowed (600 kept, or a run with no
 // deadline). Validated for --detach only — the synchronous path keeps its historical behaviour.
@@ -1046,7 +1192,7 @@ if a.detach && a.maxTime <= 0 { die("--max-time must be a positive integer") }
 
 // Background-mode dispatch (#37). These need no --output and no prompt of their own.
 if let id = a.workerId { runWorker(id: id) }
-if let id = a.pollId   { doPoll(id: id, wait: a.pollWait) }
+if let id = a.pollId   { doPoll(id: id, wait: a.pollWait ?? 0) }
 if let id = a.abortId  { doAbort(id: id) }
 
 // R3-H5: the synchronous path must keep its original order — `--output` is required BEFORE
