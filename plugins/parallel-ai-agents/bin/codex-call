@@ -540,7 +540,10 @@ func openOurLock(_ dir: String, flags: Int32) -> (fd: Int32?, why: String, err: 
 /// The integrity check behind every lock file we open (worker lock, claim marker): regular,
 /// singly linked, ours. Round 7 factored it out so the .claimed marker gets the same discipline.
 func openTrusted(_ path: String, flags: Int32) -> (fd: Int32?, why: String, err: Int32) {
-    let fd = open(path, flags | O_NOFOLLOW, 0o600)
+    // O_NONBLOCK: open(2) on a FIFO blocks until a peer appears, and the S_IFREG check below runs
+    // AFTER open — a `mkfifo <run>.done/.claimed` hung every later --detach inside the GC
+    // (round 7 L-R7-1 / F-SEC-1, measured). Harmless for regular files (fcntl locks unaffected).
+    let fd = open(path, flags | O_NOFOLLOW | O_NONBLOCK, 0o600)
     guard fd >= 0 else { let e = errno; return (nil, "open: " + String(cString: strerror(e)), e) }
     var st = stat()
     guard fstat(fd, &st) == 0 else { let e = errno; close(fd); return (nil, "fstat: " + String(cString: strerror(e)), e) }
@@ -646,10 +649,17 @@ var heldClaimFds: [Int32] = []
 /// nlink 1, our uid — openTrusted): a marker we cannot trust is `.failed`, and so is any errno
 /// other than "somebody holds it" (round 6 RC3b: EACCES/ENOSPC used to be reported as "already
 /// reported to another caller; do not retry" — a paid-for result made unreachable by a lie).
-func claimMarker(_ done: String) -> ClaimResult {
-    let (fdOpt, why, err) = openTrusted(done + CLAIM_MARKER, flags: O_RDWR | O_CREAT)
+/// Marker lifecycle invariant (round 7 B-CRIT, measured 7/150 double reports): the marker is created
+/// EXACTLY ONCE, by the process whose rename() won the live run, before it does anything else; every
+/// later caller only opens it. Nobody unlinks it except removeRun (recursively, at the end). With that,
+/// "the marker name is gone" can only mean "the .done is being torn down or its claim was never
+/// completed" — an adopter that creates a fresh inode there would take a lock nobody else can see
+/// (the ABA the O_EXCL marker had, moved to removeRun's door). ENOENT on adoption is therefore
+/// "not adoptable, do not retry", never "mine to create".
+func claimMarker(_ done: String, create: Bool) -> ClaimResult {
+    let (fdOpt, why, err) = openTrusted(done + CLAIM_MARKER, flags: create ? (O_RDWR | O_CREAT) : O_RDWR)
     guard let fd = fdOpt else {
-        if err == ENOENT { return .gone }   // the .done itself vanished (an abort/GC finished first)
+        if err == ENOENT { return .gone }   // the .done vanished, is being torn down, or its claim never completed
         return .failed("claim marker: " + why)
     }
     var fl = flock()
@@ -663,19 +673,26 @@ func claimMarker(_ done: String) -> ClaimResult {
     return .claimed(done)
 }
 
-/// GC only: is somebody finalizing this .done right now? "Cannot tell" counts as yes.
+/// GC only: is somebody finalizing this .done right now? Only a holder that F_GETLK positively
+/// reports counts. A marker that is missing, not a regular file, multiply linked, unreadable or
+/// otherwise uninspectable cannot be a live claim (a live claimer created a plain 0600 file seconds
+/// ago, and the GC only looks at entries older than its threshold) — round 7 L-R7-2: "cannot tell ⇒
+/// held" made a `.done` with a directory or chmod-000 marker immortal, with no path to reclaim it.
 func markerHeld(_ done: String) -> Bool {
-    let (fdOpt, _, err) = openTrusted(done + CLAIM_MARKER, flags: O_RDONLY)
-    guard let fd = fdOpt else { return err != ENOENT }
+    let (fdOpt, why, err) = openTrusted(done + CLAIM_MARKER, flags: O_RDONLY)
+    guard let fd = fdOpt else {
+        if err != ENOENT { log("gc: marker in \(done) is not inspectable (\(why)) — treating it as unheld") }
+        return false
+    }
     defer { close(fd) }
     var fl = flock()
     fl.l_type = Int16(F_WRLCK); fl.l_whence = Int16(SEEK_SET); fl.l_start = 0; fl.l_len = 0
-    guard fcntl(fd, F_GETLK, &fl) == 0 else { return true }
+    guard fcntl(fd, F_GETLK, &fl) == 0 else { return false }
     return fl.l_type != Int16(F_UNLCK)
 }
 
 func claimTerminal(_ id: String, dir: String) -> ClaimResult {
-    if dir.hasSuffix(".done") { return claimMarker(dir) }
+    if dir.hasSuffix(".done") { return claimMarker(dir, create: false) }   // adoption never creates
     let done = dir + ".done"
     guard rename(dir, done) == 0 else {
         let err = errno
@@ -687,9 +704,9 @@ func claimTerminal(_ id: String, dir: String) -> ClaimResult {
         }
         return .failed(String(cString: strerror(err)))
     }
-    // The rename won the race for the live run; the marker lock is what keeps an adopter out
-    // while we finalize. An adopter that beats us to the marker owns it — and will report it.
-    return claimMarker(done)
+    // The rename won the race for the live run: create the marker (the only creation site) and lock it.
+    // An adopter cannot beat us to it any more — it can only open a marker that already exists.
+    return claimMarker(done, create: true)
 }
 
 /// Validates the id and returns its directory: <id> (live, or finished and unclaimed) or
@@ -926,7 +943,7 @@ func doPoll(id: String, wait: Int = 0) -> Never {
         switch claimTerminal(id, dir: dir) {
         case .claimed(let d): return d
         case .takenByOther: die("run \(id) is being finalized by a concurrent poll or abort — its terminal state goes to that caller; do not retry")
-        case .gone: die("run \(id) is gone — aborted or garbage-collected; do not retry")
+        case .gone: die("run \(id) is gone — aborted, garbage-collected, being torn down by the caller that reported it, or its claim never completed; do not retry")
         case .failed(let why): die("cannot claim run \(id): \(why) — no other poll is involved; retrying will not help")
         }
     }
@@ -975,7 +992,7 @@ func doAbort(id: String) -> Never {
     switch claimTerminal(id, dir: resolved) {
     case .claimed(let d): dir = d
     case .takenByOther: log("run \(id) is already being finalized by a concurrent poll — nothing to abort"); exit(0)
-    case .gone: log("run \(id) is already gone — nothing to abort"); exit(0)
+    case .gone: log("run \(id) is already gone (removed, being torn down, or its claim never completed) — nothing to abort"); exit(0)
     case .failed(let why): die("cannot claim run \(id) for abort: \(why) — retrying will not help")
     }
     if !killHolderConverged(dir) {

@@ -129,16 +129,27 @@ round 6 的結論：round 5 六條 blocking 六條全關、`lockState` 三態成
 - **S7 `test/lint-bats.sh`**（零例外、含會失敗的 fixture 自測，進 `run.sh` 與兩個 CI job）：裸 `!` 斷言在 bats errexit 下是 no-op，散文規則寫了四次都復發（RC11：`R5-S3`／`R5-L8` 的 mutant 偵測率 0/10，改寫後 10/10）。三處改寫。
 - **S8 誠實化**：`--help` 真的補上 `--wait`（round 5 宣稱過但沒做）；`--_selftest-gc-age` 只掃 selftest run（RC5：曾掃掉正式 run 與已交付輸出）；契約 §2 第 53／57／58／62–64 行、§4、§5、§7 逐行對齊，新增 **§8 Known limitations**（dirfd/openat、`--wait 120` vs harness timeout、`.untrusted` 回收、`O_RDWR` 探測、`did not terminate` 的第二 token 例外——DA 3.2 的付費 run 無法回收也在 Known limitations）；Tests 段不再出現「N 個先驗 RED」這類無腳本可重現的數字（RC13）。
 
+### Fixed（round 7 verify：requirements／regression FAIL + logic／security 初稿四條新根因，修於 round 8）
+
+round 7 的新根因全部在 `.claimed` 這個新物件上——它的生命週期（誰建、誰刪、刪的順序）沒寫成不變式：
+
+- **`.claimed` 只由 rename 成功者建立、接手者只 open 不建立**（regression B-CRIT：A 的 `removeRun` 遞迴 unlink 先刪掉標記名，B 的 `O_CREAT` 建出**新 inode**並取得鎖 → 三路併發接手無 status 的 `.done`，`1514d40` 上 **7/150 雙 `FAILED status missing`**；契約「沒有 ABA」實測為偽——ABA 從 `claimMarker` 換到 `removeRun` 這扇門）。接手時 ENOENT → `.gone`（正在被清除或 claim 未完成），不回報。`R7-X` 的接手迴圈改三路 ×10。
+- **`openTrusted` 加 `O_NONBLOCK`**（logic L-R7-1／security F-SEC-1：`mkfifo <id>.done/.claimed` 讓 GC 的 `open` 永久阻塞 → 之後每一次 `--detach` 掛死）。`R8-FIFO`。
+- **`markerHeld` 只在 `F_GETLK` 明確回報持鎖者時才算持有**（logic L-R7-2／security F-SEC-2：目錄／symlink／`chmod 000` 的標記曾讓 `.done` 永遠不被 GC）；完整性失敗的標記對 poll／abort 仍是 `.failed` exit 1。`R8-RC3b`（regression 的 CE mutant：errno 摺成 `takenByOther` 讓 abort exit 0 而 worker 仍活）、`R8-GC2`（GC2 mutant）——**這兩個是護欄型：在 `1514d40` 上就綠**，鑑別力在對應 mutant 上，不宣稱能區分修法前後；在 `1514d40` 上為紅的是 `R7-X`（三路 ×十輪，重現 B-CRIT）與 `R8-FIFO`（detach 掛住，SIGALRM 142）。
+- **CI 的兩個環境相依斷言**（第一次真的在 CI 執行就照出來）：`Codex-R4-3` prelock 90／上界 60；`R5-S5` 以 `perl -e 'alarm'` 取代 macOS runner 沒有的 `timeout`（round 7 得到 127 被讀成「不是 2」）。
+- 誠實化：契約第 63 行「stdout 只有兩種」與自己的表矛盾（改為三種）；四處封閉列舉補「不得類推」；重複的 `## 8.` → `## 9.`；§9 補 rename→建立標記之間崩潰的洩漏、標記完整性失敗、`reported`→print 視窗、`FAILED worker did not terminate` 之後的第二 token 實測是 `FAILED status missing`；`reported`／`.claimed` 的同 uid 偽造面揭露；case 數改由 grep 產生。
+- 兩個 mutant 判為等價、不補測試並在此宣告：S1 逾時兜底「只 rename 不取標記鎖」（S4 的 `reported` 已保證至多印一次，S1 留著是為性質 (3) 的對稱）；S2 detach readiness 清理不 claim（id 尚未印出，沒有第二個 caller 能撞到）。
+
 ### Removed
 
 - `bin/pai-codex-review` 與 `test/pai-codex-review.bats`（從未進 main）。
 
 ### Tests
 
-- 新增 `test/codex-call-detach.bats`（macOS job，**69 個 case**；round 3 後 12 → 31，round 4 後 → 43，round 5 後 → 63，round 7 後 → 69：+7 `R7-*`、−1 `Codex-R4-1`（年齡判準已不存在）、5 個改寫）。
+- 新增 `test/codex-call-detach.bats`（macOS job，**73 個 case**（`grep -c "^@test" test/codex-call-detach.bats`）；round 3 後 12 → 31，round 4 後 → 43，round 5 後 → 63，round 7 後 → 70，round 8 後 → 73：+8 `R7-*`（含 `R7-X` 狀態叉積補格）、+3 `R8-*`、−1 `Codex-R4-1`（年齡判準已不存在）、5 個改寫。round 7 verify 抓到本行曾寫 69／+7——`R7-X` 加在段落寫完之後，數字沒跟上：RC13 第四度，所以 round 8 起 case 數由 `grep -c "^@test" test/codex-call-detach.bats` 產生、不手打）。
   走**同一條** detach／lock／poll／abort 路徑，只以 `--_selftest-*` 把 HTTP 換成 sleep + 寫檔。
   **round 7 的 RED-first 證據以名稱列出、原始輸出貼在 PR #47 的 round 7 留言**（round 6 regression 實測 round 5 寫在這裡的「13 個先驗 RED／7 個護欄型」名單有 4 個成員是錯的，而且沒有腳本能重現那些數字——所以不再寫數字）：
-  在 `880785a` 上為 RED 的案例：`R7-A`（雙逾時 poll ×10）、`R7-D`（`.done` 內活 worker）、`R7-R`（reported 痕跡）、`R7-M05`（kill 等待中 lock 變不可信；含新 hook `--_selftest-ignore-term`，RED 一部分來自旗標不存在）、`R7-RC1c`（逾時瞬間 status 已落地）、`R7-GC`（GC hook 只掃 selftest run）、`R7-S5`（abort 輸家 stdout 空）、`R3-L10/R7`、`R4-L3/R7`、`R5-L2`（拿掉 hook 後）、`R5-S6/R7`。
+  在 `880785a` 上為 RED 的案例：`R7-A`（雙逾時 poll ×10）、`R7-D`（`.done` 內活 worker）、`R7-R`（reported 痕跡）、`R7-M05`（kill 等待中 lock 變不可信；含新 hook `--_selftest-ignore-term`，RED 一部分來自旗標不存在）、`R7-RC1c`（逾時瞬間 status 已落地）、`R7-GC`（GC hook 只掃 selftest run）、`R7-S5`（abort 輸家 stdout 空）、`R7-X`（狀態叉積補格：poll×abort 逾時、abort×abort、接手×接手無 status）、`R3-L10/R7`、`R4-L3/R7`、`R5-L2`（拿掉 hook 後）、`R5-S6/R7`。
   `R5-S3`、`R5-L8` 的改寫是護欄（裸 `!` → `run cmd; [ "$status" -ne 0 ]`），修法前後皆綠，其鑑別力由 round 6 regression 的 mutant 量得（0/10 → 10/10）。
 - 新增 `test/lint-bats.sh` + `test/fixtures/lint-bats-bad.bats`：裸 `!` 斷言的機械護欄，先自測（fixture 必須被拒）再掃套件。
 - `test/ensemble-workflow.test.mjs` 改為新契約（**31 個**；round 7 +1：`--abort` 的空 stdout／非零退出不是判決）；補 `--instructions` 與 wrapper 路徑的
