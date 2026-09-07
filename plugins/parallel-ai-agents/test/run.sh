@@ -5,10 +5,14 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "── shellcheck (bash scripts) ──"
-shellcheck bin/pai-build-diff bin/pai-parse-verdict bin/pai-iter-commit
+shellcheck bin/pai-build-diff bin/pai-parse-verdict bin/pai-iter-commit test/lint-bats.sh
 
 echo "── py_compile (python scripts) ──"
 python3 -m py_compile bin/pai-parse-lens-csv
+
+echo "── lint-bats (bare ! assertions are no-ops under bats errexit — round 6 RC11) ──"
+bash test/lint-bats.sh --selftest
+bash test/lint-bats.sh
 
 echo "── bats test/ ──"
 bats test/

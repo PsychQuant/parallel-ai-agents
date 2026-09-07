@@ -506,6 +506,8 @@ rm -f '<path>'
 
 # 4) 早停（context 快耗盡、使用者中斷）：先 abort，否則 worker 會跑完整趟 HTTP 燒 quota
 "$CLAUDE_PLUGIN_ROOT/bin/codex-call" --abort '<id>'
+#    印 ABORTED 只代表「這次呼叫終止了它」；stdout 空 + exit 0 = 別人已 finalize（終態歸那邊）、
+#    非零 = 這次沒有答案。三者都不是 leg 失敗、不是判決：不要重試、不要記成 finding。
 ```
 
 > **為什麼背景執行在 `codex-call` 裡而不是 bash（#37）**：PR #47 曾用 bash helper 做

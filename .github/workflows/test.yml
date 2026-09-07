@@ -23,7 +23,12 @@ jobs:
         # shellcheck 已預裝在 ubuntu-latest runner
 
       - name: shellcheck
-        run: shellcheck bin/pai-build-diff bin/pai-parse-verdict bin/pai-iter-commit
+        run: shellcheck bin/pai-build-diff bin/pai-parse-verdict bin/pai-iter-commit test/lint-bats.sh
+
+      # Round 6 RC11 (#37): a bare `!` assertion is a no-op under bats' errexit — it recurred four
+      # times as a prose rule, so it is a machine rule now, and the guard proves it can fail first.
+      - name: lint-bats (bare ! assertions) — selftest, then the suite
+        run: bash test/lint-bats.sh --selftest && bash test/lint-bats.sh
 
       - name: py_compile
         run: python3 -m py_compile bin/pai-parse-lens-csv bin/pai-collect-lens-layers
@@ -61,8 +66,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install bats
-        run: brew install bats-core
+      # `bash` is load-bearing (round 6 RC7, #37): bats runs under `/usr/bin/env bash`, and on the
+      # macOS runner that resolved to the system bash 3.2, which cannot encode non-ASCII test
+      # names — every CJK-named case became `unknown test name` and the detach suite executed
+      # ZERO cases for four consecutive PR heads while the PR body said "bats 全綠". The job
+      # went red each time (the vacuous-green guards below did their job); nobody read it.
+      - name: Install bats + a bash that can run it
+        run: brew install bats-core bash
+
+      - name: Assert bats will run under bash ≥ 5 (the system bash 3.2 mangles CJK test names)
+        shell: bash
+        run: |
+          echo "bats shebang: $(head -1 "$(command -v bats)")"
+          echo "bash on PATH: $(command -v bash) → $(bash --version | head -1)"
+          major="$(bash -c 'echo "${BASH_VERSINFO[0]}"')"
+          [ "$major" -ge 5 ] || { echo "::error::bats would run under bash $major — CJK-named cases become 'unknown test name' and never execute"; exit 1; }
+
+      - name: lint-bats (bare ! assertions) — selftest, then the suite
+        shell: bash
+        run: bash test/lint-bats.sh --selftest && bash test/lint-bats.sh
 
       - name: Assert swift toolchain is usable (the real gate — a present shim is not enough)
         run: swift --version
@@ -97,4 +119,12 @@ jobs:
             echo "::error::tests skipped on the macOS job — the regression anchor is vacuous"; exit 1
           fi
           grep -q '^ok' "$TAP" || { echo "::error::no tests ran (empty glob or bats bail-out)"; exit 1; }
+          # Round 6 RC7: the plan line must match what actually ran. bats only WARNS
+          # ("Executed 13 instead of expected 76") when test names fail to decode.
+          plan="$(grep -m1 -oE '^1\.\.[0-9]+' "$TAP" | sed 's/^1\.\.//')"
+          ran="$(grep -cE '^(ok|not ok) ' "$TAP" || true)"
+          if [ -z "$plan" ] || [ "$ran" -ne "$plan" ]; then
+            echo "::error::TAP plan announces $plan tests but $ran executed — cases were skipped or unknown to bats"; exit 1
+          fi
+          echo "TAP plan $plan == executed $ran"
           exit "$rc"

@@ -26,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   現在 worker 是**單一 Swift 程序**（`codex-call` 以 `--_worker` 重新執行自己，它就是那通 HTTP
   呼叫，無 subprocess）：
   - **生存**：worker 對 `<run>/lock` 持有 `fcntl(F_SETLK)` record lock 直到結束
-  - **身分**：`--poll`／`--abort` 用 `F_GETLK` 取得**此刻**持鎖者的 pid，發訊號只對它——不從任何檔案讀 pid，PID 重用不可能誤殺。（實測 `flock()` 鎖在 macOS 的 `F_GETLK` 下 `l_pid = -1`，故用 `fcntl`）
+  - **身分**：`--poll`／`--abort` 用 `F_GETLK` 取得**此刻**持鎖者的 pid，發訊號只對它——不從任何檔案讀 pid；PID 重用的誤殺視窗縮到單一系統呼叫之間（契約 §4 誠實邊界，round 6 R6-6 指出本行曾寫「不可能」）。（實測 `flock()` 鎖在 macOS 的 `F_GETLK` 下 `l_pid = -1`，故用 `fcntl`）
   - **capability**：只接受 32 字元 CSPRNG run id，解析到 `~/.cache/codex-call/runs/<id>`（0700）。**不接受路徑**——round 2 證明「接受任意目錄 + 檔案存在性檢查」等於任意 PID kill／`rm -rf` 原語
   - **原子性**：terminal 清理以 `rename(run, run.done)` claim，併發 poll 只有一個回 terminal
   - **期限**：worker 自己強制 `--max-time`；poll 端兜底 `max-time + 60 s` 才 kill；meta 損毀 fail-closed
@@ -111,10 +111,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--wait N` 不再超過 N；`setsid` 移除（對 group leader 依定義必失敗，存活靠 Foundation 的獨立 pgid）；
   `openOurLock` 回傳原因，不再印陳舊 errno。
 - `tailOfFile`：`O_NOFOLLOW`＋一般檔案檢查＋`O_NONBLOCK`（FIFO 曾讓 poll 無限阻塞）、保留尾端位元組、剝除 bidi／Tags／BOM。
-- `--_selftest-claim-age` 只對 selftest run 生效；契約 §7 補三個隱藏旗標；`--help` 補 `--wait`；§2 的 exit-1 答案列舉補齊。
+- `--_selftest-claim-age` 只對 selftest run 生效；契約 §7 補三個隱藏旗標；§2 的 exit-1 答案列舉補齊。（round 6 regression：本行原本還寫「`--help` 補 `--wait`」，在 `880785a` 上並不成立——round 7 才補，見下。）
 - 測試：`Codex-R4-3` 的 `pgrep -f -- "--_worker"` 改為只數本 checkout 的 worker（曾因同機其他 codex-call 6/6 假 RED）；
   `--wait 500` 斷言改用活 id 並比對訊息；補 worker 提早退出四條 log、GC 對 untrusted 舊 run、abort 撞 prelock 的案例；
   teardown 先 `chflags -R nouchg`。detach bats 43 → 63。
+
+### Fixed（round 6 verify：六方一致 FAIL + Devil's Advocate，修於 round 7）
+
+round 6 的結論：round 5 六條 blocking 六條全關、`lockState` 三態成立，但**「恰好回報一次」不是一個函式能保證的**——五方都把「唯一 claim」當充分條件，它只是必要條件（DA-1）。round 7 依 DA 的封閉列舉 S1–S8：
+
+- **S1 逾時兜底先 claim 再 kill**（RC1a：`terminate()` 曾在 claim 之外 kill＋刪＋印，兩個 poll 打同一個逾時 run **10/10 雙終態**）；kill 後**重讀 status**——逾時瞬間剛收尾的 run 以 status 為準、不再被刪輸出報 TIMEOUT（RC1c）；`removeRun` 回傳值不再丟（RC1b）。
+- **S2 `resolveRun` 不再看年齡、不再刪任何東西**（RC2：無 status 的 `.done` 曾被當殘留刪掉，而 worker 還活著——abort 先 claim 但 kill 未收斂的殘局）。`.done` 內 worker 持鎖 → `RUNNING`／逾時兜底。
+- **S3 接手標記改成 `.done/.claimed` 上的 fcntl 寫鎖、持到程序結束**——與 worker 鎖同一個原語，一次消掉 `lstat→unlink→O_EXCL` 的 ABA、60 s mtime lease、`touch` 偽造、接手者慢而非死被搶（RC3a）；標記完整性檢查與 errno 分流回 `.failed`，EACCES／ENOSPC 不再被說成「別人拿走了、不要 retry」（RC3b）。`CLAIM_MARKER_STALE_SECONDS`、`resolveRun` 的 ctime 門檻與 `--_selftest-claim-age` 一併移除（單一機制）。
+- **S4 印任何終態之前先讓 `reported` 落地**（`rename(status, reported)`，缺 status 則 `O_EXCL` 建立；失敗則不印、exit 1、run 保留）。有 `reported` 的殘留永不重報（RC4：DONE 後清理失敗曾在 65 s 後被改報 FAILED）。**S3 與 S4 同 commit**——DA-2：fcntl 標記單獨出貨會把重報視窗從 60 s 縮成 0 s。
+- **S5 `--abort` 的 stdout 只有 `ABORTED` 或空**：輸給併發 poll、run 已消失、已 `reported` → 空 stdout、exit 0（後置條件成立）；`ABORTED` 專指本次呼叫終止了它（RC6）。engine step 4 同步：非 ABORTED 的結果不是 leg 失敗也不是判決。契約 §2 改為精確表。
+- **S6 CI 錨點**：macOS job 改裝 Homebrew bash 並斷言 `bash ≥ 5`（RC7：runner 的 bats 跑在 bash 3.2，63 個中文名 detach case **四個 head 從未在 CI 執行**，job 一直是紅的、PR body 卻寫「全綠」）；TAP `1..N` 必須等於執行數；verify 的 freshness gate 加「head check-runs 全綠」。
+- **S7 `test/lint-bats.sh`**（零例外、含會失敗的 fixture 自測，進 `run.sh` 與兩個 CI job）：裸 `!` 斷言在 bats errexit 下是 no-op，散文規則寫了四次都復發（RC11：`R5-S3`／`R5-L8` 的 mutant 偵測率 0/10，改寫後 10/10）。三處改寫。
+- **S8 誠實化**：`--help` 真的補上 `--wait`（round 5 宣稱過但沒做）；`--_selftest-gc-age` 只掃 selftest run（RC5：曾掃掉正式 run 與已交付輸出）；契約 §2 第 53／57／58／62–64 行、§4、§5、§7 逐行對齊，新增 **§8 Known limitations**（dirfd/openat、`--wait 120` vs harness timeout、`.untrusted` 回收、`O_RDWR` 探測、`did not terminate` 的第二 token 例外——DA 3.2 的付費 run 無法回收也在 Known limitations）；Tests 段不再出現「N 個先驗 RED」這類無腳本可重現的數字（RC13）。
 
 ### Removed
 
@@ -122,14 +135,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 
-- 新增 `test/codex-call-detach.bats`（macOS job，**63 個 case**；round 3 後 12 → 31，round 4 後 → 43，round 5 後 → 63）。
-  誠實邊界：round 5 新增的 20 個案例中 13 個在無修法的 build 上確認為 RED；7 個是護欄型、在修法前也綠——
-  `R5-L2`（雙 DONE 機率約 1/20，三輪抓不到）、`R5-S3`（併發形狀與 security lens 量到的 `--wait 20` 不同）、`R5-L8`、`R5-L9`、
-  `R5-F2b`／`R5-F2d`、`R5-F4`——它們守的是上界與不變式，不宣稱能區分修法前後。：detach 立即返回、poll RUNNING→DONE、
-  `--output` 直寫、abort 殺持鎖者且無 orphan、FAILED、status 缺失 fail-closed、poll 端兜底 TIMEOUT、
-  **偽造 id／偽造 run 目錄不對任何程序發訊號**、併發 poll 原子 claim、參數錯誤同步浮現、同步路徑不變。
+- 新增 `test/codex-call-detach.bats`（macOS job，**69 個 case**；round 3 後 12 → 31，round 4 後 → 43，round 5 後 → 63，round 7 後 → 69：+7 `R7-*`、−1 `Codex-R4-1`（年齡判準已不存在）、5 個改寫）。
   走**同一條** detach／lock／poll／abort 路徑，只以 `--_selftest-*` 把 HTTP 換成 sleep + 寫檔。
-- `test/ensemble-workflow.test.mjs` 改為新契約（**30 個**）；補 `--instructions` 與 wrapper 路徑的
+  **round 7 的 RED-first 證據以名稱列出、原始輸出貼在 PR #47 的 round 7 留言**（round 6 regression 實測 round 5 寫在這裡的「13 個先驗 RED／7 個護欄型」名單有 4 個成員是錯的，而且沒有腳本能重現那些數字——所以不再寫數字）：
+  在 `880785a` 上為 RED 的案例：`R7-A`（雙逾時 poll ×10）、`R7-D`（`.done` 內活 worker）、`R7-R`（reported 痕跡）、`R7-M05`（kill 等待中 lock 變不可信；含新 hook `--_selftest-ignore-term`，RED 一部分來自旗標不存在）、`R7-RC1c`（逾時瞬間 status 已落地）、`R7-GC`（GC hook 只掃 selftest run）、`R7-S5`（abort 輸家 stdout 空）、`R3-L10/R7`、`R4-L3/R7`、`R5-L2`（拿掉 hook 後）、`R5-S6/R7`。
+  `R5-S3`、`R5-L8` 的改寫是護欄（裸 `!` → `run cmd; [ "$status" -ne 0 ]`），修法前後皆綠，其鑑別力由 round 6 regression 的 mutant 量得（0/10 → 10/10）。
+- 新增 `test/lint-bats.sh` + `test/fixtures/lint-bats-bad.bats`：裸 `!` 斷言的機械護欄，先自測（fixture 必須被拒）再掃套件。
+- `test/ensemble-workflow.test.mjs` 改為新契約（**31 個**；round 7 +1：`--abort` 的空 stdout／非零退出不是判決）；補 `--instructions` 與 wrapper 路徑的
   `shQuote()` 正向斷言（round 2 指出零覆蓋）。
 
 ### Known limitations（誠實邊界）
@@ -141,7 +153,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Claude lens 的同類 stall（#44）、目錄型 artifact（#45）、`xhigh` 治理（#43）、
   `response.completed` 的 tier／usage 可觀測性——皆不在本版。**issue #37 Expected 第 3 點（leg 被放棄時回報已花成本）
   依賴後者，明確延後至該獨立 issue**；本版 leg 缺席時的 integrity finding 只標記缺席、不含 token 數（round 5 D-1）。
-- Swift script 每次啟動約 1.5 s compile cache；poll 是分開 tool call、間隔數十秒，屬雜訊。
+- Swift script 每次啟動約 1.5–2.5 s（compile cache）；poll 是分開 tool call、間隔數十秒，屬雜訊——但 bats 內任何「未逾時應回 RUNNING」的斷言必須把這個啟動時間算進 `max-time + grace` 的餘裕（round 7 R7-D 實測 3 s 的 deadline 會被啟動時間吃掉）。
+- round 7 明確排除的五項見契約 §8：worker 以路徑字串寫 status（dirfd/`openat` 未做）、`--wait 120` 與 harness timeout、`.untrusted` run 無回收、`O_RDWR` 探測、`FAILED worker did not terminate` 後的第二 token。DA 3.2：被硬殺的 agent 留下的付費 run 沒有 `--list`，只能等 24 h GC。
 
 ## [2.22.1] - 2026-09-01
 

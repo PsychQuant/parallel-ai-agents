@@ -307,6 +307,13 @@ test('#37 R3 engine：早停要 --abort、讀完要 rm 輸出、detach 非零退
   assert.ok(/exits non-zero, do NOT poll/.test(p), '沒有交代 detach 非零退出時不 poll')
 })
 
+test('#37 R7 S5 engine：--abort 的空 stdout／非零退出不是 leg 失敗也不是判決（round 6 RC6，DA Q4）', async () => {
+  const p = await codexPromptFor({ profile: 'code', diffFile: '/tmp/d.diff' })
+  assert.ok(/`ABORTED` only when THIS call terminated the run/.test(p), '沒有說明 ABORTED 專指本次呼叫終止了 run')
+  assert.ok(/empty stdout with exit 0 means the run was already finalized/.test(p), '沒有說明空 stdout + exit 0 = 別人已 finalize')
+  assert.ok(/Neither is a leg failure and neither is a verdict — do not retry, do not record it as a finding/.test(p), '沒有交代 abort 的非 ABORTED 結果不得重試、不得記成判決')
+})
+
 test('#37 T6 用 --poll <id> 分開 tool call 輪詢，且明說 id 來自 tool output、shell 變數不跨呼叫', async () => {
   const p = await codexPromptFor({ profile: 'code', diffFile: '/tmp/d.diff' })
   assert.ok(p.includes(' --poll '), '沒有 --poll 子命令')
