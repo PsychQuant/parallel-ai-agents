@@ -1,0 +1,13 @@
+# codex-pro 專案層 profile —— 本 repo 的 codex leg（cross-model reviewer）pin（PsychQuant/parallel-ai-agents#48）
+#
+# 解析鏈（codex-pro EXTERNAL-CONSUMER CONTRACT，profile-contract.md §2）：
+#   codex-pro references/defaults.json → ~/.codex-pro/profile.yaml → 本檔
+#   per-field 高層蓋低層。解析器是 plugins/parallel-ai-agents/references/codex-governance.md 那組正規式：
+#   `^model:` / `^effort:` 取第一個命中、值 = 該行冒號後的全部 —— 所以值**不可加引號、不可尾隨註解**。
+#   （test/codex-profile.bats 用同一組正規式把這件事鎖在 CI。）
+#
+# 為什麼 pin 在這裡：codex-pro baseline 仍是 gpt-5.6-sol / xhigh（contract 1.0.0）。本 repo 把跨模型
+# 盲驗 leg 換到 GPT-6-Astra、用它的預設 effort（medium）；取捨理由與 effort 品質追蹤見 #48 / #50。
+# codex-pro baseline 換代（PsychQuant/codex-pro#17）落地後請**刪除本檔**，免得遮蔽下一次換代。
+model: gpt-6-astra
+effort: medium
