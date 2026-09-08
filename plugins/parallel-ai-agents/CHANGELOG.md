@@ -140,13 +140,24 @@ round 7 的新根因全部在 `.claimed` 這個新物件上——它的生命週
 - 誠實化：契約第 63 行「stdout 只有兩種」與自己的表矛盾（改為三種）；四處封閉列舉補「不得類推」；重複的 `## 8.` → `## 9.`；§9 補 rename→建立標記之間崩潰的洩漏、標記完整性失敗、`reported`→print 視窗、`FAILED worker did not terminate` 之後的第二 token 實測是 `FAILED status missing`；`reported`／`.claimed` 的同 uid 偽造面揭露；case 數改由 grep 產生。
 - 兩個 mutant 判為等價、不補測試並在此宣告：S1 逾時兜底「只 rename 不取標記鎖」（S4 的 `reported` 已保證至多印一次，S1 留著是為性質 (3) 的對稱）；S2 detach readiness 清理不 claim（id 尚未印出，沒有第二個 caller 能撞到）。
 
+### Fixed（round 8 verify：FAIL + Devil's Advocate 裁決「有條件換設計」，Stage A 修於 round 9）
+
+round 8 的 CI **首度全綠**（TAP plan 86 == executed 86、bash 5.3.15）、round 7 的五條 blocking **全部關閉**（B-CRIT 儀器化 0/150，round 7 是 7/150）。但三個 lens 獨立收斂到同一格：**`<id>.done` 存在、`.claimed` 不存在**。DA 裁決連續三輪（6→7→8）的根因是同一個結構特徵——「名字 ＋ 事後建立的檔案」是兩個不可組合的系統呼叫——**有條件換設計，但先做兩條與設計無關的修法，且必須在舊設計上就綠**。本節是那兩條（Stage A）：
+
+- **A1 止血與回報分離**（round 8 L-R8-1 實測）：`--abort` 先問 worker 鎖、該殺就殺，**不再被 claim 協定擋住**；claim 只決定誰回報終態、誰刪 run。round 8 把兩者綁在一起的後果是：一個標記從未建成的 `.done`，`--abort` 回 **exit 0**（契約說那代表「不會再跑、不會再花錢」）**而 worker 仍在跑，且此後沒有任何命令能終止它**。同時把 `.gone` 拆成兩列：真的消失 → exit 0 靜默；**claim 不可得但 run 還在磁碟上 → exit 1，明說「worker 已終止、清理沒做成」**——後置條件只成立一半就不得用 exit 0 宣稱全部成立。`R9-A1`／`R9-A1b`。
+- **A2 `markerHeld` → `markerState` 三答案**（round 8 DA §3 實測）：`held`／`unheld`／`untrusted`，GC 對 `untrusted` **不刪、記錄一行**。round 8 的 `Bool` 把「不可判定」摺成「沒鎖」，方向正好是本專案自己 R4-S1 紀律點名的那個：同 uid 對標記 `ln` 一個 hard link 就讓 GC 印「claimer died first」並掃掉一個 **claimer 全程存活**的 `.done`；**非對抗入口**是 `F_GETLK` 在 NFS／SMB 的 `$HOME` 上失敗，不需要攻擊者。代價（這種 `.done` 需人工清理）寫進契約 §9——round 7 L-R7-2 的原始問題是「沒有回收路徑」，用「不可判定就刪」去修它是錯的方向。`R9-A2`（hard link／目錄／`chmod 000` 三變體）。
+- **`R8-FIFO` 的斷言隨語意一起改（明講，不靜默）**：它原本斷言 FIFO 標記的 `.done` **會被 GC 掃掉**——那是 round 8 的決定，方向與 R4-S1 相反。A2 之後它斷言 `.done` **存活**且 stderr 有拒掃的理由；案例的原始價值（`O_NONBLOCK`：detach 與 poll 都不掛住）原封不動。改測試去配合新行為需要理由才不算移動球門，理由就是上一條。
+- 測試護欄：`no_worker_for <id>`（run-id 級的孤兒斷言；`own_workers` 是 checkout 級，一個案例的孤兒會污染後面每一個案例——round 5 F-3 把 scope 從機器全域縮到 checkout，這裡再縮一級）；`bats_require_minimum_version 1.5.0`。
+
+**Stage B（換設計：`claim` 改成 `doDetach` 在 spawn worker 之前建立的第二個鎖檔，取消 `rename` claim／`.done` 名字／接手分支）與 Stage C（誠實化）另計。**
+
 ### Removed
 
 - `bin/pai-codex-review` 與 `test/pai-codex-review.bats`（從未進 main）。
 
 ### Tests
 
-- 新增 `test/codex-call-detach.bats`（macOS job，**73 個 case**（`grep -c "^@test" test/codex-call-detach.bats`）；round 3 後 12 → 31，round 4 後 → 43，round 5 後 → 63，round 7 後 → 70，round 8 後 → 73：+8 `R7-*`（含 `R7-X` 狀態叉積補格）、+3 `R8-*`、−1 `Codex-R4-1`（年齡判準已不存在）、5 個改寫。round 7 verify 抓到本行曾寫 69／+7——`R7-X` 加在段落寫完之後，數字沒跟上：RC13 第四度，所以 round 8 起 case 數由 `grep -c "^@test" test/codex-call-detach.bats` 產生、不手打）。
+- 新增 `test/codex-call-detach.bats`（macOS job，**76 個 case**（`grep -c "^@test" test/codex-call-detach.bats`）；round 3 後 12 → 31，round 4 後 → 43，round 5 後 → 63，round 7 後 → 70，round 8 後 → 73，round 9 Stage A 後 → 76：+8 `R7-*`（含 `R7-X` 狀態叉積補格）、+3 `R8-*`、+3 `R9-A*`、−1 `Codex-R4-1`（年齡判準已不存在）、5 個改寫。round 7 verify 抓到本行曾寫 69／+7——`R7-X` 加在段落寫完之後，數字沒跟上：RC13 第四度，所以 round 8 起 case 數由 `grep -c "^@test" test/codex-call-detach.bats` 產生、不手打）。
   走**同一條** detach／lock／poll／abort 路徑，只以 `--_selftest-*` 把 HTTP 換成 sleep + 寫檔。
   **round 7 的 RED-first 證據以名稱列出、原始輸出貼在 PR #47 的 round 7 留言**（round 6 regression 實測 round 5 寫在這裡的「13 個先驗 RED／7 個護欄型」名單有 4 個成員是錯的，而且沒有腳本能重現那些數字——所以不再寫數字）：
   在 `880785a` 上為 RED 的案例：`R7-A`（雙逾時 poll ×10）、`R7-D`（`.done` 內活 worker）、`R7-R`（reported 痕跡）、`R7-M05`（kill 等待中 lock 變不可信；含新 hook `--_selftest-ignore-term`，RED 一部分來自旗標不存在）、`R7-RC1c`（逾時瞬間 status 已落地）、`R7-GC`（GC hook 只掃 selftest run）、`R7-S5`（abort 輸家 stdout 空）、`R7-X`（狀態叉積補格：poll×abort 逾時、abort×abort、接手×接手無 status）、`R3-L10/R7`、`R4-L3/R7`、`R5-L2`（拿掉 hook 後）、`R5-S6/R7`。

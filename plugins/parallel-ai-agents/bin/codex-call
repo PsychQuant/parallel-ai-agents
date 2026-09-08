@@ -673,22 +673,29 @@ func claimMarker(_ done: String, create: Bool) -> ClaimResult {
     return .claimed(done)
 }
 
-/// GC only: is somebody finalizing this .done right now? Only a holder that F_GETLK positively
-/// reports counts. A marker that is missing, not a regular file, multiply linked, unreadable or
-/// otherwise uninspectable cannot be a live claim (a live claimer created a plain 0600 file seconds
-/// ago, and the GC only looks at entries older than its threshold) — round 7 L-R7-2: "cannot tell ⇒
-/// held" made a `.done` with a directory or chmod-000 marker immortal, with no path to reclaim it.
-func markerHeld(_ done: String) -> Bool {
+/// Round 9 A2 (round 8 DA §3): the marker answers the SAME question the worker lock does, so it
+/// owes the same three answers — `lockState`'s doc (R4-S1) says it in as many words: "no lock
+/// file", "a lock file we refuse to trust" and "lock held" are THREE answers, and collapsing the
+/// second into the first makes an integrity failure look like a finished run. `markerHeld -> Bool`
+/// collapsed it in exactly that direction: a same-uid `ln` on the marker (nlink 2) made the GC
+/// print "its claimer died first" and sweep a `.done` whose claimer was alive throughout
+/// (measured). The non-adversarial entry is the same one lockState has: F_GETLK itself failing
+/// (ENOLCK/EIO on an NFS/SMB $HOME) needs no attacker at all.
+///
+/// Round 7 L-R7-2 pushed the pendulum the other way ("cannot tell ⇒ immortal") because such a run
+/// had NO recovery path. Round 9 keeps "cannot tell ⇒ do not delete" — silently deleting a live
+/// claim loses a paid-for result, which is strictly worse than a visible leftover — and pays for
+/// it with honesty instead: the GC logs the reason, and the contract lists manual cleanup.
+enum MarkerState { case held(pid_t), unheld, untrusted(String) }
+
+func markerState(_ done: String) -> MarkerState {
     let (fdOpt, why, err) = openTrusted(done + CLAIM_MARKER, flags: O_RDONLY)
-    guard let fd = fdOpt else {
-        if err != ENOENT { log("gc: marker in \(done) is not inspectable (\(why)) — treating it as unheld") }
-        return false
-    }
+    guard let fd = fdOpt else { return err == ENOENT ? .unheld : .untrusted(why) }
     defer { close(fd) }
     var fl = flock()
     fl.l_type = Int16(F_WRLCK); fl.l_whence = Int16(SEEK_SET); fl.l_start = 0; fl.l_len = 0
-    guard fcntl(fd, F_GETLK, &fl) == 0 else { return false }
-    return fl.l_type != Int16(F_UNLCK)
+    guard fcntl(fd, F_GETLK, &fl) == 0 else { return .untrusted("F_GETLK: " + String(cString: strerror(errno))) }
+    return fl.l_type == Int16(F_UNLCK) ? .unheld : .held(fl.l_pid)
 }
 
 func claimTerminal(_ id: String, dir: String) -> ClaimResult {
@@ -983,19 +990,38 @@ func doAbort(id: String) -> Never {
     let resolved = resolveRun(id)
     refuseIfUntrusted(resolved)   // R4-S1
     let meta = readMeta(resolved)
-    // R5-S3 / ACTION 2: abort takes part in the SAME claim protocol as poll. Round 7 S5 (round 6
-    // DA Q4): --abort's post-condition is "this run will not run or cost anything more", and it
-    // holds whether WE terminated it or somebody else is finalizing it — so those are exit 0.
-    // But the ABORTED token means "this call terminated it": the engine reads stdout tokens as
+    // Round 9 A1 (round 8 L-R8-1, measured): STOPPING THE SPEND IS NOT THE CLAIM PROTOCOL'S
+    // BUSINESS. The claim decides who may REPORT a terminal state (and who may delete the run);
+    // whether a process may stop a worker from burning quota is answered by the worker lock alone
+    // — F_GETLK names the holder at this instant (§4), no claim required. Conflating the two let
+    // --abort exit 0 ("this run will not run or cost anything more") on a `.done` whose marker was
+    // never created, while its worker ran on and NO command could ever terminate it. --abort is
+    // the one command whose purpose is to stop paying; it must not be gated on a protocol that
+    // can become unavailable. Reporting and cleanup stay behind the claim (round 6 RC1a stands:
+    // that finding was about printing and deleting without a claim, not about signalling).
+    let holderBefore: Bool = { if case .held = lockState(resolved) { return true }; return false }()
+    if holderBefore, !killHolderConverged(resolved) {
+        log("abort: worker did not release the lock after SIGTERM/SIGKILL — run left in place at \(resolved)")
+        print("FAILED worker did not terminate"); exit(2)
+    }
+    // R5-S3 / ACTION 2: reporting takes part in the SAME claim protocol as poll (round 6 DA Q4).
+    // The ABORTED token means "this call terminated it": the engine reads stdout tokens as
     // verdicts, so a loser prints NOTHING (round 6 RC6: it printed ABORTED — a second token).
     let dir: String
     switch claimTerminal(id, dir: resolved) {
     case .claimed(let d): dir = d
     case .takenByOther: log("run \(id) is already being finalized by a concurrent poll — nothing to abort"); exit(0)
-    case .gone: log("run \(id) is already gone (removed, being torn down, or its claim never completed) — nothing to abort"); exit(0)
+    case .gone:
+        // Round 9 A1: "gone" and "still on disk but unclaimable" are not the same answer. Say
+        // which half of the post-condition holds — the worker is stopped, the run is not cleaned.
+        if FileManager.default.fileExists(atPath: resolved) || FileManager.default.fileExists(atPath: resolved + ".done") {
+            let where_ = FileManager.default.fileExists(atPath: resolved) ? resolved : resolved + ".done"
+            die("run \(id): the worker was terminated (nothing more will be spent) but the run could not be claimed for cleanup — its claim was never completed; left at \(where_) for the 24 h GC or manual removal")
+        }
+        log("run \(id) is already gone (removed, or torn down by the caller that reported it) — nothing to abort"); exit(0)
     case .failed(let why): die("cannot claim run \(id) for abort: \(why) — retrying will not help")
     }
-    if !killHolderConverged(dir) {
+    if !killHolderConverged(dir) {   // a holder that took the lock after our probe (Codex round 4 #10)
         log("abort: worker did not release the lock — run left in place at \(dir)")
         print("FAILED worker did not terminate"); exit(2)
     }
@@ -1058,7 +1084,13 @@ func gcStaleRuns(olderThan: TimeInterval = GC_AGE_SECONDS) {
             case .unlocked: break
             }
             if suffix == ".done" {
-                if markerHeld(path) { continue }             // somebody is finalizing it right now
+                switch markerState(path) {
+                case .held: continue                         // somebody is finalizing it right now
+                case .untrusted(let why):                    // round 9 A2: never delete on "cannot tell"
+                    log("gc: marker in \(path) cannot be trusted or inspected (\(why)) — refusing to sweep it; remove it by hand once you know it is dead (contract §9)")
+                    continue
+                case .unheld: break
+                }
                 let fm = FileManager.default
                 if fm.fileExists(atPath: path + "/status"), !fm.fileExists(atPath: path + REPORTED) {
                     log("gc: run \(stem) was claimed but never reported (its claimer died first) — sweeping it")

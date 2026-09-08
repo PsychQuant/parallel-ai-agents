@@ -11,6 +11,8 @@
 # macOS-only（codex-call 是 #!/usr/bin/swift）——guard 沿用 codex-call-error-extract.bats。
 # CI 的 macos-swift-bats job glob 是 test/codex-call-*.bats，本檔會被納入。
 
+bats_require_minimum_version 1.5.0   # `run --separate-stderr`（round 7 起使用）
+
 setup() {
   BIN="${BATS_TEST_DIRNAME}/../bin/codex-call"
   [ "$(uname)" = "Darwin" ] && [ -x /usr/bin/swift ] \
@@ -31,6 +33,13 @@ own_workers() { pgrep -f -- "-interpret $BIN_REAL .* --_worker"; }
 
 # round 7：接手 claim 是 `.done/.claimed` 上的 fcntl 寫鎖（與 worker 鎖同一個原語）。
 # 模擬「另一個 caller 正在 finalize」＝從另一個程序持有那把鎖 30 s；python 的 lockf 就是 fcntl F_SETLK。
+no_worker_for() {  # $1=id → 只等「這一個 run」的 worker 消失（最多 6 s）。
+  # round 9：`own_workers` 是 checkout 級的，一個案例留下的孤兒會污染後面每一個案例的斷言
+  # （round 5 F-3 把 scope 從機器全域縮到 checkout，這裡再縮到 run id）。
+  for _ in $(seq 1 60); do pgrep -f -- "-interpret $BIN_REAL .* --_worker $1" >/dev/null 2>&1 || return 0; sleep 0.1; done
+  return 1
+}
+
 no_own_workers() {  # 鎖釋放到程序真的消失有毫秒級時差；滿載時（整套平行、CI runner）可到數秒——最多等 6 s
   for _ in $(seq 1 60); do own_workers >/dev/null 2>&1 || return 0; sleep 0.1; done
   own_workers >/dev/null 2>&1 && return 1; return 0
@@ -878,7 +887,7 @@ wait_terminal() {  # $1=id → 設 POLL_OUT / POLL_RC
   "$BIN" --abort "$id2" >/dev/null 2>&1 || true
 }
 
-@test "R8-FIFO .claimed 是 FIFO → detach 不掛住（GC 不阻塞）、poll exit 1 不阻塞、老的 .done 被回收" {
+@test "R8-FIFO/R9 .claimed 是 FIFO → detach 與 poll 都不掛住（O_NONBLOCK）；GC 不掃它（不可判定 ⇒ 不刪，A2）、留下一行紀錄" {
   cid="$(printf 'v%.0s' $(seq 1 32))"; mkdir -p "$BASE/$cid.done"
   printf '{"selftest_sleep":0,"output":"/tmp/nope","max_time":30,"started_at":%s}\n' "$(date +%s)" > "$BASE/$cid.done/meta.json"
   printf '0\n' > "$BASE/$cid.done/status"; mkfifo "$BASE/$cid.done/.claimed"
@@ -886,8 +895,70 @@ wait_terminal() {  # $1=id → 設 POLL_OUT / POLL_RC
   [ "$status" -eq 1 ]; [ -z "$output" ]; [[ "$stderr" == *"cannot claim"* ]]     # 掛住會是 142
   run --separate-stderr perl -e 'alarm 60; exec @ARGV' -- "$BIN" --detach --_selftest-sleep 2 --_selftest-gc-age 0 --instructions i "p"
   [ "$status" -eq 0 ]; id="$output"                          # 掛住會是 142；round 7 L-R7-1 實測 detach 永久掛住
-  [ ! -e "$BASE/$cid.done" ]                                  # FIFO marker 不是活的 claim → 回收
+  # round 9 A2：FIFO 標記＝「不可判定」，不是「沒鎖」。round 8 在這裡刪掉它（本案例原本斷言 `! -e`），
+  # 方向與本專案 R4-S1 紀律相反——靜默刪掉一個可能還活著的 claim 會弄丟已付費的結果。改為留著並說出來。
+  [ -d "$BASE/$cid.done" ]
+  [[ "$stderr" == *"cannot be trusted or inspected"* ]]
+  [[ "$stderr" == *"refusing to sweep"* ]]
   "$BIN" --abort "$id" >/dev/null 2>&1 || true
+  rm -f "$BASE/$cid.done/.claimed"                            # 契約 §9：這種 .done 需人工清理
+}
+
+
+# ---------- round 9 Stage A（設計無關；round 8 DA §1.7 條件 1——必須在舊設計上就綠） ----------
+
+@test "R9-A1 abort 對「claim 不可得 ＋ worker 持鎖」：不得 exit 0、不得印 ABORTED，且 worker 必須真的被終止（止血與回報分離）" {
+  run "$BIN" --detach --_selftest-sleep 90 --instructions i "p"; [ "$status" -eq 0 ]; id="$output"
+  sleep 0.5
+  mv "$BASE/$id" "$BASE/$id.done"        # rename 成功、標記沒建成（R8-A／L-R8-1 的黑洞格）
+  wpid=$(own_workers | head -1); [ -n "$wpid" ]; kill -0 "$wpid"
+  run --separate-stderr "$BIN" --abort "$id"
+  [ "$status" -ne 0 ]                     # 後置條件沒有全部成立（run 清不掉）→ 不得用 exit 0 宣稱成立
+  [ -z "$output" ]                        # 沒有終態 token
+  [[ "$stderr" == *"terminated"* ]]       # 但必須說出「worker 已終止」這個成立的部分
+  no_worker_for "$id"                     # 驗收條件 #2：這條命令確實終止了它
+  [ -d "$BASE/$id.done" ]                 # 清不掉就誠實留著，不假報已清
+}
+
+@test "R9-A1b 正常 abort 不受影響：活 run 仍 ABORTED exit 0、run 已清；已結束的 run 併發 poll 仍拿 DONE" {
+  run "$BIN" --detach --_selftest-sleep 60 --instructions i "p"; [ "$status" -eq 0 ]; id="$output"
+  run "$BIN" --abort "$id"
+  [ "$status" -eq 0 ]; [ "$output" = "ABORTED" ]
+  [ -z "$(ls -d "$BASE/$id"* 2>/dev/null)" ]
+  no_worker_for "$id"
+  run "$BIN" --detach --_selftest-sleep 1 --instructions i "p"; [ "$status" -eq 0 ]; id2="$output"
+  sleep 3                                  # worker 已結束、無人持鎖 → abort 不該殺到任何東西
+  "$BIN" --poll "$id2" > "$TMP/p2" 2>/dev/null &
+  "$BIN" --abort "$id2" > "$TMP/a2" 2>/dev/null &
+  wait
+  run grep -q "FAILED" "$TMP/p2"; [ "$status" -ne 0 ]
+  n=$(cat "$TMP/p2" "$TMP/a2" | grep -cE '^(DONE|ABORTED)'); [ "$n" -eq 1 ]
+}
+
+@test "R9-A2 GC 對「不可判定的標記」不得刪除：hard link（nlink 2）／目錄／chmod 000 三變體，正在被 finalize 的 .done 必須存活" {
+  printf 'v\n' > "$TMP/linkbait"
+  for variant in hardlink dir chmod000; do
+    cid="$(printf 'y%.0s' $(seq 1 32))"; rm -rf "$BASE/$cid"*; mkdir -p "$BASE/$cid.done"
+    printf '{"selftest_sleep":0,"output":"/tmp/nope","max_time":30,"started_at":%s}\n' "$(date +%s)" > "$BASE/$cid.done/meta.json"
+    printf '0\n' > "$BASE/$cid.done/status"
+    case "$variant" in
+      hardlink) : > "$BASE/$cid.done/.claimed"; hp=$(hold_marker "$BASE/$cid.done"); sleep 0.5
+                ln "$BASE/$cid.done/.claimed" "$TMP/lnk.$cid" ;;    # nlink=2：完整性失敗，但鎖還被持有
+      dir)      mkdir -p "$BASE/$cid.done/.claimed"; hp="" ;;
+      chmod000) : > "$BASE/$cid.done/.claimed"; chmod 000 "$BASE/$cid.done/.claimed"; hp="" ;;
+    esac
+    run --separate-stderr "$BIN" --detach --_selftest-sleep 2 --_selftest-gc-age 0 --instructions i "p"
+    [ "$status" -eq 0 ]; gid="$output"
+    [ -d "$BASE/$cid.done" ]                       # 不可判定 ⇒ 不刪（與 lockState 的 .untrusted 同一紀律，R4-S1）
+    [[ "$stderr" == *"cannot be trusted or inspected"* ]]   # 與 lockState 的 .untrusted 同一句措辭
+    [[ "$stderr" == *"refusing to sweep"* ]]                # 且必須留下一行紀錄
+    run grep -q "claimer died first" <<< "$stderr"; [ "$status" -ne 0 ]   # 不得宣稱 claimer 已死
+    [ -z "$hp" ] || kill -0 "$hp"                  # hard link 變體：持鎖者全程存活
+    [ -z "$hp" ] || kill "$hp" 2>/dev/null || true
+    "$BIN" --abort "$gid" >/dev/null 2>&1 || true
+    chmod 600 "$BASE/$cid.done/.claimed" 2>/dev/null || true
+    rm -f "$TMP/lnk.$cid"
+  done
 }
 
 
