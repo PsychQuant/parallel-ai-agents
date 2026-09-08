@@ -298,6 +298,21 @@ test('#37 T6 codex-call 以背景執行 + 輪詢，不阻塞單一命令', async
 
 let pass = 0
 let fail = 0
+// #48：codex leg 的 model / effort 由 caller 依 codex-pro 契約解析後以 args 傳入（#22/#23），
+// engine 必須把三個值原樣放進 codex-call 命令列。這裡鎖 #48 實際依賴的那組三元組
+// （gpt-6-astra / medium / fast）—— 若有人把 effort 或 tier 寫死回 engine，這案會先叫。
+// 容忍裸值與 shQuote 單引號兩種寫法（#37 分支改為 shQuote，合併後不需改此案）。
+test('#48 codexModel / codexEffort args 原樣進 codex-call 命令列，service tier 固定 fast', async () => {
+  const p = await codexPromptFor({
+    profile: 'code', diffFile: '/tmp/d.diff',
+    codexModel: 'gpt-6-astra', codexEffort: 'medium',
+  })
+  assert.match(p, /--model '?gpt-6-astra'? --effort '?medium'? --service-tier '?fast'?/,
+    'codex-call 命令列沒有帶 caller 解析的 model/effort，或 service tier 不是 fast')
+  assert.ok(!/--model '?gpt-5\.6-sol'?/.test(p) && !/--effort '?xhigh'?/.test(p),
+    'engine 用了治理 snapshot 而非 caller 傳入的值（#23：snapshot 只服務不傳參的 legacy caller）')
+})
+
 for (const t of tests) {
   try {
     await t.fn()
