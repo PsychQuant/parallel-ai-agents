@@ -55,11 +55,35 @@ codex-call --detach [--output FILE] [同步模式的其餘旗標] [--prompt-file
 
 - id 不合法（格式錯／不存在）→ stderr 訊息，exit `1`，**不對任何程序發訊號**。
 - exit `1` 的答案不在上表——它們不是 run 的狀態，是「這次呼叫沒有答案」，**沒有一種值得 retry**（round 5 L5：ENOENT 曾被說成「另一個 poll，retry 有意義」，而 retry 只會得到 unknown）。封閉列舉：id 不合法；`unknown run id`（id 從未存在，或已完全清除——兩者無法區分）；`being finalized by a concurrent poll or abort — its terminal state goes to that caller`（`.claimed` 鎖被別人持有）；`gone — aborted or garbage-collected`；`cannot claim … retrying will not help`（`rename`／marker 因 EPERM、EACCES、ENOSPC、完整性檢查失敗——round 6 RC3b：這些曾被摺成「別人拿走了、不要 retry」）；`cannot be trusted or inspected`（lock 檔完整性或 I/O 問題，run 原地保留）；`already reported to another caller (recorded in …/reported)`（清理中斷的殘留，已清）；`cannot finalize … no terminal state printed`（`reported` 落地失敗，run 保留）；`--_selftest-claim-age was removed`。本列舉封閉，**不得依性質相似類推**——新的 exit-1 答案必須加進這裡並附測試。
-- 「恰好回報一次」是**三個分開的性質、三個分開的機制**，不是一個函式（round 6 DA-1：五方都把「唯一 claim」當充分條件，它只是必要條件；契約這一句曾寫成「由單一函式保證」）：**(1) at-most-one claimer**——活的 run 以 `rename(<id>, <id>.done)` 原子 claim；claim 到之後、以及接手既有 `.done` 時，在 `<id>.done/.claimed` 上取 **`fcntl(F_SETLK)` 寫鎖並持到程序結束**——與 worker 鎖同一個原語，kernel 在持鎖者死亡時釋放，所以沒有 lease、沒有時鐘、`touch` 偽造不了、也沒有 `lstat→unlink→O_EXCL` 的 ABA（round 6 RC3a；round 5 的 60 s mtime 標記三者皆有，且接手者「慢而非死」會被搶）。**標記的生命週期是不變式**：只由 `rename` 成功者建立一次（在做任何其他事之前），接手者只 `open` 不建立，除了 `removeRun` 的遞迴刪除之外沒有人 unlink 它——所以「標記名不在」只能是「正在被清除」或「claim 沒完成」，接手者得到 `.gone`、不回報（round 7 B-CRIT：接手者曾可 `O_CREAT` 出新 inode 並取得鎖，三路併發 7/150 雙終態——ABA 從 `claimMarker` 換到 `removeRun` 這扇門）。拿不到鎖＝`.takenByOther`；標記檔不可信或其他 errno＝`.failed`（不是「別人拿走了」）；標記是 FIFO 也不阻塞（`O_NONBLOCK`）。**不引入第三種目錄名**（round 5 DA 4.1／4.2）。**(2) 至多印一次**——印任何終態**之前**先讓 `<id>.done/reported` 落地（有 `status` 則 `rename(status, reported)`，一個原子系統呼叫；沒有則 `O_EXCL` 建立），落地失敗就不印（exit 1、run 保留）；接手者遇到已有 `reported` 的 `.done` 永不重報（round 6 RC4：DONE 後清理失敗曾在 65 s 後被改報 FAILED）。**(3) 沒有 claim 就不刪、不印**——`--poll`、`--wait` 迴圈、poll 端逾時兜底、`--abort`、detach 的 readiness 逾時清理，全部先 `claimTerminal`（round 6 RC1a：逾時兜底曾在 claim 之外 kill＋刪＋印，兩個 poll 打同一個逾時 run 10/10 雙終態）。**唯一例外是 §4 的 24 h GC**，且 GC 不碰 `.claimed` 鎖被持有**或不可判定**的 `.done`。
+- 「恰好回報一次」是**三個分開的性質、三個分開的機制**，不是一個函式（round 6 DA-1：五方都把「唯一 claim」當充分條件，它只是必要條件；契約這一句曾寫成「由單一函式保證」）：
 
-**發訊號不在性質 (3) 之內（round 9 A1，改自 round 6–8 的「不發訊號」）**：claim 決定的是**誰可以回報終態、誰可以刪除 run**；「可不可以讓一個 worker 停止燒錢」由 **worker 鎖單獨回答**——`F_GETLK` 指出此刻的持鎖者（§4），不需要 claim。round 8 把兩者綁在一起的後果是實測到的：一個 `rename` 成功但標記從未建成的 `.done`，`--abort` 得到 `.gone` 而回 **exit 0**（契約說那代表「不會再跑、不會再花錢」），**而 worker 仍在跑，且此後沒有任何命令能終止它**。`--abort` 是唯一目的就是停止付費的命令，**不得**被一個可能不可用的協定擋住。回報與清理仍在 claim 之後——RC1a 的發現是「在 claim 之外**印與刪**」，不是「在 claim 之外發訊號」。
+  **(1) at-most-one claimer**——`<id>/claim` 上的 `fcntl(F_SETLK)` 寫鎖，持到程序結束。**這個檔案由 `--detach` 建立一次**，在 spawn worker 之前、印出 id 之前；**任何 caller 都不建立它**（`open` 不帶 `O_CREAT`）。所以「輸掉」是 `EAGAIN`，不是第二個 inode；「檔案不在」是「run 正在被清除」（`removeRun` 是唯一的刪除者），不是「輪到我建」。claim 檔不可信或其他 errno ＝ `.failed`（**不是**「別人拿走了」，round 7 RC3b）；claim 檔不在但 run 目錄還在 ＝ `.failed`（**不是** `gone`，round 8 R8-A：一個帶著已付費結果、還躺在磁碟上的 run 曾被說成「gone — 不要 retry」）。
 
-本列舉封閉，**不得依性質相似類推第四個性質或第二個例外**。
+  **(2) 至多印一次**——印任何終態**之前**先讓 `<id>/reported` 落地（有 `status` 則 `rename(status, reported)`，一個原子系統呼叫；沒有則 `O_EXCL` 建立），落地失敗就不印（exit 1、run 保留）；下一個 caller 遇到已有 `reported` 的 run 永不重報（round 6 RC4：DONE 後清理失敗曾在 65 s 後被改報 FAILED）。
+
+  **(3) 沒有 claim 就不刪、不印**——`--poll`、`--wait` 迴圈、poll 端逾時兜底、`--abort`、detach 的 readiness 逾時清理，全部先取得 claim 鎖（round 6 RC1a：逾時兜底曾在 claim 之外 kill＋刪＋印，兩個 poll 打同一個逾時 run 10/10 雙終態）。**唯一例外是 §4 的 24 h GC**，且 GC 不碰 claim 鎖被持有**或不可判定**的 run。
+
+  **發訊號不在性質 (3) 之內（round 9 A1，改自 round 6–8 的「不發訊號」）**：claim 決定的是**誰可以回報終態、誰可以刪除 run**；「可不可以讓一個 worker 停止燒錢」由 **worker 鎖單獨回答**——`F_GETLK` 指出此刻的持鎖者（§4），不需要 claim。round 8 把兩者綁在一起的後果是實測到的：一個 claim 不可得的 run，`--abort` 回 **exit 0**（契約說那代表「不會再跑、不會再花錢」），**而 worker 仍在跑，且此後沒有任何命令能終止它**。`--abort` 是唯一目的就是停止付費的命令，**不得**被一個可能不可用的協定擋住。回報與清理仍在 claim 之後——RC1a 的發現是「在 claim 之外**印與刪**」，不是「在 claim 之外發訊號」。
+
+  **為什麼不是前三種設計**（rounds 5–8 各付過一次代價，不要重新推導；程式碼裡 `ClaimResult` 上方有同一段）：`<id>.claim.<pid>` 第三種目錄名讓 `resolveRun` 與 GC 對它盲目、成功結果永久遺失（round 5）；`<id>.done/.claimed` 以 `O_EXCL` ＋ 60 s mtime lease，lease 是時鐘所以 `touch` 偽造得了、慢而非死的接手者會被搶、`lstat→unlink→O_EXCL` 是 ABA（round 6）；改成 fcntl 鎖但由 `rename` 的贏家建立，`removeRun` 的遞迴 unlink 會先放掉標記名、第二個接手者於是建出新 inode 並取得鎖（round 7，實測 7/150 雙終態），而擋掉接手者建立之後，「rename 成功、標記沒建成」變成黑洞（round 8）。三者的共同結構特徵是**「一個名字加上一個事後才建立的檔案」是兩個不可組合的系統呼叫**——把 claim 檔與 run 一起建立（在任何人能叫出它的名字之前）刪掉的是那個特徵本身。
+
+  本列舉封閉，**不得依性質相似類推第四個性質或第二個例外**。
+
+### 狀態叉積（規格，不是紀錄）
+
+維度：**caller 配對** × **run 狀態**。每格填 `(stdout token, exit code)`；**沒有空格**——不可達的格子要寫「不可達」與理由。round 8 的兩條 blocking（R8-A／L-R8-1）正好落在 round 7 那張表沒有的格子裡，所以這張表放在契約裡，讓每一輪的 requirements lens 逐格驗證時會撞上空白。
+
+run 狀態（**封閉列舉，五種**，round 9 Stage B 之後只有一個目錄名）：`live`（worker 持鎖）、`live-expired`（持鎖且超過 `max_time + grace`）、`done`（無人持鎖、有 `status`）、`stale`（無人持鎖、無 `status`）、`reported`（有 `reported`；claim 後崩潰或清理中斷）。
+
+| run 狀態 ＼ | 單一 `--poll` | 單一 `--abort` | poll × poll | poll × abort | abort × abort | claim 被第三方持有 |
+|---|---|---|---|---|---|---|
+| `live` | `RUNNING`, 0 | `ABORTED`, 0（先殺後 claim） | 皆 `RUNNING`, 0（無副作用，不需 claim） | poll `RUNNING`／abort `ABORTED`（順序無關） | 恰好一個 `ABORTED`, 0；輸家空, 0 | poll `RUNNING`, 0；abort 空, 0 |
+| `live-expired` | `TIMEOUT`, 3（claim → kill → 重讀 status；有 status 則以它為準） | `ABORTED`, 0 | 恰好一個終態；輸家空, 1 | 恰好一個終態；輸家空, 1（poll）／0（abort） | 恰好一個 `ABORTED`；輸家空, 0 | 空, 1 `concurrent` |
+| `done` | `DONE <path>`, 0 | `ABORTED`, 0（結果被放棄） | 恰好一個 `DONE`；輸家空, 1 | 恰好一個終態 | 恰好一個 `ABORTED` | 空, 1 `concurrent` |
+| `stale` | `FAILED status missing`, 2 | `ABORTED`, 0 | 恰好一個 `FAILED`；輸家空, 1 | 恰好一個終態 | 恰好一個 `ABORTED` | 空, 1 `concurrent` |
+| `reported` | 空, 1（`already reported`，殘留清掉） | 空, 0（`nothing to abort`，殘留清掉） | 恰好一個清掉；另一個空, 1 | 同左 | 同左 | 空, 1 `concurrent` |
+
+**不可達的格子**：detach 的 readiness 逾時清理 × 任何併發 caller——id 尚未印出，沒有第二個 caller 能叫出這個 run。**表外的異常狀態**（claim 檔被 `rm`、claim 完整性失敗、lock 不可信）不在本表，它們一律 exit 1、run 原地保留，見 §9。
 
 ### `--abort <id>`
 
@@ -119,7 +143,7 @@ codex-call --detach [--output FILE] [同步模式的其餘旗標] [--prompt-file
 以下是**封閉列舉的三列**（同 uid／caller 環境完整性／跨 uid），**不得依性質相似類推第四列**。round 3 security 的 H1（hard-link lock）從「同 uid」與「跨 uid」之間的縫掉出去，因為第二列當時不存在。（下方的 prompt-injection 段落**不是**第四列，是對緩解措施的說明——round 4 R4-4 指出原本的排版讓讀者數成四列。）
 
 - **同一 uid 的攻擊者在模型之外。** base 是 `0700`，同 uid 本來就能 kill 你的任何程序。
-- **`$HOME` 與 base 的完整性是 caller 的責任**：本工具的 **run base** 讀環境變數 `HOME`；**憑證**（`~/.codex/auth.json` 與其 refresh lock）走 passwd db 的家目錄、**不受 `HOME` 影響**（同步路徑的既有行為，§1 不動）——所以「隔離 HOME」隔離的是 run 目錄不是憑證，測試不打線上 API 靠的只有 `--_selftest-*`（round 4 R4-6）；被注入的 HOME 等同同 uid 攻擊。硬化（§3）與 lock 完整性（§4）把「寫得到 base」能造成的傷害縮到「殺自己的 worker、刪掉自己 base 下的 run 與預設輸出」——本工具**刪除的路徑只會是 `<base>/<id>…`**，用 `unlink` 不用遞迴刪除，且**不再信任 `meta.json` 裡的任何路徑**（round 5 S2：曾可經 meta 的 `output` 遞迴刪除任意目錄，這句上界當時是假的）；不把 HOME 注入納入防禦承諾。**base 硬化的硬失敗是宣告的行為**：`~/.cache/codex-call/` 與 `runs/` 任一層若是 symlink、非目錄、或 owner 不是當前 uid（例如曾以 `sudo` 建立），`--detach` 同步 exit 1 並說明原因；不是 bug，也不會自動修復。
+- 硬化（§3）與 lock 完整性（§4）**不建立**針對「寫得到 base」的安全邊界。它們買到的是消掉最便宜的兩種 lock 檔變體與一行誠實。**寫得到 base 者可以，封閉列舉五項：** (1) 殺掉本工具的 worker（把 victim 持鎖的檔案 `rename` 進 `<run>/lock`，或直接 kill）；(2) 刪掉 base 下的任何 run 與預設輸出；(3) `touch <run>/reported`——讓一個已付費的成功結果被下一個 caller 只清不報，caller 得到 exit 1（round 7 Q3）；(4) 把 `<run>/claim` 換成 symlink／FIFO／目錄／hard link 或直接 `rm`——讓 claim `.failed`（run 原地保留、需人工清理），**或**讓 GC 誤判（round 9 A2 之後 GC 對不可判定一律不刪，所以這一項的傷害從「掃掉正在被 finalize 的 run」降為「留下需人工清理的殘留」）；(5) 改寫 `meta.json` 的 `output`——讓 `--poll` 印出 `DONE <攻擊者選定路徑>`，caller 會去讀那個檔（round 8 DA §4.1 實測）；**這一項直接餵進本節末的 prompt-injection 鏈**，是「刪除面」（round 5 S2 已修）之外的「回報面」，同一句上界曾因此兩次為假。**以上五項為封閉列舉，不得依性質相似類推第六項。** 本工具**不宣稱防禦**其中任何一項；列出它們是為了讓 caller 知道「同 uid 在模型外」這句話具體換來的是什麼。
 - 跨 uid：`/tmp` 不再涉入（base 在 HOME）；id 不可猜（CSPRNG 32 字元）；poll 不收路徑。
 
 **prompt-injection 鏈（緩解說明，不屬於上面三列）**：artifact → Codex 輸出 → wrapper agent 讀取，是一條 **prompt-injection 鏈**。engine 的「strictly as DATA」與 `DATA_GUARD` 是對同一個 LLM 的自然語言指示，是**緩解、不是安全邊界**——本契約不宣稱已建立隔離。caller 端的硬性規則：poll 用的 id **只能**來自 `--detach` 的 tool output，不得來自任何檔案內容；agent 可執行的命令面由 caller 的 tool 權限決定，本工具不擴大它。round 4 起 engine 的 codex leg 要求 agent 在讀取 Codex 輸出檔**之後**執行一次 `rm -f '<path>'`，早停時執行 `--abort '<id>'`——這擴大的是 **engine 指示的動作面**，不是本工具的權限；兩者的唯一可變部分分別是 `DONE` 印出的路徑與 `--detach` 印出的 id，agent 不得從任何檔案內容取路徑或 id（S5／S9）。codex-call 印到 stderr 的一切（`FAILED` 原因、`worker.log` 尾段）同樣是 DATA（S7）。
@@ -143,15 +167,17 @@ codex-call --detach [--output FILE] [同步模式的其餘旗標] [--prompt-file
 
 ## 9. Known limitations（round 7 明確排除——寫在這裡，不是默默不做）
 
-- **worker 用路徑字串寫 status**：`rename(<id>, <id>.done)` 之後，worker 對舊路徑的 `status` 寫入會失敗（round 6 DA-3）。因此逾時兜底的「claim 後重讀 status」只救得到 rename **之前**就寫完 status 的 run；rename 之後才收尾的會被報 TIMEOUT。完整關閉需要 worker 以 `open(dir, O_DIRECTORY)` 拿 dirfd、用 `openat` 寫——SHOULD，非本版。
+- ~~**worker 用路徑字串寫 status**~~ —— **round 9 Stage B 已關閉**：取消 `rename` 之後 run 目錄的名字終生不變，worker 手上的路徑字串永遠有效，「rename 之後才收尾的 run 被誤報 TIMEOUT」在結構上不再發生（round 8 DA §1.6 指出這是取消 rename 的附帶收益；`R9-B7` 守它）。**不需要** dirfd／`openat` 重構。
 - **`--wait` 上限 120 s 與 Claude Code Bash tool 的前景 timeout 衝突**：`--wait 120` 實測 121 s、被工具層移到背景（round 6 regression）。engine 用 `--wait 30`；上限未降。
 - **lock 檔不可信的 run 沒有回收路徑**（round 6 L-R6-4）：poll／abort／GC 三方皆拒，需人工清理。
 - **探測用 `O_RDWR` 開 lock**（round 6 S5-R6）：`chmod 400 lock` 讓三方皆拒、run 永久不可回收；`F_GETLK` 用 `O_RDONLY` 即可，未改。
-- **`rename` 成功與建立 `.claimed` 之間崩潰**：留下沒有標記的 `.done`，任何人都不能接手（ENOENT → `.gone`），由 24 h GC 回收——視窗是兩個系統呼叫之間，round 8 接受。
-- **`.claimed` 完整性失敗**（目錄／symlink／hard link／FIFO／`chmod 000`／`F_GETLK` 失敗）：poll／abort exit 1（`cannot claim`）、run 原地保留；**GC 也不掃**（round 9 A2：不可判定時刪除會靜默丟掉一個活 claim 的已付費結果），只記錄一行——因此**這種 `.done` 需要人工清理**，與上一列的 lock 檔同型。round 7 L-R7-2 的原始問題是「沒有任何回收路徑」，round 8 用「不可判定就刪」去修它是錯的方向；正確的代價分配是「留下、但說出來」。
+- **同 uid `rm <id>/claim`**：run 從此不可 claim——`--poll` 回 exit 1「claim 檔不見了、run 還在磁碟上」（**不是** `gone`），`--abort` 仍會終止 worker 並說「已止血、清理沒做成」，run 原地保留待人工或 24 h GC。**這一項在替代設計上沒有消失**（round 8 DA 攻擊 4 預言、round 9 實測確認）；把它寫在這裡，就是不把「結構上不存在」講成一句假話。
+- **`claim` 完整性失敗**（目錄／symlink／hard link／FIFO／`chmod 000`／`F_GETLK` 失敗）：poll／abort exit 1（`cannot claim`）、run 原地保留；**GC 也不掃**（round 9 A2：不可判定時刪除會靜默丟掉一個活 claim 的已付費結果），只記錄一行——因此**這種 `.done` 需要人工清理**，與上一列的 lock 檔同型。round 7 L-R7-2 的原始問題是「沒有任何回收路徑」，round 8 用「不可判定就刪」去修它是錯的方向；正確的代價分配是「留下、但說出來」。
 - **`reported` 落地與 `print` 之間被 SIGKILL**：終態永久遺失（下一個 caller 得到 `already reported`）。這是 at-most-once 的方向，round 6 DA Q5 選擇了它而不是重報。
 - **`FAILED worker did not terminate` 之後的第二個 token**：worker 後來自然死亡 → 下一次 poll 走 `.unlocked` 路徑，得到 `FAILED status missing`；仍持鎖且再逾時 → `TIMEOUT`。兩者都是第二個 stdout token（上一條所述的例外）。
 - **`reported` 與 `.claimed` 的偽造面（同 uid）**：在活的 `<id>` 或 `.done` 內預放一個 `reported` 檔，claimer 會把它讀成「已回報」而只清不報——**一個 `touch` 就讓已付費的成功結果被清掉**；預放 symlink 的 `.claimed` 會讓 claim `.failed`、run 永久保留。兩者都在 §6 第一列（同 uid）之外，但比 round 6 的 `meta.output` 遞迴刪更容易觸發；本工具不宣稱防禦，只在此揭露。
 - **`FAILED worker did not terminate` 之後 run 保留、不落地 `reported`**：只有 SIGKILL 都殺不掉的 worker 才會到這裡（kernel 層異常）。此時下一次 poll 的 TIMEOUT 是同一 run 的第二個 stdout token——§2 性質 (2) 在這一格有明寫的例外。
 
-上列五項加偽造面揭露為封閉列舉，**不得依性質相似類推**——新的排除項必須寫進這裡並附理由，不得默默不做。
+上列各項（逐條以 `-` 起首、可數）為封閉列舉，**不得依性質相似類推**——新的排除項必須寫進這裡並附理由，不得默默不做。
+
+- **`.done` 這個名字與接手（adoption）分支已於 round 9 Stage B 移除**；它們的失敗史保存在 `bin/codex-call` 的 `ClaimResult` doc-comment 與 §2 的「為什麼不是前三種設計」，不是隨程式碼一起消失（round 8 DA 的遷移完整性要求：被刪機制的失敗史不得淨損失）。

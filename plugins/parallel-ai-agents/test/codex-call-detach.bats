@@ -31,8 +31,9 @@ setup() {
 
 own_workers() { pgrep -f -- "-interpret $BIN_REAL .* --_worker"; }
 
-# round 7：接手 claim 是 `.done/.claimed` 上的 fcntl 寫鎖（與 worker 鎖同一個原語）。
-# 模擬「另一個 caller 正在 finalize」＝從另一個程序持有那把鎖 30 s；python 的 lockf 就是 fcntl F_SETLK。
+# round 9 Stage B：claim 是 `<id>/claim` 上的 fcntl 寫鎖（與 worker 鎖同一個原語），檔案由 doDetach
+# 在 spawn worker 之前建立、caller 永不建立。模擬「另一個 caller 正在 finalize」＝從另一個程序持有那把鎖
+# 30 s；python 的 lockf 就是 fcntl F_SETLK。
 no_worker_for() {  # $1=id → 只等「這一個 run」的 worker 消失（最多 6 s）。
   # round 9：`own_workers` 是 checkout 級的，一個案例留下的孤兒會污染後面每一個案例的斷言
   # （round 5 F-3 把 scope 從機器全域縮到 checkout，這裡再縮到 run id）。
@@ -45,9 +46,27 @@ no_own_workers() {  # 鎖釋放到程序真的消失有毫秒級時差；滿載�
   own_workers >/dev/null 2>&1 && return 1; return 0
 }
 
-hold_marker() {  # $1=<id>.done → 印出持鎖程序 pid
+wait_claim_taken() {  # $1=<run dir> → 等到 claim 鎖被「別人」持有（最多 30 s）
+  # round 9：claim 不再改名，沒有可觀察的檔案系統事件。用唯讀的 F_GETLK 查詢誰持鎖——
+  # 不自己取鎖（取了會跟正在 claim 的 caller 搶，把被測行為改掉）。
+  # 這取代固定延遲：滿載時 swift 啟動 2–6 s 不等，賭時間會隨機失敗（round 9 實測）。
+  python3 -c 'import fcntl,os,struct,sys,time
+FMT="qqihh"
+d=sys.argv[1]
+for _ in range(600):
+    try: fd=os.open(d+"/claim", os.O_RDONLY)
+    except OSError: time.sleep(0.05); continue
+    try:
+        res=fcntl.fcntl(fd, fcntl.F_GETLK, struct.pack(FMT,0,0,0,fcntl.F_WRLCK,0))
+        if struct.unpack(FMT,res)[3] != fcntl.F_UNLCK: os.close(fd); sys.exit(0)
+    except OSError: pass
+    os.close(fd); time.sleep(0.05)
+sys.exit(1)' "$1"
+}
+
+hold_claim() {  # $1=<run dir> → 印出持鎖程序 pid
   python3 -c 'import fcntl,os,sys,time
-fd=os.open(sys.argv[1]+"/.claimed",os.O_RDWR|os.O_CREAT,0o600)
+fd=os.open(sys.argv[1]+"/claim",os.O_RDWR|os.O_CREAT,0o600)
 fcntl.lockf(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
 time.sleep(30)' "$1" >/dev/null 2>&1 &
   echo $!
@@ -160,6 +179,7 @@ wait_terminal() {  # $1=id → 設 POLL_OUT / POLL_RC
   mkdir -p "$BASE/$id"
   printf '{"selftest_sleep":0,"output":"%s","max_time":30,"started_at":%s}\n' "$BASE/$id.out.md" "$(date +%s)" > "$BASE/$id/meta.json"
   printf 'x\n' > "$BASE/$id.out.md"
+  : > "$BASE/$id/claim"   # round 9：claim 檔由 doDetach 建立、caller 永不建立——手造的 run 要自己放
   run "$BIN" --poll "$id"
   [ "$status" -eq 2 ]
   [[ "$output" == FAILED* ]]
@@ -197,6 +217,8 @@ wait_terminal() {  # $1=id → 設 POLL_OUT / POLL_RC
   mkdir -p "$BASE/$fid"
   printf '{"selftest_sleep":0,"output":"/tmp/nope","max_time":30,"started_at":%s}\n' "$(date +%s)" > "$BASE/$fid/meta.json"
   printf '%s\n' "$victim" > "$BASE/$fid/pid"          # 舊設計會讀這個檔 —— 新設計不得
+  : > "$BASE/$fid/claim"   # round 9：claim 檔由 doDetach 建立、caller 永不建立——手造的 run 要自己放
+
   run "$BIN" --abort "$fid"
   [ "$status" -eq 0 ]; [ "$output" = "ABORTED" ]     # R3：abort 對無人持鎖的 run 是 no-signal 清除
   [ ! -d "$BASE/$fid" ]
@@ -292,6 +314,8 @@ wait_terminal() {  # $1=id → 設 POLL_OUT / POLL_RC
     xid="$(printf 'g%.0s' $(seq 1 32))"; mkdir -p "$BASE/$xid"
     printf '{"selftest_sleep":0,"output":"/tmp/nope","max_time":30,"started_at":%s}\n' "$(date +%s)" > "$BASE/$xid/meta.json"
     printf '%s\n' "$s" > "$BASE/$xid/status"
+    : > "$BASE/$xid/claim"   # round 9：claim 檔由 doDetach 建立、caller 永不建立——手造的 run 要自己放
+
     run "$BIN" --poll "$xid"
     case "$s" in
       TIMEOUT*) [ "$status" -eq 3 ]; [ "$output" = "TIMEOUT" ] ;;
@@ -304,6 +328,7 @@ wait_terminal() {  # $1=id → 設 POLL_OUT / POLL_RC
   xid="$(printf 'h%.0s' $(seq 1 32))"; mkdir -p "$BASE/$xid"
   printf '{"selftest_sleep":0,"output":"%s","max_time":30,"started_at":%s}\n' "$TMP/absent.md" "$(date +%s)" > "$BASE/$xid/meta.json"
   printf '0\n' > "$BASE/$xid/status"
+  : > "$BASE/$xid/claim"   # round 9：claim 檔由 doDetach 建立、caller 永不建立——手造的 run 要自己放
   run "$BIN" --poll "$xid"
   [ "$status" -eq 2 ]; [ "$output" = "FAILED output missing or empty" ]
 }
@@ -313,6 +338,8 @@ wait_terminal() {  # $1=id → 設 POLL_OUT / POLL_RC
   printf 'old but non-empty\n' > "$TMP/prev.md"
   printf '{"selftest_sleep":0,"output":"%s","max_time":30,"started_at":%s}\n' "$TMP/prev.md" "$(date +%s)" > "$BASE/$xid/meta.json"
   printf '9 boom\n' > "$BASE/$xid/status"
+  : > "$BASE/$xid/claim"   # round 9：claim 檔由 doDetach 建立、caller 永不建立——手造的 run 要自己放
+
   run "$BIN" --poll "$xid"
   [ "$status" -eq 2 ]; [[ "$output" == "FAILED 9 boom"* ]]
   [ -f "$TMP/prev.md" ]
@@ -345,31 +372,32 @@ wait_terminal() {  # $1=id → 設 POLL_OUT / POLL_RC
 @test "R3-M5 abort 清不掉 run 目錄 → FAILED exit 2，不得印 ABORTED" {
   fid="$(printf 'e%.0s' $(seq 1 32))"; mkdir -p "$BASE/$fid"
   printf '{"selftest_sleep":0,"output":"/tmp/nope","max_time":30,"started_at":%s}\n' "$(date +%s)" > "$BASE/$fid/meta.json"
+  : > "$BASE/$fid/claim"   # round 9：claim 檔由 doDetach 建立、caller 永不建立——手造的 run 要自己放
   chflags uchg "$BASE/$fid/meta.json"
   run "$BIN" --abort "$fid"
-  chflags nouchg "$BASE/$fid.done/meta.json" 2>/dev/null || chflags nouchg "$BASE/$fid/meta.json" 2>/dev/null || true
+  chflags nouchg "$BASE/$fid/meta.json" 2>/dev/null || chflags nouchg "$BASE/$fid/meta.json" 2>/dev/null || true
   # bats 的 run 把 stderr 併進 $output：stderr 的 warning 行在前、stdout 的 FAILED 在後 → 比子字串
   [ "$status" -eq 2 ]; [[ "$output" == *"FAILED could not remove run dir"* ]]; [[ "$output" != *ABORTED* ]]
-  [ -d "$BASE/$fid.done" ]                            # 已 claim（改名）但清不掉 → 原地保留
+  [ -d "$BASE/$fid" ]                            # 已 claim（持鎖）但清不掉 → 原地保留
 }
 
-@test "R3-L10/R7 .done 無人 finalize → 被接手完成 DONE（不看年齡）；.claimed 被另一程序持鎖 → exit 1 concurrent、不接手" {
-  sid="$(printf 'f%.0s' $(seq 1 32))"; mkdir -p "$BASE/$sid.done"
+@test "R3-L10/R9 沒人持 claim 的既有 run → 下一個 poll 就是唯一 finalizer（不看年齡、無接手特例）；claim 被另一程序持鎖 → exit 1 concurrent" {
+  sid="$(printf 'f%.0s' $(seq 1 32))"; mkdir -p "$BASE/$sid"
   printf 'x\n' > "$TMP/stale.out"
-  printf '{"selftest_sleep":0,"output":"%s","max_time":30,"started_at":%s}\n' "$TMP/stale.out" "$(date +%s)" > "$BASE/$sid.done/meta.json"
-  printf '0\n' > "$BASE/$sid.done/status"
-  : > "$BASE/$sid.done/.claimed"   # round 8：標記只由 rename 者建立，接手者只 open——fixture 要自己放
-  run "$BIN" --poll "$sid"                            # 剛 rename 的 .done、沒人持 marker 鎖 → 接手者就是唯一 finalizer
+  printf '{"selftest_sleep":0,"output":"%s","max_time":30,"started_at":%s}\n' "$TMP/stale.out" "$(date +%s)" > "$BASE/$sid/meta.json"
+  printf '0\n' > "$BASE/$sid/status"
+  : > "$BASE/$sid/claim"   # round 9：claim 檔由 doDetach 建立、caller 永不建立——手造的 fixture 要自己放
+  run "$BIN" --poll "$sid"                            # 沒人持 claim 鎖 → 這個 caller 就是唯一 finalizer（round 9：接手不再是分支，就是拿鎖）
   [ "$status" -eq 0 ]; [ "$output" = "DONE $TMP/stale.out" ]
-  [ ! -d "$BASE/$sid.done" ]
-  mkdir -p "$BASE/$sid.done"
-  printf '{"selftest_sleep":0,"output":"%s","max_time":30,"started_at":%s}\n' "$TMP/stale.out" "$(date +%s)" > "$BASE/$sid.done/meta.json"
-  printf '0\n' > "$BASE/$sid.done/status"
-  : > "$BASE/$sid.done/.claimed"   # round 8：標記只由 rename 者建立，接手者只 open——fixture 要自己放
-  hp=$(hold_marker "$BASE/$sid.done"); sleep 0.5
+  [ ! -d "$BASE/$sid" ]
+  mkdir -p "$BASE/$sid"
+  printf '{"selftest_sleep":0,"output":"%s","max_time":30,"started_at":%s}\n' "$TMP/stale.out" "$(date +%s)" > "$BASE/$sid/meta.json"
+  printf '0\n' > "$BASE/$sid/status"
+  : > "$BASE/$sid/claim"   # round 9：claim 檔由 doDetach 建立、caller 永不建立——手造的 fixture 要自己放
+  hp=$(hold_claim "$BASE/$sid"); sleep 0.5
   run "$BIN" --poll "$sid"
   [ "$status" -eq 1 ]; [[ "$output" == *concurrent* ]]
-  [ -d "$BASE/$sid.done" ]; [ -f "$BASE/$sid.done/status" ]
+  [ -d "$BASE/$sid" ]; [ -f "$BASE/$sid/status" ]
   kill "$hp" 2>/dev/null || true
 }
 
@@ -393,11 +421,11 @@ wait_terminal() {  # $1=id → 設 POLL_OUT / POLL_RC
   [[ "$output" == *"worker finished: 9"* ]]
 }
 
-@test "R4-GC detach 回收 >24h 且無人持鎖的 run／.done／.out.md，保留新鮮的與持鎖中的" {
+@test "R4-GC detach 回收 >24h 且無人持鎖的 run／.out.md，保留新鮮的與持鎖中的" {
   mkdir -p "$BASE"
   old="$(printf 'j%.0s' $(seq 1 32))"; new="$(printf 'k%.0s' $(seq 1 32))"
-  mkdir -p "$BASE/$old" "$BASE/$old.done" "$BASE/$new"; printf 'x\n' > "$BASE/$old.out.md"; printf 'x\n' > "$BASE/$new.out.md"
-  touch -t 202001010000 "$BASE/$old" "$BASE/$old.done" "$BASE/$old.out.md"
+  mkdir -p "$BASE/$old" "$BASE/$new"; printf 'x\n' > "$BASE/$old.out.md"; printf 'x\n' > "$BASE/$new.out.md"
+  touch -t 202001010000 "$BASE/$old" "$BASE/$old.out.md"
   mkdir -p "$BASE/not-a-run"; touch -t 202001010000 "$BASE/not-a-run"
   run "$BIN" --detach --_selftest-sleep 60 --instructions i "live"
   live="$output"
@@ -408,7 +436,6 @@ wait_terminal() {  # $1=id → 設 POLL_OUT / POLL_RC
   run "$BIN" --detach --_selftest-sleep 1 --instructions i "p"
   [ "$status" -eq 0 ]
   [ ! -e "$BASE/$old" ]; [ ! -e "$BASE/$old.out.md" ]
-  [ -d "$BASE/$old.done" ]                              # claim 過的目錄依 ctime＝剛建立 → 這一輪不該被收（R5-L6）
   [ -d "$BASE/$new" ]; [ -f "$BASE/$new.out.md" ]; [ -d "$BASE/not-a-run" ]; [ -d "$BASE/$live" ]
   [ -d "$BASE/$bad" ]; kill -0 "$lpid"                # untrusted 舊 run 不被 GC 碰、victim 存活（F-5）
   rm -f "$BASE/$bad/lock"
@@ -421,7 +448,7 @@ wait_terminal() {  # $1=id → 設 POLL_OUT / POLL_RC
   run "$BIN" --_selftest-classify NSURLErrorDomain -1009; [[ "$output" == "-1009 probe"* ]]
 }
 
-@test "R4-L2 rename 因非併發原因失敗（uchg → EPERM）→ exit 1、訊息不說 concurrent、run 原地保留" {
+@test "R4-L2/R9 claim 因非併發原因失敗（run 目錄 500 → EACCES）→ exit 1、訊息不說 concurrent、run 原地保留" {
   xid="$(printf 'l%.0s' $(seq 1 32))"; mkdir -p "$BASE/$xid"
   printf '{"selftest_sleep":0,"output":"/tmp/nope","max_time":30,"started_at":%s}\n' "$(date +%s)" > "$BASE/$xid/meta.json"
   printf '0\n' > "$BASE/$xid/status"
@@ -432,20 +459,20 @@ wait_terminal() {  # $1=id → 設 POLL_OUT / POLL_RC
   [ -d "$BASE/$xid" ]
 }
 
-@test "R4-L3/R7 .done 殘留：有 reported 無 status → 已回報過，清掉、exit 1、stdout 空；無 status 也無 reported → 從未回報，FAILED status missing" {
-  sid="$(printf 'm%.0s' $(seq 1 32))"; mkdir -p "$BASE/$sid.done"
-  printf '{"selftest_sleep":0,"output":"/tmp/nope","max_time":30,"started_at":%s}\n' "$(date +%s)" > "$BASE/$sid.done/meta.json"
-  printf 'DONE /tmp/nope\n' > "$BASE/$sid.done/reported"
-  : > "$BASE/$sid.done/.claimed"   # round 8：標記只由 rename 者建立，接手者只 open——fixture 要自己放
+@test "R4-L3/R9 殘留 run：有 reported 無 status → 已回報過，清掉、exit 1、stdout 空；無 status 也無 reported → 從未回報，FAILED status missing" {
+  sid="$(printf 'm%.0s' $(seq 1 32))"; mkdir -p "$BASE/$sid"
+  printf '{"selftest_sleep":0,"output":"/tmp/nope","max_time":30,"started_at":%s}\n' "$(date +%s)" > "$BASE/$sid/meta.json"
+  printf 'DONE /tmp/nope\n' > "$BASE/$sid/reported"
+  : > "$BASE/$sid/claim"   # round 9：claim 檔由 doDetach 建立、caller 永不建立——手造的 fixture 要自己放
   run --separate-stderr "$BIN" --poll "$sid"
   [ "$status" -eq 1 ]; [ -z "$output" ]; [[ "$stderr" == *reported* ]]; [[ "$stderr" != *"unknown run id"* ]]
-  [ ! -d "$BASE/$sid.done" ]
-  mkdir -p "$BASE/$sid.done"
-  printf '{"selftest_sleep":0,"output":"/tmp/nope","max_time":30,"started_at":%s}\n' "$(date +%s)" > "$BASE/$sid.done/meta.json"
-  : > "$BASE/$sid.done/.claimed"   # round 8：標記只由 rename 者建立，接手者只 open——fixture 要自己放
+  [ ! -d "$BASE/$sid" ]
+  mkdir -p "$BASE/$sid"
+  printf '{"selftest_sleep":0,"output":"/tmp/nope","max_time":30,"started_at":%s}\n' "$(date +%s)" > "$BASE/$sid/meta.json"
+  : > "$BASE/$sid/claim"   # round 9：claim 檔由 doDetach 建立、caller 永不建立——手造的 fixture 要自己放
   run --separate-stderr "$BIN" --poll "$sid"
   [ "$status" -eq 2 ]; [ "$output" = "FAILED status missing" ]
-  [ ! -d "$BASE/$sid.done" ]
+  [ ! -d "$BASE/$sid" ]
 }
 
 @test "R4-L6 meta 損毀時非 DONE 終態仍清除預設輸出檔（路徑可推導）" {
@@ -463,6 +490,7 @@ wait_terminal() {  # $1=id → 設 POLL_OUT / POLL_RC
   vid="$output"; vpid=$(pgrep -f -- "--_worker $vid" | head -1)
   aid="$(printf 'n%.0s' $(seq 1 32))"; mkdir -p "$BASE/$aid"
   printf '{"selftest_sleep":0,"output":"/tmp/x","max_time":30,"started_at":%s}\n' "$(date +%s)" > "$BASE/$aid/meta.json"
+  : > "$BASE/$aid/claim"   # round 9：claim 檔由 doDetach 建立、caller 永不建立——手造的 run 要自己放
   mv "$BASE/$vid/lock" "$BASE/$aid/lock"
   run "$BIN" --abort "$aid"
   [ "$status" -eq 0 ]; [[ "$output" == *ABORTED* ]]
@@ -530,17 +558,17 @@ wait_terminal() {  # $1=id → 設 POLL_OUT / POLL_RC
   [ "$status" -eq 1 ]; [[ "$output" == *"run directory missing"* ]]
 }
 
-@test "DA3.3 孤兒 claim（.done 無人持鎖）在 GC 門檻內會被回收；同一輪 detach 自己的 run 不受影響" {
+@test "DA3.3 孤兒 claim（run 無人持鎖、有 status 無 reported）在 GC 門檻內會被回收；同一輪 detach 自己的 run 不受影響" {
   # claim 過的目錄以 ctime 計齡，測試偽造不了 → 用 --_selftest-gc-age 把門檻壓到 0。
   # gcStaleRuns 跑在 detach 建立自己的 run 之前，所以本次 run 不會被自己收掉。
-  cid="$(printf 't%.0s' $(seq 1 32))"; mkdir -p "$BASE/$cid.done"
+  cid="$(printf 't%.0s' $(seq 1 32))"; mkdir -p "$BASE/$cid"
   printf 'x\n' > "$TMP/gc.out"
-  printf '{"selftest_sleep":0,"output":"%s","max_time":30,"started_at":%s}\n' "$TMP/gc.out" "$(date +%s)" > "$BASE/$cid.done/meta.json"
-  printf '0\n' > "$BASE/$cid.done/status"
+  printf '{"selftest_sleep":0,"output":"%s","max_time":30,"started_at":%s}\n' "$TMP/gc.out" "$(date +%s)" > "$BASE/$cid/meta.json"
+  printf '0\n' > "$BASE/$cid/status"
   run --separate-stderr "$BIN" --detach --_selftest-sleep 5 --_selftest-gc-age 0 --instructions i "p"
   [ "$status" -eq 0 ]; id="$output"
-  [[ "$stderr" == *"never reported"* ]]                 # round 7：GC 對「claim 後從未回報」的 .done 在 stderr 記一行（契約 §4）
-  [ ! -e "$BASE/$cid.done" ]
+  [[ "$stderr" == *"never reported"* ]]                 # GC 對「claim 後從未回報」的 run 在 stderr 記一行（契約 §4）
+  [ ! -e "$BASE/$cid" ]
   [ -d "$BASE/$id" ]
   "$BIN" --abort "$id" >/dev/null 2>&1 || true
 }
@@ -558,14 +586,14 @@ wait_terminal() {  # $1=id → 設 POLL_OUT / POLL_RC
   run "$BIN" --poll "$id" --wait 0; [ "$status" -ne 0 ]; [ -d "$BASE/$id" ]
 }
 
-@test "R5-L2 接手 stale .done 也是原子 claim：兩個併發接手恰好一個 DONE（三輪）" {
+@test "R5-L2/R9 併發 finalize 是原子 claim：兩個併發 poll 於同一個既有 run 恰好一個 DONE（三輪）" {
   for round in 1 2 3; do
-    cid="$(printf 'p%.0s' $(seq 1 32))"; rm -rf "$BASE/$cid"* ; mkdir -p "$BASE/$cid.done"
+    cid="$(printf 'p%.0s' $(seq 1 32))"; rm -rf "$BASE/$cid"* ; mkdir -p "$BASE/$cid"
     printf 'x\n' > "$TMP/a$round.out"
-    printf '{"selftest_sleep":0,"output":"%s","max_time":30,"started_at":%s}\n' "$TMP/a$round.out" "$(date +%s)" > "$BASE/$cid.done/meta.json"
-    printf '0\n' > "$BASE/$cid.done/status"
-    : > "$BASE/$cid.done/.claimed"   # round 8：標記只由 rename 者建立，接手者只 open——fixture 要自己放
-    for k in $(seq 1 300); do : > "$BASE/$cid.done/pad$k"; done      # 拉長 removeItem，放大舊 race
+    printf '{"selftest_sleep":0,"output":"%s","max_time":30,"started_at":%s}\n' "$TMP/a$round.out" "$(date +%s)" > "$BASE/$cid/meta.json"
+    printf '0\n' > "$BASE/$cid/status"
+    : > "$BASE/$cid/claim"   # round 9：claim 檔由 doDetach 建立、caller 永不建立——手造的 fixture 要自己放
+    for k in $(seq 1 300); do : > "$BASE/$cid/pad$k"; done      # 拉長 removeItem，放大舊 race
     "$BIN" --poll "$cid" > "$TMP/q1" 2>/dev/null &
     "$BIN" --poll "$cid" > "$TMP/q2" 2>/dev/null &
     wait
@@ -585,13 +613,13 @@ wait_terminal() {  # $1=id → 設 POLL_OUT / POLL_RC
   rm -f "$BASE/$id/lock"; "$BIN" --abort "$id" >/dev/null 2>&1 || true; "$BIN" --abort "$vid" >/dev/null 2>&1 || true
 }
 
-@test "R5-L4 lstat 失敗（run 目錄 000）不是「沒有 lock」：poll exit 1、目錄不被 rename、worker 存活" {
+@test "R5-L4 lstat 失敗（run 目錄 000）不是「沒有 lock」：poll exit 1、run 原地保留、worker 存活" {
   run "$BIN" --detach --_selftest-sleep 25 --instructions i "p"; id="$output"; wpid=$(pgrep -f -- "--_worker $id" | head -1)
   chmod 000 "$BASE/$id"
   run "$BIN" --poll "$id"
   chmod 700 "$BASE/$id"
   [ "$status" -eq 1 ]; [[ "$output" == *"cannot be trusted or inspected"* ]]
-  [ -d "$BASE/$id" ]; [ ! -e "$BASE/$id.done" ]; kill -0 "$wpid"
+  [ -d "$BASE/$id" ]; kill -0 "$wpid"
 }
 
 @test "R5-L5 abort 在 --wait 期間到達 → poll 說「gone — aborted」不說 concurrent；retry 得到 unknown" {
@@ -606,22 +634,25 @@ wait_terminal() {  # $1=id → 設 POLL_OUT / POLL_RC
   run "$BIN" --poll "$id"; [ "$status" -eq 1 ]; [[ "$output" == *"unknown run id"* ]]
 }
 
-@test "R5-L6 GC 看 mtime 與 ctime 較新者：mtime 25 h 前、剛 rename 的 .done 不被 GC 刪" {
-  mkdir -p "$BASE"; cid="$(printf 'q%.0s' $(seq 1 32))"; mkdir -p "$BASE/$cid"
-  printf 'x\n' > "$TMP/g.out"; printf '{"selftest_sleep":0,"output":"%s","max_time":30,"started_at":%s}\n' "$TMP/g.out" "$(date +%s)" > "$BASE/$cid/meta.json"; printf '0\n' > "$BASE/$cid/status"
-  touch -t 202001010000 "$BASE/$cid"; mv "$BASE/$cid" "$BASE/$cid.done"     # mtime 舊、ctime 新
-  run "$BIN" --detach --_selftest-sleep 1 --instructions i "p"                # 觸發 GC
-  [ -d "$BASE/$cid.done" ]
-}
+# round 9 Stage B 刪除 `R5-L6`（GC 看 mtime 與 ctime 較新者）：它守的是 `rename(<id>, <id>.done)`
+# 只更新 ctime 所造成的時鐘歪斜——claim 路徑看到「剛剛」、GC 看到「25 小時沒動」。取消 rename 之後
+# 只有一個名字、一個時鐘（mtime），那個歪斜在結構上不存在，案例無物可守。教訓保留在
+# `bin/codex-call` 的 gcStaleRuns doc-comment 與契約 §9（被刪機制的失敗史不得淨損失）。
 
-@test "R5-L9 --wait N 不超過 N：--wait 4 在 4.6 s 內返回" {
+@test "R5-L9 --wait N 不超過 N：--wait 4 的等待段落落在 [4, 4+餘裕]（上界自校準，不賭啟動時間）" {
   run "$BIN" --detach --_selftest-sleep 20 --instructions i "p"; id="$output"
+  # 先量「這台機器此刻」的 swift 啟動成本：對一個不存在的 id 呼叫 poll，它在啟動之後立刻 exit 1。
+  # round 9：原本寫死上界 4.6 s，量到的其實是「啟動＋等待」——滿載時 swift 冷啟動可到數秒，
+  # 於是這條在單獨跑時綠、跟整套一起跑時紅（實測）。同一類賭法在 R7-M05／R9-B7 也修掉了。
+  ghost="$(printf '0%.0s' $(seq 1 32))"
+  B0=$(python3 -c 'import time;print(time.time())'); run "$BIN" --poll "$ghost"; B1=$(python3 -c 'import time;print(time.time())')
   S=$(python3 -c 'import time;print(time.time())'); run "$BIN" --poll "$id" --wait 4; E=$(python3 -c 'import time;print(time.time())')
   [ "$output" = "RUNNING" ]
-  # 上界＝N ＋ swift 啟動（實測 0.7–1.5 s）＋餘裕。誠實邊界：舊碼最壞只多 1 s，落在啟動時間的
-  # 變異內，**本案例不宣稱能區分舊碼**；它守的是「--wait 不會大幅超過 N」這個上界本身
-  # （契約把 120 s 列為合法值，而 harness 的 tool timeout 也是 120 s——超時就會被殺）。
-  python3 -c "import sys; d=$E-$S; sys.exit(0 if 3.9 <= d <= 6.0 else 1)"
+  # 下界 3.9：真的等滿了 N（不得提早返回）。上界＝N ＋ 實測啟動 ＋ 1.5 s 餘裕。
+  # 誠實邊界：舊碼最壞只多 1 s，落在啟動時間的變異內，**本案例不宣稱能區分舊碼**；
+  # 它守的是「--wait 不會大幅超過 N」這個上界本身（契約把 120 s 列為合法值，而 harness 的
+  # tool timeout 也是 120 s——超時就會被殺）。
+  python3 -c "import sys; d=$E-$S; boot=$B1-$B0; sys.exit(0 if 3.9 <= d <= 4.0 + boot + 1.5 else 1)"
 }
 
 @test "R5-L8 worker.log 不再每次都有 setsid 失敗的 warning" {
@@ -668,14 +699,14 @@ wait_terminal() {  # $1=id → 設 POLL_OUT / POLL_RC
 }
 
 @test "R5-S6/R7 --_selftest-claim-age 已移除（接手不再有時間門檻）：給了就 exit 1、零副作用" {
-  cid="$(printf 's%.0s' $(seq 1 32))"; mkdir -p "$BASE/$cid.done"
+  cid="$(printf 's%.0s' $(seq 1 32))"; mkdir -p "$BASE/$cid"
   printf 'x\n' > "$TMP/s6.out"
-  printf '{"output":"%s","max_time":30,"started_at":%s}\n' "$TMP/s6.out" "$(date +%s)" > "$BASE/$cid.done/meta.json"
-  printf '0\n' > "$BASE/$cid.done/status"
-  : > "$BASE/$cid.done/.claimed"   # round 8：標記只由 rename 者建立，接手者只 open——fixture 要自己放
+  printf '{"output":"%s","max_time":30,"started_at":%s}\n' "$TMP/s6.out" "$(date +%s)" > "$BASE/$cid/meta.json"
+  printf '0\n' > "$BASE/$cid/status"
+  : > "$BASE/$cid/claim"   # round 9：claim 檔由 doDetach 建立、caller 永不建立——手造的 fixture 要自己放
   run --separate-stderr "$BIN" --poll "$cid" --_selftest-claim-age 0
   [ "$status" -eq 1 ]; [ -z "$output" ]; [[ "$stderr" == *removed* ]]
-  [ -d "$BASE/$cid.done" ]; [ -f "$BASE/$cid.done/status" ]
+  [ -d "$BASE/$cid" ]; [ -f "$BASE/$cid/status" ]
 }
 
 @test "R5-S10 worker.log 尾段剝除 bidi／BOM／Tags；超長行不擠掉真正的最後一行" {
@@ -694,7 +725,8 @@ wait_terminal() {  # $1=id → 設 POLL_OUT / POLL_RC
 }
 
 @test "R5-F2b worker 提早退出：lock 檔不可信（symlink 預先埋好）→ detach 失敗且尾段含原因、無 orphan" {
-  ( for _ in $(seq 1 60); do for d in "$BASE"/*/; do [ -d "$d" ] && [ ! -e "$d/lock" ] && ln -s /dev/null "$d/lock" 2>/dev/null; done; sleep 0.1; done ) &
+  # round 9：lock 由 doDetach 建立，所以埋伏改成「在 worker 取鎖前把它換成 symlink」（prelock 視窗）
+  ( for _ in $(seq 1 60); do for d in "$BASE"/*/; do [ -f "$d/lock" ] && ln -sf /dev/null "$d/lock" 2>/dev/null; done; sleep 0.1; done ) &
   run "$BIN" --detach --_selftest-sleep 1 --_selftest-prelock-sleep 2 --instructions i "p"
   wait
   [ "$status" -ne 0 ]; [[ "$output" == *"cannot open or trust the lock file"* ]]
@@ -717,7 +749,8 @@ wait_terminal() {  # $1=id → 設 POLL_OUT / POLL_RC
 }
 
 @test "R5-F4 abort 在 worker 拿鎖前到達（watcher）：最終無 orphan、run 已清" {
-  ( for _ in $(seq 1 60); do for d in "$BASE"/*/; do [ -d "$d" ] && [ ! -e "$d/lock" ] && "$BIN" --abort "$(basename "$d")" >/dev/null 2>&1; done; sleep 0.1; done ) &
+  # round 9：lock 一開始就存在，改用「還沒有 status」當「worker 尚未收尾」的訊號
+  ( for _ in $(seq 1 60); do for d in "$BASE"/*/; do [ -d "$d" ] && [ ! -e "$d/status" ] && "$BIN" --abort "$(basename "$d")" >/dev/null 2>&1; done; sleep 0.1; done ) &
   run "$BIN" --detach --_selftest-sleep 5 --_selftest-prelock-sleep 2 --instructions i "p"
   wait
   sleep 4
@@ -743,20 +776,23 @@ wait_terminal() {  # $1=id → 設 POLL_OUT / POLL_RC
   done
 }
 
-@test "R7-D .done 內仍有活 worker（abort 先 claim、kill 未收斂的殘局）：未逾時 RUNNING、不刪目錄、不孤兒化；逾時後單一 TIMEOUT" {
+@test "R7-D/R9 claim 被別人持著且 worker 還活著：未逾時 RUNNING、逾時 exit 1 concurrent、不刪目錄、不孤兒化；持鎖者離開後單一 TIMEOUT" {
   run "$BIN" --detach --max-time 8 --_selftest-grace 1 --_selftest-sleep 60 --instructions i "p"; [ "$status" -eq 0 ]; id="$output"
   sleep 0.5
-  mv "$BASE/$id" "$BASE/$id.done"                      # = claim 過但沒人 finalize；worker 持鎖的 inode 不變
-  : > "$BASE/$id.done/.claimed"                         # round 8：claim 過的 .done 一定帶標記（接手者只 open 不建立）
+  hp=$(hold_claim "$BASE/$id"); sleep 0.5               # = 另一個 caller 已 claim、尚未 finalize；worker 仍在跑
   wpid=$(own_workers | head -1); [ -n "$wpid" ]
   run --separate-stderr "$BIN" --poll "$id"
   [ "$status" -eq 0 ]; [ "$output" = "RUNNING" ]
-  [ -d "$BASE/$id.done" ]; kill -0 "$wpid"
+  [ -d "$BASE/$id" ]; kill -0 "$wpid"
   sleep 10                                             # 超過 max-time 8 + grace 1（swift 每個程序啟動 1.5–2.5 s，餘裕要夠）
+  run --separate-stderr "$BIN" --poll "$id"             # claim 被別人持著 → 終態歸那個 caller
+  [ "$status" -eq 1 ]; [ -z "$output" ]; [[ "$stderr" == *"concurrent"* ]]
+  [ -d "$BASE/$id" ]; kill -0 "$wpid"                   # 不刪、不孤兒化
+  kill "$hp" 2>/dev/null || true; sleep 0.5             # 持鎖者離開 → 下一個 poll 才是唯一 finalizer
   run --separate-stderr "$BIN" --poll "$id"
   [ "$status" -eq 3 ]; [ "$output" = "TIMEOUT" ]
-  [ ! -e "$BASE/$id.done" ]; [ ! -e "$BASE/$id" ]
-  no_own_workers
+  [ ! -e "$BASE/$id" ]
+  no_worker_for "$id"
 }
 
 @test "R7-R 已回報 DONE 但清理失敗 → 立刻再 poll 不得產生第二個終態（reported 痕跡，不等 60 s）" {
@@ -766,25 +802,27 @@ wait_terminal() {  # $1=id → 設 POLL_OUT / POLL_RC
   mkdir -p "$BASE/$id"; printf 'p\n' > "$BASE/$id/prompt.txt"; chflags uchg "$BASE/$id/prompt.txt"
   printf 'SELFTEST\n' > "$BASE/$id.out.md"; printf '0\n' > "$BASE/$id/status"
   printf '{"selftest_sleep":0,"default_output":true,"output":"%s","max_time":30,"started_at":%s}\n' "$BASE/$id.out.md" "$(date +%s)" > "$BASE/$id/meta.json"
+  : > "$BASE/$id/claim"   # round 9：claim 檔由 doDetach 建立、caller 永不建立——手造的 run 要自己放
+
   run --separate-stderr "$BIN" --poll "$id"
   [ "$status" -eq 0 ]; [ "$output" = "DONE $BASE/$id.out.md" ]
   rm -f "$BASE/$id.out.md"                             # caller 依 engine step 3 刪掉輸出
   run --separate-stderr "$BIN" --poll "$id"            # 立刻
   [ "$status" -eq 1 ]; [ -z "$output" ]; [[ "$stderr" == *reported* ]]
-  [ -f "$BASE/$id.done/reported" ]; [ ! -f "$BASE/$id.done/status" ]
-  chflags nouchg "$BASE/$id.done/prompt.txt" 2>/dev/null || true
+  [ -f "$BASE/$id/reported" ]; [ ! -f "$BASE/$id/status" ]
+  chflags nouchg "$BASE/$id/prompt.txt" 2>/dev/null || true
 }
 
 @test "R7-M05 kill 期間 lock 變成不可信 → 不得視為已釋放：FAILED worker did not terminate、run 保留（lockReleasedForSure 三態）" {
   printf 'v\n' > "$TMP/victim"
   run "$BIN" --detach --max-time 1 --_selftest-grace 1 --_selftest-sleep 60 --_selftest-ignore-term --instructions i "p"; [ "$status" -eq 0 ]; id="$output"
   sleep 3
-  ( for _ in $(seq 1 200); do [ -d "$BASE/$id.done" ] && break; sleep 0.05; done; sleep 0.5   # poll 已 claim、正在 SIGTERM 等待中
-    ln -f "$TMP/victim" "$BASE/$id.done/lock" ) &
+  # 錨定在「claim 鎖已被 poll 持有」這個事實上，而不是賭 swift 啟動要多久（滿載時會隨機失敗）
+  ( wait_claim_taken "$BASE/$id" && ln -f "$TMP/victim" "$BASE/$id/lock" ) &
   run --separate-stderr "$BIN" --poll "$id"
   wait
   [ "$status" -eq 2 ]; [ "$output" = "FAILED worker did not terminate" ]
-  [ -d "$BASE/$id.done" ]
+  [ -d "$BASE/$id" ]
   pkill -9 -f -- "-interpret $BIN_REAL .* --_worker $id" 2>/dev/null || true   # 忽略 SIGTERM 的 selftest worker
   sleep 0.3
 }
@@ -795,29 +833,29 @@ wait_terminal() {  # $1=id → 設 POLL_OUT / POLL_RC
   printf 'SELFTEST\n' > "$BASE/$id.out.md"; printf '0\n' > "$BASE/$id/status"   # = worker 在 finish() 裡、status 已落地尚未 exit
   run --separate-stderr "$BIN" --poll "$id"
   [ "$status" -eq 0 ]; [ "$output" = "DONE $BASE/$id.out.md" ]
-  [ -s "$BASE/$id.out.md" ]; [ ! -e "$BASE/$id.done" ]; [ ! -e "$BASE/$id" ]
+  [ -s "$BASE/$id.out.md" ]; [ ! -e "$BASE/$id" ]
   no_own_workers
 }
 
 @test "R7-GC --_selftest-gc-age 只掃 selftest run：同 base 的正式 run（meta 無 selftest_sleep）與其已交付輸出不受影響" {
-  pid="$(printf 'q%.0s' $(seq 1 32))"; mkdir -p "$BASE/$pid.done"
-  printf '{"output":"%s","max_time":30,"started_at":%s}\n' "$BASE/$pid.out.md" "$(date +%s)" > "$BASE/$pid.done/meta.json"
-  printf '0\n' > "$BASE/$pid.done/status"; printf 'x\n' > "$BASE/$pid.out.md"
-  touch -t 202001010000 "$BASE/$pid.done" "$BASE/$pid.out.md"
+  pid="$(printf 'q%.0s' $(seq 1 32))"; mkdir -p "$BASE/$pid"
+  printf '{"output":"%s","max_time":30,"started_at":%s}\n' "$BASE/$pid.out.md" "$(date +%s)" > "$BASE/$pid/meta.json"
+  printf '0\n' > "$BASE/$pid/status"; printf 'x\n' > "$BASE/$pid.out.md"
+  touch -t 202001010000 "$BASE/$pid" "$BASE/$pid.out.md"
   run "$BIN" --detach --_selftest-sleep 3 --_selftest-gc-age 0 --instructions i "p"; [ "$status" -eq 0 ]; id="$output"
-  [ -d "$BASE/$pid.done" ]; [ -f "$BASE/$pid.out.md" ]
+  [ -d "$BASE/$pid" ]; [ -f "$BASE/$pid.out.md" ]
   "$BIN" --abort "$id" >/dev/null 2>&1 || true
 }
 
 @test "R7-S5 abort 輸給正在 finalize 的 caller：stdout 空、exit 0（後置條件成立），ABORTED 只在本次真的終止時印；真的終止仍印 ABORTED" {
-  cid="$(printf 'r%.0s' $(seq 1 32))"; mkdir -p "$BASE/$cid.done"
-  printf '{"selftest_sleep":0,"output":"/tmp/nope","max_time":30,"started_at":%s}\n' "$(date +%s)" > "$BASE/$cid.done/meta.json"
-  printf '0\n' > "$BASE/$cid.done/status"
-  : > "$BASE/$cid.done/.claimed"   # round 8：標記只由 rename 者建立，接手者只 open——fixture 要自己放
-  hp=$(hold_marker "$BASE/$cid.done"); sleep 0.5
+  cid="$(printf 'r%.0s' $(seq 1 32))"; mkdir -p "$BASE/$cid"
+  printf '{"selftest_sleep":0,"output":"/tmp/nope","max_time":30,"started_at":%s}\n' "$(date +%s)" > "$BASE/$cid/meta.json"
+  printf '0\n' > "$BASE/$cid/status"
+  : > "$BASE/$cid/claim"   # round 9：claim 檔由 doDetach 建立、caller 永不建立——手造的 fixture 要自己放
+  hp=$(hold_claim "$BASE/$cid"); sleep 0.5
   run --separate-stderr "$BIN" --abort "$cid"
   [ "$status" -eq 0 ]; [ -z "$output" ]; [[ "$stderr" == *"nothing to abort"* ]]
-  [ -d "$BASE/$cid.done" ]; [ -f "$BASE/$cid.done/status" ]
+  [ -d "$BASE/$cid" ]; [ -f "$BASE/$cid/status" ]
   kill "$hp" 2>/dev/null || true
   run "$BIN" --detach --_selftest-sleep 30 --instructions i "p"; [ "$status" -eq 0 ]; id="$output"
   run --separate-stderr "$BIN" --abort "$id"
@@ -825,7 +863,7 @@ wait_terminal() {  # $1=id → 設 POLL_OUT / POLL_RC
   [ -z "$(ls -d "$BASE/$id"* 2>/dev/null)" ]
 }
 
-@test "R7-X 狀態叉積補格：poll×abort 於逾時持鎖 run（五輪）、abort×abort 於活 run（三輪）、接手×接手於無 status 的 .done（三路 ×十輪）——每格恰好一個終態 token" {
+@test "R7-X 狀態叉積補格：poll×abort 於逾時持鎖 run（五輪）、abort×abort 於活 run（三輪）、三路併發 finalize 於無 status 的 run（十輪）——每格恰好一個終態 token" {
   for round in 1 2 3 4 5; do
     run "$BIN" --detach --max-time 1 --_selftest-grace 1 --_selftest-sleep 60 --instructions i "p"; [ "$status" -eq 0 ]; id="$output"
     sleep 3
@@ -846,11 +884,11 @@ wait_terminal() {  # $1=id → 設 POLL_OUT / POLL_RC
     [ -z "$(ls -d "$BASE/$id"* 2>/dev/null)" ]
     no_own_workers
   done
-  for round in $(seq 1 10); do   # round 7 B-CRIT：三路併發接手無 status 的 .done，1514d40 上 7/150 雙終態（removeRun 打掉 marker 名 → 第三者 O_CREAT 新 inode）
-    cid="$(printf 'z%.0s' $(seq 1 32))"; rm -rf "$BASE/$cid"*; mkdir -p "$BASE/$cid.done"
-    printf '{"selftest_sleep":0,"output":"/tmp/nope","max_time":30,"started_at":%s}\n' "$(date +%s)" > "$BASE/$cid.done/meta.json"
-    : > "$BASE/$cid.done/.claimed"   # round 8：標記只由 rename 者建立，接手者只 open——fixture 要自己放
-    for k in $(seq 1 200); do : > "$BASE/$cid.done/pad$k"; done
+  for round in $(seq 1 10); do   # round 7 B-CRIT 的形狀：三路併發 finalize 無 status 的 run（1514d40 上 7/150 雙終態——removeRun 打掉標記名、第三者 O_CREAT 出新 inode；round 9 Stage B 讓 caller 不再能建立 claim 檔）
+    cid="$(printf 'z%.0s' $(seq 1 32))"; rm -rf "$BASE/$cid"*; mkdir -p "$BASE/$cid"
+    printf '{"selftest_sleep":0,"output":"/tmp/nope","max_time":30,"started_at":%s}\n' "$(date +%s)" > "$BASE/$cid/meta.json"
+    : > "$BASE/$cid/claim"   # round 9：claim 檔由 doDetach 建立、caller 永不建立——手造的 fixture 要自己放
+    for k in $(seq 1 200); do : > "$BASE/$cid/pad$k"; done
     "$BIN" --poll "$cid" > "$TMP/z1" 2>/dev/null &
     "$BIN" --poll "$cid" > "$TMP/z2" 2>/dev/null &
     "$BIN" --poll "$cid" > "$TMP/z3" 2>/dev/null &
@@ -860,48 +898,48 @@ wait_terminal() {  # $1=id → 設 POLL_OUT / POLL_RC
   done
 }
 
-# ---------- round 8（round 7 verify：.claimed 的生命週期沒寫成不變式） ----------
+# ---------- round 8／9（claim 檔的完整性與 GC 的三答案；fixture 已遷移到 round 9 的 <id>/claim） ----------
 
-@test "R8-RC3b marker 完整性失敗（.claimed 是目錄）→ poll／abort 都 exit 1、stdout 空、run 保留（不得摺成「別人拿走了」而 exit 0）" {
-  cid="$(printf 'u%.0s' $(seq 1 32))"; mkdir -p "$BASE/$cid.done/.claimed"
-  printf '{"selftest_sleep":0,"output":"/tmp/nope","max_time":30,"started_at":%s}\n' "$(date +%s)" > "$BASE/$cid.done/meta.json"
-  printf '0\n' > "$BASE/$cid.done/status"
+@test "R8-RC3b claim 完整性失敗（claim 是目錄）→ poll／abort 都 exit 1、stdout 空、run 保留（不得摺成「別人拿走了」而 exit 0）" {
+  cid="$(printf 'u%.0s' $(seq 1 32))"; mkdir -p "$BASE/$cid/claim"
+  printf '{"selftest_sleep":0,"output":"/tmp/nope","max_time":30,"started_at":%s}\n' "$(date +%s)" > "$BASE/$cid/meta.json"
+  printf '0\n' > "$BASE/$cid/status"
   run --separate-stderr "$BIN" --abort "$cid"
-  [ "$status" -eq 1 ]; [ -z "$output" ]; [[ "$stderr" == *"cannot claim"* ]]
+  [ "$status" -eq 1 ]; [ -z "$output" ]; [[ "$stderr" == *"could not be claimed"* ]]
   run --separate-stderr "$BIN" --poll "$cid"
   [ "$status" -eq 1 ]; [ -z "$output" ]; [[ "$stderr" == *"cannot claim"* ]]
-  [ -d "$BASE/$cid.done" ]; [ -f "$BASE/$cid.done/status" ]
+  [ -d "$BASE/$cid" ]; [ -f "$BASE/$cid/status" ]
 }
 
-@test "R8-GC2 GC 不碰 .claimed 鎖被持有的 .done（有人正在 finalize）；鎖釋放後同一個 .done 被回收" {
-  cid="$(printf 'w%.0s' $(seq 1 32))"; mkdir -p "$BASE/$cid.done"
-  printf '{"selftest_sleep":0,"output":"/tmp/nope","max_time":30,"started_at":%s}\n' "$(date +%s)" > "$BASE/$cid.done/meta.json"
-  printf '0\n' > "$BASE/$cid.done/status"
-  hp=$(hold_marker "$BASE/$cid.done"); sleep 0.5
+@test "R8-GC2 GC 不碰 claim 鎖被持有的 run（有人正在 finalize）；鎖釋放後同一個 run 被回收" {
+  cid="$(printf 'w%.0s' $(seq 1 32))"; mkdir -p "$BASE/$cid"
+  printf '{"selftest_sleep":0,"output":"/tmp/nope","max_time":30,"started_at":%s}\n' "$(date +%s)" > "$BASE/$cid/meta.json"
+  printf '0\n' > "$BASE/$cid/status"
+  hp=$(hold_claim "$BASE/$cid"); sleep 0.5
   run --separate-stderr "$BIN" --detach --_selftest-sleep 2 --_selftest-gc-age 0 --instructions i "p"; [ "$status" -eq 0 ]; id1="$output"
-  [ -d "$BASE/$cid.done" ]                                    # 持鎖中 → 不掃
+  [ -d "$BASE/$cid" ]                                    # 持鎖中 → 不掃
   kill "$hp" 2>/dev/null || true; sleep 0.5
   "$BIN" --abort "$id1" >/dev/null 2>&1 || true
   run --separate-stderr "$BIN" --detach --_selftest-sleep 2 --_selftest-gc-age 0 --instructions i "p"; [ "$status" -eq 0 ]; id2="$output"
-  [ ! -e "$BASE/$cid.done" ]                                  # 鎖釋放 → 掃掉
+  [ ! -e "$BASE/$cid" ]                                  # 鎖釋放 → 掃掉
   "$BIN" --abort "$id2" >/dev/null 2>&1 || true
 }
 
-@test "R8-FIFO/R9 .claimed 是 FIFO → detach 與 poll 都不掛住（O_NONBLOCK）；GC 不掃它（不可判定 ⇒ 不刪，A2）、留下一行紀錄" {
-  cid="$(printf 'v%.0s' $(seq 1 32))"; mkdir -p "$BASE/$cid.done"
-  printf '{"selftest_sleep":0,"output":"/tmp/nope","max_time":30,"started_at":%s}\n' "$(date +%s)" > "$BASE/$cid.done/meta.json"
-  printf '0\n' > "$BASE/$cid.done/status"; mkfifo "$BASE/$cid.done/.claimed"
+@test "R8-FIFO/R9 claim 是 FIFO → detach 與 poll 都不掛住（O_NONBLOCK）；GC 不掃它（不可判定 ⇒ 不刪，A2）、留下一行紀錄" {
+  cid="$(printf 'v%.0s' $(seq 1 32))"; mkdir -p "$BASE/$cid"
+  printf '{"selftest_sleep":0,"output":"/tmp/nope","max_time":30,"started_at":%s}\n' "$(date +%s)" > "$BASE/$cid/meta.json"
+  printf '0\n' > "$BASE/$cid/status"; mkfifo "$BASE/$cid/claim"
   run --separate-stderr perl -e 'alarm 40; exec @ARGV' -- "$BIN" --poll "$cid"
   [ "$status" -eq 1 ]; [ -z "$output" ]; [[ "$stderr" == *"cannot claim"* ]]     # 掛住會是 142
   run --separate-stderr perl -e 'alarm 60; exec @ARGV' -- "$BIN" --detach --_selftest-sleep 2 --_selftest-gc-age 0 --instructions i "p"
   [ "$status" -eq 0 ]; id="$output"                          # 掛住會是 142；round 7 L-R7-1 實測 detach 永久掛住
   # round 9 A2：FIFO 標記＝「不可判定」，不是「沒鎖」。round 8 在這裡刪掉它（本案例原本斷言 `! -e`），
   # 方向與本專案 R4-S1 紀律相反——靜默刪掉一個可能還活著的 claim 會弄丟已付費的結果。改為留著並說出來。
-  [ -d "$BASE/$cid.done" ]
+  [ -d "$BASE/$cid" ]
   [[ "$stderr" == *"cannot be trusted or inspected"* ]]
   [[ "$stderr" == *"refusing to sweep"* ]]
   "$BIN" --abort "$id" >/dev/null 2>&1 || true
-  rm -f "$BASE/$cid.done/.claimed"                            # 契約 §9：這種 .done 需人工清理
+  rm -f "$BASE/$cid/claim"                            # 契約 §9：這種 run 需人工清理
 }
 
 
@@ -910,14 +948,14 @@ wait_terminal() {  # $1=id → 設 POLL_OUT / POLL_RC
 @test "R9-A1 abort 對「claim 不可得 ＋ worker 持鎖」：不得 exit 0、不得印 ABORTED，且 worker 必須真的被終止（止血與回報分離）" {
   run "$BIN" --detach --_selftest-sleep 90 --instructions i "p"; [ "$status" -eq 0 ]; id="$output"
   sleep 0.5
-  mv "$BASE/$id" "$BASE/$id.done"        # rename 成功、標記沒建成（R8-A／L-R8-1 的黑洞格）
+  rm -f "$BASE/$id/claim"                # 同 uid 刪掉 claim 檔（契約 §9 明列；round 8 的黑洞格在新設計上只剩這一條入口）
   wpid=$(own_workers | head -1); [ -n "$wpid" ]; kill -0 "$wpid"
   run --separate-stderr "$BIN" --abort "$id"
   [ "$status" -ne 0 ]                     # 後置條件沒有全部成立（run 清不掉）→ 不得用 exit 0 宣稱成立
   [ -z "$output" ]                        # 沒有終態 token
   [[ "$stderr" == *"terminated"* ]]       # 但必須說出「worker 已終止」這個成立的部分
   no_worker_for "$id"                     # 驗收條件 #2：這條命令確實終止了它
-  [ -d "$BASE/$id.done" ]                 # 清不掉就誠實留著，不假報已清
+  [ -d "$BASE/$id" ]                      # 清不掉就誠實留著，不假報已清
 }
 
 @test "R9-A1b 正常 abort 不受影響：活 run 仍 ABORTED exit 0、run 已清；已結束的 run 併發 poll 仍拿 DONE" {
@@ -935,30 +973,104 @@ wait_terminal() {  # $1=id → 設 POLL_OUT / POLL_RC
   n=$(cat "$TMP/p2" "$TMP/a2" | grep -cE '^(DONE|ABORTED)'); [ "$n" -eq 1 ]
 }
 
-@test "R9-A2 GC 對「不可判定的標記」不得刪除：hard link（nlink 2）／目錄／chmod 000 三變體，正在被 finalize 的 .done 必須存活" {
+@test "R9-A2 GC 對「不可判定的 claim」不得刪除：hard link（nlink 2）／目錄／chmod 000 三變體，正在被 finalize 的 run 必須存活" {
   printf 'v\n' > "$TMP/linkbait"
   for variant in hardlink dir chmod000; do
-    cid="$(printf 'y%.0s' $(seq 1 32))"; rm -rf "$BASE/$cid"*; mkdir -p "$BASE/$cid.done"
-    printf '{"selftest_sleep":0,"output":"/tmp/nope","max_time":30,"started_at":%s}\n' "$(date +%s)" > "$BASE/$cid.done/meta.json"
-    printf '0\n' > "$BASE/$cid.done/status"
+    cid="$(printf 'y%.0s' $(seq 1 32))"; rm -rf "$BASE/$cid"*; mkdir -p "$BASE/$cid"
+    printf '{"selftest_sleep":0,"output":"/tmp/nope","max_time":30,"started_at":%s}\n' "$(date +%s)" > "$BASE/$cid/meta.json"
+    printf '0\n' > "$BASE/$cid/status"
     case "$variant" in
-      hardlink) : > "$BASE/$cid.done/.claimed"; hp=$(hold_marker "$BASE/$cid.done"); sleep 0.5
-                ln "$BASE/$cid.done/.claimed" "$TMP/lnk.$cid" ;;    # nlink=2：完整性失敗，但鎖還被持有
-      dir)      mkdir -p "$BASE/$cid.done/.claimed"; hp="" ;;
-      chmod000) : > "$BASE/$cid.done/.claimed"; chmod 000 "$BASE/$cid.done/.claimed"; hp="" ;;
+      hardlink) : > "$BASE/$cid/claim"; hp=$(hold_claim "$BASE/$cid"); sleep 0.5
+                ln "$BASE/$cid/claim" "$TMP/lnk.$cid" ;;    # nlink=2：完整性失敗，但鎖還被持有
+      dir)      mkdir -p "$BASE/$cid/claim"; hp="" ;;
+      chmod000) : > "$BASE/$cid/claim"; chmod 000 "$BASE/$cid/claim"; hp="" ;;
     esac
     run --separate-stderr "$BIN" --detach --_selftest-sleep 2 --_selftest-gc-age 0 --instructions i "p"
     [ "$status" -eq 0 ]; gid="$output"
-    [ -d "$BASE/$cid.done" ]                       # 不可判定 ⇒ 不刪（與 lockState 的 .untrusted 同一紀律，R4-S1）
+    [ -d "$BASE/$cid" ]                       # 不可判定 ⇒ 不刪（與 lockState 的 .untrusted 同一紀律，R4-S1）
     [[ "$stderr" == *"cannot be trusted or inspected"* ]]   # 與 lockState 的 .untrusted 同一句措辭
     [[ "$stderr" == *"refusing to sweep"* ]]                # 且必須留下一行紀錄
     run grep -q "claimer died first" <<< "$stderr"; [ "$status" -ne 0 ]   # 不得宣稱 claimer 已死
     [ -z "$hp" ] || kill -0 "$hp"                  # hard link 變體：持鎖者全程存活
     [ -z "$hp" ] || kill "$hp" 2>/dev/null || true
     "$BIN" --abort "$gid" >/dev/null 2>&1 || true
-    chmod 600 "$BASE/$cid.done/.claimed" 2>/dev/null || true
+    chmod 600 "$BASE/$cid/claim" 2>/dev/null || true
     rm -f "$TMP/lnk.$cid"
   done
+}
+
+
+# ---------- round 9 Stage B（換設計的驗收條件；round 8 DA §6.2 #3／#5／#6／#7） ----------
+
+@test "R9-B3 claim 開不起來時（EACCES／目錄／FIFO／symlink）--poll 一律不得說「gone」——已付費的結果不可達是 round 8 的黑洞（DA #3）" {
+  for variant in eacces dir fifo symlink; do
+    cid="$(printf 'a%.0s' $(seq 1 32))"; rm -rf "$BASE/$cid"*; mkdir -p "$BASE/$cid"
+    printf 'PAID\n' > "$BASE/$cid.out.md"
+    printf '{"selftest_sleep":0,"default_output":true,"output":"%s","max_time":30,"started_at":%s}\n' "$BASE/$cid.out.md" "$(date +%s)" > "$BASE/$cid/meta.json"
+    printf '0\n' > "$BASE/$cid/status"
+    case "$variant" in
+      eacces)  : > "$BASE/$cid/claim"; chmod 000 "$BASE/$cid/claim" ;;
+      dir)     mkdir -p "$BASE/$cid/claim" ;;
+      fifo)    mkfifo "$BASE/$cid/claim" ;;
+      symlink) ln -s /dev/null "$BASE/$cid/claim" ;;
+    esac
+    run --separate-stderr perl -e 'alarm 40; exec @ARGV' -- "$BIN" --poll "$cid"
+    [ "$status" -eq 1 ]                                  # 不是 142（掛住）
+    [[ "$stderr" != *"is gone"* ]]                       # ← 這一條就是 R8-A：run 在磁碟上卻被說成 gone
+    [[ "$stderr" == *"cannot claim"* ]]
+    [ -d "$BASE/$cid" ]; [ -s "$BASE/$cid.out.md" ]      # 已付費的結果原地保留，人工可取
+    chmod 700 "$BASE/$cid/claim" 2>/dev/null || true
+    rm -rf "$BASE/$cid" "$BASE/$cid.out.md"
+  done
+  # 對照：整個 run 目錄真的不見了才是 gone
+  gid="$(printf 'c%.0s' $(seq 1 32))"
+  run --separate-stderr "$BIN" --poll "$gid"
+  [ "$status" -eq 1 ]; [[ "$stderr" == *"unknown run id"* ]]
+}
+
+@test "R9-B5 lock 與 claim 都在 spawn worker 之前、印 id 之前就存在（DA #5）" {
+  run "$BIN" --detach --_selftest-sleep 2 --_selftest-prelock-sleep 6 --instructions i "p"
+  [ "$status" -eq 0 ]; id="$output"
+  # worker 還卡在拿鎖之前，兩個檔案就必須已經在：它們是 doDetach 建的，不是 worker 建的
+  [ -f "$BASE/$id/lock" ]; [ -f "$BASE/$id/claim" ]
+  [ "$(stat -f '%Lp' "$BASE/$id/claim")" = "600" ]
+  run "$BIN" --abort "$id"; [ "$status" -eq 0 ]
+  no_worker_for "$id"
+}
+
+@test "R9-B6 claim 的 inode 全程不變：任何 caller 路徑都不建立、不置換它（DA #6）" {
+  run "$BIN" --detach --_selftest-sleep 8 --instructions i "p"; [ "$status" -eq 0 ]; id="$output"
+  ino0=$(stat -f '%i' "$BASE/$id/claim")
+  run "$BIN" --poll "$id"; [ "$output" = "RUNNING" ]
+  [ "$(stat -f '%i' "$BASE/$id/claim")" = "$ino0" ]
+  run "$BIN" --poll "$id" --wait 2; [ "$output" = "RUNNING" ]
+  [ "$(stat -f '%i' "$BASE/$id/claim")" = "$ino0" ]
+  hp=$(hold_claim "$BASE/$id"); sleep 0.5                # 另一個 caller 持鎖：也不得換 inode
+  [ "$(stat -f '%i' "$BASE/$id/claim")" = "$ino0" ]
+  kill "$hp" 2>/dev/null || true; sleep 0.3
+  run "$BIN" --abort "$id"; [ "$status" -eq 0 ]; [ "$output" = "ABORTED" ]
+  no_worker_for "$id"
+  # 靜態：任何用到 CLAIM_FILE 的 open 都不得帶 O_CREAT（caller 永不建立），
+  # 而 doDetach 的建立點恰好一處（O_RDWR|O_CREAT|O_EXCL|O_NOFOLLOW 那一行，同時建 lock 與 claim）。
+  [ "$(grep -n 'CLAIM_FILE' "$BIN_REAL" | grep -c 'O_CREAT')" -eq 0 ]
+  [ "$(grep -c 'O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW' "$BIN_REAL")" -eq 1 ]
+}
+
+@test "R9-B7 取消 rename 之後，worker 在 claim 之後才寫的 status 仍算數：不得誤報 TIMEOUT（DA #7／§1.6）" {
+  # round 8 之前：poll 逾時時 rename(<id> → <id>.done)，worker 手上的路徑字串失效，之後寫的 status
+  # 落不進 run 目錄 → 被報成 TIMEOUT。取消 rename 之後目錄名終生不變，這條已揭露的缺陷結構上消失。
+  run "$BIN" --detach --max-time 1 --_selftest-grace 1 --_selftest-sleep 60 --_selftest-ignore-term --instructions i "p"
+  [ "$status" -eq 0 ]; id="$output"
+  sleep 3                                                # 已逾時：下一個 poll 會 claim → kill
+  # 「worker 在 claim 之後才把 status 寫完」——錨定在 claim 鎖已被持有，不賭啟動時間。
+  # worker 忽略 SIGTERM，poll 因此有 2 s 的等待窗（--_selftest-ignore-term）。
+  ( wait_claim_taken "$BASE/$id" && { printf 'SELFTEST\n' > "$BASE/$id.out.md"; printf '0\n' > "$BASE/$id/status"; } ) &
+  run --separate-stderr "$BIN" --poll "$id"
+  wait
+  [ "$status" -eq 0 ]; [ "$output" = "DONE $BASE/$id.out.md" ]   # 以 worker 的 status 為準，不是 TIMEOUT
+  [ ! -e "$BASE/$id" ]
+  pkill -9 -f -- "-interpret $BIN_REAL .* --_worker $id" 2>/dev/null || true   # 忽略 SIGTERM 的 selftest worker
+  no_worker_for "$id"
 }
 
 

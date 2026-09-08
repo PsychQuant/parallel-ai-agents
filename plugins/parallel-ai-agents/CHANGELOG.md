@@ -149,7 +149,24 @@ round 8 的 CI **首度全綠**（TAP plan 86 == executed 86、bash 5.3.15）、
 - **`R8-FIFO` 的斷言隨語意一起改（明講，不靜默）**：它原本斷言 FIFO 標記的 `.done` **會被 GC 掃掉**——那是 round 8 的決定，方向與 R4-S1 相反。A2 之後它斷言 `.done` **存活**且 stderr 有拒掃的理由；案例的原始價值（`O_NONBLOCK`：detach 與 poll 都不掛住）原封不動。改測試去配合新行為需要理由才不算移動球門，理由就是上一條。
 - 測試護欄：`no_worker_for <id>`（run-id 級的孤兒斷言；`own_workers` 是 checkout 級，一個案例的孤兒會污染後面每一個案例——round 5 F-3 把 scope 從機器全域縮到 checkout，這裡再縮一級）；`bats_require_minimum_version 1.5.0`。
 
-**Stage B（換設計：`claim` 改成 `doDetach` 在 spawn worker 之前建立的第二個鎖檔，取消 `rename` claim／`.done` 名字／接手分支）與 Stage C（誠實化）另計。**
+**Stage B — 換設計（round 8 DA §1.7 三個前置條件已滿足：Stage A 在舊設計上綠、建立順序寫進契約、明寫消不掉什麼）**
+
+連續三輪（6→7→8）每一輪的修法製造下一輪的根因，全部在同一個 claim 協定裡；DA 判定共同的結構特徵是**「一個名字 ＋ 一個事後才建立的檔案」是兩個不可組合的系統呼叫**。Stage B 刪掉那個特徵本身：
+
+- **`claim` 檔由 `--detach` 與 run 一起建立**（`lock` 也是），在 spawn worker 之前、印出 id 之前。**任何 caller 都不建立它**（`open` 不帶 `O_CREAT`）：輸掉是 `EAGAIN` 不是第二個 inode，「檔案不在」是「run 正在被清除」不是「輪到我建」。
+- **取消 `rename(<id>, <id>.done)` claim、取消 `.done` 這個名字、取消接手（adoption）分支**。接手不再是特例，就是「拿得到鎖」——claimer 崩潰 → kernel 釋放鎖 → 下一個 caller 直接拿到。連帶消失的還有：第二個目錄名、年齡門檻、`ctime`／`mtime` 兩個時鐘（`R5-L6` 因此刪除，教訓移入 `gcStaleRuns` 的 doc-comment）。
+- **claim 檔不在但 run 目錄還在 ＝ `.failed`，不是 `gone`**（round 8 R8-A：一個帶著已付費結果、還躺在磁碟上的 run 曾被說成「gone — 不要 retry」）。這一格在新設計上只剩同 uid `rm <id>/claim` 一條入口，**它沒有消失**，寫進契約 §9——不把「結構上不存在」講成假話（DA 條件 3）。
+- **附帶收益（DA §1.6 指出、`R9-B7` 守）**：取消 rename 之後 run 目錄名終生不變，worker 手上的路徑字串永遠有效，契約 §9 原本第一項「rename 之後才收尾的 run 被誤報 TIMEOUT」**結構上關閉**，不需要 dirfd／`openat` 重構。
+- **對外契約一個旗標都沒動**：`--detach`／`--poll`／`--abort` 的旗標名、stdout token、exit code、id 格式、base 路徑與 round 8 逐字相同；engine（`*.js`／`*.mjs`）與兩份 SKILL.md 零改動。run 目錄的內部布局從來不是 §8 的 STABLE 面——**因此不需要 major bump**（DA 特別要求寫明：否則「換 claim 協定」最可能死於「破壞相容性」的誤讀）。
+- **被刪機制的失敗史不得淨損失**（DA 遷移完整性）：round 5 的第三種目錄名、round 6 的 `O_EXCL`＋60 s lease、round 7–8 的 rename＋marker ABA 與它造成的黑洞，全部保留在 `ClaimResult` 的 WHY NOT doc-comment 與契約 §2「為什麼不是前三種設計」。
+- **三條 wall-clock 餘裕斷言改成錨定事實**（`R7-M05`／`R9-B7` 錨在「claim 鎖已被持有」，用唯讀 `F_GETLK` 查詢、不自己取鎖以免跟被測的 caller 搶；`R5-L9` 的上界改成自校準——先量這台機器此刻的 swift 啟動成本再加 N）。它們在單獨跑時綠、跟整套一起跑時紅：量到的是「啟動＋行為」而不是行為。這與 round 8 CI 首度真的執行套件後照出的兩條（`Codex-R4-3`、`R5-S5`）是同一類。
+- 新驗收案例：`R9-B3`（claim 開不起來的四種變體，`--poll` 一律不得說 gone、已付費結果原地保留）、`R9-B5`（建立順序）、`R9-B6`（claim inode 全程不變 ＋ 靜態：用到 `CLAIM_FILE` 的 open 零個帶 `O_CREAT`）、`R9-B7`（不再誤報 TIMEOUT）。既有 21 個引用 `.done`／`.claimed` 的案例全部遷移，`R5-L6` 明確刪除並說明。
+
+**Stage C — 誠實化**
+
+- 契約 §2 末新增**狀態叉積表**（5 種 run 狀態 × 6 種 caller 配對，每格填 stdout token 與 exit code，**不留空格**；不可達要寫理由）。放契約而不是 CHANGELOG 或 PR 留言，理由是 DA 第五題：**round 8 的兩條 blocking 正好落在 round 7 那張表沒有的格子裡**，表在契約裡，下一輪逐格驗證才會撞上空白。
+- 契約 §6 的傷害上界句改成**封閉列舉五項**（同一句話已兩次為假：round 5 修了刪除面、round 8 DA 實測回報面仍在——改寫 `meta.json` 的 `output` 可讓 `--poll` 印出攻擊者選定的路徑，直接餵進 prompt-injection 鏈的下游）。
+- §9 的「上列五項」改成可數的「上列各項」（實際 10 條，round 8 DA §4.3）。
 
 ### Removed
 

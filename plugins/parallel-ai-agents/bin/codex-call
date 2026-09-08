@@ -453,7 +453,7 @@ func streamCodex(prompt: String, outputFile: String, model: String, effort: Stri
 //                reason fcntl is used instead.)
 //   capability — --poll/--abort accept a 32-char CSPRNG run id, resolved under
 //                $HOME/.cache/codex-call/runs (0700). Never a path.
-//   atomicity  — terminal cleanup is claimed with rename(run, run.done).
+//   atomicity  — the terminal state is claimed with an fcntl lock on <run>/claim (§2).
 // Contract: references/codex-call-contract.md (#35).
 
 let RUN_ID_ALPHABET = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789")
@@ -538,7 +538,7 @@ func openOurLock(_ dir: String, flags: Int32) -> (fd: Int32?, why: String, err: 
 }
 
 /// The integrity check behind every lock file we open (worker lock, claim marker): regular,
-/// singly linked, ours. Round 7 factored it out so the .claimed marker gets the same discipline.
+/// singly linked, ours. Round 7 factored it out so the claim file gets the same discipline.
 func openTrusted(_ path: String, flags: Int32) -> (fd: Int32?, why: String, err: Int32) {
     // O_NONBLOCK: open(2) on a FIFO blocks until a peer appears, and the S_IFREG check below runs
     // AFTER open — a `mkfifo <run>.done/.claimed` hung every later --detach inside the GC
@@ -617,79 +617,92 @@ func removeDefaultOutput(_ meta: [String: Any]?, id: String) {
     _ = unlink(out)
 }
 
-/// ACTION 2 (round 5 DA §5) + round 7 (round 6 DA-1): a run's terminal state is owned by exactly
-/// one caller, and "exactly one report" is THREE properties with three mechanisms — not one
-/// function that every path is asked to call:
-///   1. at-most-one claimer — rename(<id> → <id>.done) for a live run, then a fcntl WRITE LOCK on
-///      <id>.done/.claimed held until this process exits (claimMarker). Adoption of a .done is the
-///      same lock. Same primitive as the worker lock: the kernel releases it when the holder dies,
-///      so there is no lease, no clock, nothing to forge with touch and no ABA (round 6 RC3a: the
-///      O_EXCL + 60 s mtime marker had all three, and a slow-but-alive adopter lost its claim).
-///   2. a run is reported at most once — `reported` is put INSIDE <id>.done BEFORE any terminal
-///      line is printed (markReported). A leftover carrying `reported` is never reported again
-///      (round 6 RC4: a DONE whose cleanup failed was re-reported as FAILED 65 s later).
-///   3. nobody kills, deletes or prints without 1 — --poll, its --wait loop, the timeout path,
-///      --abort and the detach handshake all go through claimTerminal (round 6 RC1a: the timeout
-///      path did not, and two polls on one expired run both printed, 10/10). The 24 h GC is the
-///      one documented exception (contract §4) and it never touches a .done whose marker is held.
+/// Round 9 Stage B (round 8 DA §1.7): a run's terminal state is owned by exactly one caller, and
+/// "exactly one report" is THREE properties with three mechanisms (round 6 DA-1 — "one claim" is
+/// necessary, not sufficient):
+///
+///   1. at-most-one claimer — an `fcntl(F_SETLK)` WRITE LOCK on `<id>/claim`, held until this
+///      process exits. The file is created ONCE, by `doDetach`, BEFORE the worker is spawned and
+///      before the id is printed: every caller that can name a run sees it, and no caller ever
+///      creates it. Losing the race is EAGAIN, not a second inode.
+///   2. a run is reported at most once — `<id>/reported` lands BEFORE any terminal line is
+///      printed (markReported); a leftover carrying it is never reported again.
+///   3. nobody deletes or prints without 1 — every path goes through claimRun; the 24 h GC is the
+///      one documented exception (contract §4) and it skips a run whose claim is held or
+///      uninspectable.
+///
+/// WHY NOT the three designs this replaces (rounds 5–8 paid for each; do not re-derive them):
+///   - `<id>.claim.<pid>` as a third directory name (round 5): resolveRun and the GC went blind to
+///     it, so a successful result was lost for good; and a substring test on the full path
+///     silently disabled claiming under some $HOMEs (round 5 DA 4.1/4.2).
+///   - `<id>.done/.claimed` created with O_EXCL + a 60 s mtime lease (round 6): the lease is a
+///     clock, so `touch` forged it, an adopter that was slow rather than dead lost its claim, and
+///     `lstat → unlink → O_EXCL` is an ABA (round 6 RC3a).
+///   - the same marker with an fcntl lock, created by whoever won `rename(<id>, <id>.done)`
+///     (rounds 7–8): `removeRun` is a recursive unlink, so it freed the marker NAME while the
+///     directory still existed — a second adopter created a fresh inode there and locked it,
+///     giving two reporters (measured 7/150). Round 8 stopped adopters from creating it, which
+///     turned "rename succeeded, marker never created" into a black hole: `--poll` said "gone"
+///     about a run that was on disk with a paid-for result, and `--abort` said exit 0 while its
+///     worker kept spending (round 8 R8-A / L-R8-1, both measured).
+///
+/// The shared cause of all three is one structural feature: **a name plus a file created
+/// afterwards is two syscalls that cannot be composed**. Creating the claim file with the run —
+/// before anyone can name it — removes the feature, not one of its consequences. What it does NOT
+/// remove: a same-uid `rm <id>/claim` still makes a run unclaimable (contract §9), and "cannot
+/// tell" must still never be read as "nobody" (that is a logic error, not a design one — §4).
 enum ClaimResult {
-    case claimed(String)     // we own this .done now and hold its marker lock until exit
-    case takenByOther        // another poll/abort is finalizing it — the terminal state goes to that caller
-    case gone                // aborted or garbage-collected between our probe and the claim
-    case failed(String)      // rename/open/lock failed for a reason retrying cannot fix (RC3b: never "someone else's")
+    case claimed(String)     // we hold this run's claim lock until exit; nobody else will report it
+    case takenByOther        // another poll/abort holds it — the terminal state goes to that caller
+    case gone                // the run directory (or its claim file) is being torn down
+    case failed(String)      // integrity or errno failure — never "someone else's" (round 7 RC3b)
 }
 
-let CLAIM_MARKER = "/.claimed"
+let CLAIM_FILE = "/claim"
 let REPORTED = "/reported"
-/// Marker lock fds are intentionally never closed: fcntl locks drop when ANY fd to the file is
-/// closed by this process, and the claim must outlive every step up to exit.
+/// Claim fds are intentionally never closed: fcntl locks drop when ANY fd to the file is closed by
+/// this process, and the claim must outlive every step up to exit.
 var heldClaimFds: [Int32] = []
 
-/// Take the marker lock inside a .done. The integrity discipline is the worker lock's (S_IFREG,
-/// nlink 1, our uid — openTrusted): a marker we cannot trust is `.failed`, and so is any errno
-/// other than "somebody holds it" (round 6 RC3b: EACCES/ENOSPC used to be reported as "already
-/// reported to another caller; do not retry" — a paid-for result made unreachable by a lie).
-/// Marker lifecycle invariant (round 7 B-CRIT, measured 7/150 double reports): the marker is created
-/// EXACTLY ONCE, by the process whose rename() won the live run, before it does anything else; every
-/// later caller only opens it. Nobody unlinks it except removeRun (recursively, at the end). With that,
-/// "the marker name is gone" can only mean "the .done is being torn down or its claim was never
-/// completed" — an adopter that creates a fresh inode there would take a lock nobody else can see
-/// (the ABA the O_EXCL marker had, moved to removeRun's door). ENOENT on adoption is therefore
-/// "not adoptable, do not retry", never "mine to create".
-func claimMarker(_ done: String, create: Bool) -> ClaimResult {
-    let (fdOpt, why, err) = openTrusted(done + CLAIM_MARKER, flags: create ? (O_RDWR | O_CREAT) : O_RDWR)
+/// Take the run's claim lock. Never creates the file — `doDetach` did, before the id existed.
+/// ENOENT therefore means the run is being torn down (removeRun is the only remover) or was never
+/// a run at all; it never means "mine to create" (that was round 7's ABA).
+func claimRun(_ dir: String) -> ClaimResult {
+    let (fdOpt, why, err) = openTrusted(dir + CLAIM_FILE, flags: O_RDWR)
     guard let fd = fdOpt else {
-        if err == ENOENT { return .gone }   // the .done vanished, is being torn down, or its claim never completed
-        return .failed("claim marker: " + why)
+        // "the claim file is gone" and "the run is gone" are two different answers, and only the
+        // second one is `gone`. Round 8's black hole (R8-A / L-R8-1) was exactly this conflation:
+        // a run sitting on disk with a paid-for result was reported as "gone — do not retry".
+        // A same-uid `rm <run>/claim` can still reach this state (contract §9) — it is honest
+        // about it instead of pretending the run does not exist.
+        if err == ENOENT {
+            var st = stat()
+            if lstat(dir, &st) == 0 {
+                return .failed("its claim file is missing while the run is still on disk (it was removed by something other than this tool)")
+            }
+            return .gone
+        }
+        return .failed("claim file: " + why)
     }
     var fl = flock()
     fl.l_type = Int16(F_WRLCK); fl.l_whence = Int16(SEEK_SET); fl.l_start = 0; fl.l_len = 0
     guard fcntl(fd, F_SETLK, &fl) == 0 else {
         let e = errno; close(fd)
         return (e == EAGAIN || e == EACCES) ? .takenByOther
-            : .failed("claim marker F_SETLK: " + String(cString: strerror(e)))
+            : .failed("claim F_SETLK: " + String(cString: strerror(e)))
     }
     heldClaimFds.append(fd)
-    return .claimed(done)
+    return .claimed(dir)
 }
 
-/// Round 9 A2 (round 8 DA §3): the marker answers the SAME question the worker lock does, so it
-/// owes the same three answers — `lockState`'s doc (R4-S1) says it in as many words: "no lock
-/// file", "a lock file we refuse to trust" and "lock held" are THREE answers, and collapsing the
-/// second into the first makes an integrity failure look like a finished run. `markerHeld -> Bool`
-/// collapsed it in exactly that direction: a same-uid `ln` on the marker (nlink 2) made the GC
-/// print "its claimer died first" and sweep a `.done` whose claimer was alive throughout
-/// (measured). The non-adversarial entry is the same one lockState has: F_GETLK itself failing
-/// (ENOLCK/EIO on an NFS/SMB $HOME) needs no attacker at all.
-///
-/// Round 7 L-R7-2 pushed the pendulum the other way ("cannot tell ⇒ immortal") because such a run
-/// had NO recovery path. Round 9 keeps "cannot tell ⇒ do not delete" — silently deleting a live
-/// claim loses a paid-for result, which is strictly worse than a visible leftover — and pays for
-/// it with honesty instead: the GC logs the reason, and the contract lists manual cleanup.
-enum MarkerState { case held(pid_t), unheld, untrusted(String) }
+/// Round 9 A2: the claim answers the same question the worker lock does, so it owes the same three
+/// answers (R4-S1). Collapsing "cannot tell" into "nobody" let the GC sweep a run whose claimer
+/// was alive (round 8 DA §3, measured: a same-uid hard link on the claim file); the
+/// non-adversarial entry is F_GETLK itself failing on an NFS/SMB $HOME.
+enum ClaimState { case held(pid_t), unheld, untrusted(String) }
 
-func markerState(_ done: String) -> MarkerState {
-    let (fdOpt, why, err) = openTrusted(done + CLAIM_MARKER, flags: O_RDONLY)
+func claimState(_ dir: String) -> ClaimState {
+    let (fdOpt, why, err) = openTrusted(dir + CLAIM_FILE, flags: O_RDONLY)
     guard let fd = fdOpt else { return err == ENOENT ? .unheld : .untrusted(why) }
     defer { close(fd) }
     var fl = flock()
@@ -698,36 +711,15 @@ func markerState(_ done: String) -> MarkerState {
     return fl.l_type == Int16(F_UNLCK) ? .unheld : .held(fl.l_pid)
 }
 
-func claimTerminal(_ id: String, dir: String) -> ClaimResult {
-    if dir.hasSuffix(".done") { return claimMarker(dir, create: false) }   // adoption never creates
-    let done = dir + ".done"
-    guard rename(dir, done) == 0 else {
-        let err = errno
-        if err == ENOENT {
-            // L-R5-5: ENOENT means EITHER another poll claimed it OR --abort / GC removed it.
-            // Neither is worth a retry — the old "retry" advice sent agents to "unknown run id".
-            var dst = stat()
-            return lstat(done, &dst) == 0 ? .takenByOther : .gone
-        }
-        return .failed(String(cString: strerror(err)))
-    }
-    // The rename won the race for the live run: create the marker (the only creation site) and lock it.
-    // An adopter cannot beat us to it any more — it can only open a marker that already exists.
-    return claimMarker(done, create: true)
-}
-
-/// Validates the id and returns its directory: <id> (live, or finished and unclaimed) or
-/// <id>.done (claimed). Whether somebody is still finalizing it is the marker lock's answer and
-/// whether the worker is still alive is the worker lock's — resolveRun asks neither and deletes
-/// nothing (round 6 RC2: it deleted a .done whose worker was alive because "no status" was read
-/// as "leftover", and its 60 s clock was the only thing between a reported DONE and a second one).
+/// Validates the id and returns its directory. It asks nothing else and deletes nothing: whether
+/// someone is finalizing it is the claim lock's answer, and whether the worker is alive is the
+/// worker lock's (round 6 RC2: this function once deleted a run whose worker was alive because
+/// "no status" was read as "leftover"). Round 9 Stage B: there is no second directory name.
 func resolveRun(_ id: String) -> String {
     guard validRunId(id) else { die("invalid run id (expected 32 alphanumerics): \(id)") }
     let dir = runDir(id)
     var isDir: ObjCBool = false
     if FileManager.default.fileExists(atPath: dir, isDirectory: &isDir), isDir.boolValue { return dir }
-    let done = dir + ".done"
-    if FileManager.default.fileExists(atPath: done, isDirectory: &isDir), isDir.boolValue { return done }
     die("unknown run id: \(id)")
 }
 
@@ -880,7 +872,9 @@ func runWorker(id: String) -> Never {
     // would re-fire the HTTP call, burn quota and overwrite status). status present ⇒ refuse.
     if FileManager.default.fileExists(atPath: dir + "/status") { log("worker: status already present — refusing to replay"); exit(1) }
     if let n = readMeta(dir)?["selftest_prelock"] as? Int, n > 0 { sleep(UInt32(n)) }   // Codex R4 #3 hook
-    let (lockFd, lockWhy, _) = openOurLock(dir, flags: O_RDWR | O_CREAT)   // R3-Sec-H1
+    // Round 9 Stage B: doDetach created `lock` before spawning us, so we never create it —
+    // a missing lock file means the run was torn down underneath us, not that we are first.
+    let (lockFd, lockWhy, _) = openOurLock(dir, flags: O_RDWR)   // R3-Sec-H1
     guard let fd = lockFd else { log("worker: cannot open or trust the lock file: \(lockWhy)"); exit(1) }
     var fl = flock()
     fl.l_type = Int16(F_WRLCK); fl.l_whence = Int16(SEEK_SET); fl.l_start = 0; fl.l_len = 0
@@ -946,11 +940,11 @@ func doPoll(id: String, wait: Int = 0) -> Never {
             usleep(UInt32(max(0.05, min(1.0, remaining)) * 1_000_000))   // L-R5-9: never overrun N
         }
     }
-    func claimOrDie() -> String {   // property 3: no signal, no deletion, no print without the claim
-        switch claimTerminal(id, dir: dir) {
+    func claimOrDie() -> String {   // property 3: no deletion and no print without the claim
+        switch claimRun(dir) {
         case .claimed(let d): return d
         case .takenByOther: die("run \(id) is being finalized by a concurrent poll or abort — its terminal state goes to that caller; do not retry")
-        case .gone: die("run \(id) is gone — aborted, garbage-collected, being torn down by the caller that reported it, or its claim never completed; do not retry")
+        case .gone: die("run \(id) is gone — removed, or being torn down by the caller that reported it; do not retry")
         case .failed(let why): die("cannot claim run \(id): \(why) — no other poll is involved; retrying will not help")
         }
     }
@@ -1008,18 +1002,15 @@ func doAbort(id: String) -> Never {
     // The ABORTED token means "this call terminated it": the engine reads stdout tokens as
     // verdicts, so a loser prints NOTHING (round 6 RC6: it printed ABORTED — a second token).
     let dir: String
-    switch claimTerminal(id, dir: resolved) {
+    switch claimRun(resolved) {
     case .claimed(let d): dir = d
     case .takenByOther: log("run \(id) is already being finalized by a concurrent poll — nothing to abort"); exit(0)
     case .gone:
-        // Round 9 A1: "gone" and "still on disk but unclaimable" are not the same answer. Say
-        // which half of the post-condition holds — the worker is stopped, the run is not cleaned.
-        if FileManager.default.fileExists(atPath: resolved) || FileManager.default.fileExists(atPath: resolved + ".done") {
-            let where_ = FileManager.default.fileExists(atPath: resolved) ? resolved : resolved + ".done"
-            die("run \(id): the worker was terminated (nothing more will be spent) but the run could not be claimed for cleanup — its claim was never completed; left at \(where_) for the 24 h GC or manual removal")
-        }
         log("run \(id) is already gone (removed, or torn down by the caller that reported it) — nothing to abort"); exit(0)
-    case .failed(let why): die("cannot claim run \(id) for abort: \(why) — retrying will not help")
+    case .failed(let why):
+        // Round 9 A1: say which half of the post-condition holds. The worker is stopped (that is
+        // what --abort is for and it is done); the run is not cleaned, and it is still on disk.
+        die("run \(id): the worker was terminated (nothing more will be spent) but the run could not be claimed for cleanup — \(why); left at \(resolved) for the 24 h GC or manual removal")
     }
     if !killHolderConverged(dir) {   // a holder that took the lock after our probe (Codex round 4 #10)
         log("abort: worker did not release the lock — run left in place at \(dir)")
@@ -1047,10 +1038,12 @@ func doAbort(id: String) -> Never {
 /// hard-killed, so a run abandoned mid-poll (agent
 /// killed, context exhausted) would otherwise live forever — together with prompt.txt, a full
 /// copy of the artifact. Sweep entries older than `olderThan` that nobody holds a lock on.
-/// Only run-id-shaped names are touched: <id>, <id>.done, <id>.out.md.
-/// DA 3.3: a claimed .done is aged by ctime, which no test can forge — so "an abandoned claim is
-/// eventually reclaimed" had zero coverage. The threshold is overridable ONLY together with
-/// --_selftest-sleep (same gating discipline as the other hooks).
+/// Only run-id-shaped names are touched: <id>, <id>.out.md. Round 9 Stage B removed the second
+/// directory name, and with it the clock skew it forced: round 5 L6 had to age a `.done` by
+/// max(mtime, ctime) because `rename` updates only ctime, so the claim path and the GC read the
+/// same directory as "a moment ago" and "25 hours idle". One name, one clock (mtime).
+/// The threshold is overridable ONLY together with --_selftest-sleep (same gating discipline as
+/// the other hooks), and only for runs whose meta says selftest (round 8 RC5).
 var GC_AGE_SECONDS: TimeInterval = 24 * 3600
 var GC_AGE_OVERRIDDEN = false   // round 7 RC5: the hook scopes to selftest runs
 
@@ -1061,40 +1054,32 @@ func gcStaleRuns(olderThan: TimeInterval = GC_AGE_SECONDS) {
     for name in names {
         let stem = String(name.prefix(32))            // 32 = validRunId's length
         let suffix = String(name.dropFirst(32))
-        guard validRunId(stem), ["", ".done", ".out.md"].contains(suffix) else { continue }
+        guard validRunId(stem), ["", ".out.md"].contains(suffix) else { continue }
         let path = base + "/" + name
         if GC_AGE_OVERRIDDEN {
-            // Round 7 (round 6 RC5): the hook scopes to selftest RUNS, not to the invocation that
-            // carries it — with a 0 s threshold it swept production runs and delivered outputs.
-            let m = readMeta(suffix == ".out.md" ? base + "/" + stem : path) ?? readMeta(base + "/" + stem + ".done")
-            guard m?["selftest_sleep"] != nil else { continue }
+            // Round 8 RC5: the hook scopes to selftest RUNS, not to the invocation carrying it —
+            // with a 0 s threshold it swept production runs and delivered outputs.
+            guard readMeta(suffix == ".out.md" ? base + "/" + stem : path)?["selftest_sleep"] != nil else { continue }
         }
-        // L-R5-6: a claim is aged by ctime (rename updates it, not mtime). The GC must not use an
-        // older clock than the claim path, or it deletes a .done that was claimed a moment ago.
         var pst = stat()
         guard lstat(path, &pst) == 0 else { continue }
-        let age = now - (suffix == ".done"
-            ? max(TimeInterval(pst.st_mtimespec.tv_sec), TimeInterval(pst.st_ctimespec.tv_sec))
-            : TimeInterval(pst.st_mtimespec.tv_sec))
-        guard age > olderThan else { continue }
+        guard now - TimeInterval(pst.st_mtimespec.tv_sec) > olderThan else { continue }
         var isDir: ObjCBool = false
         if FileManager.default.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue {
             switch lockState(path) {
-            case .held, .untrusted: continue                 // alive, or not ours to judge (R4-S1)
+            case .held, .untrusted: continue                 // the worker is alive, or not ours to judge (R4-S1)
             case .unlocked: break
             }
-            if suffix == ".done" {
-                switch markerState(path) {
-                case .held: continue                         // somebody is finalizing it right now
-                case .untrusted(let why):                    // round 9 A2: never delete on "cannot tell"
-                    log("gc: marker in \(path) cannot be trusted or inspected (\(why)) — refusing to sweep it; remove it by hand once you know it is dead (contract §9)")
-                    continue
-                case .unheld: break
-                }
-                let fm = FileManager.default
-                if fm.fileExists(atPath: path + "/status"), !fm.fileExists(atPath: path + REPORTED) {
-                    log("gc: run \(stem) was claimed but never reported (its claimer died first) — sweeping it")
-                }
+            switch claimState(path) {                        // round 9 A2: three answers, same discipline
+            case .held: continue                             // somebody is finalizing it right now
+            case .untrusted(let why):
+                log("gc: claim file in \(path) cannot be trusted or inspected (\(why)) — refusing to sweep it; remove it by hand once you know it is dead (contract §9)")
+                continue
+            case .unheld: break
+            }
+            let fm = FileManager.default
+            if fm.fileExists(atPath: path + "/status"), !fm.fileExists(atPath: path + REPORTED) {
+                log("gc: run \(stem) was claimed but never reported (its claimer died first) — sweeping it")
             }
         }
         _ = removeRun(path)
@@ -1124,6 +1109,16 @@ func doDetach(_ a: Args, prompt: String) -> Never {
             meta["selftest_ignore_term"] = a.selftestIgnoreTerm
         }
         try JSONSerialization.data(withJSONObject: meta).write(to: URL(fileURLWithPath: dir + "/meta.json"))
+        // Round 9 Stage B: BOTH lock files are created here — before the worker is spawned and
+        // before the id is printed — so every caller that can name this run finds them, and no
+        // caller ever creates one. `lock` carries the worker's liveness (it takes F_SETLK on it
+        // and holds it to exit); `claim` carries the terminal state's ownership (§2 property 1).
+        // Creating them late is what rounds 6–8 kept paying for: see the enum's WHY NOT block.
+        for f in [dir + "/lock", dir + CLAIM_FILE] {
+            let fd = open(f, O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+            guard fd >= 0 else { throw NSError(domain: "codex-call", code: 5, userInfo: [NSLocalizedDescriptionKey: "cannot create \(f): " + String(cString: strerror(errno))]) }
+            close(fd)
+        }
         // stdio MUST NOT be inherited: a caller doing `$(codex-call --detach …)` would
         // otherwise block until the worker exits — the exact bug round 1 found in the bash helper.
         FileManager.default.createFile(atPath: dir + "/worker.log", contents: nil,
@@ -1176,7 +1171,7 @@ func doDetach(_ a: Args, prompt: String) -> Never {
             }
             // Round 7 S2: even this path removes nothing without a claim. The id was never printed,
             // so no poll can be racing us — the rule simply has no exception besides the GC.
-            switch claimTerminal(id, dir: dir) {
+            switch claimRun(dir) {
             case .claimed(let d): removeRun(d); removeDefaultOutput(meta, id: id)
             default: log("detach: could not claim \(dir) for cleanup — left in place")
             }
@@ -1242,7 +1237,7 @@ func parseArgs() -> Args {
         case "--selftest-error-extract": a.selftestErrorExtract = next()
         case "--_selftest-classify": let d = next(); a.selftestClassify = (d, Int(next()) ?? 0)
         case "--_selftest-prelock-sleep": a.selftestPrelockSleep = Int(next()) ?? 0
-        case "--_selftest-claim-age": die("--_selftest-claim-age was removed in 2.23.0: adopting a .done is decided by the .claimed fcntl lock, not by age — there is no threshold to override")
+        case "--_selftest-claim-age": die("--_selftest-claim-age was removed in 2.23.0: taking over a run is decided by the `claim` fcntl lock, not by age — there is no threshold to override")
         case "--_selftest-ignore-term": a.selftestIgnoreTerm = true
         case "--_selftest-gc-age": a.selftestGcAge = Int(next()) ?? 0
         case "--wait": a.pollWait = Int(next()) ?? -1

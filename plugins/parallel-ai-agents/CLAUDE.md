@@ -51,7 +51,7 @@ Swift script wrapper，取代原本的 `codex exec --full-auto`。設計目的�
 | service_tier=fast | CLI 接受（內部翻譯成 priority）| **接受 `fast`/`priority`/`flex`**，內部翻譯與 codex CLI 一致 |
 | Cold start | ~50ms (subprocess) | ~1.5s（swift compile + cache）|
 | 依賴 | `codex` CLI 安裝 | macOS 內建 swift（Xcode CLT）|
-| 背景執行 | 無 | **`--detach` / `--poll <id> [--wait N]` / `--abort <id>`**（#37）：worker 是單一程序，生存靠 `fcntl` record lock、身分靠 `F_GETLK` 持鎖者 pid、只收 CSPRNG run id 不收路徑。終態「恰好回報一次」= 三個機制：rename／`.claimed` fcntl 鎖 claim、印出前 `reported` 落地、沒有 claim 不動（契約 §2）。契約：`references/codex-call-contract.md` |
+| 背景執行 | 無 | **`--detach` / `--poll <id> [--wait N]` / `--abort <id>`**（#37）：worker 是單一程序，生存靠 `fcntl` record lock、身分靠 `F_GETLK` 持鎖者 pid、只收 CSPRNG run id 不收路徑。終態「恰好回報一次」= 三個機制：`<id>/claim` 的 fcntl 鎖（**由 detach 與 run 一起建立**，caller 永不建立）、印出前 `reported` 落地、沒有 claim 不刪不印（契約 §2；發訊號不在其內——止血由 worker 鎖單獨回答）。契約：`references/codex-call-contract.md` |
 
 範例：
 
