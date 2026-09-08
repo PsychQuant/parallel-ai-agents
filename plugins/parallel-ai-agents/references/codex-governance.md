@@ -23,15 +23,29 @@ if [ ! -f "$CP_DEFAULTS" ] || [ "$(printf '%s\n%s\n' "$MIN_CODEX_PRO" "$CP_VER" 
 fi
 
 # 解析（per codex-pro profile-contract.md §2：defaults.json 起底 → ~/.codex-pro/profile.yaml → ./.codex-pro/profile.yaml，per-field 高層蓋低層）：
-CODEX_MODEL=$(python3 -c "import json;print(json.load(open('$CP_DEFAULTS'))['model'])")
-CODEX_EFFORT=$(python3 -c "import json;print(json.load(open('$CP_DEFAULTS'))['effort'])")
-# profile.yaml overlay（扁平 YAML regex parse，不依賴 PyYAML）：
+# 路徑用 argv 傳給 python，不內插進程式碼字串（#48 verify finding #11）
+CODEX_MODEL=$(python3 - "$CP_DEFAULTS" <<'PY'
+import json, sys; print(json.load(open(sys.argv[1]))['model'])
+PY
+)
+CODEX_EFFORT=$(python3 - "$CP_DEFAULTS" <<'PY'
+import json, sys; print(json.load(open(sys.argv[1]))['effort'])
+PY
+)
+# profile.yaml overlay（扁平 YAML regex parse，不依賴 PyYAML；同 key 取第一個命中）：
+# ⚠ project 層是 **cwd 相對**（契約 §2 原文），不是 repo root——從子目錄跑會靜默掉回上一層。錨定語意由 codex-pro#19 追蹤。
 for PF in "$HOME/.codex-pro/profile.yaml" "./.codex-pro/profile.yaml"; do
   [ -f "$PF" ] || continue
   M=$(grep -E '^model:' "$PF" | head -1 | sed 's/^model:[[:space:]]*//'); [ -n "$M" ] && CODEX_MODEL="$M"
   E=$(grep -E '^effort:' "$PF" | head -1 | sed 's/^effort:[[:space:]]*//'); [ -n "$E" ] && CODEX_EFFORT="$E"
 done
+# 形狀驗證（#48 verify finding #1）：這兩個值會進 shell 命令列（engine 組 codex-call 命令）與 HTTP body，
+# 而 profile.yaml 是 repo 內、fork PR 可改的檔案。只准 [A-Za-z0-9._-]，否則 fail-fast——靜默送出比失敗糟（#205 判準）。
+case "$CODEX_MODEL"  in ''|*[!A-Za-z0-9._-]*) echo "✗ codex governance: model 值為空或含非法字元，拒絕送出" >&2; exit 1 ;; esac
+case "$CODEX_EFFORT" in ''|*[!A-Za-z0-9._-]*) echo "✗ codex governance: effort 值為空或含非法字元，拒絕送出" >&2; exit 1 ;; esac
 ```
+
+> **連動點**：`test/codex-profile.bats` 的 `resolve_field` / `resolve_layers` 逐字鏡像上面這段。codex-pro#18（引號 / 註解 / 重複 key 語意）與 codex-pro#19（project 層 cwd 錨定）改契約時，本段與該 bats 必須一起改。
 
 解析值以 Workflow args `codexModel` / `codexEffort` 傳入 engine（#22 契約），或以顯式 `--model` / `--effort` 傳給 `bin/codex-call` 直呼。
 

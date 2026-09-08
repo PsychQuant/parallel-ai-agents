@@ -13,7 +13,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- repo root `.codex-pro/profile.yaml`：專案層 codex-pro profile，把 ensemble codex leg pin 到 `gpt-6-astra` / effort `medium`（service tier `fast` 為既有現況）。走 codex-pro 契約三層解析的 project 層，skill 端零程式碼改動；`test/codex-profile.bats` 用 `references/codex-governance.md` 同組正規式鎖住解析後的字面，並在 codex-pro cache 存在時跑完整三層解析。codex-pro baseline 換代（PsychQuant/codex-pro#17）後應移除此檔（#48）。
+- repo root `.codex-pro/profile.yaml`：專案層 codex-pro profile，把 ensemble codex leg pin 到 `gpt-6-astra` / effort `medium`（service tier `fast` 為既有現況）。走 codex-pro 契約三層解析的 project 層，engine / codex-call 零改動；`test/codex-profile.bats` 用 `references/codex-governance.md` 同組正規式鎖住解析後的字面、重複 key、git 追蹤狀態，並以 fixture 斷言三層優先序（不依賴 codex-pro cache）。**作用半徑**：本檔不隨 plugin 散發；契約的 project 層是 cwd 相對，只在 repo root 當 cwd 執行 ensemble 時生效（codex-pro#19）。本機另有同值的全域 `~/.codex-pro/profile.yaml`，只有本檔可攜。**退場**：codex-pro baseline 換代（PsychQuant/codex-pro#17）後，先確認移除後解析值仍符合，再連同 `test/codex-profile.bats` 一起刪（#49 認領）（#48）。
+
+### Changed
+
+- `references/codex-governance.md` 解析片段：defaults.json 路徑改以 argv 交給 python（不再內插進程式碼字串）；解析後對 `model` / `effort` 做形狀驗證（`[A-Za-z0-9._-]`），不合即 fail-fast——這兩個值會進 engine 的 shell 命令列，而 profile.yaml 是 repo 內可改的檔案（#48 verify findings #1 / #11）。
+- `skills/ensemble-code-review/SKILL.md` legacy Backend B 的 codex 呼叫改用解析出的 `"$CODEX_EFFORT"`，不再寫死 `xhigh`；Workflow 不可用的 session 走的正是這條（#48 verify finding #9）。
+
+### Fixed
+
+- `.gitignore` 加 `.codex-pro/*` + `!.codex-pro/profile.yaml`：codex-pro producer 的結果檔不再被 `pai-build-diff --diff` 當 untracked 新檔餵進下一輪 ensemble（#48 verify finding #6）。
 
 ## [2.22.1] - 2026-09-01
 

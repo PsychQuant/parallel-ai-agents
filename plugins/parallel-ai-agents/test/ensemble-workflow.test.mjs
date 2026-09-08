@@ -296,8 +296,6 @@ test('#37 T6 codex-call 以背景執行 + 輪詢，不阻塞單一命令', async
     '沒有交代輪詢必須是分開的 tool call（那才是 progress 事件）')
 })
 
-let pass = 0
-let fail = 0
 // #48：codex leg 的 model / effort 由 caller 依 codex-pro 契約解析後以 args 傳入（#22/#23），
 // engine 必須把三個值原樣放進 codex-call 命令列。這裡鎖 #48 實際依賴的那組三元組
 // （gpt-6-astra / medium / fast）—— 若有人把 effort 或 tier 寫死回 engine，這案會先叫。
@@ -312,6 +310,10 @@ test('#48 codexModel / codexEffort args 原樣進 codex-call 命令列，service
   assert.ok(!/--model '?gpt-5\.6-sol'?/.test(p) && !/--effort '?xhigh'?/.test(p),
     'engine 用了治理 snapshot 而非 caller 傳入的值（#23：snapshot 只服務不傳參的 legacy caller）')
 })
+
+// ── runner ── 新案請加在這條線之上；迴圈之後註冊的 test() 不會執行。
+let pass = 0
+let fail = 0
 
 for (const t of tests) {
   try {

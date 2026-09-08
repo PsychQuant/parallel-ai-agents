@@ -305,7 +305,7 @@ cat "$INSTR_FILE" "$ARTIFACT_FILE" > "$PROMPT_FILE"
 nohup codex-call \
   --output "{output_file}" \
   --model "$CODEX_MODEL" \
-  --effort xhigh \
+  --effort "$CODEX_EFFORT" \
   --service-tier fast \
   --max-time 600 \
   --instructions "你是嚴謹的程式碼審閱者，用中文輸出。" << 'EOF' \

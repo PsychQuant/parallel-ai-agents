@@ -3,11 +3,19 @@
 # 解析鏈（codex-pro EXTERNAL-CONSUMER CONTRACT，profile-contract.md §2）：
 #   codex-pro references/defaults.json → ~/.codex-pro/profile.yaml → 本檔
 #   per-field 高層蓋低層。解析器是 plugins/parallel-ai-agents/references/codex-governance.md 那組正規式：
-#   `^model:` / `^effort:` 取第一個命中、值 = 該行冒號後的全部 —— 所以值**不可加引號、不可尾隨註解**。
-#   （test/codex-profile.bats 用同一組正規式把這件事鎖在 CI。）
+#   `^model:` / `^effort:` 取第一個命中、值 = 該行冒號後的全部 —— 所以值**不可加引號、不可尾隨註解、
+#   同一 key 只能出現一次**（重複時 first-wins，檔尾追加不會覆蓋）。值只准 [A-Za-z0-9._-]，解析器會 fail-fast。
+#   （test/codex-profile.bats 用同一組正規式把這些鎖在 CI。）
+#
+# 作用半徑：契約的 project 層是 **cwd 相對**的 `./.codex-pro/profile.yaml`——只有在 repo root 當 cwd 跑
+#   ensemble 時本檔才生效；從 plugins/parallel-ai-agents/ 或別的 checkout 跑會靜默落回上一層
+#   （錨定語意見 codex-pro#19）。本檔不隨 plugin 散發，對安裝 plugin 的外部使用者無影響。
 #
 # 為什麼 pin 在這裡：codex-pro baseline 仍是 gpt-5.6-sol / xhigh（contract 1.0.0）。本 repo 把跨模型
 # 盲驗 leg 換到 GPT-6-Astra、用它的預設 effort（medium）；取捨理由與 effort 品質追蹤見 #48 / #50。
-# codex-pro baseline 換代（PsychQuant/codex-pro#17）落地後請**刪除本檔**，免得遮蔽下一次換代。
+#
+# 退場：codex-pro baseline 換代（PsychQuant/codex-pro#17）落地後，先確認「移除本檔後」的解析值仍是所需的
+#   model / effort（#17 可能只換 model、不降 effort），再**連同 plugins/parallel-ai-agents/test/codex-profile.bats
+#   一起刪除**——只刪本檔會讓該 bats 前幾案 hard fail。認領：#49。
 model: gpt-6-astra
 effort: medium
