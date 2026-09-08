@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- repo root `.codex-pro/profile.yaml`：專案層 codex-pro profile，把 ensemble codex leg pin 到 `gpt-6-astra` / effort `medium`（service tier `fast` 為既有現況）。走 codex-pro 契約三層解析的 project 層，skill 端零程式碼改動；`test/codex-profile.bats` 用 `references/codex-governance.md` 同組正規式鎖住解析後的字面，並在 codex-pro cache 存在時跑完整三層解析。codex-pro baseline 換代（PsychQuant/codex-pro#17）後應移除此檔（#48）。
+
 ## [2.22.1] - 2026-09-01
 
 ### Fixed
