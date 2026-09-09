@@ -676,20 +676,29 @@ func claimRun(_ dir: String) -> ClaimResult {
         // A same-uid `rm <run>/claim` can still reach this state (contract §9) — it is honest
         // about it instead of pretending the run does not exist.
         if err == ENOENT {
+            // Round 10 R9-REG-A (measured 13/150 = 8.7 %, no attacker): the COMMON way to reach
+            // "claim missing, directory present" is this tool's own concurrent teardown —
+            // removeRun is a recursive unlink that drops `claim` first and rmdir's last. Round 9's
+            // message said "removed by something other than this tool / no other poll is involved /
+            // retrying will not help": all three false on that path. Wait a bounded 2 s for the
+            // teardown to finish; a directory that vanishes in that window is `gone`, and only one
+            // that is still there afterwards was really left claimless (contract §9).
             var st = stat()
-            if lstat(dir, &st) == 0 {
-                return .failed("its claim file is missing while the run is still on disk (it was removed by something other than this tool)")
+            for _ in 0..<40 {                                  // 40 × 50 ms = 2 s, bounded
+                if lstat(dir, &st) != 0 { return .gone }
+                usleep(50_000)
             }
-            return .gone
+            let id = (dir as NSString).lastPathComponent
+            return .failed("its claim file is missing while the run directory is still on disk (waited 2 s — it is not being torn down; something removed the claim file, contract §9). Left in place: `--force-reap \(id)` terminates its worker and retrieves its output, and the 24 h GC also reclaims it")
         }
-        return .failed("claim file: " + why)
+        return .failed("claim file: " + why + " — no other poll is involved; retrying will not help")
     }
     var fl = flock()
     fl.l_type = Int16(F_WRLCK); fl.l_whence = Int16(SEEK_SET); fl.l_start = 0; fl.l_len = 0
     guard fcntl(fd, F_SETLK, &fl) == 0 else {
         let e = errno; close(fd)
         return (e == EAGAIN || e == EACCES) ? .takenByOther
-            : .failed("claim F_SETLK: " + String(cString: strerror(e)))
+            : .failed("claim F_SETLK: " + String(cString: strerror(e)) + " — no other poll is involved; retrying will not help")
     }
     heldClaimFds.append(fd)
     return .claimed(dir)
@@ -857,6 +866,10 @@ func statusToken(for e: NSError) -> String {
     return isTimeout ? "TIMEOUT \(msg)" : "\(e.code) \(msg)"
 }
 
+/// Round 10 L9-1 test anchor — set only on the selftest `ignore_term` path; read from a C signal
+/// handler, so it is a global rather than a capture.
+var TERM_SEEN_PATH: String? = nil
+
 // --- worker: hidden, spawned by --detach. Single process; it IS the HTTP call. ---
 func runWorker(id: String) -> Never {
     // R3-H9 / L-R5-8: Foundation's Process already makes this child a process-group leader, and
@@ -893,7 +906,15 @@ func runWorker(id: String) -> Never {
         exit(0)
     }
     if let s = meta["selftest_sleep"] as? Int {   // test hook: same path, no HTTP
-        if meta["selftest_ignore_term"] as? Bool == true { signal(SIGTERM, SIG_IGN) }   // round 7 R7-M05 hook: outlive SIGTERM
+        if meta["selftest_ignore_term"] as? Bool == true {
+            // round 7 R7-M05 hook: outlive SIGTERM. Round 10 L9-1: instead of SIG_IGN, leave a
+            // trace (`<run>/term-seen`) so a test can anchor on "the signal was delivered" rather
+            // than on a guessed delay — open/close are async-signal-safe; the handler captures nothing.
+            TERM_SEEN_PATH = dir + "/term-seen"
+            signal(SIGTERM) { _ in
+                if let p = TERM_SEEN_PATH { let fd = open(p, O_CREAT | O_WRONLY, 0o600); if fd >= 0 { close(fd) } }
+            }
+        }
         sleep(UInt32(max(0, s)))
         if meta["selftest_fail"] as? Bool == true { finish("9 selftest failure") }
         do { try writeText("SELFTEST\n", to: output) } catch { finish("1 cannot write output") }
@@ -945,7 +966,7 @@ func doPoll(id: String, wait: Int = 0) -> Never {
         case .claimed(let d): return d
         case .takenByOther: die("run \(id) is being finalized by a concurrent poll or abort — its terminal state goes to that caller; do not retry")
         case .gone: die("run \(id) is gone — removed, or being torn down by the caller that reported it; do not retry")
-        case .failed(let why): die("cannot claim run \(id): \(why) — no other poll is involved; retrying will not help")
+        case .failed(let why): die("cannot claim run \(id): \(why)")   // the qualifier lives in `why` — it differs per cause (round 10 R9-REG-A)
         }
     }
     switch lockState(dir) {   // ACTION 1: `.untrusted` cannot slip through as "finished" any more
@@ -994,25 +1015,35 @@ func doAbort(id: String) -> Never {
     // can become unavailable. Reporting and cleanup stay behind the claim (round 6 RC1a stands:
     // that finding was about printing and deleting without a claim, not about signalling).
     let holderBefore: Bool = { if case .held = lockState(resolved) { return true }; return false }()
-    if holderBefore, !killHolderConverged(resolved) {
-        log("abort: worker did not release the lock after SIGTERM/SIGKILL — run left in place at \(resolved)")
-        print("FAILED worker did not terminate"); exit(2)
-    }
+    // Round 10 L9-1: whether the worker survived both signal rounds is REMEMBERED here and told
+    // only after the claim. A1 moved the signalling ahead of the claim and took this stdout token
+    // with it, so two concurrent aborts on an unkillable worker both printed it — a second token,
+    // the thing properties (2)/(3) exist to prevent. Signalling needs no claim; printing does.
+    let unterminated = holderBefore && !killHolderConverged(resolved)
+    if unterminated { log("abort: worker did not release the lock after SIGTERM/SIGKILL — run left in place at \(resolved)") }
     // R5-S3 / ACTION 2: reporting takes part in the SAME claim protocol as poll (round 6 DA Q4).
     // The ABORTED token means "this call terminated it": the engine reads stdout tokens as
     // verdicts, so a loser prints NOTHING (round 6 RC6: it printed ABORTED — a second token).
     let dir: String
     switch claimRun(resolved) {
     case .claimed(let d): dir = d
-    case .takenByOther: log("run \(id) is already being finalized by a concurrent poll — nothing to abort"); exit(0)
+    case .takenByOther:
+        // The post-condition ("nothing more will be spent") does NOT hold when the worker is still
+        // alive — exit 1, not the loser's exit 0. The token belongs to whoever holds the claim.
+        if unterminated { die("run \(id): the worker did not terminate after SIGTERM/SIGKILL, and another caller holds the claim and will report it — nothing printed here; the run is still spending") }
+        log("run \(id) is already being finalized by a concurrent poll — nothing to abort"); exit(0)
     case .gone:
+        if unterminated { die("run \(id): the worker did not terminate, yet its run directory is gone (another caller reported it) — the worker is an orphan; `--force-reap \(id)` still finds it by its argv") }
         log("run \(id) is already gone (removed, or torn down by the caller that reported it) — nothing to abort"); exit(0)
     case .failed(let why):
+        if unterminated { die("run \(id): the worker did not terminate after SIGTERM/SIGKILL AND the run could not be claimed — \(why); left at \(resolved)") }
         // Round 9 A1: say which half of the post-condition holds. The worker is stopped (that is
         // what --abort is for and it is done); the run is not cleaned, and it is still on disk.
-        die("run \(id): the worker was terminated (nothing more will be spent) but the run could not be claimed for cleanup — \(why); left at \(resolved) for the 24 h GC or manual removal")
+        die("run \(id): the worker was terminated (nothing more will be spent) but the run could not be claimed for cleanup — \(why); left at \(resolved) for the 24 h GC, `--force-reap` or manual removal")
     }
-    if !killHolderConverged(dir) {   // a holder that took the lock after our probe (Codex round 4 #10)
+    // Under the claim now. The second probe catches a holder that took the lock after ours
+    // (Codex round 4 #10); the first result is the remembered one.
+    if unterminated || !killHolderConverged(dir) {
         log("abort: worker did not release the lock — run left in place at \(dir)")
         print("FAILED worker did not terminate"); exit(2)
     }
@@ -1032,6 +1063,74 @@ func doAbort(id: String) -> Never {
         print("FAILED could not remove run dir \(dir)"); exit(2)
     }
     print("ABORTED"); exit(0)
+}
+
+/// Round 10 — `--force-reap <id>` (contract §2; the escape hatch round 8's DA pre-authorised):
+/// "I know I am bypassing the claim protocol." It exists for S9-1/S9-2 (§9): a run whose `lock`
+/// was removed, replaced or turned into a FIFO is outside every guarantee this tool makes —
+/// --poll/--abort either refuse before signalling (FIFO) or report a terminal state on a LIVE
+/// worker and delete the run (rm/replace) — and afterwards no command can stop that worker
+/// from spending. So this path trusts `lock` not at all. Identity comes from a second source:
+/// same uid AND argv `--_worker <id>` as two adjacent tokens (a 32-char CSPRNG id cannot collide
+/// with another run, and cannot be planted on a victim's argv). It never signals a pid taken
+/// from F_GETLK — a victim's lock file `rename`d into `<run>/lock` passes every integrity check
+/// (§4), and an escape hatch must not turn into the kill-a-victim primitive the rest of the
+/// design spent rounds avoiding. It deletes without a claim and lands no `reported`; that is
+/// exactly why it must be typed by a human and never emitted by the engine.
+/// Orphans are in scope: after S9-1 the run directory is already gone, so the worker is found
+/// by argv alone; only "no directory AND no process" is `unknown run id`.
+func workerPids(forRun id: String) -> [pid_t]? {
+    // `ps` rather than sysctl(KERN_PROCARGS2): readable, no unsafe buffer arithmetic, and a fork
+    // is fine on a human-driven path. `-ww` — without it ps clips args to the terminal width.
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: "/bin/ps")
+    p.arguments = ["-axww", "-o", "pid=,uid=,args="]
+    let pipe = Pipe(); p.standardOutput = pipe; p.standardError = FileHandle.nullDevice
+    p.standardInput = FileHandle.nullDevice
+    guard (try? p.run()) != nil else { return nil }
+    let data = pipe.fileHandleForReading.readDataToEndOfFile(); p.waitUntilExit()
+    guard p.terminationStatus == 0 else { return nil }
+    let me = getuid(), mypid = getpid()
+    var pids: [pid_t] = []
+    for line in String(decoding: data, as: UTF8.self).split(separator: "\n") {
+        let f = line.split(separator: " ", omittingEmptySubsequences: true)
+        guard f.count >= 3, let pid = pid_t(f[0]), let uid = uid_t(f[1]), uid == me, pid != mypid else { continue }
+        let args = f[2...]
+        guard let i = args.firstIndex(of: "--_worker") else { continue }
+        let j = args.index(after: i)
+        if j < args.endIndex, args[j] == Substring(id) { pids.append(pid) }
+    }
+    return pids
+}
+
+func doForceReap(id: String) -> Never {
+    guard validRunId(id) else { die("invalid run id (expected 32 alphanumerics): \(id)") }
+    let dir = runDir(id)
+    var isDir: ObjCBool = false
+    let haveDir = FileManager.default.fileExists(atPath: dir, isDirectory: &isDir) && isDir.boolValue
+    guard var left = workerPids(forRun: id) else { die("force-reap: cannot enumerate processes (ps failed) — refusing to act without an identity source") }
+    if !haveDir && left.isEmpty { die("unknown run id: \(id) (no run directory and no worker process carries this id)") }
+    if !left.isEmpty {
+        for pid in left { kill(pid, SIGTERM) }
+        for _ in 0..<8 { usleep(250_000); left = workerPids(forRun: id) ?? left; if left.isEmpty { break } }
+        if !left.isEmpty {
+            for pid in left { kill(pid, SIGKILL) }
+            for _ in 0..<8 { usleep(250_000); left = workerPids(forRun: id) ?? left; if left.isEmpty { break } }
+        }
+        if !left.isEmpty {
+            log("force-reap: worker pid(s) \(left) survived SIGKILL — run left in place" + (haveDir ? " at \(dir)" : ""))
+            print("FAILED worker did not terminate"); exit(2)
+        }
+    }
+    // The paid-for result, if any, at the derivable default path — never a path read from meta.
+    let out = runsBase() + "/" + id + ".out.md"
+    var st = stat()
+    let haveOutput = lstat(out, &st) == 0 && (st.st_mode & S_IFMT) == S_IFREG && st.st_size > 0
+    // No claim, no `reported`: the documented bypass. A concurrent poll/abort gets `unknown run id`.
+    if haveDir, !removeRun(dir) { print("FAILED could not remove run dir \(dir)"); exit(2) }
+    if haveOutput { print("REAPED \(out)") }
+    else { log("force-reap: no default output on disk for run \(id) (a caller-supplied --output is never read or removed by this tool)"); print("REAPED") }
+    exit(0)
 }
 
 /// R4-GC (DA K6/X4): --abort is best-effort (engine step 4) and unavailable when the agent is
@@ -1079,7 +1178,10 @@ func gcStaleRuns(olderThan: TimeInterval = GC_AGE_SECONDS) {
             }
             let fm = FileManager.default
             if fm.fileExists(atPath: path + "/status"), !fm.fileExists(atPath: path + REPORTED) {
-                log("gc: run \(stem) was claimed but never reported (its claimer died first) — sweeping it")
+                // Round 10 S9-3: after Stage B a finished-but-unreported run is most often one that
+                // simply was never polled; "its claimer died first" was round 8's story, told about
+                // a state that no longer distinguishes the two. Say what is known, no more.
+                log("gc: run \(stem) finished but was never reported (never polled, or its finalizer died before `reported` landed — indistinguishable) — sweeping it")
             }
         }
         _ = removeRun(path)
@@ -1193,6 +1295,7 @@ struct Args {
     var workerId: String?          // hidden — spawned by --detach
     var pollId: String?
     var abortId: String?
+    var forceReapId: String?       // --force-reap <id> (round 10; contract §2)
     var selftestSleep: Int?        // hidden test hooks — see contract §7
     var selftestFail = false
     var selftestGrace: Int?
@@ -1245,6 +1348,7 @@ func parseArgs() -> Args {
         case "--_worker": a.workerId = next()
         case "--poll": a.pollId = next()
         case "--abort": a.abortId = next()
+        case "--force-reap": a.forceReapId = next()
         case "--_selftest-sleep": a.selftestSleep = Int(next()) ?? 0
         case "--_selftest-fail": a.selftestFail = true
         case "--_selftest-grace": a.selftestGrace = Int(next()) ?? 60
@@ -1265,6 +1369,10 @@ func parseArgs() -> Args {
                          → RUNNING | DONE <path> | FAILED <reason> | TIMEOUT
                            (--wait N: re-probe inside codex-call for up to N s (1…120), never a shell sleep)
               codex-call --abort <id>   → ABORTED when this call terminated it; silent exit 0 when it was already finalized
+              codex-call --force-reap <id>
+                         → REAPED [<path>]: bypasses the claim protocol — terminates the worker found
+                           by argv (lock file NOT trusted), keeps <base>/<id>.out.md if present,
+                           deletes the run. For a run whose lock was removed/replaced/FIFO'd (§9).
 
             If no PROMPT and no --prompt-file is given, reads prompt from stdin.
 
@@ -1299,8 +1407,8 @@ if let raw = a.selftestErrorExtract {
 
 // R3-M3: exactly one operation mode. Silent precedence (worker > poll > abort > detach) let
 // `--detach --poll ID` quietly poll — contract §2 promises synchronous argument validation.
-let modes = [a.detach, a.workerId != nil, a.pollId != nil, a.abortId != nil].filter { $0 }.count
-if modes > 1 { die("choose exactly one of --detach / --poll / --abort") }
+let modes = [a.detach, a.workerId != nil, a.pollId != nil, a.abortId != nil, a.forceReapId != nil].filter { $0 }.count
+if modes > 1 { die("choose exactly one of --detach / --poll / --abort / --force-reap") }
 if a.selftestSleep != nil && !a.detach { die("--_selftest-sleep requires --detach") }
 // R3-L9: the test-only grace override must not be reachable from a production detach.
 if a.selftestGrace != nil && a.selftestSleep == nil { die("--_selftest-grace requires --_selftest-sleep") }
@@ -1327,6 +1435,7 @@ if a.detach && a.maxTime <= 0 { die("--max-time must be a positive integer") }
 if let id = a.workerId { runWorker(id: id) }
 if let id = a.pollId   { doPoll(id: id, wait: a.pollWait ?? 0) }
 if let id = a.abortId  { doAbort(id: id) }
+if let id = a.forceReapId { doForceReap(id: id) }
 
 // R3-H5: the synchronous path must keep its original order — `--output` is required BEFORE
 // the prompt is read, so `codex-call ""` / a missing prompt-file / an empty stdin still fail

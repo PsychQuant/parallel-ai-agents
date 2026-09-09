@@ -174,7 +174,7 @@ round 8 的 CI **首度全綠**（TAP plan 86 == executed 86、bash 5.3.15）、
 
 ### Tests
 
-- 新增 `test/codex-call-detach.bats`（macOS job，**76 個 case**（`grep -c "^@test" test/codex-call-detach.bats`）；round 3 後 12 → 31，round 4 後 → 43，round 5 後 → 63，round 7 後 → 70，round 8 後 → 73，round 9 Stage A 後 → 76：+8 `R7-*`（含 `R7-X` 狀態叉積補格）、+3 `R8-*`、+3 `R9-A*`、−1 `Codex-R4-1`（年齡判準已不存在）、5 個改寫。round 7 verify 抓到本行曾寫 69／+7——`R7-X` 加在段落寫完之後，數字沒跟上：RC13 第四度，所以 round 8 起 case 數由 `grep -c "^@test" test/codex-call-detach.bats` 產生、不手打）。
+- 新增 `test/codex-call-detach.bats`（macOS job，**91 個 case**（`grep -c "^@test" test/codex-call-detach.bats`）；round 3 後 12 → 31，round 4 後 → 43，round 5 後 → 63，round 7 後 → 70，round 8 後 → 73，round 9 Stage A 後 → 76，Stage B／C 後 → 79，round 10 後 → 91（+12 `R10-*`）——**這個數字自 round 10 起由 `test/lint-changelog-counts.sh` 對照括號內那條命令的實際輸出（run.sh 與 CI 都跑）**；round 9 verify 抓到本行在宣稱「由 grep 產生、不手打」的同一句裡寫 76、實際 79，RC13 第五度復發，散文規則已證明無效：+8 `R7-*`（含 `R7-X` 狀態叉積補格）、+3 `R8-*`、+3 `R9-A*`、−1 `Codex-R4-1`（年齡判準已不存在）、5 個改寫。round 7 verify 抓到本行曾寫 69／+7——`R7-X` 加在段落寫完之後，數字沒跟上：RC13 第四度，所以 round 8 起 case 數由 `grep -c "^@test" test/codex-call-detach.bats` 產生、不手打）。
   走**同一條** detach／lock／poll／abort 路徑，只以 `--_selftest-*` 把 HTTP 換成 sleep + 寫檔。
   **round 7 的 RED-first 證據以名稱列出、原始輸出貼在 PR #47 的 round 7 留言**（round 6 regression 實測 round 5 寫在這裡的「13 個先驗 RED／7 個護欄型」名單有 4 個成員是錯的，而且沒有腳本能重現那些數字——所以不再寫數字）：
   在 `880785a` 上為 RED 的案例：`R7-A`（雙逾時 poll ×10）、`R7-D`（`.done` 內活 worker）、`R7-R`（reported 痕跡）、`R7-M05`（kill 等待中 lock 變不可信；含新 hook `--_selftest-ignore-term`，RED 一部分來自旗標不存在）、`R7-RC1c`（逾時瞬間 status 已落地）、`R7-GC`（GC hook 只掃 selftest run）、`R7-S5`（abort 輸家 stdout 空）、`R7-X`（狀態叉積補格：poll×abort 逾時、abort×abort、接手×接手無 status）、`R3-L10/R7`、`R4-L3/R7`、`R5-L2`（拿掉 hook 後）、`R5-S6/R7`。
@@ -194,6 +194,22 @@ round 8 的 CI **首度全綠**（TAP plan 86 == executed 86、bash 5.3.15）、
   依賴後者，明確延後至該獨立 issue**；本版 leg 缺席時的 integrity finding 只標記缺席、不含 token 數（round 5 D-1）。
 - Swift script 每次啟動約 1.5–2.5 s（compile cache）；poll 是分開 tool call、間隔數十秒，屬雜訊——但 bats 內任何「未逾時應回 RUNNING」的斷言必須把這個啟動時間算進 `max-time + grace` 的餘裕（round 7 R7-D 實測 3 s 的 deadline 會被啟動時間吃掉）。
 - round 7 明確排除的五項見契約 §8：worker 以路徑字串寫 status（dirfd/`openat` 未做）、`--wait 120` 與 harness timeout、`.untrusted` run 無回收、`O_RDWR` 探測、`FAILED worker did not terminate` 後的第二 token。DA 3.2：被硬殺的 agent 留下的付費 run 沒有 `--list`，只能等 24 h GC。
+### Fixed（round 9 verify：FAIL——round 8 DA 的收斂判準成立，round 10 依封閉列舉六項**接受並揭露，不換設計**）
+
+round 9 出現三條修法自帶的新根因（R9-REG-A／S9-2／L9-1），判準原文：「不做第三次換設計，改為接受並揭露（寫進 §9 封閉列舉、叉積表標『不保證』、給一條逃生命令），然後 merge」。round 10 只做那六項：
+
+- **R9-REG-A（訊息三句假話）**：`claimRun` 對「claim 檔 ENOENT、run 目錄還在」的訊息說「不是本工具刪的／沒有別的 poll／retry 沒用」——而最常見的入口是**本工具自己的併發拆除**（`removeRun` 遞迴 unlink 先刪 claim、最後才 rmdir；round 9 實測 13/150 = 8.7 %，無攻擊者）。現在先做 **2 s 有界重查**：目錄消失 → `gone`；仍在才回 `cannot claim … still on disk`，訊息指向契約 §9 與 `--force-reap`。`R10-REG-A`（訊息）、`R10-REG-A2`（拆除視窗，自校準排程）。
+- **L9-1（abort 的 `FAILED worker did not terminate` 逃出 claim）**：round 9 A1 把止血搬到 claim 之前時順帶把這個 stdout token 搬了出去，兩個併發 abort 會各印一次。現在 kill 是否收斂先記住、claim 之後才印；claim 被別人持有 → stdout 空、**exit 1**（worker 還活著，後置條件沒成立，不得用輸家的 exit 0）；claim 不可得／run 已消失 → exit 1 並說明。`R10-L9-1`／`R10-L9-1b`（錨點：selftest worker 在 `--_selftest-ignore-term` 下收到 SIGTERM 會 touch `<run>/term-seen`，測試等它再讓 lock 在 grace 視窗內變不可判定——取代賭啟動時間）。
+- **R9-REG-B／C（契約自相矛盾）**：叉積表「claim 被第三方持有」欄四格對 `--abort` 寫 exit 1、實測 0 → 改成 poll／abort 分寫；`--abort` 第一條 bullet 寫的 `claimTerminal` 在程式碼裡不存在、順序也已被 A1 反轉 → 改為描述現行順序。`R10-C`。
+- **S9-3（GC 捏造一個死掉的 claimer）**：對「有 status、無 reported、無人持 claim」的 run，GC 印「its claimer died first」——Stage B 之後那最常是「跑完沒被 poll」，兩者已分不出來。訊息改為只說已知的事。`R10-S9-3`。
+- **逃生命令 `--force-reap <id>`**（round 8 DA 預先授權；契約 §2 新小節）：「我知道我在繞過 claim 協定」。**完全不信任 lock**——以 `ps` 找同 uid 且 argv 含相鄰 `--_worker <id>` 的程序（CSPRNG id 撞不到、植不進 victim），SIGTERM → SIGKILL；**永不**對 `F_GETLK` 回報的 pid 送訊號（`rename` 進來的 victim lock 會過全部檢查，逃生口不得變成殺 victim 的原語）；不取 claim、不落地 `reported`，直接清 run；`<base>/<id>.out.md` 存在則印 `REAPED <path>` 並保留給 caller，否則印 `REAPED`；S9-1 之後目錄已被刪的孤兒只靠 argv 找——「沒目錄且沒程序」才是 `unknown run id`。engine 的 prompt **不得**自動使用它。`R10-FR1`（S9-2 重現＋逃生）、`R10-FR2`（取回結果）、`R10-FR3`（驗證與互斥、不發訊號）、`R10-FR4`（繞過被持有的 claim）。
+- **揭露**：契約 §6 補第六項（讓工具對活 worker 印終態並刪 run／讓 `--abort` 永久無法止血）、§9 補 R9-REG-A 的非對抗入口與 S9-1／S9-2（各自寫明**為什麼不修**）、叉積表加「不保證的格子」段。
+- **把契約補到真的（Stage C 沒做完的部分）**：§3 run 目錄列舉補 `claim`／`reported`、去掉 `.done`；§4 GC 依 mtime 單一時鐘、`.claimed` → `claim`；§5 整段從「`.done` 中繼目錄／接手」改成「finalize 所有權＝拿到 `<id>/claim` 的鎖」；§8 把 `--force-reap` 納入 STABLE。`R10-C` 靜態守：契約無 `claimTerminal`，§3–§5 提到舊名字的行必須同時說它已移除。
+- **RC13 機械化**：新增 `test/lint-changelog-counts.sh`（＋ `--selftest` 與 fixture），對 CHANGELOG 每一個「N 個 case（`grep -c "^@test" <file>`）」宣稱實際跑那條命令比對；接進 `test/run.sh` 與 CI。`R10-RC13`。
+- **R9-B5 補牙**：動態半（`--_selftest-prelock-sleep 6`）對 mutant「建立搬到 `p.run()` 之後」5/5 全綠——swift 啟動 1.5 s 遠慢於檔案建立，順序從外部觀察不到。加靜態半 `R10-B5s`：建立行號 < `try p.run()` 行號 < `print(id)` 行號；本輪實際做了 mutant，動態半 3/3 綠、靜態半紅，還原後綠。
+
+**誠實邊界（round 10 明確不做）**：S9-1／S9-2 本身不修——在「寫得到 base」的前提下沒有任何檢查能區分「我們建的 lock」與「別人放的一般檔」（§4 早已寫明），修法只會是第四種設計；R9-REG-A 的 2 s 重查分不出「正在拆除」與「被 `rm`」（前者慢過 2 s 幾乎不可能、後者白等 2 s）；`--force-reap` 的身分來源是 `ps` 的 argv，同 uid 可偽造——它本來就在 §6 第一列之外。
+
 ## [2.22.2] - 2026-09-09
 
 ### Added

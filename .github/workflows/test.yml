@@ -86,6 +86,13 @@ jobs:
         shell: bash
         run: bash test/lint-bats.sh --selftest && bash test/lint-bats.sh
 
+      # Round 10 (RC13, fifth recurrence): the CHANGELOG's "N 個 case（`grep -c "^@test" …`）"
+      # claims are checked by running the very command they cite. Prose said "not typed by hand"
+      # and was wrong twice; a number that a lint recomputes cannot drift.
+      - name: lint-changelog-counts — selftest, then CHANGELOG.md
+        shell: bash
+        run: bash test/lint-changelog-counts.sh --selftest && bash test/lint-changelog-counts.sh
+
       - name: Assert swift toolchain is usable (the real gate — a present shim is not enough)
         run: swift --version
 

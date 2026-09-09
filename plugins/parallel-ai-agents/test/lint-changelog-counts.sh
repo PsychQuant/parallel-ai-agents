@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# 機械護欄（RC13，round 10）：CHANGELOG 裡任何「N 個 case（`grep -c "^@test" <file>`）」的宣稱，
+# N 必須等於那條命令**此刻**的輸出。
+#
+# 為什麼：這個數字手打錯了五次（round 7：69 vs 76；round 9：76 vs 79）——而 round 8 起那一句
+# 自己就宣稱「由 grep -c 產生、不手打」。散文規則寫了四次都沒用，所以跟 lint-bats 一樣改成機器擋：
+# 宣稱裡附的命令就是判準，lint 只是真的去跑它。
+#
+# 用法：test/lint-changelog-counts.sh [file...]   預設 CHANGELOG.md
+#       test/lint-changelog-counts.sh --selftest   對故意寫錯數字的 fixture 必須回非零
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+if [ "${1:-}" = "--selftest" ]; then
+  if bash test/lint-changelog-counts.sh test/fixtures/changelog-count-bad.md >/dev/null 2>&1; then
+    echo "lint-changelog-counts selftest FAILED: the fixture with a wrong count was accepted" >&2
+    exit 1
+  fi
+  echo "lint-changelog-counts selftest ok: fixture rejected"
+  exit 0
+fi
+
+files=("$@")
+if [ "${#files[@]}" -eq 0 ]; then files=(CHANGELOG.md); fi
+
+python3 - "${files[@]}" <<'PY'
+import re, subprocess, sys
+# 「N 個 case」之後、括號之前允許 markdown 裝飾（**），括號可全形或半形；命令逐字取自宣稱本身。
+CLAIM = re.compile(r'(\d+)\s*個\s*case[^（(]*[（(]`grep -c "\^@test" ([^`]+)`[）)]')
+rc, seen = 0, 0
+for f in sys.argv[1:]:
+    for n, line in enumerate(open(f, encoding='utf-8'), 1):
+        for m in CLAIM.finditer(line):
+            seen += 1
+            claimed, path = int(m.group(1)), m.group(2)
+            out = subprocess.run(['grep', '-c', '^@test', path], capture_output=True, text=True)
+            actual = out.stdout.strip()
+            if not actual.isdigit() or int(actual) != claimed:
+                print(f"{f}:{n}: claims {claimed} cases for {path}; `grep -c \"^@test\" {path}` says {actual or '(unreadable)'}", file=sys.stderr)
+                rc = 1
+if seen == 0:
+    print(f"no case-count claims found in {' '.join(sys.argv[1:])} — the lint would be vacuous", file=sys.stderr)
+    sys.exit(1)
+sys.exit(rc)
+PY

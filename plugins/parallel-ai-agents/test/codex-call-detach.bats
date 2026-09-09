@@ -448,13 +448,16 @@ wait_terminal() {  # $1=id → 設 POLL_OUT / POLL_RC
   run "$BIN" --_selftest-classify NSURLErrorDomain -1009; [[ "$output" == "-1009 probe"* ]]
 }
 
-@test "R4-L2/R9 claim 因非併發原因失敗（run 目錄 500 → EACCES）→ exit 1、訊息不說 concurrent、run 原地保留" {
+@test "R4-L2/R9/R10 claim 因非併發原因失敗（claim 檔 000 → EACCES）→ exit 1、訊息不說 concurrent、run 原地保留" {
   xid="$(printf 'l%.0s' $(seq 1 32))"; mkdir -p "$BASE/$xid"
   printf '{"selftest_sleep":0,"output":"/tmp/nope","max_time":30,"started_at":%s}\n' "$(date +%s)" > "$BASE/$xid/meta.json"
   printf '0\n' > "$BASE/$xid/status"
-  chflags uchg "$BASE/$xid"
+  # round 10：原 fixture 沒放 claim 檔、只對目錄 chflags uchg——那是 round 8 以前「caller 會建立 claim」時代的
+  # EACCES 入口；round 9 之後 caller 不建立，open 直接 ENOENT，實際走的是「claim 不在」那條（round 10 R9-REG-A
+  # 改了它的訊息）。EACCES 要 claim 真的在而開不起來。
+  : > "$BASE/$xid/claim"; chmod 000 "$BASE/$xid/claim"
   run "$BIN" --poll "$xid"
-  chflags nouchg "$BASE/$xid"
+  chmod 600 "$BASE/$xid/claim"
   [ "$status" -eq 1 ]; [[ "$output" == *"cannot claim"* ]]; [[ "$output" != *"concurrent poll"* ]]; [[ "$output" == *"retrying will not help"* ]]
   [ -d "$BASE/$xid" ]
 }
@@ -1078,4 +1081,152 @@ wait_terminal() {  # $1=id → 設 POLL_OUT / POLL_RC
   run "$BIN" --selftest-error-extract '{"type":"error","error":{"message":"still works"}}'
   [ "$status" -eq 0 ]
   [[ "$output" == *"still works"* ]]
+}
+
+
+# ---------- round 10（round 9 verify 的封閉列舉六項；收斂判準成立：接受並揭露，不換設計） ----------
+
+@test "R10-S9-3 GC 對「有 status、無 reported、無人持 claim」的 run 不得說 claimer died first——Stage B 之後那是正常的「跑完沒被 poll」" {
+  cid="$(printf 'g%.0s' $(seq 1 32))"; mkdir -p "$BASE/$cid"
+  printf '{"selftest_sleep":0,"output":"/tmp/nope","max_time":30,"started_at":%s}\n' "$(date +%s)" > "$BASE/$cid/meta.json"
+  printf '0\n' > "$BASE/$cid/status"
+  : > "$BASE/$cid/claim"                                  # 沒有人持鎖：跑完了、沒人來 poll
+  run --separate-stderr "$BIN" --detach --_selftest-sleep 2 --_selftest-gc-age 0 --instructions i "p"
+  [ "$status" -eq 0 ]; id="$output"
+  [[ "$stderr" == *"never reported"* ]]                   # 仍記一行（契約 §4）
+  [[ "$stderr" != *"claimer died first"* ]]               # 但不得捏造一個死掉的 claimer——這個條件已分不出兩者
+  [ ! -e "$BASE/$cid" ]
+  "$BIN" --abort "$id" >/dev/null 2>&1 || true
+}
+
+@test "R10-REG-A claim 檔不在、run 目錄持續存在 → exit 1、run 保留，訊息不得含三句假話，並指向 §9 與 --force-reap" {
+  sid="$(printf 'h%.0s' $(seq 1 32))"; mkdir -p "$BASE/$sid"
+  printf '{"selftest_sleep":0,"output":"/tmp/nope","max_time":30,"started_at":%s}\n' "$(date +%s)" > "$BASE/$sid/meta.json"
+  printf '0\n' > "$BASE/$sid/status"                       # 沒有 claim 檔（同 uid rm，契約 §9）
+  run --separate-stderr "$BIN" --poll "$sid"
+  [ "$status" -eq 1 ]; [ -z "$output" ]
+  [[ "$stderr" != *"removed by something other than this tool"* ]]   # 最常見的觸發是本工具自己的併發拆除
+  [[ "$stderr" != *"no other poll is involved"* ]]                   # 有——正在拆除的贏家
+  [[ "$stderr" != *"retrying will not help"* ]]                      # 會——拆除完成後得到誠實的 gone／unknown
+  [[ "$stderr" == *"still on disk"* ]]
+  [[ "$stderr" == *"force-reap"* ]]                                  # 唯一誠實的出路要說出來
+  [ -d "$BASE/$sid" ]
+}
+
+@test "R10-REG-A2 claim 先於目錄被拆除的視窗（正常併發拆除，round 9 實測 8.7%）→ 答案是 gone／unknown，絕不是 cannot claim" {
+  sid="$(printf 'j%.0s' $(seq 1 32))"; mkdir -p "$BASE/$sid"
+  printf '{"selftest_sleep":0,"output":"/tmp/nope","max_time":30,"started_at":%s}\n' "$(date +%s)" > "$BASE/$sid/meta.json"
+  printf '0\n' > "$BASE/$sid/status"; : > "$BASE/$sid/claim"
+  # 自校準（同 R5-L9）：先量此刻的 swift 啟動成本，把「目錄消失」排在 poll 抵達 claimRun 之後、有界重查（2 s）之內
+  ghost="$(printf '0%.0s' $(seq 1 32))"
+  B0=$(python3 -c 'import time;print(time.time())'); run "$BIN" --poll "$ghost"; B1=$(python3 -c 'import time;print(time.time())')
+  rm "$BASE/$sid/claim"                                   # removeRun 的遞迴 unlink 先刪 claim、最後才 rmdir——這是那個視窗
+  ( python3 -c "import time; time.sleep($B1-$B0+0.8)"; rm -rf "$BASE/$sid" ) &
+  run --separate-stderr "$BIN" --poll "$sid"
+  wait
+  [ "$status" -eq 1 ]; [ -z "$output" ]
+  [[ "$stderr" != *"cannot claim"* ]]
+  [[ "$stderr" == *"gone"* || "$stderr" == *"unknown run id"* ]]   # 啟動慢到目錄先消失時是 unknown——兩者都誠實
+}
+
+@test "R10-L9-1 abort 的 FAILED worker did not terminate 受 claim 保護：claim 被別人持有時 stdout 空、exit 1（不是 0——worker 還活著，後置條件沒成立）" {
+  printf 'v\n' > "$TMP/victim"
+  run "$BIN" --detach --_selftest-sleep 60 --_selftest-ignore-term --instructions i "p"; [ "$status" -eq 0 ]; id="$output"
+  sleep 0.5
+  hp=$(hold_claim "$BASE/$id"); sleep 0.5
+  # 錨定在「worker 已收到 SIGTERM」（selftest worker 忽略它但會 touch term-seen），再讓 lock 在 grace 視窗內變不可判定
+  ( for _ in $(seq 1 200); do [ -e "$BASE/$id/term-seen" ] && break; sleep 0.05; done; ln -f "$TMP/victim" "$BASE/$id/lock" ) &
+  run --separate-stderr "$BIN" --abort "$id"
+  wait
+  [ "$status" -eq 1 ]; [ -z "$output" ]
+  [[ "$stderr" == *"did not terminate"* ]]
+  [ -d "$BASE/$id" ]
+  kill "$hp" 2>/dev/null || true
+  pkill -9 -f -- "-interpret $BIN_REAL .* --_worker $id" 2>/dev/null || true
+  sleep 0.3
+}
+
+@test "R10-L9-1b abort 在 kill 未收斂且 claim 可得時：仍印 FAILED worker did not terminate、exit 2、run 保留（token 現在在 claim 之後印）" {
+  printf 'v\n' > "$TMP/victim"
+  run "$BIN" --detach --_selftest-sleep 60 --_selftest-ignore-term --instructions i "p"; [ "$status" -eq 0 ]; id="$output"
+  sleep 0.5
+  ( for _ in $(seq 1 200); do [ -e "$BASE/$id/term-seen" ] && break; sleep 0.05; done; ln -f "$TMP/victim" "$BASE/$id/lock" ) &
+  run --separate-stderr "$BIN" --abort "$id"
+  wait
+  [ "$status" -eq 2 ]; [ "$output" = "FAILED worker did not terminate" ]
+  [ -d "$BASE/$id" ]
+  pkill -9 -f -- "-interpret $BIN_REAL .* --_worker $id" 2>/dev/null || true
+  sleep 0.3
+}
+
+@test "R10-FR1 --force-reap 是 S9-2 的逃生口：lock 被換成 FIFO 讓 abort 拒絕、worker 續跑 → force-reap 終止 worker、清 run、exit 0" {
+  run "$BIN" --detach --_selftest-sleep 90 --instructions i "p"; [ "$status" -eq 0 ]; id="$output"
+  sleep 0.5
+  wpid=$(pgrep -f -- "-interpret $BIN_REAL .* --_worker $id" | head -1); [ -n "$wpid" ]
+  rm "$BASE/$id/lock"; mkfifo "$BASE/$id/lock"            # S9-2 重現：lock 不可信
+  run --separate-stderr "$BIN" --abort "$id"
+  [ "$status" -eq 1 ]; [ -z "$output" ]; kill -0 "$wpid"   # abort 被 refuseIfUntrusted 擋在殺 worker 之前，worker 活著
+  run --separate-stderr "$BIN" --force-reap "$id"
+  [ "$status" -eq 0 ]; [[ "$output" == REAPED* ]]
+  no_worker_for "$id"
+  [ ! -e "$BASE/$id" ]
+}
+
+@test "R10-FR2 --force-reap 對已完成的 run 取回 <base>/<id>.out.md：印 REAPED <path>，檔案保留（歸 caller）、run 目錄清掉" {
+  run "$BIN" --detach --_selftest-sleep 0 --instructions i "p"; [ "$status" -eq 0 ]; id="$output"
+  for _ in $(seq 1 100); do [ -e "$BASE/$id/status" ] && break; sleep 0.1; done
+  [ -e "$BASE/$id/status" ]
+  run --separate-stderr "$BIN" --force-reap "$id"
+  [ "$status" -eq 0 ]; [ "$output" = "REAPED $BASE/$id.out.md" ]
+  [ -s "$BASE/$id.out.md" ]
+  [ ! -e "$BASE/$id" ]
+}
+
+@test "R10-FR3 --force-reap 的 id 驗證與模式互斥：格式錯／不存在 → exit 1、不發訊號；與 --poll 併給 → exit 1" {
+  run "$BIN" --detach --_selftest-sleep 20 --instructions i "p"; [ "$status" -eq 0 ]; id="$output"
+  sleep 0.5
+  wpid=$(pgrep -f -- "-interpret $BIN_REAL .* --_worker $id" | head -1); [ -n "$wpid" ]
+  ghost="$(printf '0%.0s' $(seq 1 32))"
+  run --separate-stderr "$BIN" --force-reap "not-an-id"; [ "$status" -eq 1 ]; [ -z "$output" ]
+  run --separate-stderr "$BIN" --force-reap "$ghost";     [ "$status" -eq 1 ]; [ -z "$output" ]; [[ "$stderr" == *"unknown run id"* ]]
+  run --separate-stderr "$BIN" --force-reap "$id" --poll "$id"; [ "$status" -eq 1 ]; [ -z "$output" ]
+  kill -0 "$wpid"                                          # 三次都沒有對任何程序發訊號
+  "$BIN" --abort "$id" >/dev/null 2>&1 || true
+}
+
+@test "R10-FR4 --force-reap 繞過 claim 協定：claim 被另一 caller 持有仍終止 worker 並清 run——這就是它的語意，契約 §2 明寫" {
+  run "$BIN" --detach --_selftest-sleep 60 --instructions i "p"; [ "$status" -eq 0 ]; id="$output"
+  sleep 0.5
+  hp=$(hold_claim "$BASE/$id"); sleep 0.5
+  run --separate-stderr "$BIN" --force-reap "$id"
+  [ "$status" -eq 0 ]; [[ "$output" == REAPED* ]]
+  no_worker_for "$id"
+  [ ! -e "$BASE/$id" ]
+  kill "$hp" 2>/dev/null || true
+}
+
+@test "R10-B5s R9-B5 的靜態半：lock／claim 的建立行在 spawn（try p.run()）之前、id 的印出在最後——mutant「建立搬到 spawn 之後」在這裡會紅（round 9 實測動態半 5/5 抓不到）" {
+  create=$(grep -n 'O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW' "$BIN_REAL" | head -1 | cut -d: -f1)
+  spawn=$(grep -n 'try p.run()' "$BIN_REAL" | head -1 | cut -d: -f1)
+  printid=$(grep -n '^    print(id); exit(0)' "$BIN_REAL" | head -1 | cut -d: -f1)
+  [ -n "$create" ]; [ -n "$spawn" ]; [ -n "$printid" ]
+  [ "$create" -lt "$spawn" ]
+  [ "$spawn" -lt "$printid" ]
+}
+
+@test "R10-C 契約描述現行設計：無 claimTerminal；§3–§5 不以現在式提及 .done／.claimed；§3 的 run 目錄列舉含 claim 與 reported" {
+  C="${BATS_TEST_DIRNAME}/../references/codex-call-contract.md"
+  [ "$(grep -c 'claimTerminal' "$C")" -eq 0 ]
+  sec=$(awk '/^## 3\. /{f=1} /^## 6\. /{f=0} f' "$C")
+  bad=$(printf '%s\n' "$sec" | grep -E '\.done|\.claimed' | grep -vE '移除|取消|round 9|前三種|已關閉|不再' || true)
+  [ -z "$bad" ]
+  printf '%s\n' "$sec" | grep -E '^- base：' | grep -q '`claim`'
+  printf '%s\n' "$sec" | grep -E '^- base：' | grep -q '`reported`'
+}
+
+@test "R10-RC13 CHANGELOG 宣稱的 case 數由 lint 對照實際值：lint 存在、自測會拒絕錯的數字、對現行 CHANGELOG 通過（第五度復發後改機器擋）" {
+  L="${BATS_TEST_DIRNAME}/lint-changelog-counts.sh"
+  [ -f "$L" ]
+  run bash "$L" --selftest; [ "$status" -eq 0 ]
+  run bash "$L"; [ "$status" -eq 0 ]
 }
