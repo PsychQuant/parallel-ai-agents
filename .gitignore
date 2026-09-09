@@ -27,3 +27,9 @@ openspec/.vector-search.db*
 
 # IDD parallel worktree isolation (idd-worktree.sh #167) — not tracked in main tree
 .claude/worktrees/
+
+# codex-pro：producer skill 的結果檔（review-*.md / adversarial-review-*.md / rescue-*.md）寫進同一目錄，
+# 不追蹤——否則 pai-build-diff --diff 會把上一輪 Codex 審閱全文當 untracked 新檔餵進下一輪 ensemble（#48 verify）。
+# 只有 project profile（#48）進版控。
+.codex-pro/*
+!.codex-pro/profile.yaml
