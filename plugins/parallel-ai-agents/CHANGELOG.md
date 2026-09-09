@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.22.2] - 2026-09-09
+
 ### Added
 
 - repo root `.codex-pro/profile.yaml`：專案層 codex-pro profile，把 ensemble codex leg pin 到 `gpt-6-astra` / effort `medium`（service tier `fast` 為既有現況）。走 codex-pro 契約三層解析的 project 層，engine / codex-call 零改動；`test/codex-profile.bats` 用 `references/codex-governance.md` 同組正規式鎖住解析後的字面、重複 key、git 追蹤狀態，並以 fixture 斷言三層優先序（不依賴 codex-pro cache）。**作用半徑**：本檔不隨 plugin 散發；契約的 project 層是 cwd 相對，只在 repo root 當 cwd 執行 ensemble 時生效（codex-pro#19）。本機另有同值的全域 `~/.codex-pro/profile.yaml`，只有本檔可攜。**退場**：codex-pro baseline 換代（PsychQuant/codex-pro#17）後，先確認移除後解析值仍符合，再連同 `test/codex-profile.bats` 一起刪（#49 認領）（#48）。
