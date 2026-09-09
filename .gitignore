@@ -22,3 +22,8 @@ venv/
 
 # IDD tree-lock (idd-tree-lock.sh #183) — per-machine session state, not tracked
 .claude/.idd/tree-lock
+.spectra/
+openspec/.vector-search.db*
+
+# IDD parallel worktree isolation (idd-worktree.sh #167) — not tracked in main tree
+.claude/worktrees/
