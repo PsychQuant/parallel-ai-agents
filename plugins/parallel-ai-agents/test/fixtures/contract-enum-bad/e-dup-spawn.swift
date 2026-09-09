@@ -1251,6 +1251,7 @@ func doDetach(_ a: Args, prompt: String) -> Never {
         p.standardOutput = logFH
         p.standardError  = logFH
         p.standardInput  = FileHandle.nullDevice
+        try p.run()   // dup for lint selftest
         try p.run()   // not waited on — the worker outlives us by design
         // R3-C1: readiness handshake. Measured: the lock appeared 0.6–1.0 s AFTER we used to
         // print the id; a poll in that window saw "no lock, no status" and destroyed a

@@ -111,7 +111,7 @@ run 狀態（**封閉列舉，五種**，round 9 Stage B 之後只有一個目�
 | SIGTERM→SIGKILL 兩輪後無法確認 worker 已停止，且 claim 被別人持有 | 空 | **1** | `could not confirm the worker stopped … another caller holds the claim and will report it`——後置條件沒被建立；token 歸持 claim 者（round 10 L9-1；round 11 L-R10-2：「無法確認」不是「還活著」——lock 不可判定時 worker 可能早已停止，訊息不再宣稱它還在燒錢） |
 | 已 `reported`、清不掉 run 目錄 | `FAILED could not remove run dir …` | 2 | 終態已落地為 `ABORTED`；殘留由下一次 poll／abort 只清不報 |
 
-上表封閉（十四列），**不得依性質相似類推第十五列**；`--abort` 的任何新結果都必須加進表並附測試。列數由 `test/lint-contract-enumerations.sh` 機器核對（round 10 這一句寫「十一列」而表有十二列、round 9 寫「十列」而表有十一列——手打的數字連兩輪都錯，散文規則對數字無效）。
+上表封閉（十三列），**不得依性質相似類推第十五列**；`--abort` 的任何新結果都必須加進表並附測試。列數由 `test/lint-contract-enumerations.sh` 機器核對（round 10 這一句寫「十一列」而表有十二列、round 9 寫「十列」而表有十一列——手打的數字連兩輪都錯，散文規則對數字無效）。
 
 - **順序（round 9 A1；round 10 L9-1）**：先 `lockState`——持鎖中就 `SIGTERM` → 2 s → `SIGKILL`，第二輪同樣（持鎖者若在第一次探測**之後**才拿到鎖也會被送到訊號，Codex round 4 #10），**這一步不需要 claim**。接著 `claimRun`；兩輪後仍持鎖 → 持有 claim 者印 `FAILED worker did not terminate`、exit 2、run 保留，輸掉 claim 者 exit 1 不印。確認鎖釋放且拿到 claim 後 `reported` 落地（內容 `ABORTED`）→ 清除預設輸出檔 → 清除 run 目錄 → 印 `ABORTED`。
 - 未持鎖（已結束、尚未被 poll）→ 同樣先 claim、`reported` 落地，清除（含預設輸出檔），印 `ABORTED`，exit `0`——結果被放棄是 abort 的語意。

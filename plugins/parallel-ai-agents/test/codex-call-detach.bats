@@ -1121,12 +1121,16 @@ wait_terminal() {  # $1=id → 設 POLL_OUT / POLL_RC
   ghost="$(printf '0%.0s' $(seq 1 32))"
   B0=$(python3 -c 'import time;print(time.time())'); run "$BIN" --poll "$ghost"; B1=$(python3 -c 'import time;print(time.time())')
   rm "$BASE/$sid/claim"                                   # removeRun 的遞迴 unlink 先刪 claim、最後才 rmdir——這是那個視窗
-  ( python3 -c "import time; time.sleep($B1-$B0+0.8)"; rm -rf "$BASE/$sid" ) &
+  ( python3 -c "import time; time.sleep($B1-$B0+0.8)"; python3 -c 'import time;print(time.time())' > "$TMP/deleted-at"; rm -rf "$BASE/$sid" ) &
+  S=$(python3 -c 'import time;print(time.time())')
   run --separate-stderr "$BIN" --poll "$sid"
   wait
   [ "$status" -eq 1 ]; [ -z "$output" ]
   [[ "$stderr" != *"cannot claim"* ]]
-  [[ "$stderr" == *"gone"* || "$stderr" == *"unknown run id"* ]]   # 啟動慢到目錄先消失時是 unknown——兩者都誠實
+  # round 11 R11-6：`unknown run id` 在修前也會出現（目錄在 poll 抵達 resolveRun 之前就消失），所以
+  # 只在「poll 啟動慢過我們的排程」時才接受它；目錄是在 poll 已經過了啟動之後才消失的話，答案**必須**是 gone。
+  DEL=$(cat "$TMP/deleted-at"); LATE=$(python3 -c "import sys; print(1 if ($DEL - $S) >= ($B1-$B0)*0.9 else 0)")
+  if [ "$LATE" = 1 ]; then [[ "$stderr" == *"gone"* ]]; else [[ "$stderr" == *"gone"* || "$stderr" == *"unknown run id"* ]]; fi
 }
 
 @test "R10-L9-1 abort 的 FAILED worker did not terminate 受 claim 保護：claim 被別人持有時 stdout 空、exit 1（不是 0——worker 還活著，後置條件沒成立）" {
@@ -1139,8 +1143,9 @@ wait_terminal() {  # $1=id → 設 POLL_OUT / POLL_RC
   run --separate-stderr "$BIN" --abort "$id"
   wait
   [ "$status" -eq 1 ]; [ -z "$output" ]
-  [[ "$stderr" == *"did not terminate"* ]]
+  [[ "$stderr" == *"could not confirm the worker stopped"* ]]   # round 11：不可判定 ≠ 還活著，訊息只說測得到的事
   [ -d "$BASE/$id" ]
+  kill -0 "$(pgrep -f -- "-interpret $BIN_REAL .* --_worker $id" | head -1)"   # round 11 R11-4 之後這個前提才真的成立：worker 活過了 SIGTERM
   kill "$hp" 2>/dev/null || true
   pkill -9 -f -- "-interpret $BIN_REAL .* --_worker $id" 2>/dev/null || true
   sleep 0.3
@@ -1222,6 +1227,55 @@ wait_terminal() {  # $1=id → 設 POLL_OUT / POLL_RC
   [ -z "$bad" ]
   printf '%s\n' "$sec" | grep -E '^- base：' | grep -q '`claim`'
   printf '%s\n' "$sec" | grep -E '^- base：' | grep -q '`reported`'
+}
+
+@test "R11-HOOK --_selftest-ignore-term 的前提本身要被斷言：worker 收到 SIGTERM 後 3 s 仍活、無 status（round 10 把 SIG_IGN 換成 handler 時靜默壞掉，4/91 個 case 綠的理由變了）" {
+  run "$BIN" --detach --_selftest-sleep 30 --_selftest-ignore-term --instructions i "p"; [ "$status" -eq 0 ]; id="$output"
+  sleep 0.5
+  wpid=$(pgrep -f -- "-interpret $BIN_REAL .* --_worker $id" | head -1); [ -n "$wpid" ]
+  kill -TERM "$wpid"
+  sleep 3
+  [ -e "$BASE/$id/term-seen" ]                           # 訊號真的送達了（round 10 的錨點仍在）
+  kill -0 "$wpid"                                        # ……而 worker 活過它
+  [ ! -e "$BASE/$id/status" ]                            # 沒有提早 finish
+  run "$BIN" --force-reap "$id"; [ "$status" -eq 0 ]
+  no_worker_for "$id"
+}
+
+@test "R11-ABORT-MSG abort 第一輪沒收斂是因為 lock 變不可判定時，stderr 不得宣稱 worker 還在燒錢——只能說無法確認（L-R10-2：訊息斷言了測不到的事）" {
+  printf 'v\n' > "$TMP/victim"
+  run "$BIN" --detach --_selftest-sleep 60 --_selftest-ignore-term --instructions i "p"; [ "$status" -eq 0 ]; id="$output"
+  sleep 0.5
+  hp=$(hold_claim "$BASE/$id"); sleep 0.5
+  ( for _ in $(seq 1 200); do [ -e "$BASE/$id/term-seen" ] && break; sleep 0.05; done; ln -f "$TMP/victim" "$BASE/$id/lock" ) &
+  run --separate-stderr "$BIN" --abort "$id"
+  wait
+  [ "$status" -eq 1 ]; [ -z "$output" ]
+  [[ "$stderr" != *"still spending"* ]]
+  [[ "$stderr" == *"could not confirm"* ]]
+  kill "$hp" 2>/dev/null || true
+  pkill -9 -f -- "-interpret $BIN_REAL .* --_worker $id" 2>/dev/null || true
+  sleep 0.3
+}
+
+@test "R11-FR5 --force-reap 清不掉 run 目錄時：exit 2、stdout 是列舉內的 FAILED token，且帶上仍在磁碟上的 <id>.out.md 路徑（「一定能取回輸出」在清理失敗時仍成立）" {
+  run "$BIN" --detach --_selftest-sleep 0 --instructions i "p"; [ "$status" -eq 0 ]; id="$output"
+  for _ in $(seq 1 100); do [ -e "$BASE/$id/status" ] && break; sleep 0.1; done
+  [ -s "$BASE/$id.out.md" ]
+  chmod 0500 "$BASE"                                     # removeItem(<id>) → EACCES
+  run --separate-stderr "$BIN" --force-reap "$id"
+  chmod 0700 "$BASE"
+  [ "$status" -eq 2 ]
+  [[ "$output" == "FAILED could not remove run dir"* ]]
+  [[ "$output" == *"$BASE/$id.out.md"* ]]
+  [ -s "$BASE/$id.out.md" ]; [ -d "$BASE/$id" ]
+}
+
+@test "R11-LINT 契約枚舉 lint 存在、自測拒絕每個壞 fixture、對現行契約＋code 通過（round 10 同型缺陷在契約裡復發四次後改機器擋）" {
+  L="${BATS_TEST_DIRNAME}/lint-contract-enumerations.sh"
+  [ -f "$L" ]
+  run bash "$L" --selftest; [ "$status" -eq 0 ]
+  run bash "$L"; [ "$status" -eq 0 ]
 }
 
 @test "R10-RC13 CHANGELOG 宣稱的 case 數由 lint 對照實際值：lint 存在、自測會拒絕錯的數字、對現行 CHANGELOG 通過（第五度復發後改機器擋）" {

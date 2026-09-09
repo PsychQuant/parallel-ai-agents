@@ -93,6 +93,13 @@ jobs:
         shell: bash
         run: bash test/lint-changelog-counts.sh --selftest && bash test/lint-changelog-counts.sh
 
+      # Round 11 (R11-1): the contract's self-declared closed lists (stdout tokens per section,
+      # exit-1 answers, abort-table row count, §6 cardinality, R10-B5s pattern uniqueness) are
+      # checked against bin/codex-call. Round 10 drifted on four of them in one commit.
+      - name: lint-contract-enumerations — selftest, then the real contract
+        shell: bash
+        run: bash test/lint-contract-enumerations.sh --selftest && bash test/lint-contract-enumerations.sh
+
       - name: Assert swift toolchain is usable (the real gate — a present shim is not enough)
         run: swift --version
 

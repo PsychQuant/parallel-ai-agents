@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [2.23.0] - 2026-09-03
+## [2.23.0] - 2026-09-10
 
 ### Changed
 
@@ -174,7 +174,7 @@ round 8 的 CI **首度全綠**（TAP plan 86 == executed 86、bash 5.3.15）、
 
 ### Tests
 
-- 新增 `test/codex-call-detach.bats`（macOS job，**91 個 case**（`grep -c "^@test" test/codex-call-detach.bats`）；round 3 後 12 → 31，round 4 後 → 43，round 5 後 → 63，round 7 後 → 70，round 8 後 → 73，round 9 Stage A 後 → 76，Stage B／C 後 → 79，round 10 後 → 91（+12 `R10-*`）——**這個數字自 round 10 起由 `test/lint-changelog-counts.sh` 對照括號內那條命令的實際輸出（run.sh 與 CI 都跑）**；round 9 verify 抓到本行在宣稱「由 grep 產生、不手打」的同一句裡寫 76、實際 79，RC13 第五度復發，散文規則已證明無效：+8 `R7-*`（含 `R7-X` 狀態叉積補格）、+3 `R8-*`、+3 `R9-A*`、−1 `Codex-R4-1`（年齡判準已不存在）、5 個改寫。round 7 verify 抓到本行曾寫 69／+7——`R7-X` 加在段落寫完之後，數字沒跟上：RC13 第四度，所以 round 8 起 case 數由 `grep -c "^@test" test/codex-call-detach.bats` 產生、不手打）。
+- 新增 `test/codex-call-detach.bats`（macOS job，**95 個 case**（`grep -c "^@test" test/codex-call-detach.bats`）；round 3 後 12 → 31，round 4 後 → 43，round 5 後 → 63，round 7 後 → 70，round 8 後 → 73，round 9 Stage A 後 → 76，Stage B／C 後 → 79，round 10 後 → 91（+12 `R10-*`），round 11 後 → 95（+4 `R11-*`）——**這個數字自 round 10 起由 `test/lint-changelog-counts.sh` 對照括號內那條命令的實際輸出（run.sh 與 CI 都跑）**；round 9 verify 抓到本行在宣稱「由 grep 產生、不手打」的同一句裡寫 76、實際 79，RC13 第五度復發，散文規則已證明無效：+8 `R7-*`（含 `R7-X` 狀態叉積補格）、+3 `R8-*`、+3 `R9-A*`、−1 `Codex-R4-1`（年齡判準已不存在）、5 個改寫。round 7 verify 抓到本行曾寫 69／+7——`R7-X` 加在段落寫完之後，數字沒跟上：RC13 第四度，所以 round 8 起 case 數由 `grep -c "^@test" test/codex-call-detach.bats` 產生、不手打）。
   走**同一條** detach／lock／poll／abort 路徑，只以 `--_selftest-*` 把 HTTP 換成 sleep + 寫檔。
   **round 7 的 RED-first 證據以名稱列出、原始輸出貼在 PR #47 的 round 7 留言**（round 6 regression 實測 round 5 寫在這裡的「13 個先驗 RED／7 個護欄型」名單有 4 個成員是錯的，而且沒有腳本能重現那些數字——所以不再寫數字）：
   在 `880785a` 上為 RED 的案例：`R7-A`（雙逾時 poll ×10）、`R7-D`（`.done` 內活 worker）、`R7-R`（reported 痕跡）、`R7-M05`（kill 等待中 lock 變不可信；含新 hook `--_selftest-ignore-term`，RED 一部分來自旗標不存在）、`R7-RC1c`（逾時瞬間 status 已落地）、`R7-GC`（GC hook 只掃 selftest run）、`R7-S5`（abort 輸家 stdout 空）、`R7-X`（狀態叉積補格：poll×abort 逾時、abort×abort、接手×接手無 status）、`R3-L10/R7`、`R4-L3/R7`、`R5-L2`（拿掉 hook 後）、`R5-S6/R7`。
@@ -193,7 +193,25 @@ round 8 的 CI **首度全綠**（TAP plan 86 == executed 86、bash 5.3.15）、
   `response.completed` 的 tier／usage 可觀測性——皆不在本版。**issue #37 Expected 第 3 點（leg 被放棄時回報已花成本）
   依賴後者，明確延後至該獨立 issue**；本版 leg 缺席時的 integrity finding 只標記缺席、不含 token 數（round 5 D-1）。
 - Swift script 每次啟動約 1.5–2.5 s（compile cache）；poll 是分開 tool call、間隔數十秒，屬雜訊——但 bats 內任何「未逾時應回 RUNNING」的斷言必須把這個啟動時間算進 `max-time + grace` 的餘裕（round 7 R7-D 實測 3 s 的 deadline 會被啟動時間吃掉）。
-- round 7 明確排除的五項見契約 §8：worker 以路徑字串寫 status（dirfd/`openat` 未做）、`--wait 120` 與 harness timeout、`.untrusted` run 無回收、`O_RDWR` 探測、`FAILED worker did not terminate` 後的第二 token。DA 3.2：被硬殺的 agent 留下的付費 run 沒有 `--list`，只能等 24 h GC。
+- round 7 明確排除的五項見契約 §9（round 10 之前這裡寫 §8——§8 是穩定性承諾）：worker 以路徑字串寫 status（dirfd/`openat` 未做）、`--wait 120` 與 harness timeout、`.untrusted` run 無回收、`O_RDWR` 探測、`FAILED worker did not terminate` 後的第二 token。DA 3.2：被硬殺的 agent 留下的付費 run 沒有 `--list`，只能等 24 h GC。
+### Fixed（round 10 verify：FAIL 但收斂——六個 blocking 族全是文件層＋三個一行／三行 code 改動；round 11 依 DA 封閉列舉七項，**唯一的新機制是一個 lint**）
+
+round 10 verify（4 lens，requirements／security 各兩個盲驗實例，＋ DA ＋ **round 7 以來首次有額度的 Codex**）判 FAIL：round 9 的 blocking 是行為的，round 10 剩下的是契約文字＋三個小改動——但**同型的手打封閉列舉缺陷在同一輪契約裡復發四次**（force-reap stdout 少一種 token、exit-1 少一個答案、§6 lead-in「五項」句尾「六項」、abort 表「十一列」實有十二列），而 round 10 剛把同一個教訓機械化到 CHANGELOG 卻沒推到契約。round 11 做的是 DA 的七項：
+
+- **R11-1 `test/lint-contract-enumerations.sh`**（本輪唯一的新東西）：五項檢查——(A) `doPoll`／`doAbort`／`doForceReap` 每個 `print` 字面 token 必須出現在契約**對應小節**（全域出現不算：round 10 的漏項正是「abort 表有、force-reap 節沒有」）；(B) exit-1 答案雙向——§2 列舉的每個反引號片語（`…`／`<path>` 當萬用）要對得到 code 的 die 字串，反過來五個入口函式的每個 `die` 要對得到契約（§2 ∪ abort 表 ∪ force-reap 節）的某個反引號答案；(C) abort 表資料列數 = 「上表封閉（N 列）」；(D) §6 `(n)` 項數 = lead-in = 句尾；(E) `R10-B5s` 三個 grep pattern 各唯一。`--selftest` 對五個 fixture（四個壞契約＋一個雙 spawn 的壞 code）各自拒絕、對真契約接受；接進 `run.sh` 與 CI（bats 之前）。對修前契約 RED 7 處（A／B×4／C／D）。**lint 自己也被抓到一次假綠**：force-reap 的 print 改成三元式後，anchored 在 `print("` 的 regex 什麼都沒抽到就通過——改成掃 `print(` 括號內全部字串字面。
+- **R11-2 契約文字一批**（全部有 round 10 findings 編號可追）：force-reap 的 stdout／exit-1 封閉列舉補齊（含 `FAILED could not remove run dir <dir>; output kept at <path>`、`cannot enumerate processes (ps failed)`）並把 `REAPED` 改寫成**後置條件**、身分句改成「`ps -o args=` 文字含相鄰兩 token，不是 argv 邊界檢查」（B6；不做 KERN_PROCARGS2）；abort 表補兩列（`.gone`／`.failed` × 無法確認 worker 停止）並改成十四列、第 11 列與 §2 exit-1 列舉補三個 `could not confirm` 答案；§2 性質 (3) 的例外改為「恰好兩個」（GC 與 `--force-reap`，B3a）；§2:53 與 §5 的 abort exit 碼改 0（B3b/c）；「stderr 無任何行」×3 改成「stdout 無 token、stderr 一行」（B2a）；§6 lead-in 改六項、item (1) 的 `rename` 歸因改到 (6)、(5) 擴到 `prompt.txt`／`instructions`（S10-4，#54）、(6) 機制補 `rename`；§7 `--_selftest-ignore-term` 改成實況；§9 補「到 `FAILED worker did not terminate` 的第二條路」（B2c）、2 s 重查的 lstat fold（F6）、`.done` 殘留與封閉句後的多餘項搬回；`--wait` 一句寫清楚「不超過 N」指等待迴圈（F2）；叉積表補 force-reap 說明與 live-expired 格的 L9-1 例外（F8）。
+- **R11-3 一行修 B5**：`if unterminated || !killHolderConverged(dir)` → `if !killHolderConverged(dir)`——claim 之後的探測是真相，記憶的值只決定 exit-1 的措辭。**誠實邊界**：DA 描述的分歧情境（第一輪沒收斂、claim 取得前 worker 退出）**黑箱不可構造**——第一輪回 false 只有 lock 不可判定一途，而 kill 輪結束到 claimRun 之間只有微秒，沒有讓 lock 從不可判定翻回已釋放的窗口；round 10 Logic 之所以量到「成功的 run 被印成 FAILED」是因為 B4 的 bug 讓 worker 提早退出。所以本輪**沒有** `R11-ABORT-LATE` 這個 case，改以 `R11-ABORT-MSG` 守同一分支可觀測的性質（見下），並在此明寫這條修法沒有黑箱測試。
+- **R11-4 修 B4（測試鉤子回歸）**：`--_selftest-ignore-term` 的 handler 觸發後 `sleep()` 被 EINTR 提早返回、worker 0 秒內結束——4/91 個 case（`R7-M05`／`R9-B7`／`R10-L9-1`／`1b`）綠的理由靜默變了。改成 deadline 迴圈 `while remaining > 0 { remaining = sleep(remaining) }`（三行、無新旗標、同時保住存活與 `term-seen` 錨點）；handler 的 `open` 加 `O_NOFOLLOW`（全檔唯一沒帶的，S10-5 實測 symlink 目標被建出）；路徑在安裝前 `strdup` 成 C 字串，handler 不碰 Swift String（round 10 的「async-signal-safe」註解對一半）。新增 **`R11-HOOK`** 斷言這個前提本身（SIGTERM 後 3 s 仍活、無 status）——它從來沒被任何測試斷言過，所以才會靜默壞掉。
+- **R11-5 force-reap 清理失敗仍取得回輸出**：`removeRun` 失敗時 token 帶上 `<id>.out.md` 路徑（`FAILED could not remove run dir <dir>; output kept at <path>`，exit 2）；新增 **`R11-FR5`**（`chmod 0500 base`）。
+- **R11-6 收緊 `R10-REG-A2`**：背景拆除者記下刪除時刻，若刪除發生在 poll 已過啟動之後就**只接受** `gone`，不再讓修前也會出現的 `unknown run id` 靜默過關（L-R10-11）。
+- **訊息誠實化（L-R10-2）**：`--abort` 兩輪訊號後 `killHolderConverged` 回 false 有兩個成因（持鎖者沒死／lock 變不可判定），round 10 的訊息只講前者、宣稱「the run is still spending」——在測試自己造的情境裡就是假話。三個 exit-1 分支與 stderr 全改成「could not confirm the worker stopped」；新增 **`R11-ABORT-MSG`**。
+- **R11-7**：Expected 第 3 點（abandoned leg 回報成本）已立案 **#52**，#37 body 記錄移交；`?? left` 的取捨立 **#53**；§6 (5) 的配額竊取面立 **#54**（本輪已順手擴寫，#54 核對後關）。
+- 2.23.0 的日期改為實際發布輪（原本停在 round 3 的 09-03，排在 2.22.2 的 09-09 之上）；round 7 排除項的章節引用 §8 → §9。
+
+**明確不做**（DA 封閉列舉）：KERN_PROCARGS2（換設計）；改 `lockState` 的 ENOENT 語意（S9-1 根因，已揭露）；第四種 claim 協定；`?? left` 改 fail-closed（#53）；SIGKILL 升級輪第二個旗標（R11-4 後 `R7-M05`／`R9-B7` 自然重新走到）；動 §6 三列；實測 `.gone × unterminated`（表內標「靜態可達、未實測」）。
+
+**Merge 判準（round 10 DA）**：round 11 之後只需 targeted verify（R11-1 lint 含 selftest、`R11-HOOK`／`R11-ABORT-MSG`／`R11-FR5`、12 個 `R10-*`、CI 兩 job），不再召集四 lens＋DA。若 R11-1 綠而事後仍見同型缺陷，那才是重新召集全員的訊號。
+
 ### Fixed（round 9 verify：FAIL——round 8 DA 的收斂判準成立，round 10 依封閉列舉六項**接受並揭露，不換設計**）
 
 round 9 出現三條修法自帶的新根因（R9-REG-A／S9-2／L9-1），判準原文：「不做第三次換設計，改為接受並揭露（寫進 §9 封閉列舉、叉積表標『不保證』、給一條逃生命令），然後 merge」。round 10 只做那六項：
