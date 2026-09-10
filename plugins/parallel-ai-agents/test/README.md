@@ -54,7 +54,7 @@ shellcheck bin/pai-build-diff
 bats test/
 ```
 
-CI（`.github/workflows/test.yml`）在每次 push / PR 自動跑同一組。
+CI（`.github/workflows/test.yml`）在每次 push / PR 自動跑：`shellcheck-bats` 與 `macos-swift-bats` 兩個 job 涵蓋上面這一組；另有 `manifests-and-lens-pack` job 跑 `plugins/pai-lenses/scripts/` 的 python 測試、靶清單檢查與 validator 本體 —— `run.sh` 末段也跑同一組，所以本機一鍵與 CI 對得上（完整 mutation 量測仍是手動：`python3 scripts/mutation_check.py`）。
 
 ## 加測試的原則
 

@@ -82,24 +82,89 @@ def version_tuple(v):
 
 
 
+RAW_OUT = None   # install_output_boundary() 之前的原始 stdout —— emit() 唯一的落點
+
+
+class LineSanitiser:
+    """包住一條 stream：任何一行若 `TrimStart()` 後以 `::` 開頭，就把那個 `::` 換成 `∷`。
+
+    #33 verify R11（四個 lens + DA 各自重現）：R10 把消毒放在 `emit()`，並宣稱它是
+    「所有 workflow-command 輸出的唯一出口」—— **那句是假的**。GitHub runner 解析的是
+    這個 process 寫進 step log 的**每一行**（`ActionCommand.TryParseV2`：`TrimStart()`
+    之後 `StartsWith("::")`），不管它是哪個函式印的；而 `validate.py` 有十二處裸 `print()`，
+    其中五處插入 fork PR 可控的值（pack `version`、entry `name`、git 還原的舊路徑、
+    `pack_name`、CSV 檔名）。實測 `version` 含換行 → validator 第 2 行就是
+    `::stop-commands::`；兩份 manifest 的 `name` 同時含換行 → **rc=0 全綠**且 log 帶它。
+
+    這是這個 PR 第三次把「邊界」劃得比實際邊界小（per-call-site `wc()` → annotation 出口
+    `emit()` → 現在）。DA 另外查到 **stderr 走同一個 `ActionCommandManager` 實例**，所以
+    第四次必須一次到位：兩條 stream 都包，且以 runner 的判準（`lstrip()` 後的行首）為準。
+    `emit()` 走 `RAW_OUT` 繞過這層 —— 它是**唯一**能印出真 annotation 的路徑，且自己保證
+    一行永遠是一行。跨多次 `write()` 的部分行也要對：`print()` 是先寫內容再寫 `\\n`。"""
+
+    def __init__(self, stream):
+        self._stream = stream
+        self._at_line_start = True
+
+    def write(self, text):
+        for seg in str(text).splitlines(keepends=True):
+            if self._at_line_start and seg.lstrip().startswith("::"):
+                seg = seg.replace("::", "∷", 1)
+            self._at_line_start = seg.endswith(("\n", "\r"))
+            self._stream.write(seg)
+        return len(text)
+
+    def flush(self):
+        self._stream.flush()
+
+    def __getattr__(self, name):          # encoding / isatty / fileno … 透傳
+        return getattr(self._stream, name)
+
+
+def install_output_boundary():
+    """把 sys.stdout 與 sys.stderr 都換成 LineSanitiser，並記住原始 stdout 給 emit()。
+    要在 main() 動任何事**之前**呼叫 —— argparse 的 usage 訊息也經過這裡。"""
+    global RAW_OUT
+    if RAW_OUT is None:
+        RAW_OUT = sys.stdout
+    if not isinstance(sys.stdout, LineSanitiser):
+        sys.stdout = LineSanitiser(sys.stdout)
+    if not isinstance(sys.stderr, LineSanitiser):
+        sys.stderr = LineSanitiser(sys.stderr)
+
+
 def emit(line):
-    """**所有 workflow-command 輸出的唯一出口。**
+    """**所有 annotation（`::error` / `::warning` / `::notice`）的唯一出口。**
 
     #33 verify R10（作者自查）：R10 的第一版修法是在**個別呼叫點**包 `wc()` —— 我包了六處，
-    而實際上有約四十處插入了攻擊者可控的值（git 檔名可以含換行、marketplace.json 的字串、
-    CSV 衍生的 key/欄位…）。**那個修法本身就是這個 PR 一路在抓的「同類只修一處」，
-    只是規模更大。**
+    而實際上有約四十處插入了攻擊者可控的值。**那個修法本身就是這個 PR 一路在抓的
+    「同類只修一處」，只是規模更大。**
 
-    正確的形狀是在**邊界**消毒，不是在每個呼叫點：GitHub 的 workflow command 必須從**行首**
-    開始解析，所以只要保證一行永遠是一行，`::stop-commands::` 就注入不進來。這裡把整行的
-    CR/LF 換成 `⏎` 並限長 —— 一個地方做完，不需要再問「我有沒有漏掉某個站點」。
-
-    行內的 `::` 保持原樣：它是 annotation 格式的一部分（`::error file=x::msg`），
-    而且不在行首就構不成新的 command。"""
+    #33 verify R11：R10 接著把消毒放在這裡，並宣稱這是「所有 workflow-command 輸出的
+    唯一出口」—— 那句也是假的（見 `LineSanitiser`）。現在的分工：**輸出邊界**由
+    `LineSanitiser` 守（任何路徑、任何 stream，行首的 `::` 一律中和）；本函式是唯一
+    **繞過**那層去寫原始 stdout 的地方，所以它自己必須保證一行永遠是一行（CR/LF 換成
+    `⏎`）並限長。行內的 `::` 保持原樣 —— 它是 annotation 格式的一部分（`::error file=x::msg`），
+    而 runner 只在 `TrimStart()` 後的行首認 command。"""
     t = str(line).replace("\r\n", "⏎").replace("\n", "⏎").replace("\r", "⏎")
     if len(t) > 4000:
         t = t[:4000] + "…（截斷）"
-    print(t)
+    (RAW_OUT or sys.stdout).write(t + "\n")
+
+
+def ann_path(p, root):
+    """annotation `file=` 位置的路徑：**相對 repo 根**（runner 只會自動轉換 workspace 底下的
+    絕對路徑；相對 pack 根的 `lenses/x.csv` 在 repo 根不存在，annotation 貼不上 PR diff ——
+    #33 verify R11 #7，併回造成的回歸），並依 runner `_escapePropertyMappings` 轉義
+    property 值不可含的五個字元（`%` `\\r` `\\n` `:` `,` —— #11 #6：檔名裡一個逗號就能
+    偽造 `line=` / `title=`）。"""
+    ws = repo_root(root) or root
+    try:
+        rel = pathlib.Path(p).relative_to(ws).as_posix()
+    except ValueError:
+        rel = pathlib.Path(p).as_posix()
+    return (rel.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+               .replace(":", "%3A").replace(",", "%2C"))
 
 
 def wc(value, limit=200):
@@ -202,8 +267,8 @@ def _inside(path, repo_abs):
     """path 是否在 repo_abs 之內（含 repo_abs 本身）。兩者都必須已 resolve()。"""
     try:
         return path.is_relative_to(repo_abs)                  # Python 3.9+
-    except AttributeError:                                    # 3.8 fallback
-        return str(path).startswith(str(repo_abs) + os.sep)
+    except AttributeError:                                    # 3.8 fallback（含自身，與上面同義）
+        return path == repo_abs or str(path).startswith(str(repo_abs) + os.sep)
 
 
 def check_marketplace_sync(root, errs):
@@ -258,8 +323,17 @@ def check_marketplace_sync(root, errs):
         # entry」這個錯誤修法**，而真正的問題是既有那條的 source 寫錯了。
         # 注意不能用「登記它宣稱的路徑」來解：那會讓一個指錯地方的 entry 遮蔽掉「真的缺
         # entry」的情況。正確的做法是讓反向檢查按**名字**交叉比對後說出真正的原因。
+        # #33 verify R11 #2：身分登記（名字→source、撞名）也必須在**所有** `continue` 之前 ——
+        # R10 把 `named_entries` 放對了位置，`entry_names` 卻留在六個 continue 之後，於是
+        # 第二條同名 entry 只要 source 是遠端（`github:…`）或判不出來，撞名**完全不報、rc=0**。
+        # 情境正是本 PR 的主題：「舊的遠端 pai-lenses entry 沒刪乾淨／日後有人又加回去」。
+        # 名字的唯一性與 source 的形式無關，本來就不該被 source 的合法性擋住。
         if isinstance(entry.get("name"), str) and entry["name"]:
             named_entries[entry["name"]] = src
+            if entry["name"] in entry_names:
+                errs.append(f"::error file={mp}::entry name '{wc(entry['name'])}' 重複 —— "
+                            "後出現的會蓋掉先出現的，你以為裝到的可能是另一個")
+            entry_names.add(entry["name"])
         rel = None
         if isinstance(src, str):
             if src.startswith("./"):
@@ -334,11 +408,6 @@ def check_marketplace_sync(root, errs):
             errs.append(f"::error file={mp}::entry name '{ent_name}' 與 {rel} 的 "
                         f"plugin.json name '{pj_name}' 不一致 —— 兩者必須相同，"
                         "否則使用者用哪一個名字都可能裝不到")
-        if ent_name:
-            if ent_name in entry_names:
-                errs.append(f"::error file={mp}::entry name '{ent_name}' 重複 —— "
-                            "後出現的會蓋掉先出現的，你以為裝到的可能是另一個")
-            entry_names.add(ent_name)
         if resolved in claimed_paths:
             errs.append(f"::error file={mp}::有兩個 entry 指向同一個目錄 {rel} —— "
                         "無法判斷哪一個才是那個 plugin 的 entry")
@@ -375,14 +444,20 @@ def check_marketplace_sync(root, errs):
         # 仍停在 v2.21.0），使用者看到的版本是 2.23.0、描述卻是兩版前的文字。
         # 剛立起來的閘門對它自己造成的漂移是盲的。warning 而非 error：description 不同步
         # 不會讓人裝不到東西（version 會），但兩份敘述指向不同版本區間仍是缺陷。
-        try:
-            pj_desc = json.loads(pj.read_text(encoding="utf-8")).get("description")
-        except (OSError, json.JSONDecodeError):
-            pj_desc = None
+        pj_desc = pj_obj.get("description")      # R11 #13：同一份已解析的物件，不再重讀重解
         mp_desc = entry.get("description")
         if pj_desc is not None and mp_desc is not None and pj_desc != mp_desc:
             emit(f"::warning file={mp}::{entry.get('name')} 的 description 兩處不同步 —— "
                   "使用者在 /plugin 看到的是 marketplace 那份，可能在敘述舊版本的內容")
+        # #33 verify R11 #3：上面那道閘門只比兩份**彼此**是否相同 —— rebase 把 version 改成
+        # 2.24.0 而兩份 description 都還寫「v2.23.0: …」時，它印綠。description 若以
+        # `v<semver>:` 標示「這一版帶來什麼」，最新（第一個）那個版號必須等於 version 欄。
+        for label, desc in (("plugin.json", pj_desc), ("marketplace.json", mp_desc)):
+            m_desc = re.search(r"\bv(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?):", str(desc or ""))
+            if m_desc and pj_ver and m_desc.group(1) != pj_ver:
+                emit(f"::warning file={mp}::{entry.get('name')} 的 {label} description 最新一段標示 "
+                      f"v{m_desc.group(1)}，但 version 是 {pj_ver} —— 使用者會把這一版的內容"
+                      "歸給另一個版號。發版時 description 的版號前綴要跟著改")
     if seen == 0:
         errs.append(f"::error file={mp}::沒有任何本 repo 內的 plugin 被檢查 —— 這個檢查形同虛設")
 
@@ -390,6 +465,12 @@ def check_marketplace_sync(root, errs):
     # 而正向迴圈**結構上**看不到它（它不在 plugins 陣列裡）。#33 verify R6。
     for found in sorted(repo_abs.glob("plugins/*/.claude-plugin/plugin.json")):
         pdir = found.parent.parent
+        # #33 verify R11 #12：`glob` 會跟隨 symlink —— 五處 `_inside` 硬化漏了這第六處，
+        # `plugins/evil -> repo 外` 的 plugin.json 會被讀。與正向路徑同一判準：先判、再讀。
+        if not _inside(found.resolve(), repo_abs):
+            errs.append(f"::error file={mp}::{pdir.relative_to(repo_abs)} 解析後落在 repo 外"
+                        "（可能是 symlink）—— 拒絕讀取。validator 只能讀本 repo 內的 plugin")
+            continue
         if pathlib.Path(os.path.normpath(pdir)) not in claimed:
             # 先看有沒有「名字對得上但 source 指錯地方」的 entry —— 訊息要指向真正的修法。
             try:
@@ -397,11 +478,16 @@ def check_marketplace_sync(root, errs):
                     found.read_text(encoding="utf-8")).get("name")
             except (OSError, json.JSONDecodeError, AttributeError):
                 dir_name = None
-            culprit = named_entries.get(dir_name) if dir_name else None
-            if culprit is not None:
+            # #33 verify R11 #8：存在性用 key 判，不用值判 —— `named_entries[name]` 存的是
+            # source 的**值**，entry 忘了寫 source（或寫 null）時值就是 None，先前的
+            # `culprit is not None` 把它與「沒有這條 entry」混為一談，最常見的寫錯仍被導向
+            # 「再加一條 entry」。
+            if dir_name in named_entries:
+                culprit = named_entries[dir_name]
+                shown = "（entry 沒有 source 欄位）" if culprit is None else f"（{wc(repr(culprit))}）"
                 errs.append(
                     f"::error file={mp}::有一個名為 {wc(dir_name)} 的 entry，但它的 source "
-                    f"（{wc(repr(culprit))}）沒有指向 {pdir.relative_to(repo_abs)} —— "
+                    f"{shown}沒有指向 {pdir.relative_to(repo_abs)} —— "
                     "**要修的是那條 entry 的 source，不是再加一條 entry**")
             else:
                 errs.append(
@@ -440,12 +526,19 @@ def _find_pack_at(repo, ref, pj_rel, name):
             suffix = new_path[len(prefix):]
             if old_path.endswith("/" + suffix):
                 old_pack = old_path[: -(len(suffix) + 1)]
-                votes[old_pack] = votes.get(old_pack, 0) + 1
+                # R11：pack 內部的改名（lenses/a.csv → lenses/b.csv）會把 pack 自己投成
+                # 「舊路徑」—— 那不是目錄改名，不算票。
+                if old_pack != pack_rel:
+                    votes[old_pack] = votes.get(old_pack, 0) + 1
         if votes:
             old_pack = max(votes, key=votes.get)
             candidate = f"{old_pack}/.claude-plugin/plugin.json"
-            if subprocess.run(["git", "cat-file", "-e", f"{ref}:{candidate}"],
-                              cwd=repo, capture_output=True).returncode == 0:
+            # #33 verify R11 #4：契約是「找出**舊**路徑」—— 與現路徑相同就不是改名，回 None。
+            # 先前在沒改名時退回 name 比對、找到現路徑並回傳，呼叫端把「非 None」當「有改名」，
+            # 於是每一個沒碰 lens 的 PR 都在綠燈上印「（偵測到純目錄改名，內容零變動）」。
+            if candidate != pj_rel and subprocess.run(
+                    ["git", "cat-file", "-e", f"{ref}:{candidate}"],
+                    cwd=repo, capture_output=True).returncode == 0:
                 return candidate
     if not name:
         return None
@@ -464,7 +557,7 @@ def _find_pack_at(repo, ref, pj_rel, name):
             obj = json.loads(blob.stdout)
         except json.JSONDecodeError:
             continue
-        if isinstance(obj, dict) and obj.get("name") == name:
+        if isinstance(obj, dict) and obj.get("name") == name and path != pj_rel:
             return path
     return None
 
@@ -597,12 +690,15 @@ def check_bumped(root, errs, base, event=None):
                     "這不是「無需 bump」—— 是這道閘門沒有跑")
         return
     # 純改名（R100，內容零變動）不算 lens 有變更；R<100 表示搬移時內容也改了，要算。
+    # R11：但**檔名就是 profile** —— `lenses/code.csv → lenses/academic.csv` 也是 R100，
+    # 卻把整批 lens 從一個 profile 搬到另一個，使用者 /plugin update 收不到。只有檔名
+    # （profile）不變的 R100（也就是 pack 目錄搬家）才是純改名。
     real = []
     for line in changed.stdout.splitlines():
         parts = line.split("\t")
         if not parts or not parts[0]:
             continue
-        if parts[0] == "R100":
+        if parts[0] == "R100" and len(parts) == 3 and parts[1].rsplit("/", 1)[-1] == parts[2].rsplit("/", 1)[-1]:
             continue
         real.append(parts[-1])
     if not real:
@@ -690,7 +786,7 @@ def check_lens_dir_shape(root, errs):
         return []
     good = []
     for p in sorted(d.iterdir()):
-        rel = p.relative_to(root)
+        rel = ann_path(p, root)
         # #33 verify R6：先前用 `p.suffix != ".csv"` 判定，而 pathlib 對 dotfile 回傳空
         # suffix（`Path(".DS_Store").suffix == ""`）→ 一個 .DS_Store 就讓整支 exit 1，
         # 訊息還說它是「大小寫不同的 csv」。本 pack 自己的 .gitignore 就只有 .DS_Store
@@ -817,7 +913,7 @@ def check_csvs(root, errs, files):
                 known_profiles = {p.strip() for p in r.stdout.split() if p.strip()}
 
     for path in files:
-        rel = path.relative_to(root)
+        rel = ann_path(path, root)
         # #33 verify R4：header 要看 reader.fieldnames，不能從 rows[0].keys() 反推 ——
         # 反推看不出重複欄位（DictReader 會覆蓋），也看不出多餘欄位（跑進 restkey）。
         try:
@@ -953,10 +1049,14 @@ def check_csvs(root, errs, files):
                     emit(f"::warning file={rel}::{col}='{wc(r[col])}' 不是可辨識的真假值 —— 會被當成 false")
 
 
+# 封閉列舉，且是**兩份規格的一份**：另一份是 `.github/workflows/test.yml` 的 `on:` 觸發清單。
+# 在 `on:` 加新 trigger（merge_group、schedule…）而沒改這裡 → argparse rc=2、整個 job 以
+# usage error 紅掉（fail-loud，但訊息看不出根因）。改其中一邊時請一併改另一邊（#33 verify R11）。
 EVENTS = ("pull_request", "push", "workflow_dispatch")
 
 
 def main():
+    install_output_boundary()
     # #33 verify R9：手寫的 argv 解析有一串洞，而每一個洞的後果都是**安靜地換掉判準**：
     #   - 位置參數完全不檢查 —— 漏打 `--event`（`--base <sha> push`）時 `push` 被丟棄、
     #     event 變 None → 走 merge-base 而非 exact-tree。實測在 force-push 情境下印出

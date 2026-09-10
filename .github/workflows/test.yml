@@ -24,8 +24,9 @@ jobs:
 
       - name: shellcheck
         # 寫死清單的形式本身是問題（下一個新增的 script 預設不會被檢查）—— 追蹤於 #30。
-        # 這裡先把本 PR 新增的 pai-list-profiles 補進來，不留一支未檢查的新腳本。
-        run: shellcheck bin/pai-build-diff bin/pai-parse-verdict bin/pai-iter-commit bin/pai-list-profiles test/lint-bats.sh
+        # 這份清單與 test/run.sh 的 shellcheck 行是**兩份**寫死規格；#33 verify R11 抓到兩邊互相
+        # 都不是對方的超集（這裡漏了兩支 lint、run.sh 漏了 pai-list-profiles）。改一邊請一併改另一邊。
+        run: shellcheck bin/pai-build-diff bin/pai-parse-verdict bin/pai-iter-commit bin/pai-list-profiles test/lint-bats.sh test/lint-changelog-counts.sh test/lint-contract-enumerations.sh
 
       # Round 6 RC11 (#37): a bare `!` assertion is a no-op under bats' errexit — it recurred four
       # times as a prose rule, so it is a machine rule now, and the guard proves it can fail first.
@@ -156,6 +157,9 @@ jobs:
     # 併回本 repo 前，這個檢查住在 PsychQuant/pai-lenses 自己的 validate.yml。併入後該檔
     # 落在 plugins/pai-lenses/.github/ —— GitHub 只執行 repo root 的 .github/workflows/，
     # 所以它形同失效。改掛成本 repo 的獨立 job。
+    # 隱含相依（#33 verify R11）：validate.py → bash bin/pai-list-profiles → `node` 求值主 plugin
+    # 的 PROFILES。ubuntu-latest 內建 node，所以沒有 setup-node；缺了會 fail-loud
+    # （「無法取得 PROFILES 清單」），不會靜默。換 runner image 時要記得這一條。
     runs-on: ubuntu-latest
     defaults:
       run:

@@ -7,7 +7,7 @@ Claude Code marketplace，散發 **平行多 AI agent 審閱** plugin。
 | Plugin | 是什麼 |
 |---|---|
 | **`parallel-ai-agents`** | 主 plugin —— ensemble 審閱的 skill、harness、`bin/` 工具 |
-| **`pai-lenses`** | 官方 **lens pack**（三層疊加的層 ②）：以 CSV 提供可疊加的 reviewer lens。純資料，無程式碼 |
+| **`pai-lenses`** | 官方 **lens pack**（三層疊加的層 ②）：以 CSV 提供可疊加的 reviewer lens。無 runtime 程式碼 —— `scripts/` 只有 CI 閘門（`validate.py`）與它的測試 |
 
 ## 安裝
 

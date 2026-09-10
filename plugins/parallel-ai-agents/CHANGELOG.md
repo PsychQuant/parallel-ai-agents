@@ -83,7 +83,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   （靶數 × 全套 ≈ 十分鐘）不進 CI，但**靶清單相對 `validate.py` 的漂移**秒級就能擋：
   改動被 mutate 的那幾行、或搬走一道閘門，靶就對不上。先前這件事只有在有人手動跑整輪時
   才會發現，而「忘了跑」是預設。
-  > **量測（R9 後）：46 個靶 → 45 殺掉 / 1 存活 / 0 靶壞**（R8 後是 36→35/1/0）。
+  > **量測（R9 後）：46 個靶 → 45 殺掉 / 1 存活 / 0 靶壞**（R8 後是 35 殺 / 1 存活 / 0 靶壞；
+  > 當時的靶總數本段兩處分別記成 36 與 37，已無法重建 —— #33 verify R11 抓到這個矛盾。判準
+  > 是跑一次 `mutation_check.py`，不是這張表）。R10／R11 後的數字見下方各輪。
   > 唯一存活的「catalog 缺檔」經實測確認是 equivalent mutant。
   > 五個存活裡有三個是**真缺口**（行為確實不同），已逐條補測試；判讀靠實測不靠推論。
 
@@ -211,7 +213,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   description 漂移、header 重複欄位、focus 逗號未 quote（pack README 的頭號陷阱）、
   整份複製 catalog 的 header、0 條 lens、`key` 以 `#` 開頭、`lenses/` 下子目錄、大寫 `.CSV`、
   `lenses/` 目錄不存在、沒有合法 csv、lister rc=0 空輸出、catalog 解析出 0 條、
-  truthy 無法辨識、未知旗標。**量測結果：37 靶 → 35 殺掉 / 1 存活 / 0 靶壞**，
+  truthy 無法辨識、未知旗標。**量測結果：35 殺掉 / 1 存活 / 0 靶壞**（靶總數當時記成 37，
+  但 35+1+0=36，與上方另一處記的 36 對不上；R11 指出後不再宣稱那個總數），
   唯一存活經實測確認是 equivalent mutant。
 - **`main()` 的未知旗標改為 `return 2`**（#33 verify R8）。先前靜默丟棄 —— 本檔花大量篇幅
   論證「靜默略過正是本 PR 一路在修的病」，未知旗標卻是唯一的例外：workflow 若把旗標打錯
@@ -345,6 +348,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `references/builtin-lenses.csv` 檔頭改為 `!!! GENERATED FILE — DO NOT EDIT !!!` ——
   實測有人（含本次開發 session）第一次就誤以為該檔可編輯而去改它。
 - root `CLAUDE.md` 不再宣告「唯一的 plugin」；版本同步的 CRITICAL 規則改為逐 plugin 的表格。
+
+### Fixed（#33 verify R11 —— rebase 到 main 後的第一次完整判決：4 lens + DA，Codex 因配額缺席）
+
+R11 是 PR #34 rebase 到 main `5eab1e4`（含 2.23.0 的 codex-call 背景執行）之後跑的。閘門邏輯本身
+比前十輪都紮實（DA 跑完整輪 mutation：56 靶 → 55 殺 / 1 存活（已知 equivalent）/ 0 壞；R9 可判定的
+10 個 HIGH 全部有測試接著），失守的是**三句宣稱**：
+
+- **R10 最後一個修法宣稱的邊界是假的**（HIGH，三個 lens + DA 各自重現）。`emit()` 的 docstring
+  與 commit message 都寫「所有 workflow-command 輸出的唯一出口」，但 GitHub runner 解析的是
+  這個 process 寫進 step log 的**每一行**（`ActionCommand.TryParseV2`：`TrimStart()` 後
+  `StartsWith("::")`），`validate.py` 有十二處裸 `print()`、五處插入 fork PR 可控的值。實測
+  pack `version` 含換行 → validator **第 2 行**就是 `::stop-commands::`；兩份 manifest 的 `name`
+  同時含換行 → **rc=0 全綠**且 log 帶它。這是本 PR 第三次把「邊界」劃得比實際邊界小
+  （per-call-site `wc()` → annotation 出口 `emit()` → …）。DA 另外查到 **stderr 走同一個
+  `ActionCommandManager` 實例**，且 lens 提議的 `print = emit` 會無窮遞迴。第四次一次到位：
+  新增 `LineSanitiser` 在 `main()` 開頭包住 **stdout 與 stderr**，任何一行 `lstrip()` 後以 `::`
+  開頭就把它中和成 `∷`；`emit()` 改走原始 stdout（`RAW_OUT`），是唯一能印出真 annotation 的
+  路徑。測試改成**形狀斷言**（輸出中每一行以 `::` 開頭者必須是 validator 的 annotation 形狀、
+  head 不得含注入標記），並對 `LineSanitiser` 的跨 `write()` 部分行與兩條 stream 的安裝各有測試；
+  靶清單加了邊界本身與兩個安裝點。
+- **`entry_names` 登記在所有 `continue` 之後**（HIGH，只有 1/4 lens 抓到，DA 獨立重現）。
+  第二條同名 entry 只要 source 是遠端（`github:…`）或判不出來，撞名**完全不報、rc=0**。程式碼裡
+  就寫著 R7 的教訓「登記必須在所有 continue 之前」，R10 新加的 `named_entries` 照做了，
+  `entry_names` 沒有。情境正是本 PR 的主題：舊的遠端 `pai-lenses` entry 沒刪乾淨。搬到同一區塊。
+- **description 的版號前綴沒跟著 rebase 改**（MEDIUM）：version 改 2.24.0，兩份 description
+  仍寫 `v2.23.0: pai-lenses 併回…`，而同一棵樹的 2.23.0 是 #47。既有的 description-drift 閘門只比
+  兩份彼此是否相同，兩份一起錯就靜默。改字串，並補一行 2.23.0（#47）的敘述（main 從未替它寫過），
+  新增 warning：description 以 `v<semver>:` 標示時，最新那個必須等於 `version` 欄。
+- **綠燈路徑上一句永遠為假的「（偵測到純目錄改名，內容零變動）」**（MEDIUM）：`_find_pack_at`
+  在沒改名時退回 name 比對、回傳**現**路徑，呼叫端把「非 None」當「有改名」。契約是「找出**舊**
+  路徑」，與現路徑相同就回 None；補「無改名 → 不得出現該字串」的測試（先前兩條 rename 測試的
+  `assertIn("純目錄改名")` 對此零鑑別力）。
+- **`R100` 判定只有「過嚴」方向有靶**（MEDIUM）：放寬成 `.startswith("R")` 全套仍綠，而放寬後
+  「改名 + 追加一條 lens」（git 判 `R09x`）變成假綠燈。既有測試的 fixture 整檔覆寫、git 判 A/D，
+  沒踩到那條分支。新測試只 append 一行並斷言 fixture 逼出 `R0xx`；靶清單加放寬方向。
+- **annotation 的 `file=` property**（MEDIUM ×2）：(a) 檔名裡一個逗號就能偽造 `line=` /
+  `title=`（runner 用 `,` 切 property），`emit()`／`wc()` 都不處理；(b) `check_lens_dir_shape` /
+  `check_csvs` 那組 `file=lenses/x.csv` 是相對 pack 根 —— 併回後 repo 根沒有這個檔，annotation
+  貼不上 PR diff（runner 只自動轉換 workspace 底下的**絕對**路徑，所以 manifest 那組不動）。
+  新增 `ann_path()`：相對 repo 根 + 依 runner `_escapePropertyMappings` 轉義 `% \r \n : ,`。
+- **`culprit is not None` 把「沒有這條 entry」與「有名字但 source 缺席」混為一談**（MEDIUM）：
+  忘了寫 `source` 仍被導向「再加一條 entry」。存在性改用 key 判。
+- **反向 glob 沒有 containment**（LOW）：`plugins/evil → repo 外` 的 plugin.json 會被讀 ——
+  五處 `_inside` 硬化漏了第六處。先判再讀。
+- 零星：`emit()` 截斷補測試（mutation 存活）；`:379` 改用已解析的 `pj_obj`；`_inside` 的 3.8
+  fallback 補「含自身」；`EVENTS` 旁註明與 `test.yml` `on:` 是兩份規格；`test/run.sh` 補
+  `bin/pai-list-profiles` 的 shellcheck、`pai-collect-lens-layers` 的 py_compile、並跑 pack 的
+  python 測試（先前 66 條測試沒有任何本機入口，`test/README.md` 的「CI 跑同一組」為假）；
+  `test.yml` 補兩支 lint 的 shellcheck 與 `node` 隱含相依的註解；root README「純資料無程式碼」
+  改為與目錄樹一致；刪掉 subtree 殘留的 `plugins/pai-lenses/.gitignore`；本段 R8 的 mutation
+  數字自相矛盾處已改寫（見上）。
+- **跨 profile 的 lens 檔改名先前算「純改名」**（R11 修法後自己的 mutation 量測抓到：新加的
+  「沒改名時不回現路徑」靶在 git 分支存活）：`lenses/code.csv → lenses/academic.csv` 是同一 pack 內
+  的 R100，(a) `_find_pack_at` 的多數決把 pack 自己投成「舊路徑」、印假的「純目錄改名」；
+  (b) `R100` 被無條件當純改名 —— 但**檔名就是 profile**，整批 lens 換了 profile 而不 bump，
+  使用者收不到。現在 pack 內部改名不投票，且只有檔名（profile）不變的 R100 才是純改名。
+- 明示**不在本 PR**：`bin/pai-collect-lens-layers` 的 semver prefix match／prerelease 打平靠
+  readdir／`<profile>` 未驗證 → #56（不在本 diff 內）；shellcheck 清單的自動列舉 → #30。
+
+  測試 66 → 79 條；靶清單 56 → 68 個。量測（R11 後）的殺／存活數見 `scripts/test_validate.py` 檔頭。
 
 ## [2.23.0] - 2026-09-10
 

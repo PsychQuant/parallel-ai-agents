@@ -15,10 +15,13 @@
 mutation」。**那三句話會讓下一個維護者以為改動 `validate.py` 有測試網接著。**
 
 現在用 `scripts/mutation_check.py` 量：跑一次就知道哪些閘門沒有測試網。
-**最近一次量測（R10 後）：56 個靶**（數字與存活清單請跑一次 `mutation_check.py`） —— 三個存活逐條實測後，
-兩個是真缺口（已補測試，現在會轉紅），只有下面那個是 equivalent mutant；唯一存活的「catalog 缺檔」
-經實測確認是 *equivalent mutant*（拿掉那道 `is_file()` 前置檢查後，`cat.open()` 仍拋
-`OSError` 被同一個 `except` 接住並報同一語意的錯、同樣 rc=1 —— 縱深防禦，不是缺口）。
+**最近一次量測（R11 後）：68 個靶 → 64 殺 / 4 存活 / 0 靶壞**（數字與存活清單請跑一次
+`mutation_check.py`）。四個存活逐條實測都是 equivalent mutant（縱深防禦，不是缺口）：
+「containment（只判目錄層）」自 R11 起被反向 glob 的 containment 先一步接住（訊息同為
+「落在 repo 外」）；「catalog 缺檔」拿掉 `is_file()` 前置檢查後 `cat.open()` 仍拋 `OSError`
+被同一個 `except` 接住、同樣 rc=1；「pack 內部改名不投票」與「純改名偵測不得在沒改名時回現路徑
+（git 分支）」互為後盾 —— 關掉其中一個，另一個（或 name 分支的同一守衛）仍讓 `_find_pack_at`
+回 None，而跨 profile 的 R100 又已由 basename 判定擋下，所以單獨關掉任一個行為不變。
 
 > 這個數字**會過期**。判準不是相信這段話，而是跑一次 `mutation_check.py`。
 > CI 會跑 `--check-targets`（秒級），所以「靶清單與程式碼漂移」擋得住；
@@ -774,6 +777,189 @@ class ValidateTest(unittest.TestCase):
         self.assertNotIn("Traceback", out, f"base 那側也不該是裸 traceback：\n{out}")
         self.assertEqual(rc, 1, out)
         self.assertIn("::error", out)
+
+    # ---- #33 verify R11 ----
+
+    INJECT = "\n::stop-commands::zzz\n::error file=innocent.py,line=1::forged"
+
+    def assertNoInjectedCommand(self, out):
+        """輸出裡每一行凡 `TrimStart()` 後以 `::` 開頭者（runner 就是這樣判的），
+        都必須是 validator 自己的 annotation 形狀，且不得帶注入標記。"""
+        for line in out.splitlines():
+            t = line.lstrip()
+            if not t.startswith("::"):
+                continue
+            self.assertFalse(t.startswith("::stop-commands::"), out)
+            self.assertRegex(t, r"^::(error|warning|notice)(\s[^:]*)?::",
+                             f"非 validator 形狀的 workflow command：{line!r}\n{out}")
+            # runner 只把第二個 `::` 之前的部分當 command + properties；payload 以資料的
+            # 身分出現在**訊息**裡是合法的（它已被 ⏎ 壓成同一行），出現在 head 才是偽造。
+            head = t.split("::", 2)[1]
+            self.assertNotIn("innocent.py", head, f"偽造的 annotation property：\n{out}")
+
+    def test_manifest_version_cannot_inject_workflow_commands(self):
+        """R11 #1：`check_version` 的成功路徑用裸 `print()` 印 version —— 整支程式的第 2 行
+        就能是 `::stop-commands::`，之後所有 `::error::` 全被 runner 吞掉。"""
+        self.fx.edit_json("plugins/pai-lenses/.claude-plugin/plugin.json",
+                          lambda d: d.__setitem__("version", "0.2.0" + self.INJECT))
+        rc, out = self.fx.run()
+        self.assertNoInjectedCommand(out)
+
+    def test_manifest_name_cannot_inject_on_the_green_path(self):
+        """R11 #1（最嚴重的一條）：兩份 manifest 的 `name` 同時含換行 → 身分檢查通過、
+        版本一致、lens 沒動 —— **rc=0 全綠**，而 log 帶 `::stop-commands::`。"""
+        evil = "pai-lenses" + self.INJECT
+        self.fx.edit_json("plugins/pai-lenses/.claude-plugin/plugin.json",
+                          lambda d: d.__setitem__("name", evil))
+        def rename_entry(d):
+            for e in d["plugins"]:
+                if e.get("name") == "pai-lenses":
+                    e["name"] = evil
+        self.fx.edit_json(".claude-plugin/marketplace.json", rename_entry)
+        rc, out = self.fx.run()
+        self.assertNoInjectedCommand(out)
+
+    def test_output_boundary_covers_stdout_and_stderr(self):
+        """R11 DA D2：runner 對 stderr 用**同一個** ActionCommandManager 解析，
+        所以邊界必須同時包住兩條 stream；且要能處理跨多次 write() 的部分行。"""
+        import io
+        sys.path.insert(0, str(HERE))
+        import validate as V
+        buf = io.StringIO()
+        w = V.LineSanitiser(buf)
+        w.write("ok\n::stop-commands::x\n")
+        w.write("  ::err")          # 縮排 + 分兩次寫完一行
+        w.write("or::y\nplain::mid\n")
+        self.assertEqual(buf.getvalue(), "ok\n∷stop-commands::x\n  ∷error::y\nplain::mid\n")
+        # main() 前必須把兩條 stream 都換掉；emit() 走原始 stream 才印得出真的 annotation。
+        old_out, old_err = sys.stdout, sys.stderr
+        try:
+            V.install_output_boundary()
+            self.assertIsInstance(sys.stdout, V.LineSanitiser)
+            self.assertIsInstance(sys.stderr, V.LineSanitiser)
+            self.assertIs(V.RAW_OUT, old_out)
+        finally:
+            sys.stdout, sys.stderr = old_out, old_err
+            V.RAW_OUT = None
+
+    def test_emit_truncates_overlong_lines(self):
+        """R11 #13：`emit()` 的截斷先前零測試（mutation 存活）。"""
+        self.fx.edit_json("plugins/pai-lenses/.claude-plugin/plugin.json",
+                          lambda d: d.__setitem__("version", "v" * 5000))
+        rc, out = self.fx.run()
+        self.assertEqual(rc, 1, out)
+        cmds = [ln for ln in out.splitlines() if ln.startswith("::")]
+        self.assertTrue(any(ln.endswith("…（截斷）") for ln in cmds), out)
+        self.assertFalse(any(len(ln) > 4200 for ln in cmds), "超長的 annotation 沒被截斷")
+
+    def test_duplicate_entry_name_with_remote_source_is_error(self):
+        """R11 #2：`entry_names.add()` 在所有 `continue` 之後 —— 第二條同名 entry 只要
+        source 是遠端，撞名完全不報、rc=0。情境正是「舊的遠端 pai-lenses entry 沒刪乾淨」。"""
+        self.fx.add_entry("pai-lenses", "github:someone/pai-lenses")
+        self.assertRed(contains="重複", msg="遠端來源的同名 entry 也要報撞名")
+
+    def test_clean_run_does_not_claim_a_rename(self):
+        """R11 #4：`_find_pack_at` 在沒改名時回傳現路徑，於是每個沒碰 lens 的 PR 都印
+        「（偵測到純目錄改名，內容零變動）」—— 綠燈路徑上一句永遠為假的話。"""
+        base = self.fx.commit("base")
+        (self.fx.repo / "README.md").write_text("unrelated\n", encoding="utf-8")
+        self.fx.commit("無關檔案")
+        for ev in ("push", "pull_request"):
+            out = self.assertGreen(("--base", base, "--event", ev), msg=ev)
+            self.assertNotIn("純目錄改名", out, f"沒有改名不得宣稱偵測到改名（{ev}）：\n{out}")
+
+    def test_rename_plus_small_edit_is_still_caught(self):
+        """R11 #5：既有的「改名 + 改內容」fixture 整檔覆寫，git 判成 A/D 而非 R，沒踩到
+        `R100` 那條分支。這裡只 append 一行（git 判 R09x），把放寬方向鎖住。"""
+        base = self.fx.commit("base")
+        git(self.fx.repo, "mv", "plugins/pai-lenses", "plugins/lens-pack")
+        self.fx.set_entry("pai-lenses", source="./plugins/lens-pack")
+        csv_path = self.fx.repo / "plugins/lens-pack/lenses/code.csv"
+        csv_path.write_text(csv_path.read_text(encoding="utf-8") + 'added,"append one lens"\n',
+                            encoding="utf-8")
+        self.fx.commit("改名 + 追加一條")
+        # 兩個路徑都給 git，rename detection 才配得起來（validate.py 自己也是這樣呼叫的）。
+        status = git(self.fx.repo, "diff", "--name-status", "-M", base, "HEAD",
+                     "--", "plugins/pai-lenses/lenses", "plugins/lens-pack/lenses").stdout
+        self.assertRegex(status, r"^R0\d\d\t", f"fixture 必須逼出 R0xx：\n{status}")
+        rc, out = self.fx.run("--base", base, "--event", "push",
+                              script="plugins/lens-pack/scripts/validate.py")
+        self.assertEqual(rc, 1, f"改名時追加 lens 仍要擋：\n{out}")
+        self.assertIn("版本沒有增加", out)
+
+    def test_description_version_prefix_must_match_version(self):
+        """R11 #3：rebase 後 version 改 2.24.0、description 仍寫 `v2.23.0:`，而兩份一起錯時
+        既有的 description-drift 閘門靜默。description 若帶 `v<semver>:` 前綴，最新那個
+        必須等於 version 欄。"""
+        self.fx.edit_json("plugins/pai-lenses/.claude-plugin/plugin.json",
+                          lambda d: d.__setitem__("description", "v9.9.9: 假的版本說明"))
+        self.fx.set_entry("pai-lenses", description="v9.9.9: 假的版本說明")
+        out = self.assertGreen(msg="只 warning 不 error")
+        self.assertIn("::warning", out)
+        self.assertIn("v9.9.9", out)
+        self.assertIn("description", out)
+
+    def test_comma_in_filename_cannot_forge_annotation_properties(self):
+        """R11 #6：runner 用 `,` 切 property、`=` 切 key/value；`file=` 位置從未消毒。
+        檔名 `x,line=99,title=CI PASSED.CSV` 會被渲染成第 99 行、標題「CI PASSED」。"""
+        (self.fx.repo / "plugins/pai-lenses/lenses" / "x,line=99,col=1,title=CI PASSED.CSV").write_text(
+            'key,focus\nk,"f"\n', encoding="utf-8")
+        rc, out = self.fx.run()
+        self.assertEqual(rc, 1, out)
+        for line in out.splitlines():
+            if line.startswith("::"):
+                head = line.split("::", 2)[1]      # `error file=…,line=…`
+                # 照 runner 的切法：`,` 切 property、第一個 `=` 切 key/value。
+                keys = [kv.split("=", 1)[0] for kv in head.split(" ", 1)[1].split(",")] \
+                    if " " in head else []
+                self.assertNotIn("line", keys, f"property 被檔名偽造：{line}")
+                self.assertNotIn("title", keys, f"property 被檔名偽造：{line}")
+
+    def test_lens_annotation_file_path_is_repo_relative(self):
+        """R11 #7：`file=lenses/code.csv` 是相對 pack 根 —— 併回後 repo 根沒有這個檔，
+        annotation 貼不上 PR diff。runner 只會自動轉換 workspace 底下的絕對路徑。"""
+        (self.fx.repo / "plugins/pai-lenses/lenses/Upper.CSV").write_text(
+            'key,focus\nk,"f"\n', encoding="utf-8")
+        out = self.assertRed(contains="副檔名必須是小寫")
+        self.assertIn("file=plugins/pai-lenses/lenses/Upper.CSV::", out)
+
+    def test_entry_without_source_field_says_fix_the_entry(self):
+        """R11 #8：`culprit is not None` 把「沒有這個名字的 entry」與「有名字但 source
+        缺席／null」混為一談 —— 最常見的寫錯（忘了寫 source）仍被導向「再加一條 entry」。"""
+        def drop_source(d):
+            for e in d["plugins"]:
+                if e.get("name") == "pai-lenses":
+                    e.pop("source", None)
+        self.fx.edit_json(".claude-plugin/marketplace.json", drop_source)
+        out = self.assertRed(contains="要修的是那條 entry 的 source")
+        self.assertNotIn("沒有指向它的 entry", out)
+
+    def test_reverse_check_does_not_read_plugin_json_outside_repo(self):
+        """R11 #12：`check_marketplace_sync` 的反向 glob 跟隨 symlink —— 五處 `_inside`
+        硬化漏了第六處。"""
+        outside = self.fx.dir / "evilplug"
+        (outside / ".claude-plugin").mkdir(parents=True)
+        (outside / ".claude-plugin/plugin.json").write_text(
+            '{"name":"evil","version":"1.0.0","description":"SECRET-OUTSIDE-DESC"}\n',
+            encoding="utf-8")
+        (self.fx.repo / "plugins/evil").symlink_to(outside)
+        out = self.assertRed(contains="落在 repo 外")
+        self.assertNotIn("SECRET-OUTSIDE-DESC", out)
+        self.assertNotIn("plugins/evil 有 plugin.json", out, "不可先讀了才報")
+
+    def test_lens_file_rename_across_profiles_is_a_change_not_a_pure_rename(self):
+        """R11 mutation 存活（git 分支）：`lenses/code.csv → lenses/academic.csv` 是同一 pack 內的
+        R100 —— 先前 (a) `_find_pack_at` 的多數決把 pack 自己投成「舊路徑」、印出假的
+        「純目錄改名」；(b) `R100` 被無條件當成純改名 —— 但檔名就是 profile，lens 整批從 code
+        搬到 academic 是**真的變更**，使用者 /plugin update 收不到卻沒 bump。"""
+        base = self.fx.commit("base")
+        git(self.fx.repo, "mv", "plugins/pai-lenses/lenses/code.csv",
+            "plugins/pai-lenses/lenses/academic.csv")
+        self.fx.commit("lens 檔改名到另一個 profile")
+        rc, out = self.fx.run("--base", base, "--event", "push")
+        self.assertNotIn("純目錄改名", out, f"pack 目錄沒動，不得宣稱目錄改名：\n{out}")
+        self.assertEqual(rc, 1, f"跨 profile 的 lens 搬移要 bump：\n{out}")
+        self.assertIn("版本沒有增加", out)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
