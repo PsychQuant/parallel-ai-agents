@@ -26,6 +26,10 @@ ensemble-* 的程式表面看似都是「LLM 驅動的編排」，不可測。�
 | `pai-eval-grade.test.mjs` | `../bin/pai-eval-grade`（eval 評分器：detect 容差聚合 / fix 修稿驗證 —— eval 裡唯一確定性、可單元測的部分）|
 | `codex-call-error-extract.bats` | `../bin/codex-call` 的 SSE error 訊息提取（`--selftest-error-extract`）—— **macOS-only**（codex-call 是 `#!/usr/bin/swift` script），在非 macOS 環境自我 skip |
 | `codex-profile.bats` | repo root `.codex-pro/profile.yaml`（#48 專案層 codex-pro profile pin）—— 用 `references/codex-governance.md` 同組正規式鎖住解析後字面、重複 key、git 追蹤；fixture 三層優先序（不依賴 codex-pro cache）；形狀驗證拒絕注入。與 governance 文件是連動點（codex-pro#18 / #19）|
+| `codex-call-detach.bats` | `../bin/codex-call` 的背景模式（`--detach`／`--poll`／`--abort`／`--force-reap`；#37）—— **macOS-only**、95 case；全部走同一條 detach／lock／claim／poll 路徑，只用 `--_selftest-*` 旗標把 HTTP 換成 sleep＋寫檔（任何沒帶 selftest 旗標的 detach 都會真的發 HTTPS）。**不可與另一組 bats 在同一 checkout 並行**（`own_workers` 斷言是 checkout 級） |
+| `lint-bats.sh` | 護欄：bats 檔內不得有裸 `!` 斷言（errexit 不觸發，斷言變 no-op；round 6 RC11）。`--selftest` 對 `fixtures/lint-bats-bad.bats` 必須拒絕 |
+| `lint-changelog-counts.sh` | 護欄：CHANGELOG 每個「N 個 case（`grep -c "^@test" <file>`）」宣稱，N 必須等於那條命令此刻的輸出（RC13 第五度復發後機械化，#37 round 10）。`--selftest` 對 `fixtures/changelog-count-bad.md` 拒絕 |
+| `lint-contract-enumerations.sh` | 護欄：`references/codex-call-contract.md` 自稱封閉的列舉（各命令的 stdout token、exit-1 答案、abort 表列數、§6 項數、`R10-B5s` pattern 唯一性）必須與 `bin/codex-call` 一致（#37 round 11——同型手打枚舉缺陷在一輪契約裡復發四次）。`--selftest` 對 `fixtures/contract-enum-bad/` 五個 fixture 各自拒絕 |
 
 `pai-parse-lens-csv.bats` 涵蓋：含逗號/引號/換行的 focus（csv 模組、不被切爛）、needsSrt 變體、空欄跳過、**BOM 不丟列（utf-8-sig regression）**、CRLF、缺檔/缺欄。
 `codex-call-error-extract.bats` 的 SUT 是 macOS-only 的 Swift script，故在 ubuntu job 上會**自我 skip**；CI 另有 `macos-swift-bats` job 確保它真的被執行（只加 skip guard 而不加 job，錨點會變成永遠 skip 的 vacuous green —— #25 verify）。
@@ -42,7 +46,7 @@ ensemble-* 的程式表面看似都是「LLM 驅動的編排」，不可測。�
 # 前置（一次性）
 brew install bats-core shellcheck
 
-# 一鍵：shellcheck + bats
+# 一鍵：shellcheck + py_compile + 三支 lint（各含 selftest）+ bats + node
 ./test/run.sh
 
 # 或分開
