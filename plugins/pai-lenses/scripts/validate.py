@@ -100,21 +100,54 @@ class LineSanitiser:
     `emit()` → 現在）。DA 另外查到 **stderr 走同一個 `ActionCommandManager` 實例**，所以
     第四次必須一次到位：兩條 stream 都包，且以 runner 的判準（`lstrip()` 後的行首）為準。
     `emit()` 走 `RAW_OUT` 繞過這層 —— 它是**唯一**能印出真 annotation 的路徑，且自己保證
-    一行永遠是一行。跨多次 `write()` 的部分行也要對：`print()` 是先寫內容再寫 `\\n`。"""
+    一行永遠是一行。跨多次 `write()` 的部分行也要對：`print()` 是先寫內容再寫 `\\n`。
+
+    #33 verify R12（三個 lens + DA 各自重現）：R11 版用 `str.splitlines()` 切段（Python 認 8 種
+    行界：含 `\\v` `\\f` `\\x85` U+2028 U+2029），卻用 `endswith(("\\n","\\r"))` 判行首 —— 兩套「行」
+    的定義一交叉，`_at_line_start` 在實體行中途歸零，下一段的 `::` 不經消毒；而 .NET `TrimStart()`
+    會把那五個字元當空白吃掉，runner 眼裡就是行首 command。實測 `name` 含 `\\n\\v::stop-commands::`
+    → **rc=0 全綠**且 log 帶它，與 R11 的攻擊只差一個字元。同一個邊界第四次劃錯。現在「行」只有
+    一種定義：**runner 的**（`\\r` / `\\n` 之後才是新行），判行首用 Python `lstrip()`（其空白集合
+    是 .NET `IsWhiteSpace` 的超集，過度消毒是安全方向）。
+
+    **這層守的邊界（明寫，免得第五次）**：經 `sys.stdout` / `sys.stderr` 的 `.write()` 文字寫入。
+    它守不住 `sys.stdout.buffer.write()`、`os.write(1, …)`、以及**不帶 `capture_output=True`
+    的子行程**（繼承 fd 1/2）。本檔零 `.buffer`／`os.write` 呼叫，12 處 `subprocess.run` 全部
+    `capture_output=True` —— 那是紀律，不是機械保證；新增子行程呼叫時必須沿用。"""
+
+    _LINE_END = re.compile(r"(?<=[\r\n])")
 
     def __init__(self, stream):
         self._stream = stream
-        self._at_line_start = True
+        self._pending = ""          # 未完成的一行（還沒看到 \r / \n）
+
+    @staticmethod
+    def _neutralise(line):
+        # V2：`TrimStart()` 後行首的 `::`（判行首用 Python lstrip —— .NET IsWhiteSpace 的超集，過度消毒是安全方向）。
+        if line.lstrip().startswith("::"):
+            line = line.replace("::", "∷", 1)
+        # V1：`##[cmd …]…` 由 IndexOf 定位，不 trim、不錨定行首 —— 只能全行取代（#33 verify R12 DA-1，
+        # primary source：actions/runner ActionCommandManager.TryProcessCommand 依序試 TryParseV2 與 TryParse）。
+        return line.replace("##[", "##［")
 
     def write(self, text):
-        for seg in str(text).splitlines(keepends=True):
-            if self._at_line_start and seg.lstrip().startswith("::"):
-                seg = seg.replace("::", "∷", 1)
-            self._at_line_start = seg.endswith(("\n", "\r"))
-            self._stream.write(seg)
+        # #33 verify R12 DA-3：只記「上一段有沒有以行界結尾」看不到被切在兩次 write() 中間的 `::`
+        # （`write("x\n:")` + `write(":stop-commands::…")`）。改成緩衝未完成的一行，到行界才判、才寫——
+        # 「一行永遠是一行」因此是實作保證，不是呼叫慣例。
+        data = self._pending + str(text)
+        segs = [x for x in self._LINE_END.split(data) if x]
+        if segs and not segs[-1].endswith(("\n", "\r")):
+            self._pending = segs.pop()
+        else:
+            self._pending = ""
+        for seg in segs:
+            self._stream.write(self._neutralise(seg))
         return len(text)
 
     def flush(self):
+        if self._pending:               # 程序結束（或顯式 flush）時把殘餘那一行也經同一道判定寫出
+            self._stream.write(self._neutralise(self._pending))
+            self._pending = ""
         self._stream.flush()
 
     def __getattr__(self, name):          # encoding / isatty / fileno … 透傳
@@ -146,10 +179,35 @@ def emit(line):
     **繞過**那層去寫原始 stdout 的地方，所以它自己必須保證一行永遠是一行（CR/LF 換成
     `⏎`）並限長。行內的 `::` 保持原樣 —— 它是 annotation 格式的一部分（`::error file=x::msg`），
     而 runner 只在 `TrimStart()` 後的行首認 command。"""
-    t = str(line).replace("\r\n", "⏎").replace("\n", "⏎").replace("\r", "⏎")
-    if len(t) > 4000:
-        t = t[:4000] + "…（截斷）"
-    (RAW_OUT or sys.stdout).write(t + "\n")
+    t = collapse_lines(str(line))
+    t = t.replace("##[", "##［")
+    # #33 verify R12 DA-1（推論，已補成測試）：截斷若把第二個 `::` 推過 4000，TryParseV2 找不到
+    # 命令尾就 return false，該行落到 V1 parser。所以只截**訊息**，`::cmd props::` 這個頭永遠完整。
+    head_end = t.find("::", 2) if t.startswith("::") else -1
+    head, msg = (t[:head_end + 2], t[head_end + 2:]) if head_end > 0 else ("", t)
+    if len(msg) > 4000:
+        msg = msg[:4000] + "…（截斷）"
+    (RAW_OUT or sys.stdout).write(head + msg + "\n")
+
+
+# Python `str.splitlines()` 認得的全部行界。runner 只認 `\r` / `\n`，但 emit() / wc() 的承諾是
+# 「一行永遠是一行」—— 在任何切行慣例下都成立才叫承諾（#33 verify R12，縱深防禦）。
+_LINE_BREAKS = ("\r\n", "\n", "\r", "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", " ", " ")
+
+
+def collapse_lines(t):
+    for br in _LINE_BREAKS:
+        t = t.replace(br, "⏎")
+    return t
+
+
+def prop(value):
+    """annotation **property 位置**（`file=` / `title=` …）的值：依 runner `_escapePropertyMappings`
+    轉義 `%` `\\r` `\\n` `:` `,`。#33 verify R12（logic L2）：R11 的 `ann_path()` 只落在 lens CSV
+    兩個站點，manifest 側 24 個 `file=` 仍是裸路徑 —— 目錄名 `plugins/evil,line=1,title=CI PASSED/`
+    一樣能偽造 property。現在**所有** `file=` 都經這裡。"""
+    return (str(value).replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+                      .replace(":", "%3A").replace(",", "%2C"))
 
 
 def ann_path(p, root):
@@ -163,8 +221,7 @@ def ann_path(p, root):
         rel = pathlib.Path(p).relative_to(ws).as_posix()
     except ValueError:
         rel = pathlib.Path(p).as_posix()
-    return (rel.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-               .replace(":", "%3A").replace(",", "%2C"))
+    return prop(rel)
 
 
 def wc(value, limit=200):
@@ -177,12 +234,11 @@ def wc(value, limit=200):
     最後印出的每一條 `::error::`。job 仍然紅，但 PR 上不會有任何 annotation 指出問題在哪，
     等於把本 PR 一路在建的 fail-loud 降級成 fail-silent；還能偽造指向無辜檔案的 annotation。
 
-    做三件事：換行與 CR 換成 `⏎`（保留可讀性、不製造新行）、`::` 換成 `∷`（U+2237，
-    形似但不是 workflow-command 分隔符）、超長截斷。
+    做四件事：所有行界換成 `⏎`（保留可讀性、不製造新行）、`::` 換成 `∷`（U+2237，
+    形似但不是 workflow-command 分隔符）、`##[` 換成 `##［`（V1 語法的前綴）、超長截斷。
     """
-    t = str(value)
-    t = t.replace("\r\n", "⏎").replace("\n", "⏎").replace("\r", "⏎")
-    t = t.replace("::", "∷")
+    t = collapse_lines(str(value))
+    t = t.replace("::", "∷").replace("##[", "##［")   # 兩套語法都不能從值裡長出來（R12 DA-1）
     return t if len(t) <= limit else t[:limit] + "…（截斷）"
 
 
@@ -198,10 +254,10 @@ def load_obj(path_or_text, label, errs, *, is_text=False):
         raw = path_or_text if is_text else pathlib.Path(path_or_text).read_text(encoding="utf-8")
         obj = json.loads(raw)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
-        errs.append(f"::error file={label}::讀取失敗：{e}")
+        errs.append(f"::error file={prop(label)}::讀取失敗：{e}")
         return None
     if not isinstance(obj, dict):
-        errs.append(f"::error file={label}::內容是合法 JSON 但不是物件"
+        errs.append(f"::error file={prop(label)}::內容是合法 JSON 但不是物件"
                     f"（是 {type(obj).__name__}）—— manifest 必須是 JSON object")
         return None
     return obj
@@ -253,12 +309,12 @@ def check_version(root, errs):
         risky = [x for x in m["pre"].split(".")
                  if not x.isdigit() and any(c.isdigit() for c in x)]
         if risky:
-            emit(f"::warning file={manifest}::prerelease identifier {risky} 把數字黏在字母後面 —— "
+            emit(f"::warning file={prop(manifest)}::prerelease identifier {risky} 把數字黏在字母後面 —— "
                   "semver §11 對這種 identifier 按 ASCII 比較，於是 `rc9` 排在 `rc10` **之後**，"
                   "遞增發布會被 bump 閘門擋下。請改用點分隔（`rc.9` / `rc.10`），數字段才會按整數比較")
     if version_tuple(version) is None:
         errs.append(
-            f"::error file={manifest}::需要 semver version（現在是 '{version}'）—— 缺了或格式不對時 "
+            f"::error file={prop(manifest)}::需要 semver version（現在是 '{version}'）—— 缺了或格式不對時 "
             "cache 目錄名會退回 commit SHA 或 unknown，consumer 的 semver glob 定位不到這個 pack"
         )
 
@@ -291,7 +347,7 @@ def check_marketplace_sync(root, errs):
         return
     plugins = mp_obj.get("plugins", [])
     if not isinstance(plugins, list):
-        errs.append(f"::error file={mp}::`plugins` 必須是陣列（現在是 {type(plugins).__name__}）"
+        errs.append(f"::error file={prop(mp)}::`plugins` 必須是陣列（現在是 {type(plugins).__name__}）"
                     " —— 迭代 dict 會拿到 key、迭代字串會拿到字元，兩者都會讓下游誤判")
         return
     repo_abs = repo.resolve()
@@ -302,7 +358,7 @@ def check_marketplace_sync(root, errs):
     named_entries = {}   # 有 entry 指名的 plugin 目錄（含被判非法者）
     for entry in plugins:
         if not isinstance(entry, dict):
-            errs.append(f"::error file={mp}::`plugins` 的元素必須是物件"
+            errs.append(f"::error file={prop(mp)}::`plugins` 的元素必須是物件"
                         f"（有一個是 {type(entry).__name__}：{entry!r}）")
             continue
         src = entry.get("source")
@@ -331,7 +387,7 @@ def check_marketplace_sync(root, errs):
         if isinstance(entry.get("name"), str) and entry["name"]:
             named_entries[entry["name"]] = src
             if entry["name"] in entry_names:
-                errs.append(f"::error file={mp}::entry name '{wc(entry['name'])}' 重複 —— "
+                errs.append(f"::error file={prop(mp)}::entry name '{wc(entry['name'])}' 重複 —— "
                             "後出現的會蓋掉先出現的，你以為裝到的可能是另一個")
             entry_names.add(entry["name"])
         rel = None
@@ -345,7 +401,7 @@ def check_marketplace_sync(root, errs):
             elif (repo / src.split("/", 1)[0]).is_dir():
                 rel = src                          # 第一段在本 repo 內存在 → 當相對路徑
             else:
-                emit(f"::warning file={mp}::判不出 {entry.get('name')} 的 source {src!r} "
+                emit(f"::warning file={prop(mp)}::判不出 {entry.get('name')} 的 source {src!r} "
                       "是本 repo 路徑還是遠端來源 —— **未納入版本閘門**。"
                       "本 repo 內的 plugin 請用 './' 開頭的相對路徑")
                 continue
@@ -367,7 +423,7 @@ def check_marketplace_sync(root, errs):
         # error，後者是假訊息（有 entry，只是非法）。R6 只測了 symlink 那條（它在登記之後）。
         claimed.add(pathlib.Path(os.path.normpath(repo_abs / rel)))
         if os.path.isabs(rel) or ".." in pathlib.PurePosixPath(rel).parts:
-            errs.append(f"::error file={mp}::{wc(entry.get('name'))} 的 source 是 {wc(repr(src))} —— "
+            errs.append(f"::error file={prop(mp)}::{wc(entry.get('name'))} 的 source 是 {wc(repr(src))} —— "
                         "本 repo 內的 plugin 只能用不含 '..' 的相對路徑。"
                         "絕對路徑與 '..' 會讓這道版本閘門去比對 repo 外的檔案")
             continue
@@ -383,12 +439,12 @@ def check_marketplace_sync(root, errs):
         pj = (resolved / ".claude-plugin" / "plugin.json").resolve()
         outside = [p for p in (resolved, pj) if not _inside(p, repo_abs)]
         if outside:
-            errs.append(f"::error file={mp}::{entry.get('name')} 的 source {src!r} "
+            errs.append(f"::error file={prop(mp)}::{entry.get('name')} 的 source {src!r} "
                         f"解析後落在 repo 外（{outside[0]}）—— 可能是 symlink。"
                         "版本閘門只能比對本 repo 內的 plugin")
             continue
         if not pj.is_file():
-            errs.append(f"::error file={mp}::{entry.get('name')} 的 source 指向 {src}，"
+            errs.append(f"::error file={prop(mp)}::{entry.get('name')} 的 source 指向 {src}，"
                         "但該處沒有 .claude-plugin/plugin.json")
             continue
         pj_obj = load_obj(pj, pj, errs)
@@ -402,14 +458,14 @@ def check_marketplace_sync(root, errs):
         # CRITICAL 並宣稱「機械閘門守這條」—— 那句話漏掉了身分這一半。
         ent_name, pj_name = entry.get("name"), pj_obj.get("name")
         if not ent_name:
-            errs.append(f"::error file={mp}::有一個指向 {rel} 的 entry 沒有 name —— "
+            errs.append(f"::error file={prop(mp)}::有一個指向 {rel} 的 entry 沒有 name —— "
                         "使用者 `/plugin install <name>@<marketplace>` 沒有名字可用")
         elif pj_name and ent_name != pj_name:
-            errs.append(f"::error file={mp}::entry name '{ent_name}' 與 {rel} 的 "
+            errs.append(f"::error file={prop(mp)}::entry name '{ent_name}' 與 {rel} 的 "
                         f"plugin.json name '{pj_name}' 不一致 —— 兩者必須相同，"
                         "否則使用者用哪一個名字都可能裝不到")
         if resolved in claimed_paths:
-            errs.append(f"::error file={mp}::有兩個 entry 指向同一個目錄 {rel} —— "
+            errs.append(f"::error file={prop(mp)}::有兩個 entry 指向同一個目錄 {rel} —— "
                         "無法判斷哪一個才是那個 plugin 的 entry")
         claimed_paths.add(resolved)
 
@@ -420,20 +476,20 @@ def check_marketplace_sync(root, errs):
         # cache 目錄名不是 semver 時 consumer 的 glob 定位不到，那是逐 plugin 成立的失敗。
         for label, val in (("plugin.json", pj_ver), ("marketplace.json", mp_ver)):
             if val is not None and version_tuple(val) is None:
-                errs.append(f"::error file={mp}::{entry.get('name')} 的 {label} version "
+                errs.append(f"::error file={prop(mp)}::{entry.get('name')} 的 {label} version "
                             f"'{val}' 不是 semver —— cache 目錄名會退回 commit SHA 或 unknown，"
                             "consumer 的 semver glob 定位不到這個 plugin")
         # #33 verify R4：先前 `mp_ver != pj_ver` 把「兩邊都沒有 version」判為一致並印 ✓ ——
         # 而那正是 pack README 說會讓 pack 靜默消失（cache 目錄名不是 semver）的條件。
         if pj_ver is None or mp_ver is None:
             errs.append(
-                f"::error file={mp}::{entry.get('name')} 缺 version"
+                f"::error file={prop(mp)}::{entry.get('name')} 缺 version"
                 f"（plugin.json={pj_ver!r}、marketplace.json={mp_ver!r}）。"
                 "兩邊都沒有不是「一致」—— cache 目錄名會退回 commit SHA，consumer 定位不到"
             )
         elif mp_ver != pj_ver:
             errs.append(
-                f"::error file={mp}::{entry.get('name')} version 不同步 —— "
+                f"::error file={prop(mp)}::{entry.get('name')} version 不同步 —— "
                 f"plugin.json={pj_ver} 但 marketplace.json={mp_ver}。"
                 "兩者不一致時使用者 /plugin update 收不到新版，且不會有任何錯誤訊息"
             )
@@ -447,7 +503,7 @@ def check_marketplace_sync(root, errs):
         pj_desc = pj_obj.get("description")      # R11 #13：同一份已解析的物件，不再重讀重解
         mp_desc = entry.get("description")
         if pj_desc is not None and mp_desc is not None and pj_desc != mp_desc:
-            emit(f"::warning file={mp}::{entry.get('name')} 的 description 兩處不同步 —— "
+            emit(f"::warning file={prop(mp)}::{entry.get('name')} 的 description 兩處不同步 —— "
                   "使用者在 /plugin 看到的是 marketplace 那份，可能在敘述舊版本的內容")
         # #33 verify R11 #3：上面那道閘門只比兩份**彼此**是否相同 —— rebase 把 version 改成
         # 2.24.0 而兩份 description 都還寫「v2.23.0: …」時，它印綠。description 若以
@@ -455,11 +511,11 @@ def check_marketplace_sync(root, errs):
         for label, desc in (("plugin.json", pj_desc), ("marketplace.json", mp_desc)):
             m_desc = re.search(r"\bv(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?):", str(desc or ""))
             if m_desc and pj_ver and m_desc.group(1) != pj_ver:
-                emit(f"::warning file={mp}::{entry.get('name')} 的 {label} description 最新一段標示 "
+                emit(f"::warning file={prop(mp)}::{entry.get('name')} 的 {label} description 最新一段標示 "
                       f"v{m_desc.group(1)}，但 version 是 {pj_ver} —— 使用者會把這一版的內容"
                       "歸給另一個版號。發版時 description 的版號前綴要跟著改")
     if seen == 0:
-        errs.append(f"::error file={mp}::沒有任何本 repo 內的 plugin 被檢查 —— 這個檢查形同虛設")
+        errs.append(f"::error file={prop(mp)}::沒有任何本 repo 內的 plugin 被檢查 —— 這個檢查形同虛設")
 
     # 反向：檔案系統 → marketplace entry。缺 entry 的 plugin 使用者根本裝不到，
     # 而正向迴圈**結構上**看不到它（它不在 plugins 陣列裡）。#33 verify R6。
@@ -468,15 +524,18 @@ def check_marketplace_sync(root, errs):
         # #33 verify R11 #12：`glob` 會跟隨 symlink —— 五處 `_inside` 硬化漏了這第六處，
         # `plugins/evil -> repo 外` 的 plugin.json 會被讀。與正向路徑同一判準：先判、再讀。
         if not _inside(found.resolve(), repo_abs):
-            errs.append(f"::error file={mp}::{pdir.relative_to(repo_abs)} 解析後落在 repo 外"
+            errs.append(f"::error file={prop(mp)}::{pdir.relative_to(repo_abs)} 解析後落在 repo 外"
                         "（可能是 symlink）—— 拒絕讀取。validator 只能讀本 repo 內的 plugin")
             continue
         if pathlib.Path(os.path.normpath(pdir)) not in claimed:
             # 先看有沒有「名字對得上但 source 指錯地方」的 entry —— 訊息要指向真正的修法。
-            try:
-                dir_name = json.loads(
-                    found.read_text(encoding="utf-8")).get("name")
-            except (OSError, json.JSONDecodeError, AttributeError):
+            # #33 verify R12（security #2）：這裡先前是唯一沒走 load_obj 的 JSON 讀取點 ——
+            # `{"name":[]}` 在下面的 `in` 上拋 TypeError、非 UTF-8 拋 UnicodeDecodeError，
+            # 兩者都是裸 traceback、零 annotation、已累積的 errs 全部消失。load_obj 的 docstring
+            # 逐字寫著這個後果，R9/R10 修了三個站點、漏了這第四個。
+            found_obj = load_obj(found, found, errs)
+            dir_name = found_obj.get("name") if found_obj else None
+            if not isinstance(dir_name, str):
                 dir_name = None
             # #33 verify R11 #8：存在性用 key 判，不用值判 —— `named_entries[name]` 存的是
             # source 的**值**，entry 忘了寫 source（或寫 null）時值就是 None，先前的
@@ -486,12 +545,12 @@ def check_marketplace_sync(root, errs):
                 culprit = named_entries[dir_name]
                 shown = "（entry 沒有 source 欄位）" if culprit is None else f"（{wc(repr(culprit))}）"
                 errs.append(
-                    f"::error file={mp}::有一個名為 {wc(dir_name)} 的 entry，但它的 source "
+                    f"::error file={prop(mp)}::有一個名為 {wc(dir_name)} 的 entry，但它的 source "
                     f"{shown}沒有指向 {pdir.relative_to(repo_abs)} —— "
                     "**要修的是那條 entry 的 source，不是再加一條 entry**")
             else:
                 errs.append(
-                    f"::error file={mp}::{pdir.relative_to(repo_abs)} 有 plugin.json，"
+                    f"::error file={prop(mp)}::{pdir.relative_to(repo_abs)} 有 plugin.json，"
                     f"但 marketplace.json 裡沒有指向它的 entry —— 使用者 "
                     f"`/plugin install {pdir.name}@<marketplace>` 會直接裝不到，且沒有任何錯誤訊息")
 
@@ -526,16 +585,17 @@ def _find_pack_at(repo, ref, pj_rel, name):
             suffix = new_path[len(prefix):]
             if old_path.endswith("/" + suffix):
                 old_pack = old_path[: -(len(suffix) + 1)]
-                # R11：pack 內部的改名（lenses/a.csv → lenses/b.csv）會把 pack 自己投成
-                # 「舊路徑」—— 那不是目錄改名，不算票。
+                # #33 verify R12（logic L3 / DA-6）：下面這個守衛與 `candidate != pj_rel` 在**目前的
+                # 入口條件**（`old_path.endswith("/" + suffix)`）下依構造不可達 —— old_pack == pack_rel
+                # 蘊含 old_path == new_path，而 git 不會對同一條路徑輸出 R。R11 寫的「互為後盾」是假的；
+                # 「沒改名時回 None」真正 load-bearing 的是 name 分支的 `path != pj_rel`。
+                # 保留為防禦（入口一放寬就會變回 load-bearing，R11 #5 才剛動過隔壁），
+                # 對應的兩個 mutation 靶列在 EXPECTED_SURVIVE、不算「可能缺測試」。
                 if old_pack != pack_rel:
                     votes[old_pack] = votes.get(old_pack, 0) + 1
         if votes:
             old_pack = max(votes, key=votes.get)
             candidate = f"{old_pack}/.claude-plugin/plugin.json"
-            # #33 verify R11 #4：契約是「找出**舊**路徑」—— 與現路徑相同就不是改名，回 None。
-            # 先前在沒改名時退回 name 比對、找到現路徑並回傳，呼叫端把「非 None」當「有改名」，
-            # 於是每一個沒碰 lens 的 PR 都在綠燈上印「（偵測到純目錄改名，內容零變動）」。
             if candidate != pj_rel and subprocess.run(
                     ["git", "cat-file", "-e", f"{ref}:{candidate}"],
                     cwd=repo, capture_output=True).returncode == 0:
@@ -557,6 +617,9 @@ def _find_pack_at(repo, ref, pj_rel, name):
             obj = json.loads(blob.stdout)
         except json.JSONDecodeError:
             continue
+        # #33 verify R11 #4：契約是「找出**舊**路徑」—— 與現路徑相同就不是改名，回 None。
+        # 先前在沒改名時退回這條 name 比對、找到現路徑並回傳，呼叫端把「非 None」當「有改名」，
+        # 於是每一個沒碰 lens 的 PR 都在綠燈上印「（偵測到純目錄改名，內容零變動）」。
         if isinstance(obj, dict) and obj.get("name") == name and path != pj_rel:
             return path
     return None
@@ -711,7 +774,7 @@ def check_bumped(root, errs, base, event=None):
     cur = subprocess.run(["git", "show", f"HEAD:{pj_rel}"],
                          cwd=repo, capture_output=True, text=True)
     if cur.returncode != 0:
-        errs.append(f"::error file={pj}::HEAD 上沒有 {pj_rel} —— 無法與 base 比較版本。"
+        errs.append(f"::error file={prop(pj)}::HEAD 上沒有 {pj_rel} —— 無法與 base 比較版本。"
                     "這不是「無需 bump」")
         return
     # #33 verify R6：這兩處 json.loads 先前沒有 try。plugin.json 壞掉時整支 crash，
@@ -737,7 +800,8 @@ def check_bumped(root, errs, base, event=None):
         # 找得到就是改名，用它的舊路徑比對，閘門照跑。找不到才是真的新增。
         moved = moved_pj
         if moved:
-            print(f"note: pack 在 base 時位於 {moved}（本次改名為 {pack_rel}）—— 用舊路徑比對版本")
+            print(f"note: pack 在 base 時位於 {moved[: -len('/.claude-plugin/plugin.json')]}"
+                  f"（本次改名為 {pack_rel}）—— 用舊路徑比對版本")
             old = subprocess.run(["git", "show", f"{cmp_base}:{moved}"],
                                  cwd=repo, capture_output=True, text=True)
             if old.returncode != 0:
@@ -747,16 +811,18 @@ def check_bumped(root, errs, base, event=None):
             print(f"note: base（{cmp_base[:12]}）的樹裡找不到名為 '{pack_name}' 的 pack —— "
                   "本次在新增整個 pack，無前一版可比。這是唯一合法的略過情境")
             return
-    prev_obj = load_obj(old.stdout, f"{cmp_base[:12]}:{pj_rel}", errs, is_text=True)
+    # label 用 repo 相對路徑（R12 logic L2：先前的 `<sha>:<path>` 含裸 `:`，不是 runner 認得的
+    # 任一種路徑慣例，annotation 貼不上）。base 那一側的身分寫進訊息由 errs 的上下文承擔。
+    prev_obj = load_obj(old.stdout, pj_rel, errs, is_text=True)
     if prev_obj is None:
         return
     prev = prev_obj.get("version", "")
     tn, tp = version_tuple(now), version_tuple(prev)
     if tn is None or tp is None:
-        errs.append(f"::error file={pj}::版本字串不是 semver（base={prev!r}、現在={now!r}），無法比較")
+        errs.append(f"::error file={prop(pj)}::版本字串不是 semver（base={prev!r}、現在={now!r}），無法比較")
     elif tn <= tp:
         errs.append(
-            f"::error file={pj}::lenses/ 改了（{wc(', '.join(real))}）"
+            f"::error file={prop(pj)}::lenses/ 改了（{wc(', '.join(real))}）"
             f"但版本沒有增加（base={prev} → 現在={now}）。"
             "版本沒變時使用者 /plugin update 收不到這些 lens，而且不會有任何錯誤訊息"
         )
@@ -790,7 +856,8 @@ def check_lens_dir_shape(root, errs):
         # #33 verify R6：先前用 `p.suffix != ".csv"` 判定，而 pathlib 對 dotfile 回傳空
         # suffix（`Path(".DS_Store").suffix == ""`）→ 一個 .DS_Store 就讓整支 exit 1，
         # 訊息還說它是「大小寫不同的 csv」。本 pack 自己的 .gitignore 就只有 .DS_Store
-        # 一行 —— 作者清楚知道 macOS 會生成它；CI 是乾淨 checkout 永遠碰不到，
+        # 一行（併回本 repo 後那份已刪，由 repo 根的 .gitignore 承接）—— 作者清楚知道 macOS
+        # 會生成它；CI 是乾淨 checkout 永遠碰不到，
         # 只有「貢獻者本機跑同一支」這條本 PR 主打的路徑會被卡死。
         # #33 verify R9：但 R6 的修法是「所有 dotfile 一律忽略」—— 一個總括判準吃掉了
         # 一個封閉列舉（正是 rules/common-spec-prose-enumeration.md 點名的形狀）。
@@ -865,7 +932,7 @@ def builtin_lens_keys(repo, errs):
             reader = csv.DictReader(fh)
             fields = list(reader.fieldnames or [])
             if "profile" not in fields or "key" not in fields:
-                errs.append(f"::error file={cat.relative_to(repo)}::header 缺 profile 或 key 欄"
+                errs.append(f"::error file={prop(cat.relative_to(repo))}::header 缺 profile 或 key 欄"
                             f"（現在是 {fields}）—— 撞名閘門沒有跑。這個檔由 "
                             "references/regen-builtin-lenses.sh 產生，格式變了要同步改這裡")
                 return None
@@ -877,10 +944,10 @@ def builtin_lens_keys(repo, errs):
                     continue
                 out.setdefault(prof, set()).add(key)
     except (OSError, UnicodeDecodeError, csv.Error) as e:
-        errs.append(f"::error file={cat.relative_to(repo)}::讀取失敗：{e} —— 撞名閘門沒有跑")
+        errs.append(f"::error file={prop(cat.relative_to(repo))}::讀取失敗：{e} —— 撞名閘門沒有跑")
         return None
     if not out:
-        errs.append(f"::error file={cat.relative_to(repo)}::解析出 0 條 built-in lens —— "
+        errs.append(f"::error file={prop(cat.relative_to(repo))}::解析出 0 條 built-in lens —— "
                     "撞名閘門形同虛設（catalog 空了或格式變了）")
         return None
     return out
@@ -899,6 +966,10 @@ def check_csvs(root, errs, files):
         if not lister.is_file():
             errs.append(f"::error::找不到 {lister.relative_to(repo)} —— profile 名稱閘門沒有跑"
                         "（這不是「檔名都合法」）。它是 PROFILES 的唯一真源查詢入口")
+        elif not _inside(lister.resolve(), repo.resolve()):
+            # #33 verify R12（security LOW）：containment 的第七處 —— 這一處不只讀，還**執行**。
+            errs.append(f"::error::{lister.relative_to(repo)} 解析後落在 repo 外（可能是 symlink）"
+                        "—— 拒絕執行。profile 名稱閘門沒有跑")
         else:
             r = subprocess.run(["bash", str(lister)], capture_output=True, text=True)
             if r.returncode != 0:

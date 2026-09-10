@@ -15,13 +15,13 @@
 mutation」。**那三句話會讓下一個維護者以為改動 `validate.py` 有測試網接著。**
 
 現在用 `scripts/mutation_check.py` 量：跑一次就知道哪些閘門沒有測試網。
-**最近一次量測（R11 後）：68 個靶 → 64 殺 / 4 存活 / 0 靶壞**（數字與存活清單請跑一次
-`mutation_check.py`）。四個存活逐條實測都是 equivalent mutant（縱深防禦，不是缺口）：
-「containment（只判目錄層）」自 R11 起被反向 glob 的 containment 先一步接住（訊息同為
-「落在 repo 外」）；「catalog 缺檔」拿掉 `is_file()` 前置檢查後 `cat.open()` 仍拋 `OSError`
-被同一個 `except` 接住、同樣 rc=1；「pack 內部改名不投票」與「純改名偵測不得在沒改名時回現路徑
-（git 分支）」互為後盾 —— 關掉其中一個，另一個（或 name 分支的同一守衛）仍讓 `_find_pack_at`
-回 None，而跨 profile 的 R100 又已由 basename 判定擋下，所以單獨關掉任一個行為不變。
+**最近一次量測（R12 後）：75 個靶 → 71 殺 / 1 存活 / 0 靶壞**
+（數字與存活清單請跑一次 `mutation_check.py`）。唯一存活「catalog 缺檔」是 equivalent mutant（拿掉 `is_file()` 前置檢查後 `cat.open()` 仍拋
+`OSError` 被同一個 `except` 接住、同樣 rc=1）。另有 3 個 `EXPECTED_SURVIVE`（不計入存活）：
+`_find_pack_at` git 分支的兩個守衛依構造不可達（R12 logic L3 / DA-6，保留為防禦），以及
+「換回 splitlines()」—— R12 的 LineSanitiser 對每一段獨立判定、不靠行首旗標，過度切段只會過度消毒。
+R11 曾寫「四個存活皆 equivalent」：一個判定為假（containment 靶，已補 `./docs/evil` fixture 轉紅）、
+兩個理由為假（那兩個是死碼，不是互為後盾）。
 
 > 這個數字**會過期**。判準不是相信這段話，而是跑一次 `mutation_check.py`。
 > CI 會跑 `--check-targets`（秒級），所以「靶清單與程式碼漂移」擋得住；
@@ -786,6 +786,8 @@ class ValidateTest(unittest.TestCase):
         """輸出裡每一行凡 `TrimStart()` 後以 `::` 開頭者（runner 就是這樣判的），
         都必須是 validator 自己的 annotation 形狀，且不得帶注入標記。"""
         for line in out.splitlines():
+            # V1（`##[cmd …]…`）：runner 用 IndexOf 定位，不 trim、不錨定行首 → 全行都不得出現（R12 DA-1）。
+            self.assertNotIn("##[", line, f"V1 workflow command 進了 log：{line!r}\n{out}")
             t = line.lstrip()
             if not t.startswith("::"):
                 continue
@@ -960,6 +962,187 @@ class ValidateTest(unittest.TestCase):
         self.assertNotIn("純目錄改名", out, f"pack 目錄沒動，不得宣稱目錄改名：\n{out}")
         self.assertEqual(rc, 1, f"跨 profile 的 lens 搬移要 bump：\n{out}")
         self.assertIn("版本沒有增加", out)
+
+    # ---- #33 verify R12 ----
+
+    SEPARATORS = ("\n", "\r\n", "\r", "\n\v", "\n\f", "\n\x85", "\n ", "\n ", "\n\t", "\n ")
+
+    def test_output_boundary_uses_the_runners_line_definition(self):
+        """R12 #1（三個 lens + DA）：R11 的 LineSanitiser 用 Python `splitlines()` 切段（8 種行界），
+        卻用 `endswith(("\\n","\\r"))` 判行首。`\\v` `\\f` `\\x85` U+2028 U+2029 讓 `_at_line_start`
+        在實體行中途歸零，下一段的 `::` 不經消毒；而 .NET `TrimStart()` 會吃掉那些字元 →
+        runner 眼裡就是行首的 command。R11 的兩條測試只守 `\\n` 這一個字元。"""
+        import io
+        sys.path.insert(0, str(HERE))
+        import validate as V
+        for sep in self.SEPARATORS:
+            with self.subTest(sep=repr(sep)):
+                buf = io.StringIO()
+                V.LineSanitiser(buf).write(f"version = 1.0.0{sep}::stop-commands::x\n")
+                for line in buf.getvalue().split("\n"):
+                    self.assertFalse(line.lstrip().startswith("::"),
+                                     f"分隔符 {sep!r} 之後的 :: 沒被中和：{buf.getvalue()!r}")
+
+    def test_manifest_injection_is_blocked_for_every_separator(self):
+        """R12 #1 端到端：把 INJECT 的分隔符換成封閉列舉的每一種，version 與 name 兩條路徑都要守住。"""
+        for sep in self.SEPARATORS:
+            with self.subTest(sep=repr(sep)):
+                fx = Fixture(); self.addCleanup(fx.cleanup)
+                payload = sep + "::stop-commands::zzz" + sep + "::error file=innocent.py,line=1::forged"
+                fx.edit_json("plugins/pai-lenses/.claude-plugin/plugin.json",
+                             lambda d: d.__setitem__("version", "0.2.0" + payload))
+                rc, out = fx.run()
+                self.assertNoInjectedCommand(out)
+                fx2 = Fixture(); self.addCleanup(fx2.cleanup)
+                evil = "pai-lenses" + payload
+                fx2.edit_json("plugins/pai-lenses/.claude-plugin/plugin.json",
+                              lambda d: d.__setitem__("name", evil))
+                def rename_entry(d):
+                    for e in d["plugins"]:
+                        if e.get("name") == "pai-lenses":
+                            e["name"] = evil
+                fx2.edit_json(".claude-plugin/marketplace.json", rename_entry)
+                rc, out = fx2.run()
+                self.assertNoInjectedCommand(out)
+
+    def test_reverse_check_survives_hostile_plugin_json(self):
+        """R12（security #2）：反向 glob 是唯一沒走 load_obj 的 JSON 讀取點。`{"name":[]}` →
+        `TypeError: unhashable type`；非 UTF-8 → `UnicodeDecodeError`。兩者都是裸 traceback、
+        零 annotation，已累積的 errs 全部消失。"""
+        for label, content in (("name 是 list", b'{"name":[],"version":"1.0.0"}\n'),
+                               ("非 UTF-8", b'\xff\xfe{"name":"x"}\n')):
+            with self.subTest(case=label):
+                fx = Fixture(); self.addCleanup(fx.cleanup)
+                d = fx.repo / "plugins/hostile/.claude-plugin"; d.mkdir(parents=True)
+                (d / "plugin.json").write_bytes(content)
+                fx.write_lenses("key,focus\n")          # 一條真的 error，看它有沒有被吃掉
+                rc, out = fx.run()
+                self.assertNotIn("Traceback", out, out)
+                self.assertEqual(rc, 1, out)
+                self.assertIn("::error", out, "其他 finding 不得隨 crash 消失")
+
+    def test_directory_name_cannot_forge_annotation_properties(self):
+        """R12（logic L2）：R11 #6 的轉義只落在 lens CSV 兩個站點，manifest 側 24 個 `file=`
+        仍是裸路徑——目錄名 `plugins/evil,line=1,title=CI PASSED/` 一樣能偽造 property。"""
+        d = self.fx.repo / "plugins/evil,line=1,col=1,title=CI PASSED/.claude-plugin"
+        d.mkdir(parents=True)
+        (d / "plugin.json").write_text("{not json", encoding="utf-8")
+        self.fx.add_entry("evil", "./plugins/evil,line=1,col=1,title=CI PASSED")
+        rc, out = self.fx.run()
+        self.assertEqual(rc, 1, out)
+        for line in out.splitlines():
+            if line.startswith("::") and " " in line.split("::", 2)[1]:
+                head = line.split("::", 2)[1]
+                keys = [kv.split("=", 1)[0] for kv in head.split(" ", 1)[1].split(",")]
+                self.assertNotIn("line", keys, f"property 被目錄名偽造：{line}")
+                self.assertNotIn("title", keys, f"property 被目錄名偽造：{line}")
+
+    def test_source_outside_plugins_dir_with_symlinked_claude_plugin_is_blocked(self):
+        """R12（requirements R12-1）：「containment（只判目錄層）」的靶存活被寫成 equivalent，
+        理由是反向 glob 會接住——但反向 glob 只枚舉 plugins/*，source 指到 docs/ 時它看不到。
+        這個 fixture 讓那個靶轉紅。"""
+        outside = self.fx.dir / "evilplug"
+        (outside / ".claude-plugin").mkdir(parents=True)
+        (outside / ".claude-plugin/plugin.json").write_text(
+            '{"name":"evil","version":"9.9.9"}\n', encoding="utf-8")
+        (self.fx.repo / "docs/evil").mkdir(parents=True)
+        (self.fx.repo / "docs/evil/.claude-plugin").symlink_to(outside / ".claude-plugin")
+        self.fx.add_entry("evil", "./docs/evil")
+        out = self.assertRed(contains="落在 repo 外")
+        self.assertNotIn("evil 9.9.9 ✓", out, "不得讀了 repo 外的 plugin.json 還印綠")
+
+    def test_description_prefix_gate_reads_the_first_version_as_the_latest(self):
+        """R12（logic L4）：「第一個 v<semver>: 就是最新版」是慣例，先前沒有規格也沒有測試——
+        把 re.search 換成取最後一個 match，全套仍綠。這裡把兩個方向都釘住。"""
+        ver = json.loads((self.fx.repo / "plugins/pai-lenses/.claude-plugin/plugin.json")
+                         .read_text(encoding="utf-8"))["version"]
+        old_first = f"v0.0.1: 舊的在前。v{ver}: 新的在後"
+        new_first = f"v{ver}: 新的在前。v0.0.1: 舊的在後"
+        for desc, expect_warn in ((old_first, True), (new_first, False)):
+            with self.subTest(desc=desc):
+                fx = Fixture(); self.addCleanup(fx.cleanup)
+                fx.edit_json("plugins/pai-lenses/.claude-plugin/plugin.json",
+                             lambda d: d.__setitem__("description", desc))
+                fx.set_entry("pai-lenses", description=desc)
+                rc, out = fx.run()
+                self.assertEqual(rc, 0, out)
+                self.assertEqual("description 最新一段標示" in out, expect_warn, out)
+
+    def test_lister_symlink_outside_repo_is_not_executed(self):
+        """R12（security LOW）：`bin/pai-list-profiles` 只有 is_file() 就被 bash 執行——
+        containment 的第七處。"""
+        outside = self.fx.dir / "evil.sh"
+        outside.write_text("#!/bin/bash\necho code\n", encoding="utf-8")
+        lister = self.fx.repo / "plugins/parallel-ai-agents/bin/pai-list-profiles"
+        lister.unlink(); lister.symlink_to(outside)
+        self.assertRed(contains="落在 repo 外")
+
+    V1_PAYLOADS = (
+        "pai-lenses ##[stop-commands]zzz ##[error file=innocent.py,line=1]forged",   # 單行、零換行
+        ">>>   ##[do-something k1=v1;]msg",                                            # runner 自己的 L0 測試輸入
+        "x\t##[error file=innocent.py]FORGED",
+    )
+
+    def test_v1_workflow_command_syntax_is_neutralised_everywhere(self):
+        """R12 DA-1：runner 對每一行依序試兩個 parser。V1 `##[…]` 用 IndexOf 定位——不 trim、不錨定
+        行首、不需要換行。R11/R12 前半的 LineSanitiser / wc / emit 沒有一個碰它（全樹 grep 零命中）。"""
+        import io
+        sys.path.insert(0, str(HERE))
+        import validate as V
+        for payload in self.V1_PAYLOADS:
+            with self.subTest(payload=payload):
+                buf = io.StringIO()
+                V.LineSanitiser(buf).write(payload + "\n")
+                self.assertNotIn("##[", buf.getvalue(), buf.getvalue())
+                self.assertNotIn("##[", V.wc(payload))
+        # 端到端、rc=0 綠燈路徑：兩份 manifest 的 name 同時含 V1 payload
+        evil = self.V1_PAYLOADS[0]
+        self.fx.edit_json("plugins/pai-lenses/.claude-plugin/plugin.json",
+                          lambda d: d.__setitem__("name", evil))
+        def rename_entry(d):
+            for e in d["plugins"]:
+                if e.get("name") == "pai-lenses":
+                    e["name"] = evil
+        self.fx.edit_json(".claude-plugin/marketplace.json", rename_entry)
+        rc, out = self.fx.run()
+        self.assertNoInjectedCommand(out)
+        # emit() 那一路（errs 內含 payload）也要中和
+        fx2 = Fixture(); self.addCleanup(fx2.cleanup)
+        fx2.edit_json("plugins/pai-lenses/.claude-plugin/plugin.json",
+                      lambda d: d.__setitem__("version", "0.2.0 " + evil))
+        rc, out = fx2.run()
+        self.assertNoInjectedCommand(out)
+
+    def test_output_boundary_buffers_partial_lines(self):
+        """R12 DA-3：`::` 被切在兩次 write() 中間時（`write("x\\n:")` + `write(":stop-commands::…")`），
+        只記 _at_line_start 的實作看不到 `::`。改成緩衝未完成的一行、到行界才判。"""
+        import io
+        sys.path.insert(0, str(HERE))
+        import validate as V
+        buf = io.StringIO(); w = V.LineSanitiser(buf)
+        w.write("x\n:"); w.write(":stop-commands::H\n")
+        self.assertEqual(buf.getvalue(), "x\n∷stop-commands::H\n")
+        buf2 = io.StringIO(); w2 = V.LineSanitiser(buf2)
+        w2.write("tail without newline ::x"); w2.flush()
+        self.assertIn("tail without newline ::x", buf2.getvalue(), "flush 時未完成的一行也要寫出")
+
+    def test_emit_truncation_keeps_the_command_head_intact(self):
+        """R12 DA-1（推論，補成事實）：emit() 在 4000 字截斷，若 `file=` 的值把第二個 `::` 推過 4000，
+        TryParseV2 找不到第二個 `::` 就 return false，該行落到 V1 parser。截斷只能截訊息。
+        （檔案系統做不出 4000 字的路徑，所以直接餵 emit()。）"""
+        import io
+        sys.path.insert(0, str(HERE))
+        import validate as V
+        buf = io.StringIO(); V.RAW_OUT = buf
+        try:
+            V.emit("::error file=" + "a" * 5000 + "::" + "m" * 5000 + " ##[error]x")
+        finally:
+            V.RAW_OUT = None
+        line = buf.getvalue().rstrip("\n")
+        self.assertTrue(line.startswith("::error file=aaaa"), line[:60])
+        self.assertGreater(line.find("::", 2), 0, "命令頭（第二個 ::）被截掉了")
+        self.assertIn("…（截斷）", line)
+        self.assertNotIn("##[", line)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

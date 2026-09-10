@@ -86,8 +86,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   > **量測（R9 後）：46 個靶 → 45 殺掉 / 1 存活 / 0 靶壞**（R8 後是 35 殺 / 1 存活 / 0 靶壞；
   > 當時的靶總數本段兩處分別記成 36 與 37，已無法重建 —— #33 verify R11 抓到這個矛盾。判準
   > 是跑一次 `mutation_check.py`，不是這張表）。R10／R11 後的數字見下方各輪。
-  > 唯一存活的「catalog 缺檔」經實測確認是 equivalent mutant。
-  > 五個存活裡有三個是**真缺口**（行為確實不同），已逐條補測試；判讀靠實測不靠推論。
+  > R9 那一輪唯一存活的「catalog 缺檔」經實測確認是 equivalent mutant；R8 那一輪的五個存活裡有三個是
+  > **真缺口**（行為確實不同），已逐條補測試 —— 判讀靠實測不靠推論。（R12 指出這兩句先前沒標輪次，
+  > 讀起來像同一次量測自相矛盾。）
 
 - **R9 的兩個修正又是半成品**（#33 verify R10 HIGH）—— 而且是**同一輪之內**沒掃到手足：
   - `load_obj()` 只改了三個 JSON 讀取點，**漏了 `check_bumped` 裡的兩個**。非 dict 的
@@ -408,6 +409,59 @@ R11 是 PR #34 rebase 到 main `5eab1e4`（含 2.23.0 的 codex-call 背景執�
   readdir／`<profile>` 未驗證 → #56（不在本 diff 內）；shellcheck 清單的自動列舉 → #30。
 
   測試 66 → 79 條；靶清單 56 → 68 個。量測（R11 後）的殺／存活數見 `scripts/test_validate.py` 檔頭。
+
+### Fixed（#33 verify R12 —— R11 修法的重驗：4 lens + DA，Codex 仍因配額缺席）
+
+R11 的 15 列有 11 列真的修好（各 lens 自建 fixture 重現，不只讀作者的測試），但**R11 #1 的修法只做到一半，
+同一個邊界第四次劃錯**：
+
+- **`LineSanitiser` 的「行」與 runner 的「行」是兩套定義**（HIGH，三個 lens + DA 各自重現）。R11 版用
+  Python `str.splitlines()` 切段（8 種行界），卻用 `endswith(("\n","\r"))` 判行首 —— `\v` `\f` `\x85`
+  U+2028 U+2029 讓 `_at_line_start` 在實體行中途歸零，下一段的 `::` 不經消毒；而 .NET `TrimStart()`
+  把那五個字元當空白吃掉。實測兩份 manifest 的 `name` 含 `\n\v::stop-commands::` → **rc=0 全綠**且
+  log 帶它，與 R11 的攻擊只差一個字元；R11 為此加的兩條測試守的是 `\n` 這一個字元（把 `INJECT` 的分隔符
+  換成 `\n\v` 兩條立刻轉紅），`MUTATIONS` 也漏了那一行。現在「行」只有 runner 的定義（`\r`／`\n` 之後
+  才是新行），`INJECT` 參數化成十種分隔符的封閉列舉（單元 + 端到端各一條），靶清單加「換回 splitlines」；
+  `emit()`／`wc()` 順帶把 Python 認得的全部行界壓成 `⏎`（縱深防禦）。`LineSanitiser` docstring 明寫它守
+  不住 `.buffer`／`os.write`／未 capture 的子行程 —— 12/12 `subprocess.run` 皆 `capture_output=True`
+  是紀律不是機械保證。
+- **runner 有第二套語法 `##[cmd …]…`，全樹沒有任何東西碰它**（HIGH，DA 從 `actions/runner` 原始碼抓到：
+  `TryProcessCommand` 對每一行依序試 `TryParseV2`（`::`）與 `TryParse`（`##[`）；V1 用 `IndexOf` 定位，
+  不 trim、不錨定行首、不需要換行，runner 自己的 L0 測試斷言 `">>>   ##[do-something k1=v1;]msg"` 會被
+  解析）。PoC：兩份 manifest 的 `name` = `pai-lenses ##[stop-commands]zzz ##[error file=…]FORGED`
+  （單行、零特殊字元）→ rc=0 全綠、runner 解析出 `[stop-commands]`。四個 Claude lens 都只知道 V2、
+  三個 lens 一致提的行界修法對這份 payload 一個字元都動不到 —— Codex 缺席時跨模型的問法多樣性也缺席。
+  `LineSanitiser`／`emit()`／`wc()` 現在全行把 `##[` 換成 `##［`；`emit()` 的截斷只截訊息、保證
+  `::cmd props::` 頭完整（否則 V2 找不到第二個 `::` 就落到 V1）；`LineSanitiser` 改成**緩衝未完成的一行**
+  到行界才判（DA-3：`::` 被切在兩次 `write()` 中間時只記行首旗標看不到）；測試語料含 runner 的 L0 輸入，
+  `assertNoInjectedCommand` 對每一行斷言不含 `##[`。
+- **反向 glob 是唯一沒走 `load_obj` 的 JSON 讀取點**（MEDIUM）：`{"name":[]}` 在 `in` 上拋 TypeError、
+  非 UTF-8 拋 UnicodeDecodeError，都是裸 traceback、零 annotation、已累積的 errs 全部消失 —— `load_obj`
+  的 docstring 逐字寫著這個後果，R9/R10 修了三個站點、漏了第四個。改走 `load_obj` + `isinstance(str)`。
+- **`run.sh` 的 `|| echo HEAD` 把「無法比較」印成「比較過且通過」**（MEDIUM，R11 修法自己引進的）：
+  `--base HEAD` 恆印「無需 bump ✓」，站在 main 上跑也一樣。拿不到 merge-base（或 HEAD 就在 main 上）就明說
+  「bump 檢查本次未跑」、其餘閘門照跑；`cd ../pai-lenses` 加非 monorepo 佈局的 guard；並把 CI 的
+  `builtin-lenses.csv` drift step 搬進 `run.sh`（R11 #9 最後一處分岔）。
+- **property 轉義只落在 2/26 個 `file=` 站點**（MEDIUM，R11 #6 半成品）：manifest 側 24 處仍是裸路徑，
+  目錄名 `plugins/evil,line=1,title=CI PASSED/` 一樣偽造 property。抽出 `prop()`，所有 `file=` 一律經它；
+  base 側 load_obj 的 label 從 `<sha>:<path>` 改成 repo 相對路徑（裸 `:` 不是 runner 認得的任一種路徑）。
+- **「三個守衛互為後盾」是假的**（MEDIUM，logic 代數證明 + mutation 實測）：R11 在 `_find_pack_at` git 分支
+  加的兩個守衛依構造不可達（`old_pack == pack_rel ⟺ old_path == new_path`，git 不會對同路徑輸出 R），
+  兩個同時關掉全套仍綠；load-bearing 的只有 name 分支的 `path != pj_rel`。依 DA 的裁決**保留**那兩個守衛
+  （不可達是上游窄入口的副產品，入口一放寬就變回 load-bearing）、改文字，並把對應的兩個靶列進
+  `mutation_check.py` 的 `EXPECTED_SURVIVE`（永遠殺不掉，不再每輪讓人重新判讀）。同輪 requirements lens 另證明「containment（只判目錄層）」
+  **不是** equivalent（source 指到 `plugins/` 以外時反向 glob 看不到）—— 補 `./docs/evil` fixture 讓那個靶轉紅。
+- **description 版號閘門的「第一個＝最新」沒有規格也沒有測試**（MEDIUM）：改成取最後一個 match 全套仍綠。
+  補雙向測試（舊在前 → warning；新在前 → 無），靶清單加「first→last」；慣例寫進 root `CLAUDE.md` 版本同步表。
+  另記錄一個取捨（R12 regression R12-7）：兩份 description 統一後只列最近兩版（v2.24.0 / v2.23.0），
+  v2.19.0–v2.22.0 的敘述移出 —— 歷史看 CHANGELOG，這裡是 `/plugin` 清單的一句話。
+- 零星：`bin/pai-list-profiles` 補 containment（第七處，這一處是**執行**不只讀）；root `CLAUDE.md:38/:52`
+  的「純資料無程式碼」與 README 對齊（R11 只修了 README —— 同類只修一處第 N 次）；`test.yml` 的 `on:`
+  補回指 `EVENTS` 的對稱註解；`validate.py` 引用已刪 `.gitignore` 的註解改寫；`note: pack 在 base 時位於 …`
+  改印目錄而非 plugin.json 路徑；本段 R8/R9 兩句存活數補上輪次。
+- 明示未動：root README skill 表格的擴充（R11 #13 已標可選，內容正確、不在 checklist）。
+
+  測試 79 → 86 條；靶清單 68 → 75 個（含 3 個 EXPECTED_SURVIVE）。量測（R12 後）：71 殺 / 1 存活（equivalent）/ 0 壞，見 `scripts/test_validate.py` 檔頭。
 
 ## [2.23.0] - 2026-09-10
 

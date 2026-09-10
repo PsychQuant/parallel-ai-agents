@@ -35,7 +35,7 @@ Changes can be parked（暫存）— temporarily moved out of `openspec/changes/
 
 - `.claude-plugin/marketplace.json` — marketplace manifest
 - `plugins/parallel-ai-agents/` — 主 plugin（含 skills、`bin/codex-call` wrapper 等所有實作）
-- `plugins/pai-lenses/` — **第二個 plugin**：官方 lens pack（三層疊加的層 ②，見 `plugins/parallel-ai-agents/references/lens-layers.md`）。只有 CSV 與 validator，無程式碼
+- `plugins/pai-lenses/` — **第二個 plugin**：官方 lens pack（三層疊加的層 ②，見 `plugins/parallel-ai-agents/references/lens-layers.md`）。無 runtime 程式碼 —— `scripts/` 只有 CI 閘門（`validate.py`）與它的測試
 - `README.md` — marketplace 對外介紹
 - `LICENSE` — MIT
 
@@ -49,7 +49,7 @@ Changes can be parked（暫存）— temporarily moved out of `openspec/changes/
 
 - 「marketplace」=本 repo 整體（散發容器），對應 `.claude-plugin/marketplace.json`
 - 「plugin」=`plugins/` 底下的**一個**目錄。現在有兩個：`parallel-ai-agents`（功能本體）
-  與 `pai-lenses`（官方 lens pack，純資料）
+  與 `pai-lenses`（官方 lens pack：CSV lens ＋ CI validator，無 runtime 程式碼）
 
 不要把 marketplace 與 plugin 混在一起，也不要假設「plugin」單指主 plugin。
 
@@ -61,6 +61,10 @@ bump 版本時兩處必須一致。**這條對每一個 plugin 各自成立**，
 |---|---|---|
 | `parallel-ai-agents` | `plugins/parallel-ai-agents/.claude-plugin/plugin.json` | `name: "parallel-ai-agents"` |
 | `pai-lenses` | `plugins/pai-lenses/.claude-plugin/plugin.json` | `name: "pai-lenses"` |
+
+**description 的版號前綴慣例**（#33 verify R12）：description 若以 `vX.Y.Z: …` 標示「這一版帶來什麼」，
+**第一個**版號段是最新版，且必須等於 `version` 欄（`validate.py` 的 `check_marketplace_sync` 對此印 warning）。
+舊版敘述放後面；只保留最近幾版，歷史看 CHANGELOG。
 
 兩者不同步 → 使用者 `/plugin update` 會看到舊版或裝不到新功能，**而且沒有任何錯誤訊息**。
 

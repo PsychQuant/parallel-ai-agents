@@ -141,15 +141,14 @@ MUTATIONS = [
     ("反向檢查的 name 交叉比對", "            if dir_name in named_entries:", "            if False:"),
     ("workflow-command 消毒（值層）", '    t = t.replace("::", "∷")', "    t = t"),
     ("workflow-command 消毒（emit 的一行一行）",
-     '    t = str(line).replace("\\r\\n", "⏎").replace("\\n", "⏎").replace("\\r", "⏎")',
+     "    t = collapse_lines(str(line))",
      "    t = str(line)"),
     # #33 verify R11：真正的輸出邊界（stdout + stderr 的行首 `::`）與它的兩個安裝點。
     ("輸出邊界（行首 :: 中和）",
-     '            if self._at_line_start and seg.lstrip().startswith("::"):',
-     "            if False:"),
+     '        if line.lstrip().startswith("::"):',
+     "        if False:"),
     ("輸出邊界（stdout 安裝）", "    if not isinstance(sys.stdout, LineSanitiser):", "    if False:"),
     ("輸出邊界（stderr 安裝）", "    if not isinstance(sys.stderr, LineSanitiser):", "    if False:"),
-    ("emit 截斷", "    if len(t) > 4000:", "    if False:"),
     # R11 #5：`R100` 判定的**放寬**方向 —— 原本只有「整段拿掉」（過嚴）那一個方向的靶。
     ("純改名判定放寬（R0xx 也算純改名）",
      '        if parts[0] == "R100" and len(parts) == 3 and parts[1].rsplit("/", 1)[-1] == parts[2].rsplit("/", 1)[-1]:',
@@ -157,11 +156,8 @@ MUTATIONS = [
     ("純改名判定放寬（跨 profile 的 R100 也算純改名）",
      '        if parts[0] == "R100" and len(parts) == 3 and parts[1].rsplit("/", 1)[-1] == parts[2].rsplit("/", 1)[-1]:',
      '        if parts[0] == "R100":'),
-    ("pack 內部改名不投票",
-     "                if old_pack != pack_rel:", "                if True:"),
-    ("純改名偵測不得在沒改名時回現路徑（git 分支）",
-     "            if candidate != pj_rel and subprocess.run(",
-     "            if subprocess.run("),
+    # R12（logic L3 / DA-6）：git 分支的兩個守衛依構造不可達（見檔尾 EXPECTED_SURVIVE），
+    # 「沒改名時回 None」真正 load-bearing 的只有 name 分支這一個。
     ("純改名偵測不得在沒改名時回現路徑（name 分支）",
      '        if isinstance(obj, dict) and obj.get("name") == name and path != pj_rel:',
      '        if isinstance(obj, dict) and obj.get("name") == name:'),
@@ -169,11 +165,45 @@ MUTATIONS = [
      "            if entry[\"name\"] in entry_names:", "            if False:"),
     ("description 版號前綴",
      "            if m_desc and pj_ver and m_desc.group(1) != pj_ver:", "            if False:"),
+    # R12（logic L4）：「第一個 v<semver>: 就是最新」是慣例；把 search 換成取最後一個 match 要被抓到。
+    ("description 版號前綴取第一個（最新在前）",
+     '            m_desc = re.search(r"\\bv(\\d+\\.\\d+\\.\\d+(?:[-+][0-9A-Za-z.-]+)?):", str(desc or ""))',
+     '            m_desc = (lambda ms: ms[-1] if ms else None)(list(re.finditer(r"\\bv(\\d+\\.\\d+\\.\\d+(?:[-+][0-9A-Za-z.-]+)?):", str(desc or ""))))'),
     ("反向 glob 的 containment",
      "        if not _inside(found.resolve(), repo_abs):", "        if False:"),
-    ("annotation file= 的 property 轉義",
-     '               .replace(":", "%3A").replace(",", "%2C"))', "               )"),
+    ("annotation property 轉義（prop）",
+     '                      .replace(":", "%3A").replace(",", "%2C"))', "                      )"),
+    # R12（三 lens + DA）：輸出邊界的「行」必須是 runner 的定義。把它換回 Python splitlines() 就是 R11 的洞。
+    ("輸出邊界的行定義（runner 的，不是 splitlines）",
+     "        segs = [x for x in self._LINE_END.split(data) if x]",
+     "        segs = [x for x in data.splitlines(keepends=True) if x]"),
+    ("反向 glob 走 load_obj",
+     "            found_obj = load_obj(found, found, errs)",
+     "            found_obj = json.loads(found.read_text(encoding=\"utf-8\"))"),
+    ("lister 的 containment",
+     "        elif not _inside(lister.resolve(), repo.resolve()):", "        elif False:"),
+    # R12 DA-1：runner 的第二套語法。V1 是 IndexOf，只能全行取代。
+    ("V1 `##[` 中和（輸出邊界）", '        return line.replace("##[", "##［")', "        return line"),
+    ("輸出邊界緩衝未完成的一行", '        if segs and not segs[-1].endswith(("\\n", "\\r")):', "        if False:"),
+    ("V1 `##[` 中和（emit）", '    t = t.replace("##[", "##［")', "    t = t"),
+    ("emit 截斷保留命令頭", "    if len(msg) > 4000:", "    if False:"),
+    # R12 DA-6：這兩個守衛在目前的入口條件（`old_path.endswith("/" + suffix)`）下**依構造不可達**
+    # （old_pack == pack_rel ⟺ old_path == new_path，git 不會對同路徑輸出 R）。保留為防禦（R11 #5 才
+    # 剛放寬過隔壁的入口），但它們**永遠殺不掉**——列在 EXPECTED_SURVIVE，不算「可能缺測試」的存活。
+    ("pack 內部改名不投票（依構造不可達，保留為防禦）",
+     "                if old_pack != pack_rel:", "                if True:"),
+    ("純改名偵測 git 分支（依構造不可達，保留為防禦）",
+     "            if candidate != pj_rel and subprocess.run(",
+     "            if subprocess.run("),
 ]
+
+EXPECTED_SURVIVE = {
+    "pack 內部改名不投票（依構造不可達，保留為防禦）",
+    "純改名偵測 git 分支（依構造不可達，保留為防禦）",
+    # R12 修法後 LineSanitiser 對**每一段**獨立判 `lstrip().startswith("::")`、不再靠行首旗標——
+    # 換回 splitlines() 只會多切幾段、多消毒幾次，方向安全。靶保留是為了釘住「不得再引入旗標」的設計意圖。
+    "輸出邊界的行定義（runner 的，不是 splitlines）",
+}
 
 
 def _apply(name, old, new, src):
@@ -277,10 +307,22 @@ def main():
     finally:
         VALIDATE.write_text(original, encoding="utf-8")
 
-    print(f"\n殺掉 {len(killed)} / 存活 {len(survived)} / 靶壞 {len(broken)}")
+    expected = [n for n in survived if n in EXPECTED_SURVIVE]
+    survived = [n for n in survived if n not in EXPECTED_SURVIVE]
+    print(f"\n殺掉 {len(killed)} / 存活 {len(survived)} / 預期存活 {len(expected)} / 靶壞 {len(broken)}")
     if survived:
         print("\n存活（可能缺測試，也可能是 equivalent mutant —— 逐條判讀）：")
         for n in survived:
+            print("  -", n)
+    if expected:
+        print("\n預期存活（依構造不可達的防禦守衛，見 EXPECTED_SURVIVE 的註解 —— 不必判讀）：")
+        for n in expected:
+            print("  -", n)
+    unexpected_kill = [n for n in killed if n in EXPECTED_SURVIVE]
+    if unexpected_kill:
+        # 被殺掉代表它變得可達了 —— 入口條件被放寬。那不是壞事，但 EXPECTED_SURVIVE 要跟著更新。
+        print("\n⚠ 預期存活的靶被殺掉了（守衛變成可達，請把它從 EXPECTED_SURVIVE 移除）：")
+        for n in unexpected_kill:
             print("  -", n)
     if broken:
         print("\n靶壞（mutation 定義與現行程式碼對不上，先修這裡）：")

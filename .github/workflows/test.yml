@@ -1,5 +1,8 @@
 name: test
 
+# 這份觸發清單與 plugins/pai-lenses/scripts/validate.py 的 `EVENTS`（argparse choices）是兩份規格：
+# 在這裡加新 trigger（merge_group、schedule…）而沒改那邊 → validate.py 以 usage error（rc=2）紅掉，
+# 訊息看不出根因。改一邊請一併改另一邊（#33 verify R11 / R12）。
 on:
   push:
     branches: [main]

@@ -33,10 +33,27 @@ for t in test/*.test.mjs; do echo "  $t"; node "$t"; done
 # #33 verify R11：pack（plugins/pai-lenses）的 python 測試先前沒有任何本機入口，只有 CI 的
 # manifests-and-lens-pack job 會跑；test/README.md 卻寫「CI 跑同一組」。這裡對齊那個 job
 # （完整 mutation 量測仍是手動：python3 scripts/mutation_check.py，約十分鐘）。
+# #33 verify R12：CI 的 builtin-lenses.csv drift step 也搬過來 —— 它是 run.sh 與 CI 之間最後一處分岔。
+echo "── builtin-lenses.csv drift (regenerate → expect no diff) ──"
+bash references/regen-builtin-lenses.sh
+git diff --exit-code -- references/builtin-lenses.csv || { echo "references/builtin-lenses.csv 過期 —— 上面已重生，請 commit"; exit 1; }
+
 echo "── pai-lenses pack (validate.py 的測試、靶清單、validator 本體) ──"
-( cd ../pai-lenses && python3 -m py_compile scripts/*.py \
-  && python3 scripts/test_validate.py \
-  && python3 scripts/mutation_check.py --check-targets \
-  && python3 scripts/validate.py --base "$(git merge-base origin/main HEAD 2>/dev/null || echo HEAD)" --event pull_request )
+# 這段只在 monorepo 佈局下成立（plugin cache 裡的副本沒有 sibling pack）。
+if [ ! -d ../pai-lenses ]; then
+  echo "（非 monorepo 佈局，略過 pack 測試）"
+else
+  ( cd ../pai-lenses && python3 -m py_compile scripts/*.py \
+    && python3 scripts/test_validate.py \
+    && python3 scripts/mutation_check.py --check-targets )
+  # #33 verify R12：拿不到 origin/main 時**不要**拿 HEAD 當替身 —— `--base HEAD` 恆印「無需 bump ✓」，
+  # 正是本 PR 一路在消滅的肯定式假綠燈。validate.py 對「本機且無 base」自己會說「bump 檢查未跑」。
+  if BASE="$(git merge-base origin/main HEAD 2>/dev/null)" && [ -n "$BASE" ] && [ "$BASE" != "$(git rev-parse HEAD)" ]; then
+    ( cd ../pai-lenses && python3 scripts/validate.py --base "$BASE" --event pull_request )
+  else
+    echo "（找不到 origin/main，或 HEAD 就在 main 上：bump 檢查本次未跑，只跑其餘閘門）"
+    ( cd ../pai-lenses && python3 scripts/validate.py )
+  fi
+fi
 
 echo "✓ 全部通過"
