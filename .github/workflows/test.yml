@@ -48,14 +48,21 @@ jobs:
         run: |
           set -o pipefail
           bash references/regen-builtin-lenses.sh
-          git diff --exit-code -- references/builtin-lenses.csv || {
-            echo "::error::references/builtin-lenses.csv is stale — run 'bash references/regen-builtin-lenses.sh' and commit the result"
+          # #33 verify R13 (R13-5): do NOT print the diff body — a lens `focus` is fork-controlled
+          # text and `##[…]` / `::` inside it would land in this step's log verbatim (the V1 parser
+          # is IndexOf-based). `--quiet` reports drift without echoing content.
+          git diff --quiet -- references/builtin-lenses.csv || {
+            echo "::error::references/builtin-lenses.csv is stale — run 'bash references/regen-builtin-lenses.sh' and commit the result (diff body intentionally not printed)"
             exit 1
           }
 
       - name: bats
         run: bats test/
 
+      # 守備範圍（#33 verify R13 security S2 / DA-4）：validate.py 的輸出邊界只守它自己那個 **step** 的 log
+      # （`::stop-commands::` 是 step-scoped；跨 step 的只有 `::add-mask::`）；這裡的 node 測試（以及 bats）是 PR 自己的程式碼，stdout 原樣進 step log —— 那是
+      # `on: pull_request` 跑 PR 測試的固有面（`contents: read`、無 secrets、非 pull_request_target），
+      # 不是 validate.py 能守的。
       - name: node tests
         run: for t in test/*.test.mjs; do echo "$t"; node "$t"; done
 
@@ -186,8 +193,14 @@ jobs:
       # #33 verify R9 M20：py_compile 的寫死清單只涵蓋主 plugin 的兩支，本 pack 新增的
       # 三支 Python 只有 validate.py / test_validate.py 因為被執行而間接驗過語法，
       # mutation_check.py **在任何地方都沒被語法檢查**。用 glob 而非清單。
+      # #33 verify R13 DA-4：py_compile 的 SyntaxError code frame 會把 fork 可控的原始碼行原樣印進 step log
+      # （V1 `##[…]` 由 IndexOf 定位、V2 `::` 在 TrimStart 後認）。過一層與 validate.py `_neutralise`
+      # 同語意的 filter；`set -o pipefail` 讓 py_compile 的非零仍然紅。
       - name: py_compile（pack 內所有 Python）
-        run: python3 -m py_compile scripts/*.py
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 -m py_compile scripts/*.py 2>&1 | sed -e 's/^\([[:space:]]*\)::/\1∷/' -e 's/##\[/##⟦/g'
 
       - name: validate.py 自身的回歸測試（stdlib unittest，無額外依賴）
         run: python3 scripts/test_validate.py

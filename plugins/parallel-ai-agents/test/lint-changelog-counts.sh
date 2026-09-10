@@ -16,6 +16,12 @@ if [ "${1:-}" = "--selftest" ]; then
     echo "lint-changelog-counts selftest FAILED: the fixture with a wrong count was accepted" >&2
     exit 1
   fi
+  # #33 verify R13：宣稱可以指向 sibling plugin（`../pai-lenses/…`）。那個檔在 plugin cache 副本裡不存在，
+  # 此時要「跳過並註明」而不是報「數字錯」—— 後者是 R12 #4 那種對錯誤佈局的肯定式假診斷。
+  if ! bash test/lint-changelog-counts.sh test/fixtures/changelog-count-sibling-absent.md >/dev/null 2>&1; then
+    echo "lint-changelog-counts selftest FAILED: a claim on an absent ../sibling file must be skipped, not rejected" >&2
+    exit 1
+  fi
   echo "lint-changelog-counts selftest ok: fixture rejected"
   exit 0
 fi
@@ -24,19 +30,27 @@ files=("$@")
 if [ "${#files[@]}" -eq 0 ]; then files=(CHANGELOG.md); fi
 
 python3 - "${files[@]}" <<'PY'
-import re, subprocess, sys
+import os, re, subprocess, sys
 # 「N 個 case」之後、括號之前允許 markdown 裝飾（**），括號可全形或半形；命令逐字取自宣稱本身。
-CLAIM = re.compile(r'(\d+)\s*個\s*case[^（(]*[（(]`grep -c "\^@test" ([^`]+)`[）)]')
+# 兩種宣稱形式（封閉列舉，#33 verify R13 R13-1 加第二種——pack 的 python 測試數在隔壁一格照樣手打錯）：
+#   N 個 case（`grep -c "^@test" <file>`）
+#   N 條（`grep -c "<pattern>" <file>`）        ← pattern 逐字取自宣稱，lint 只是真的去跑它
+CLAIM = re.compile(r'(\d+)\s*(?:個\s*case|條)[^（(]*[（(]`grep -c "((?:[^"\\]|\\.)+)" ([^`]+)`[）)]')
 rc, seen = 0, 0
 for f in sys.argv[1:]:
     for n, line in enumerate(open(f, encoding='utf-8'), 1):
         for m in CLAIM.finditer(line):
             seen += 1
-            claimed, path = int(m.group(1)), m.group(2)
-            out = subprocess.run(['grep', '-c', '^@test', path], capture_output=True, text=True)
+            claimed, pattern, path = int(m.group(1)), m.group(2), m.group(3)
+            # 封閉規則：只有 `../` 開頭（sibling plugin）的路徑允許不存在——plugin cache 副本沒有 sibling，
+            # 那不是「數字錯」。plugin 自己底下的檔案不在就照常算失敗。
+            if path.startswith('../') and not os.path.exists(path):
+                print(f"{f}:{n}: note: {path} 不在這個 checkout（非 monorepo 佈局）—— 這條宣稱本次無法驗證，跳過", file=sys.stderr)
+                continue
+            out = subprocess.run(['grep', '-c', pattern, path], capture_output=True, text=True)
             actual = out.stdout.strip()
             if not actual.isdigit() or int(actual) != claimed:
-                print(f"{f}:{n}: claims {claimed} cases for {path}; `grep -c \"^@test\" {path}` says {actual or '(unreadable)'}", file=sys.stderr)
+                print(f"{f}:{n}: claims {claimed} for {path}; `grep -c \"{pattern}\" {path}` says {actual or '(unreadable)'}", file=sys.stderr)
                 rc = 1
 if seen == 0:
     print(f"no case-count claims found in {' '.join(sys.argv[1:])} — the lint would be vacuous", file=sys.stderr)

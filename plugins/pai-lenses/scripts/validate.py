@@ -128,7 +128,9 @@ class LineSanitiser:
             line = line.replace("::", "∷", 1)
         # V1：`##[cmd …]…` 由 IndexOf 定位，不 trim、不錨定行首 —— 只能全行取代（#33 verify R12 DA-1，
         # primary source：actions/runner ActionCommandManager.TryProcessCommand 依序試 TryParseV2 與 TryParse）。
-        return line.replace("##[", "##［")
+        # 替身用 U+27E6（⟦）而非全形 ［（U+FF3B）：後者有 <wide> 相容分解，NFKC 會正規化回 `[`（R13 security S3）；
+        # ⟦ 與 ∷（U+2237）都沒有分解。
+        return line.replace("##[", "##⟦")
 
     def write(self, text):
         # #33 verify R12 DA-3：只記「上一段有沒有以行界結尾」看不到被切在兩次 write() 中間的 `::`
@@ -143,6 +145,11 @@ class LineSanitiser:
         for seg in segs:
             self._stream.write(self._neutralise(seg))
         return len(text)
+
+    def writelines(self, lines):
+        # R13 DA-3：不定義的話 __getattr__ 會把 writelines 透傳到底層 stream，整個繞過消毒。
+        for line in lines:
+            self.write(line)
 
     def flush(self):
         if self._pending:               # 程序結束（或顯式 flush）時把殘餘那一行也經同一道判定寫出
@@ -179,8 +186,8 @@ def emit(line):
     **繞過**那層去寫原始 stdout 的地方，所以它自己必須保證一行永遠是一行（CR/LF 換成
     `⏎`）並限長。行內的 `::` 保持原樣 —— 它是 annotation 格式的一部分（`::error file=x::msg`），
     而 runner 只在 `TrimStart()` 後的行首認 command。"""
-    t = collapse_lines(str(line))
-    t = t.replace("##[", "##［")
+    t = collapse_lines(str(line)).lstrip()        # R13 DA-12：與 runner 的 TrimStart() 同一定義
+    t = t.replace("##[", "##⟦")
     # #33 verify R12 DA-1（推論，已補成測試）：截斷若把第二個 `::` 推過 4000，TryParseV2 找不到
     # 命令尾就 return false，該行落到 V1 parser。所以只截**訊息**，`::cmd props::` 這個頭永遠完整。
     head_end = t.find("::", 2) if t.startswith("::") else -1
@@ -235,10 +242,10 @@ def wc(value, limit=200):
     等於把本 PR 一路在建的 fail-loud 降級成 fail-silent；還能偽造指向無辜檔案的 annotation。
 
     做四件事：所有行界換成 `⏎`（保留可讀性、不製造新行）、`::` 換成 `∷`（U+2237，
-    形似但不是 workflow-command 分隔符）、`##[` 換成 `##［`（V1 語法的前綴）、超長截斷。
+    形似但不是 workflow-command 分隔符）、`##[` 換成 `##⟦`（V1 語法的前綴）、超長截斷。
     """
     t = collapse_lines(str(value))
-    t = t.replace("::", "∷").replace("##[", "##［")   # 兩套語法都不能從值裡長出來（R12 DA-1）
+    t = t.replace("::", "∷").replace("##[", "##⟦")   # 兩套語法都不能從值裡長出來（R12 DA-1）
     return t if len(t) <= limit else t[:limit] + "…（截斷）"
 
 
@@ -297,6 +304,13 @@ def collector_wiring(repo, profile):
 
 def check_version(root, errs):
     manifest = root / ".claude-plugin" / "plugin.json"
+    # #33 verify R13（logic N1）：containment 的第八處 —— pack 自己的 .claude-plugin 是 symlink 時，
+    # 這裡會把 repo 外檔案的 version 印出來，而 check_marketplace_sync 對同一個 entry 說「拒絕讀取」。
+    ws = (repo_root(root) or root).resolve()
+    if not _inside(manifest.resolve(), ws):
+        errs.append(f"::error file={prop(manifest)}::plugin.json 解析後落在 repo 外（可能是 symlink）—— "
+                    "拒絕讀取。validator 只能讀本 repo 內的 manifest")
+        return
     d = load_obj(manifest, manifest, errs)
     if d is None:
         return
@@ -509,7 +523,9 @@ def check_marketplace_sync(root, errs):
         # 2.24.0 而兩份 description 都還寫「v2.23.0: …」時，它印綠。description 若以
         # `v<semver>:` 標示「這一版帶來什麼」，最新（第一個）那個版號必須等於 version 欄。
         for label, desc in (("plugin.json", pj_desc), ("marketplace.json", mp_desc)):
-            m_desc = re.search(r"\bv(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?):", str(desc or ""))
+            # R13 logic N2：`\bv` 在 CJK 相黏時（「補齊v0.0.1:」）不成立 —— \b 兩側都是 \w。
+            # 改成「前一個字元不是 ASCII 英數」，讓中文緊鄰的版號也算「第一個」。
+            m_desc = re.search(r"(?<![A-Za-z0-9])v(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?):", str(desc or ""))
             if m_desc and pj_ver and m_desc.group(1) != pj_ver:
                 emit(f"::warning file={prop(mp)}::{entry.get('name')} 的 {label} description 最新一段標示 "
                       f"v{m_desc.group(1)}，但 version 是 {pj_ver} —— 使用者會把這一版的內容"
@@ -571,7 +587,7 @@ def _find_pack_at(repo, ref, pj_rel, name):
     # 其他檔案（README/LICENSE/scripts）仍是 R100。取多數決還原舊的 pack 根目錄。
     pack_rel = pj_rel[: -len("/.claude-plugin/plugin.json")]
     dt = subprocess.run(["git", "diff", "--name-status", "-M", ref, "HEAD"],
-                        cwd=repo, capture_output=True, text=True)
+                        cwd=repo, capture_output=True, text=True, errors="replace")
     if dt.returncode == 0:
         votes = {}
         for line in dt.stdout.splitlines():
@@ -603,14 +619,14 @@ def _find_pack_at(repo, ref, pj_rel, name):
     if not name:
         return None
     ls = subprocess.run(["git", "ls-tree", "-r", "--name-only", ref],
-                        cwd=repo, capture_output=True, text=True)
+                        cwd=repo, capture_output=True, text=True, errors="replace")
     if ls.returncode != 0:
         return None
     for path in ls.stdout.splitlines():
         if not path.endswith(".claude-plugin/plugin.json"):
             continue
         blob = subprocess.run(["git", "show", f"{ref}:{path}"],
-                              cwd=repo, capture_output=True, text=True)
+                              cwd=repo, capture_output=True, text=True, errors="replace")
         if blob.returncode != 0:
             continue
         try:
@@ -676,11 +692,17 @@ def check_bumped(root, errs, base, event=None):
     # 下一個 commit 起每一次 lens 變更都印「無需 bump ✓」而完全不受守護。
     # 位置耦合造成的假綠燈，正是本 PR 反覆在修的那一類。
     pack_rel = root.resolve().relative_to(repo.resolve()).as_posix()
-    try:
-        _pk = json.loads((root / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
-        pack_name = _pk.get("name") if isinstance(_pk, dict) else None
-    except (OSError, json.JSONDecodeError):
-        pack_name = None
+    # #33 verify R13（security S1）：R12 說「反向 glob 是唯一沒走 load_obj 的 JSON 讀取點」——假的，
+    # 這裡的 except 少列 UnicodeDecodeError，非 UTF-8 的 plugin.json 讓整支 crash、零 annotation。
+    # 同一類的另一個站點是所有 `subprocess.run(text=True)`（git 輸出的解碼）—— 一律 errors="replace"。
+    pack_name = None
+    _pj_path = root / ".claude-plugin" / "plugin.json"
+    if _inside(_pj_path.resolve(), repo.resolve()):          # R13 logic N1：第九處 containment
+        try:
+            _pk = json.loads(_pj_path.read_text(encoding="utf-8"))
+            pack_name = _pk.get("name") if isinstance(_pk, dict) else None
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            pack_name = None
     rel = f"{pack_rel}/lenses"
     pj_rel = f"{pack_rel}/.claude-plugin/plugin.json"
     # #33 verify R4：先前只堵 returncode != 0。git 對「pathspec 指向 base 不存在的路徑」
@@ -709,7 +731,7 @@ def check_bumped(root, errs, base, event=None):
     cmp_base = base
     if event != "push":
         mb = subprocess.run(["git", "merge-base", base, "HEAD"],
-                            cwd=repo, capture_output=True, text=True)
+                            cwd=repo, capture_output=True, text=True, errors="replace")
         if mb.returncode != 0 or not mb.stdout.strip():
             errs.append(f"::error::算不出 merge-base({base}, HEAD)：{mb.stderr.strip()}。"
                         "這不是「無需 bump」—— 是這道閘門沒有跑")
@@ -728,7 +750,7 @@ def check_bumped(root, errs, base, event=None):
     # 現在三個讀取點全部取自 committed history，並且**先**把未 commit 的差異講出來 ——
     # 那句提示必須在「無變更」那條路徑上也印得到，否則假綠燈依舊。
     dirty = subprocess.run(["git", "status", "--porcelain", "--", rel, pj_rel],
-                           cwd=repo, capture_output=True, text=True)
+                           cwd=repo, capture_output=True, text=True, errors="replace")
     if dirty.returncode == 0 and dirty.stdout.strip():
         # porcelain v1 = 2 個狀態字元 + 1 個空白 + 路徑。**不可**先 strip() 整個 stdout：
         # 那會吃掉第一行的前導空白（` M path` → `M path`），ln[3:] 就多切一個字元。
@@ -747,7 +769,7 @@ def check_bumped(root, errs, base, event=None):
         pathspec = [old_lens, rel]
     changed = subprocess.run(
         ["git", "diff", "--name-status", "-M", cmp_base, "HEAD", "--", *pathspec],
-        cwd=repo, capture_output=True, text=True)
+        cwd=repo, capture_output=True, text=True, errors="replace")
     if changed.returncode != 0:
         errs.append(f"::error::bump 檢查無法執行：{wc(changed.stderr.strip())}。"
                     "這不是「無需 bump」—— 是這道閘門沒有跑")
@@ -772,7 +794,7 @@ def check_bumped(root, errs, base, event=None):
         return
     pj = root / ".claude-plugin" / "plugin.json"
     cur = subprocess.run(["git", "show", f"HEAD:{pj_rel}"],
-                         cwd=repo, capture_output=True, text=True)
+                         cwd=repo, capture_output=True, text=True, errors="replace")
     if cur.returncode != 0:
         errs.append(f"::error file={prop(pj)}::HEAD 上沒有 {pj_rel} —— 無法與 base 比較版本。"
                     "這不是「無需 bump」")
@@ -793,7 +815,7 @@ def check_bumped(root, errs, base, event=None):
     now = now_obj.get("version", "")
     old = subprocess.run(
         ["git", "show", f"{cmp_base}:{pj_rel}"],
-        cwd=repo, capture_output=True, text=True)
+        cwd=repo, capture_output=True, text=True, errors="replace")
     if old.returncode != 0:
         # #33 verify R7：先前一律說「本次在新增整個 pack…這是唯一合法的略過情境」——
         # **pack 改名的那個 commit 也走這條**，而那不是新增。先在 base 的樹裡找同名 pack；
@@ -803,7 +825,7 @@ def check_bumped(root, errs, base, event=None):
             print(f"note: pack 在 base 時位於 {moved[: -len('/.claude-plugin/plugin.json')]}"
                   f"（本次改名為 {pack_rel}）—— 用舊路徑比對版本")
             old = subprocess.run(["git", "show", f"{cmp_base}:{moved}"],
-                                 cwd=repo, capture_output=True, text=True)
+                                 cwd=repo, capture_output=True, text=True, errors="replace")
             if old.returncode != 0:
                 errs.append(f"::error::讀不到 base 上的 {moved} —— bump 檢查沒有跑")
                 return
@@ -959,6 +981,7 @@ def check_csvs(root, errs, files):
     known_profiles = None
     if repo is not None:
         lister = repo / "plugins" / "parallel-ai-agents" / "bin" / "pai-list-profiles"
+        harness = repo / "plugins" / "parallel-ai-agents" / "workflows" / "ensemble-workflow.js"
         # #33 verify R6：先前「工具不存在」是唯一的靜默路徑 —— known_profiles 留 None，
         # 下面的 profile 名稱閘門整條蒸發且一個字都不印。同一支檔案對「拿不到 base ref」
         # 與「工具跑失敗」都是 hard error，唯獨「工具不見了」靜默，語意不一致。
@@ -970,10 +993,17 @@ def check_csvs(root, errs, files):
             # #33 verify R12（security LOW）：containment 的第七處 —— 這一處不只讀，還**執行**。
             errs.append(f"::error::{lister.relative_to(repo)} 解析後落在 repo 外（可能是 symlink）"
                         "—— 拒絕執行。profile 名稱閘門沒有跑")
+        elif not _inside(harness.resolve(), repo.resolve()):
+            # #33 verify R13（requirements R13-4）：第八處 —— R12 補了執行點（lister），沒補它**求值的輸入**。
+            # harness 是 symlink 到 repo 外時，node 的 SyntaxError code frame 會把該檔內容經 stderr →
+            # errs → annotation 印出來（與 R9 的 lenses symlink 洩漏同一類）。
+            errs.append(f"::error::{harness.relative_to(repo)} 解析後落在 repo 外（可能是 symlink）"
+                        "—— 拒絕求值。profile 名稱閘門沒有跑")
         else:
-            r = subprocess.run(["bash", str(lister)], capture_output=True, text=True)
+            r = subprocess.run(["bash", str(lister)], capture_output=True, text=True, errors="replace")
             if r.returncode != 0:
-                errs.append(f"::error::無法取得 PROFILES 清單：{r.stderr.strip()}")
+                # stderr 走 wc()：截斷 + 中和，不讓 node 的 code frame 把整段檔案內容帶進 annotation。
+                errs.append(f"::error::無法取得 PROFILES 清單：{wc(r.stderr.strip())}")
             elif not r.stdout.split():
                 # rc=0 但空輸出 → known_profiles 會是空 set，於是**每一個** CSV 都被報
                 # 「不是既有 profile（真源 PROFILES 有：）」，清單還是空的 —— 讀者無從判斷
@@ -1156,12 +1186,22 @@ def main():
     base, event = args.base or None, args.event
     root = pathlib.Path(__file__).resolve().parent.parent
     errs = []
-    check_version(root, errs)
-    check_marketplace_sync(root, errs)
-    check_bumped(root, errs, base, event)
-    files = check_lens_dir_shape(root, errs)
+    # #33 verify R13 DA-1：所有 annotation 留到最後才印，任何一道閘門拋例外就讓已累積的 errs 全部消失、
+    # 後面的閘門整段不跑——R6／R9／R10／R12 #3／R13 S1 是同一個結構的第五次發作，每次的修法都是
+    # 「再加一個 except」。現在每道閘門各自隔離：例外變成一條具名的 ::error，其餘閘門照跑。
+    def gate(name, fn, *args):
+        try:
+            return fn(*args)
+        except Exception as e:                      # noqa: BLE001 —— 這裡就是要接住一切
+            errs.append(f"::error::validator 內部錯誤（閘門 {name} 未跑完）：{wc(repr(e))}。"
+                        "這不是「該閘門通過」—— 是它沒跑完；其餘閘門的結果仍在下面")
+            return None
+    gate("check_version", check_version, root, errs)
+    gate("check_marketplace_sync", check_marketplace_sync, root, errs)
+    gate("check_bumped", check_bumped, root, errs, base, event)
+    files = gate("check_lens_dir_shape", check_lens_dir_shape, root, errs)
     if files:
-        check_csvs(root, errs, files)
+        gate("check_csvs", check_csvs, root, errs, files)
     for e in errs:
         emit(e)
     return 1 if errs else 0

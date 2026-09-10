@@ -15,8 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 `pai-lenses` 從獨立 repo 併回本 repo 成為第二個 plugin，並把三層 lens 疊加的文件與 CI 閘門補齊。
 
-> **範圍說明**：本版**不含**層 ③ 的自動回流工具。它原本在同一個 PR 裡，經十輪 6-AI verify
-> （HIGH 數 15 → 18 → 32 → 14 → 15 → 4 → 3 → R8 降級 → 11 → **7**；R8 只有 1/6 agent 完成，
+> **範圍說明**：本版**不含**層 ③ 的自動回流工具。它原本在同一個 PR 裡，經多輪 6-AI verify
+> （HIGH 數 15 → 18 → 32 → 14 → 15 → 4 → 3 → R8 降級 → 11 → 7 → …，逐輪見下方各 Fixed 段；R8 只有 1/6 agent 完成，
 > 不計入序列但其 CRITICAL 已修。R9 的 11 個 HIGH 偏高是因為四個 core lens **從未審過**
 > R8 之後新增的 `scripts/`，那是那批程式碼的第一次真正審閱）後拆出到 **#39**。R3 的 32 個 HIGH 有 **29 個**落在
 > 回流工具上；剩下 3 個在 `validate.py`（**本版出貨的內容**，已於 R4 修掉）。
@@ -431,7 +431,7 @@ R11 的 15 列有 11 列真的修好（各 lens 自建 fixture 重現，不只�
   解析）。PoC：兩份 manifest 的 `name` = `pai-lenses ##[stop-commands]zzz ##[error file=…]FORGED`
   （單行、零特殊字元）→ rc=0 全綠、runner 解析出 `[stop-commands]`。四個 Claude lens 都只知道 V2、
   三個 lens 一致提的行界修法對這份 payload 一個字元都動不到 —— Codex 缺席時跨模型的問法多樣性也缺席。
-  `LineSanitiser`／`emit()`／`wc()` 現在全行把 `##[` 換成 `##［`；`emit()` 的截斷只截訊息、保證
+  `LineSanitiser`／`emit()`／`wc()` 現在全行把 `##[` 換成 `##⟦`；`emit()` 的截斷只截訊息、保證
   `::cmd props::` 頭完整（否則 V2 找不到第二個 `::` 就落到 V1）；`LineSanitiser` 改成**緩衝未完成的一行**
   到行界才判（DA-3：`::` 被切在兩次 `write()` 中間時只記行首旗標看不到）；測試語料含 runner 的 L0 輸入，
   `assertNoInjectedCommand` 對每一行斷言不含 `##[`。
@@ -454,14 +454,57 @@ R11 的 15 列有 11 列真的修好（各 lens 自建 fixture 重現，不只�
 - **description 版號閘門的「第一個＝最新」沒有規格也沒有測試**（MEDIUM）：改成取最後一個 match 全套仍綠。
   補雙向測試（舊在前 → warning；新在前 → 無），靶清單加「first→last」；慣例寫進 root `CLAUDE.md` 版本同步表。
   另記錄一個取捨（R12 regression R12-7）：兩份 description 統一後只列最近兩版（v2.24.0 / v2.23.0），
-  v2.19.0–v2.22.0 的敘述移出 —— 歷史看 CHANGELOG，這裡是 `/plugin` 清單的一句話。
+  v2.19.0–v2.22.0 **五版**的敘述移出 —— 歷史看 CHANGELOG，這裡是 `/plugin` 清單的一句話。
 - 零星：`bin/pai-list-profiles` 補 containment（第七處，這一處是**執行**不只讀）；root `CLAUDE.md:38/:52`
   的「純資料無程式碼」與 README 對齊（R11 只修了 README —— 同類只修一處第 N 次）；`test.yml` 的 `on:`
   補回指 `EVENTS` 的對稱註解；`validate.py` 引用已刪 `.gitignore` 的註解改寫；`note: pack 在 base 時位於 …`
   改印目錄而非 plugin.json 路徑；本段 R8/R9 兩句存活數補上輪次。
 - 明示未動：root README skill 表格的擴充（R11 #13 已標可選，內容正確、不在 checklist）。
 
-  測試 79 → 86 條；靶清單 68 → 75 個（含 3 個 EXPECTED_SURVIVE）。量測（R12 後）：71 殺 / 1 存活（equivalent）/ 0 壞，見 `scripts/test_validate.py` 檔頭。
+  測試 79 → 89 條；靶清單 68 → 75 個（含 3 個 EXPECTED_SURVIVE；commit `96f26a4` 的訊息寫成 2，以程式碼為準——R13 errata）。量測（R12 後）：71 殺 / 1 存活（equivalent）/ 0 壞，見 `scripts/test_validate.py` 檔頭。
+
+### Fixed（#33 verify R13 —— R12 修法的重驗：4 lens + DA，Codex 仍缺席）
+
+R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現，含十幾種分隔符與 V1 重疊前綴），
+沒有 not-fixed；但「同類只修一處」在 R12 修法自己身上又發生：
+
+- **非 UTF-8 manifest 還有兩個 crash 站點**（HIGH，security S1）：R12 說「反向 glob 是唯一沒走 `load_obj` 的
+  JSON 讀取點」—— 假的。`check_bumped` 讀 `pack_name` 的 except 少列 `UnicodeDecodeError`，所有
+  `subprocess.run(text=True)` 對 git 輸出的解碼也會炸；裸 traceback、零 annotation、後面的閘門整段不跑。
+  except 補齊、12 處 `text=True` 一律 `errors="replace"`，測試在無 base／有 base 兩條路徑各斷言「後面的閘門仍跑到」。
+- **`##［`（U+FF3B）有 `<wide>` 相容分解，NFKC 會回到 `[`**（security S3）：替身改用 U+27E6 `⟦`
+  （無分解；`∷` U+2237 亦無）。
+- **containment 第八、九處**（logic N1）：pack 自己的 `.claude-plugin` 是 symlink 時 `check_version`
+  印出 repo 外的 `version`，同一次輸出下兩行卻說「拒絕讀取」；`check_bumped` 的 `pack_name` 讀取同。
+- **harness 本身沒有 containment**（requirements R13-4）：`bin/pai-list-profiles` 求值的
+  `workflows/ensemble-workflow.js` 是 symlink 到 repo 外時，node 的 SyntaxError code frame 把該檔內容經
+  stderr → errs → annotation 印出（與 R9 標 HIGH 的 lenses symlink 洩漏同類）。呼叫前判 `_inside`，
+  stderr 走 `wc()` 截斷。
+- **drift 檢查印 diff 內容**（requirements R13-5）：catalog 的 `focus` 是 fork 可控文字，`git diff` 的 `+` 行
+  會把 `##[…]` 原樣印進同一個 job 的 log —— `LineSanitiser` 守的是 `validate.py` 這個 process，不是整個
+  workflow。`test.yml` 與 `run.sh` 兩處改 `git diff --quiet`，不印內容。
+- **drift 檢查落在非 git checkout 的 guard 之外**（logic N4 / regression R13-1 / requirements R13-3）：
+  plugin cache 副本下 `git diff` rc=129 被報成「檔案過期」。包進 `git rev-parse --is-inside-work-tree`。
+- **description 版號 regex 的 `\bv` 在 CJK 相黏時不成立**（logic N2）：「補齊v0.0.1:」跳過真正最前面的版號。
+  改成「前一個字元不是 ASCII 英數」，雙向測試。
+- **`main()` 把所有 annotation 留到最後才印，任何閘門拋例外就全部消失**（DA-1：這是 R6／R9／R10／R12 #3／
+  本輪 S1 同一結構的第五次發作，五次的修法都是「再加一個 except」）。現在每道閘門各自 try/except，
+  例外變成一條具名的 `::error::validator 內部錯誤（閘門 X 未跑完）`，後面的閘門照跑、已累積的 errs
+  一定印出。`LineSanitiser` 補 `writelines`（DA-3：`__getattr__` 透傳讓它整個繞過消毒）；`emit()` 先
+  `lstrip()` 再認命令頭（DA-12：與 runner 的 `TrimStart()` 同一定義）；`test.yml` 的 `py_compile` step
+  過一層中和 filter（DA-4：SyntaxError code frame 把 fork 可控原始碼行原樣印進 log；`stop-commands` 是
+  step-scoped、`add-mask` 是 job-scoped——守備範圍寫進註解）。
+- `--check-targets` 也驗 `EXPECTED_SURVIVE ⊆ 靶名`（regression R13-6 / DA-5：這個集合在機制上能藏東西，
+  報表措辭改成「每輪仍需確認理由是否成立」）；`flush()` 的中和補測試（logic N5）；
+  `test.yml` 註明 node 測試的 stdout 不在輸出邊界守備範圍（security S2）；root `CLAUDE.md` 註明 pai-lenses
+  不採用版號前綴（requirements R13-8）；本段開頭 blockquote 不再寫死輪數（R13-9）；「五版／四段」統一（R13-7）；
+  `lint-changelog-counts.sh` 的宣稱形式擴成也認 `grep -c "<pattern>" <file>`（R13-1，python 測試數不再手打；指向 sibling plugin 的 `../` 路徑在非 monorepo 佈局不存在時跳過並註明，不判「數字錯」）。
+
+- **`main()` 逐閘門隔離讓 8 個 mutation 靶假存活**（本輪修法自己的副作用，全輪量測抓到）：守衛被刪掉後
+  只剩一條「validator 內部錯誤」，rc 仍 1、沒 traceback，舊的「不 crash」測試分不出「守衛在」與「由 gate()
+  兜住」。`test_validate.py` 的 `Fixture.run` 預設把那個字串視為失敗（一處，不是八條測試各補一句）。
+  測試 89 → 97 條（`grep -c "    def test_" ../pai-lenses/scripts/test_validate.py`）；靶清單 75 → 83 個。
+  量測（R13 後）見 `scripts/test_validate.py` 檔頭。
 
 ## [2.23.0] - 2026-09-10
 

@@ -35,8 +35,14 @@ for t in test/*.test.mjs; do echo "  $t"; node "$t"; done
 # （完整 mutation 量測仍是手動：python3 scripts/mutation_check.py，約十分鐘）。
 # #33 verify R12：CI 的 builtin-lenses.csv drift step 也搬過來 —— 它是 run.sh 與 CI 之間最後一處分岔。
 echo "── builtin-lenses.csv drift (regenerate → expect no diff) ──"
-bash references/regen-builtin-lenses.sh
-git diff --exit-code -- references/builtin-lenses.csv || { echo "references/builtin-lenses.csv 過期 —— 上面已重生，請 commit"; exit 1; }
+# R13 logic N4：非 git checkout（plugin cache 副本）下 `git diff` rc=129，不能拿它當「過期」。
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  bash references/regen-builtin-lenses.sh
+  # R13 requirements R13-5：不印 diff 內容 —— catalog 的 focus 是 fork 可控文字，`##[…]`/`::` 會原樣進 step log。
+  git diff --quiet -- references/builtin-lenses.csv || { echo "references/builtin-lenses.csv 過期 —— 上面已重生，請 commit（內容不印：見 git diff）"; exit 1; }
+else
+  echo "（非 git checkout，略過 drift 檢查）"
+fi
 
 echo "── pai-lenses pack (validate.py 的測試、靶清單、validator 本體) ──"
 # 這段只在 monorepo 佈局下成立（plugin cache 裡的副本沒有 sibling pack）。

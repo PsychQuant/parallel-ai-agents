@@ -167,8 +167,12 @@ MUTATIONS = [
      "            if m_desc and pj_ver and m_desc.group(1) != pj_ver:", "            if False:"),
     # R12（logic L4）：「第一個 v<semver>: 就是最新」是慣例；把 search 換成取最後一個 match 要被抓到。
     ("description 版號前綴取第一個（最新在前）",
-     '            m_desc = re.search(r"\\bv(\\d+\\.\\d+\\.\\d+(?:[-+][0-9A-Za-z.-]+)?):", str(desc or ""))',
-     '            m_desc = (lambda ms: ms[-1] if ms else None)(list(re.finditer(r"\\bv(\\d+\\.\\d+\\.\\d+(?:[-+][0-9A-Za-z.-]+)?):", str(desc or ""))))'),
+     '            m_desc = re.search(r"(?<![A-Za-z0-9])v(\\d+\\.\\d+\\.\\d+(?:[-+][0-9A-Za-z.-]+)?):", str(desc or ""))',
+     '            m_desc = (lambda ms: ms[-1] if ms else None)(list(re.finditer(r"(?<![A-Za-z0-9])v(\\d+\\.\\d+\\.\\d+(?:[-+][0-9A-Za-z.-]+)?):", str(desc or ""))))'),
+    ("description 版號前綴的 CJK 相黏（R13 N2）",
+     '            m_desc = re.search(r"(?<![A-Za-z0-9])v(\\d+\\.\\d+\\.\\d+(?:[-+][0-9A-Za-z.-]+)?):", str(desc or ""))',
+     '            m_desc = re.search(r"\\bv(\\d+\\.\\d+\\.\\d+(?:[-+][0-9A-Za-z.-]+)?):", str(desc or ""))'),
+    ("check_version 的 containment（R13 N1）", "    if not _inside(manifest.resolve(), ws):", "    if False:"),
     ("反向 glob 的 containment",
      "        if not _inside(found.resolve(), repo_abs):", "        if False:"),
     ("annotation property 轉義（prop）",
@@ -182,10 +186,15 @@ MUTATIONS = [
      "            found_obj = json.loads(found.read_text(encoding=\"utf-8\"))"),
     ("lister 的 containment",
      "        elif not _inside(lister.resolve(), repo.resolve()):", "        elif False:"),
+    ("main() 逐閘門隔離（R13 DA-1）", "        except Exception as e:                      # noqa: BLE001 —— 這裡就是要接住一切",
+     "        except () as e:"),
+    ("emit 認命令頭前先 lstrip（R13 DA-12）", "    t = collapse_lines(str(line)).lstrip()", "    t = collapse_lines(str(line))"),
+    ("harness 的 containment（R13 R13-4）",
+     "        elif not _inside(harness.resolve(), repo.resolve()):", "        elif False:"),
     # R12 DA-1：runner 的第二套語法。V1 是 IndexOf，只能全行取代。
-    ("V1 `##[` 中和（輸出邊界）", '        return line.replace("##[", "##［")', "        return line"),
+    ("V1 `##[` 中和（輸出邊界）", '        return line.replace("##[", "##⟦")', "        return line"),
     ("輸出邊界緩衝未完成的一行", '        if segs and not segs[-1].endswith(("\\n", "\\r")):', "        if False:"),
-    ("V1 `##[` 中和（emit）", '    t = t.replace("##[", "##［")', "    t = t"),
+    ("V1 `##[` 中和（emit）", '    t = t.replace("##[", "##⟦")', "    t = t"),
     ("emit 截斷保留命令頭", "    if len(msg) > 4000:", "    if False:"),
     # R12 DA-6：這兩個守衛在目前的入口條件（`old_path.endswith("/" + suffix)`）下**依構造不可達**
     # （old_pack == pack_rel ⟺ old_path == new_path，git 不會對同路徑輸出 R）。保留為防禦（R11 #5 才
@@ -197,12 +206,27 @@ MUTATIONS = [
      "            if subprocess.run("),
 ]
 
+MUTATIONS += [
+    # R13（security S1）：非 UTF-8 manifest 的第三、第四個 crash 站點。
+    ("pack_name 讀取的 UnicodeDecodeError",
+     "        except (OSError, UnicodeDecodeError, json.JSONDecodeError):\n            pack_name = None",
+     "        except (OSError, json.JSONDecodeError):\n            pack_name = None"),
+    ("pack_name 讀取的 containment（R13 N1 第九處）",
+     "    if _inside(_pj_path.resolve(), repo.resolve()):", "    if True:"),
+    ("git show 解碼 errors=replace（HEAD 側）",
+     '    cur = subprocess.run(["git", "show", f"HEAD:{pj_rel}"],\n                         cwd=repo, capture_output=True, text=True, errors="replace")',
+     '    cur = subprocess.run(["git", "show", f"HEAD:{pj_rel}"],\n                         cwd=repo, capture_output=True, text=True)'),
+]
+
 EXPECTED_SURVIVE = {
     "pack 內部改名不投票（依構造不可達，保留為防禦）",
     "純改名偵測 git 分支（依構造不可達，保留為防禦）",
     # R12 修法後 LineSanitiser 對**每一段**獨立判 `lstrip().startswith("::")`、不再靠行首旗標——
     # 換回 splitlines() 只會多切幾段、多消毒幾次，方向安全。靶保留是為了釘住「不得再引入旗標」的設計意圖。
     "輸出邊界的行定義（runner 的，不是 splitlines）",
+    # R13：pack_name 讀取的 containment 是縱深防禦 —— 讀取結果不輸出（只影響改名偵測的 name 比對），
+    # check_version 對同一個 symlink 已先報錯，所以關掉這一處看不出行為差異。保留守衛：不讀 repo 外的檔。
+    "pack_name 讀取的 containment（R13 N1 第九處）",
 }
 
 
@@ -227,6 +251,11 @@ def check_targets_only():
     """
     src = VALIDATE.read_text(encoding="utf-8")
     broken = []
+    # R13（regression R13-6）：EXPECTED_SURVIVE 只是名字集合 —— 靶被改名或刪掉後，這裡的名字會靜默
+    # 失效（那個靶重新變成「要人判讀的存活」，或更糟：一個不存在的名字永遠「預期存活」）。
+    names = {n for n, _o, _n in MUTATIONS}
+    for n in sorted(EXPECTED_SURVIVE - names):
+        broken.append((n, "列在 EXPECTED_SURVIVE 但 MUTATIONS 裡沒有這個靶"))
     for name, old, _new in MUTATIONS:
         if old == "__SPECIAL_NOBASE__":
             # #33 verify R10 M5：先前只驗兩個 anchor 的其中一個、而且沒驗唯一性 ——
@@ -315,7 +344,7 @@ def main():
         for n in survived:
             print("  -", n)
     if expected:
-        print("\n預期存活（依構造不可達的防禦守衛，見 EXPECTED_SURVIVE 的註解 —— 不必判讀）：")
+        print("\n預期存活（列在 EXPECTED_SURVIVE；每輪仍需確認理由是否成立 —— 這個集合是可以藏東西的，R13 DA-5）：")
         for n in expected:
             print("  -", n)
     unexpected_kill = [n for n in killed if n in EXPECTED_SURVIVE]

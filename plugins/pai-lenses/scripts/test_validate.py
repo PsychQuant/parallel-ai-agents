@@ -15,11 +15,15 @@
 mutation」。**那三句話會讓下一個維護者以為改動 `validate.py` 有測試網接著。**
 
 現在用 `scripts/mutation_check.py` 量：跑一次就知道哪些閘門沒有測試網。
-**最近一次量測（R12 後）：75 個靶 → 71 殺 / 1 存活 / 0 靶壞**
-（數字與存活清單請跑一次 `mutation_check.py`）。唯一存活「catalog 缺檔」是 equivalent mutant（拿掉 `is_file()` 前置檢查後 `cat.open()` 仍拋
-`OSError` 被同一個 `except` 接住、同樣 rc=1）。另有 3 個 `EXPECTED_SURVIVE`（不計入存活）：
-`_find_pack_at` git 分支的兩個守衛依構造不可達（R12 logic L3 / DA-6，保留為防禦），以及
-「換回 splitlines()」—— R12 的 LineSanitiser 對每一段獨立判定、不靠行首旗標，過度切段只會過度消毒。
+**最近一次量測（R13 後）：83 個靶 → 79 殺 / 0 存活 / 0 靶壞**（另 4 個 `EXPECTED_SURVIVE`，不計入存活；
+數字與存活清單請跑一次 `mutation_check.py`）。0 個意外存活。
+R13 修法的 `main()` 逐閘門隔離讓第一次全輪跑出 **8 個假存活**：守衛被刪掉後只剩一條「validator 內部錯誤」，rc 仍 1、
+沒 traceback，舊的「不 crash」測試分不出「守衛在」與「由 gate() 兜住」。修在 `Fixture.run`（預設拒絕那個字串）
+一處而不是八條測試各補一句 —— 那正是本 PR 三輪 verify 反覆抓到的「同類只修一處」。
+`EXPECTED_SURVIVE` 的 4 個：`_find_pack_at` git 分支的兩個守衛依構造不可達（R12 logic L3 / DA-6，保留為防禦）、
+「換回 splitlines()」（R12 的 LineSanitiser 對每一段獨立判定，過度切段只會過度消毒）、`pack_name` 讀取的 containment
+（R13 N1 第九處：symlink 時 check_version 已先報錯並 return，這裡只是不再重複讀）。R12 曾判「catalog 缺檔」為 equivalent
+——不是：守衛的價值是**說對原因**（「找不到」vs「讀取失敗：[Errno 2]」），測試現在斷言具名訊息，該靶轉殺。
 R11 曾寫「四個存活皆 equivalent」：一個判定為假（containment 靶，已補 `./docs/evil` fixture 轉紅）、
 兩個理由為假（那兩個是死碼，不是互為後盾）。
 
@@ -77,8 +81,18 @@ class Fixture:
         git(self.repo, "-c", "commit.gpgsign=false", "commit", "-qm", msg)
         return git(self.repo, "rev-parse", "HEAD").stdout.strip()
 
-    def run(self, *args, ci=False, script="plugins/pai-lenses/scripts/validate.py"):
+    INTERNAL = "validator 內部錯誤"
+
+    def run(self, *args, ci=False, script="plugins/pai-lenses/scripts/validate.py",
+            allow_internal=False):
         """回傳 (rc, 合併後的輸出)。validate.py 把 error 印到 stdout（GitHub annotation）。
+
+        `allow_internal`（#33 verify R13 修法後的 mutation 量測）：`main()` 逐閘門隔離之後，
+        任何守衛被刪掉都只會變成一條「validator 內部錯誤」—— rc 仍是 1、也沒有 traceback，
+        於是**每一條只斷言 rc / 沒 traceback / 有 ::error 的測試都分不出「守衛在」與「守衛沒了、
+        由 gate() 兜住」**：83 靶跑出 8 個意外存活，全是這個形狀。gate() 是最後一張網，不是閘門；
+        測試裡看到它就是缺了一道守衛，所以這裡**一律**視為失敗，要看它的那一條測試自己在
+        行程內 monkeypatch（不走這裡）。這是類級的修法：不是在八條測試各補一句 assertNotIn。
 
         `ci` 是**必要的參數，不是方便**（#33 verify R8 CRITICAL）：`check_bumped` 的
         no-base 分支依序是 workflow_dispatch → **`GITHUB_ACTIONS != "true"` 本機** → CI
@@ -90,7 +104,12 @@ class Fixture:
             [sys.executable, str(self.repo / script), *args],
             cwd=self.repo, capture_output=True, text=True,
             env={**os.environ, "GITHUB_ACTIONS": "true" if ci else ""})
-        return r.returncode, r.stdout + r.stderr
+        out = r.stdout + r.stderr
+        if not allow_internal and self.INTERNAL in out:
+            raise AssertionError(
+                f"某道閘門拋了例外、由 main() 的 gate() 兜住 —— 這代表缺了一道具名的守衛，"
+                f"不是「沒 crash」：\n{out}")
+        return r.returncode, out
 
     def write_lenses(self, text, profile="code"):
         (self.repo / "plugins/pai-lenses/lenses" / f"{profile}.csv").write_text(
@@ -257,7 +276,10 @@ class ValidateTest(unittest.TestCase):
         (self.fx.repo
          / "plugins/parallel-ai-agents/references/builtin-lenses.csv").unlink()
         self.fx.write_lenses('key,focus\narchitecture,"撞名"\n')
-        self.assertRed(contains="撞名閘門沒有跑")
+        # 只斷言「撞名閘門沒有跑」分不出這道守衛與下面 except OSError 的「讀取失敗」（R13 後靶存活）：
+        # 守衛的價值是**說對原因**——「找不到」而不是「讀取失敗：[Errno 2]」。
+        out = self.assertRed(contains="找不到 plugins/parallel-ai-agents/references/builtin-lenses.csv")
+        self.assertIn("這不是「沒有撞名」", out)
 
     def test_collision_gate_fails_loud_when_catalog_header_changed(self):
         """R7 H1 的第二條路徑：header 缺 profile 欄時回 {} 而非 None，連保險都不觸發。"""
@@ -585,12 +607,12 @@ class ValidateTest(unittest.TestCase):
                 rc, out = fx.run()
                 self.assertEqual(rc, 1, out)
                 self.assertNotIn("Traceback", out, f"{label} 不該是裸 traceback：\n{out}")
-                self.assertIn("::error", out, f"{label} 必須留下 annotation：\n{out}")
+                self.assertIn("不是物件", out, f"{label} 必須是 load_obj 的具名訊息：\n{out}")
 
     def test_marketplace_plugins_of_wrong_type_does_not_crash(self):
         self.fx.edit_json(".claude-plugin/marketplace.json",
                           lambda d: d.__setitem__("plugins", ["pai-lenses"]))
-        out = self.assertRed()
+        out = self.assertRed(contains="`plugins` 的元素必須是物件")
         self.assertNotIn("Traceback", out)
 
     def test_plugins_not_a_list_gives_one_clear_error_not_a_cascade(self):
@@ -650,7 +672,7 @@ class ValidateTest(unittest.TestCase):
         rc, out = self.fx.run("--base", base, "--event", "push")
         self.assertNotIn("Traceback", out, f"不該是裸 traceback：\n{out}")
         self.assertEqual(rc, 1, out)
-        self.assertIn("::error", out, f"必須留下 annotation：\n{out}")
+        self.assertIn("不是物件", out, f"必須是 load_obj 的具名訊息：\n{out}")
 
     def test_lenses_dir_itself_cannot_be_a_symlink_out_of_repo(self):
         """#33 verify R10 H4：R9 的 symlink 守衛只作用在 `lenses/` 的**條目**上，
@@ -776,7 +798,7 @@ class ValidateTest(unittest.TestCase):
         rc, out = self.fx.run("--base", base, "--event", "push")
         self.assertNotIn("Traceback", out, f"base 那側也不該是裸 traceback：\n{out}")
         self.assertEqual(rc, 1, out)
-        self.assertIn("::error", out)
+        self.assertIn("不是物件", out, f"必須是 load_obj 的具名訊息：\n{out}")
 
     # ---- #33 verify R11 ----
 
@@ -1143,6 +1165,117 @@ class ValidateTest(unittest.TestCase):
         self.assertGreater(line.find("::", 2), 0, "命令頭（第二個 ::）被截掉了")
         self.assertIn("…（截斷）", line)
         self.assertNotIn("##[", line)
+
+    # ---- #33 verify R13 ----
+
+    def test_non_utf8_pack_manifest_never_crashes_any_gate(self):
+        """R13 security S1：R12 修法宣稱「反向 glob 是唯一沒走 load_obj 的 JSON 讀取點」——假的。
+        非 UTF-8 的 pack plugin.json 還會在 check_bumped 的 pack_name 讀取（except 少列
+        UnicodeDecodeError）與 `git show`（subprocess text=True 解碼）炸成裸 traceback，
+        已累積的 annotation 全部消失、後面的閘門整段不跑。"""
+        base = self.fx.commit("base")
+        pj = self.fx.repo / "plugins/pai-lenses/.claude-plugin/plugin.json"
+        pj.write_bytes(b'\xff\xfe{"name":"pai-lenses","version":"0.2.0"}\n')
+        self.fx.write_lenses("key,focus\n")           # 一條真的 error，看它有沒有被吃掉；也讓 bump 檢查走到 git show
+        self.fx.commit("非 UTF-8 的 manifest + lens 變更")
+        for args in ((), ("--base", base, "--event", "push")):
+            with self.subTest(args=args):
+                rc, out = self.fx.run(*args)
+                self.assertNotIn("Traceback", out, out)
+                self.assertEqual(rc, 1, out)
+                self.assertIn("解析出 0 條 lens", out, "後面的閘門（check_csvs）必須仍然跑到")
+
+    def test_pack_own_claude_plugin_symlink_is_not_read_by_check_version(self):
+        """R13 logic N1：containment 的第八、九處——pack 自己的 .claude-plugin 是 symlink 時，
+        check_version 會印出 repo 外檔案的 version，而同一次輸出的下兩行卻說「拒絕讀取」。"""
+        outside = self.fx.dir / "outside-cp"; outside.mkdir()
+        (outside / "plugin.json").write_text('{"name":"pai-lenses","version":"9.9.9"}\n', encoding="utf-8")
+        cp = self.fx.repo / "plugins/pai-lenses/.claude-plugin"
+        shutil.rmtree(cp); cp.symlink_to(outside)
+        out = self.assertRed(contains="落在 repo 外")
+        self.assertNotIn("version = 9.9.9", out, "repo 外的 version 不得被印出")
+
+    def test_description_prefix_regex_survives_cjk_adjacency(self):
+        """R13 logic N2：`\\bv` 在 CJK 相黏時（「補齊v0.0.1:」）不成立，閘門跳過真正最前面的版號。"""
+        ver = json.loads((self.fx.repo / "plugins/pai-lenses/.claude-plugin/plugin.json")
+                         .read_text(encoding="utf-8"))["version"]
+        desc = f"補齊v0.0.1: 舊的黏在前面。v{ver}: 新的在後"
+        self.fx.edit_json("plugins/pai-lenses/.claude-plugin/plugin.json",
+                          lambda d: d.__setitem__("description", desc))
+        self.fx.set_entry("pai-lenses", description=desc)
+        out = self.assertGreen()
+        self.assertIn("description 最新一段標示 v0.0.1", out, out)
+
+    def test_output_boundary_flush_neutralises_pending_line(self):
+        """R13 logic N5：flush() 時殘餘那一行也要經同一道判定（靶先前存活）。"""
+        import io
+        sys.path.insert(0, str(HERE))
+        import validate as V
+        buf = io.StringIO(); w = V.LineSanitiser(buf)
+        w.write("::stop-commands::x ##[error]y"); w.flush()
+        self.assertEqual(buf.getvalue(), "∷stop-commands::x ##⟦error]y")
+
+    def test_harness_symlink_outside_repo_is_not_evaluated_or_leaked(self):
+        """R13 requirements R13-4：containment 補到 lister（執行點），沒補到它求值的輸入
+        （workflows/ensemble-workflow.js）。symlink 到 repo 外的檔案會被 node 求值，SyntaxError
+        的 code frame 把該檔內容經 stderr → errs → annotation 印出來。"""
+        outside = self.fx.dir / "outside.mjs"
+        outside.write_text("TOP-SECRET-HARNESS-LINE = 42 !!!\n", encoding="utf-8")
+        h = self.fx.repo / "plugins/parallel-ai-agents/workflows/ensemble-workflow.js"
+        h.unlink(); h.symlink_to(outside)
+        out = self.assertRed(contains="落在 repo 外")
+        self.assertNotIn("TOP-SECRET-HARNESS-LINE", out, "repo 外檔案內容不得進 annotation")
+
+    def test_main_drains_accumulated_errors_even_if_a_gate_crashes(self):
+        """R13 DA-1：缺陷類的根因不是「哪個 except 漏了」，而是 main() 把所有 annotation 留到最後才印——
+        任何一個閘門拋例外，已累積的 errs 全部消失，後面的閘門也不跑。這是同一結構第五次發作。"""
+        import io
+        sys.path.insert(0, str(HERE))
+        import validate as V
+        buf = io.StringIO()
+        orig_main_argv, orig_bumped, orig_raw = sys.argv, V.check_bumped, V.RAW_OUT
+        def boom(*a, **k):
+            raise RuntimeError("boom ::stop-commands::x")
+        import contextlib
+        plain = io.StringIO()
+        try:
+            sys.argv = ["validate.py"]
+            V.check_bumped = boom
+            V.RAW_OUT = buf
+            with contextlib.redirect_stdout(plain):     # print() 走 sys.stdout（會被 LineSanitiser 包住）
+                rc = V.main()
+        finally:
+            sys.argv, V.check_bumped, V.RAW_OUT = orig_main_argv, orig_bumped, orig_raw
+        out = buf.getvalue() + plain.getvalue()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("validator 內部錯誤", out, out)
+        self.assertIn("check_bumped", out, "要指名是哪道閘門沒跑完")
+        self.assertNotIn("::stop-commands::", out.split("::", 2)[-1] if False else "\n".join(
+            l for l in out.splitlines() if l.lstrip().startswith("::stop-commands")), "例外訊息也要消毒")
+        self.assertIn("條 lens ✓", out, "後面的閘門（check_csvs）仍要跑到")
+
+    def test_output_boundary_writelines_is_sanitised(self):
+        """R13 DA-3：`__getattr__` 把 writelines 透傳到底層 stream，兩套語法原樣落地。"""
+        import io
+        sys.path.insert(0, str(HERE))
+        import validate as V
+        buf = io.StringIO(); w = V.LineSanitiser(buf)
+        w.writelines(["::stop-commands::zzz\n", "##[error file=a]F\n"]); w.flush()
+        self.assertEqual(buf.getvalue(), "∷stop-commands::zzz\n##⟦error file=a]F\n")
+
+    def test_emit_recognises_a_command_head_after_leading_whitespace(self):
+        """R13 DA-12：emit() 用 startswith("::") 判 head、runner 用 TrimStart()——同一個概念兩套定義。"""
+        import io
+        sys.path.insert(0, str(HERE))
+        import validate as V
+        buf = io.StringIO(); V.RAW_OUT = buf
+        try:
+            V.emit("  ::error file=x::" + "A" * 5000)
+        finally:
+            V.RAW_OUT = None
+        line = buf.getvalue().rstrip("\n")
+        self.assertTrue(line.startswith("::error file=x::"), line[:40])
+        self.assertIn("…（截斷）", line)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

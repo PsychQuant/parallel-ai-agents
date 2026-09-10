@@ -64,7 +64,8 @@ bump 版本時兩處必須一致。**這條對每一個 plugin 各自成立**，
 
 **description 的版號前綴慣例**（#33 verify R12）：description 若以 `vX.Y.Z: …` 標示「這一版帶來什麼」，
 **第一個**版號段是最新版，且必須等於 `version` 欄（`validate.py` 的 `check_marketplace_sync` 對此印 warning）。
-舊版敘述放後面；只保留最近幾版，歷史看 CHANGELOG。
+舊版敘述放後面；只保留最近幾版，歷史看 CHANGELOG。**目前只有 `parallel-ai-agents` 採用此慣例**；
+`pai-lenses` 的 description 是功能敘述、不帶版號，這道 warning 對它結構上不觸發（R13）。
 
 兩者不同步 → 使用者 `/plugin update` 會看到舊版或裝不到新功能，**而且沒有任何錯誤訊息**。
 
