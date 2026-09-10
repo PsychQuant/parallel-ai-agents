@@ -5,10 +5,22 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "── shellcheck (bash scripts) ──"
-shellcheck bin/pai-build-diff bin/pai-parse-verdict bin/pai-iter-commit
+shellcheck bin/pai-build-diff bin/pai-parse-verdict bin/pai-iter-commit test/lint-bats.sh test/lint-changelog-counts.sh test/lint-contract-enumerations.sh
 
 echo "── py_compile (python scripts) ──"
 python3 -m py_compile bin/pai-parse-lens-csv
+
+echo "── lint-bats (bare ! assertions are no-ops under bats errexit — round 6 RC11) ──"
+bash test/lint-bats.sh --selftest
+bash test/lint-bats.sh
+
+echo "── lint-changelog-counts (CHANGELOG case counts must equal grep -c — RC13, fifth recurrence) ──"
+bash test/lint-changelog-counts.sh --selftest
+bash test/lint-changelog-counts.sh
+
+echo "── lint-contract-enumerations (contract closed lists vs bin/codex-call — round 11 R11-1) ──"
+bash test/lint-contract-enumerations.sh --selftest
+bash test/lint-contract-enumerations.sh
 
 echo "── bats test/ ──"
 bats test/

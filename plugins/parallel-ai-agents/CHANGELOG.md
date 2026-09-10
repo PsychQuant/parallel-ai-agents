@@ -11,6 +11,223 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.23.0] - 2026-09-10
+
+### Changed
+
+- **Codex leg 的背景執行收進 `bin/codex-call` 本身（`--detach` / `--poll` / `--abort`），退役 bash helper。**
+  #37 的根因是 codex leg 一通最長 600 s 的阻塞呼叫超過 Workflow runtime 的 180 s
+  no-progress 門檻，且 artifact 兩次經過 agent context。PR #47 先用 bash helper
+  （`bin/pai-codex-review`）做背景執行，**三輪 verify（2.22.1 → 2.22.2 → 2.22.3，皆未進 main）
+  每一輪都在修法本身找到新的 blocking**：supervisor 子 shell、trap 轉殺、marker 檔、status 檔、
+  deadline 檔、child_pid 檔——六個機制各自帶 race。round 2 的結論：這是在用 bash 重新發明
+  process supervision，而 bash 沒有原子操作、沒有 process identity、沒有不可偽造的 capability。
+
+  現在 worker 是**單一 Swift 程序**（`codex-call` 以 `--_worker` 重新執行自己，它就是那通 HTTP
+  呼叫，無 subprocess）：
+  - **生存**：worker 對 `<run>/lock` 持有 `fcntl(F_SETLK)` record lock 直到結束
+  - **身分**：`--poll`／`--abort` 用 `F_GETLK` 取得**此刻**持鎖者的 pid，發訊號只對它——不從任何檔案讀 pid；PID 重用的誤殺視窗縮到單一系統呼叫之間（契約 §4 誠實邊界，round 6 R6-6 指出本行曾寫「不可能」）。（實測 `flock()` 鎖在 macOS 的 `F_GETLK` 下 `l_pid = -1`，故用 `fcntl`）
+  - **capability**：只接受 32 字元 CSPRNG run id，解析到 `~/.cache/codex-call/runs/<id>`（0700）。**不接受路徑**——round 2 證明「接受任意目錄 + 檔案存在性檢查」等於任意 PID kill／`rm -rf` 原語
+  - **原子性**：terminal 清理以 `rename(run, run.done)` claim，併發 poll 只有一個回 terminal
+  - **期限**：worker 自己強制 `--max-time`；poll 端兜底 `max-time + 60 s` 才 kill；meta 損毀 fail-closed
+  - **stdio 不繼承**：`Process` 的 stdio 明確指派——round 1 在 bash 裡自抓的「`$(... start)` 阻塞到 run 結束」在這裡結構上不會發生
+  - 既有同步路徑**逐 byte 不變**（codex-pro producer skills 不受影響）
+
+- **`references/codex-call-contract.md` 新增（回應 #35）**：`codex-call` 至此有 documented STABLE
+  surface——旗標、exit code、run id 格式、base 路徑、四種 poll 狀態、威脅模型、穩定性承諾。
+  breaking change 需 major bump + migration note。
+
+- engine `codexPrompt()` 改為兩條 engine 生成的命令（`--detach` / `--poll <id> --wait 30`，所有值 `shQuote()`
+  單引號化）加兩條 agent 自組的命令（讀完後 `rm -f '<path>'`、早停 `--abort '<id>'`；round 4／5）。
+  移除 `codexReviewPath` arg（隨 helper 退役）。
+
+### Fixed（round 3 verify：5:0 FAIL + Devil's Advocate，全部修於同版）
+
+- **startup race（唯一 CRITICAL 根因，四方各算一次）**：`--detach` 返回後有 0.6–1.0 s 無人持鎖，
+  `--poll` 會把健康的 run 判成 `FAILED status missing` 並刪除、`--abort` 印 `ABORTED` 卻留下 orphan。
+  修法是 **readiness handshake**：id 只在 worker **已寫出 status 或已持鎖**之後才印出（上限 20 s，
+  worker 先退出且無 status → 同步 exit 1、附 `worker.log` 尾段）。「還沒開始」與「已經跑完」是兩個
+  不同的答案——第一版 handshake 把它們壓成同一個，DA 實測 `--_selftest-sleep 0` 12 次 11 次把已完成
+  的 run 判成沒啟動並刪掉結果；修正後 12/12。
+- **status token**：`doPoll` 原用 `hasPrefix("3")` 分類，`NSError code 3`（`auth.json` 缺 tokens）與 3xx
+  被報成可重試的 `TIMEOUT`。worker 改寫 token `TIMEOUT`，poll 比對整個 token。
+- **測試無牙齒**（round 2 finding 4/5 同型第三度復發）：`! pgrep` 在 bats 中段被 errexit 豁免、
+  路徑穿越 fixture 沒建出目標 → `validRunId` 零覆蓋。兩處改為 `run …; [ $status -ne 0 ]` 與真實 fixture。
+- **契約誠實化**：§1 同步路徑順序以條件式 guard 還原（缺 `--output` 時先報錯、不先讀 prompt）；
+  §4 的「不可能」改成量到的邊界（`F_GETLK` 與 `kill` 之間存在微秒級視窗）；§2 / §6 標為**封閉列舉**並
+  明寫「不得依性質相似類推」，§6 補第三列「caller 環境完整性（`HOME` / base）」。
+- lock 檔完整性（`O_NOFOLLOW` + `fstat`：一般檔案、`nlink == 1`、owner 是當前 uid）；
+  base 硬化（`hardenBase`：symlink / 非目錄 / 非本 uid 擁有 → 同步 exit 1，宣告為行為）；
+  worker 不可重放（status 已存在 → 拒絕）；poll 的 timeout / meta 損毀路徑經 `killHolder` 並確認鎖已釋放；
+  `removeRun` 失敗不再被吞（abort 清不掉 → `FAILED` exit 2）；預設輸出檔在非 DONE 終態清除；
+  worker `setsid()`；re-exec 用 realpath；模式旗標互斥；stale `.done`（>60 s）接手；
+  `--detach` 的 `--max-time` 必須正整數；`--_selftest-grace` 需與 `--_selftest-sleep` 並用。
+- **engine / skills**：無 artifact 時 context block 本身成為 positional prompt（原本叫 Codex 審一個它拿不到
+  的 block）、兩者皆無則不派 leg；step 2 加 `sleep 30` 輪詢節奏；`DONE` 後輸出檔轉為 caller 所有、讀完要刪；
+  早停要 `--abort`；detach 非零退出不 poll；`'<id>'` 單引號。
+- **回收**：`--abort` 是盡力而為的早停路徑（agent 被硬殺時做不到），所以 `--detach` 每次先回收 >24 h
+  且無人持鎖的 `<id>` / `<id>.done` / `<id>.out.md`（含 `prompt.txt`，即 artifact 的完整副本）。
+- `FAILED` 終態把 `worker.log` 尾段附進 stderr——那正是 #37 抱怨看不到的診斷。
+
+### Fixed（round 4 verify：四方一致 FAIL，全部修於同版）
+
+- **輪詢節奏收進 codex-call**：`--poll <id> --wait N`（1–120 s）在工具內部阻塞、每秒重查持鎖者與期限、
+  終態提早返回。round 3 的 `sleep 30; --poll` 在 Claude Code 的 Bash tool 上**被工具層拒絕**（實測
+  `Blocked: sleep 30 …`），agent 只剩高速輪詢、`until` 迴圈（= stall detector 會殺的形狀）或放棄三條路。
+  engine 與兩份 SKILL.md 改用 `--wait 30`，node 測試斷言 prompt 不含 shell `sleep`。
+- **逾時判定依 (domain, code)**：`--max-time` 到期的主要路徑是 URLSession 自己的 timer
+  （`NSURLErrorDomain/-1001`，比 semaphore 兜底早 5 s），worker 原本只認 `codex-call/408`，真逾時被寫成
+  `FAILED -1001` exit 2——與 round 3 的 `hasPrefix("3")` 同型缺陷換了一端。新增隱藏 `--_selftest-classify`
+  讓 bats 打到 catch 分支。
+- **lock 完整性失敗 fail-closed**：三態 `LockState`（unlocked／held／untrusted）；完整性檢查失敗時 poll／abort
+  exit 1、不發訊號、run 原地保留，GC 也跳過（原本被折疊成「未持鎖」→ 判為終止、刪 run、把活的 worker 孤兒化）。
+  契約 §4 改成量得到的邊界：`rename()` 保留 inode，把 victim 持鎖檔搬進 lock 可過三檢查，bats 鎖住這個宣告的邊界。
+- **`.done` claim 年齡改用 ctime**：`rename` 不動目錄 mtime（實測），舊判準會把剛 claim 的 `.done` 當 stale 讓第二個
+  poll 接手；無 `status` 的 `.done` 是清理中斷殘留 → 清掉回 unknown，不再把已回報的 DONE 翻成 FAILED。
+- **readiness 逾時先終止 worker**（SIGTERM→SIGKILL→等退出→再查鎖→才清；殺不死則 run 保留並說明）；driver 退出後
+  多等 2 s 再判死（`p` 追的是 swift driver，exec-into-interpreter 是工具鏈事實不是不變式）；`killHolder` 兩輪收斂。
+- worker 六條提早 `exit(1)` 各補一行原因、`finish()` 寫 status 失敗也 log——契約承諾的 `worker.log` 尾段不再在最需要時是空的；
+  尾段改為**真的從檔尾**有界讀最後 12 行並過 sanitizer（原本 `clampToBudget` 取的是頭）。
+- `hardenBase`：`chmod` 失敗 throw（原本被吞掉，「強制 0700」曾是 best-effort）；先驗上層再建 `runs/`；`~/.cache` 本身的歸屬寫進契約。
+- `rename` 失敗依 errno 分流（EPERM 不再說「concurrent — retry」）；meta 損毀時預設輸出路徑可推導仍清除；`setsid` 失敗記 log。
+- 文件：`rm -f '<path>'` 加引號、三處「agent 不組任何 shell」改為三條命令的誠實描述、兩份 SKILL.md 補 step 3／4；DATA_GUARD 涵蓋
+  codex-call 的 stderr；契約 §2 首句與 handshake 對齊、§6 三列與 prompt-injection 段落分開、`HOME` 只隔離 run base 不隔離憑證。
+
+### Fixed（round 5 verify：五方一致 FAIL，全部修於同版）
+
+- **`--wait` 迴圈把 lock 三態折回兩態**（五方都抓到）：untrusted 在 wait 視窗內被當「已終止」→ 刪 run、孤兒化 worker。
+  迴圈改為窮舉三態，untrusted 與無 `--wait` 的路徑同一個答案（exit 1、run 保留）；終態 claim 前再查一次。
+- **`--wait 0` 溜過全部驗證**（用值當旗標存在性的 proxy），同步路徑因此真的發 HTTPS → 欄位改 `Int?`，
+  `--wait` 不得配 `--detach`。
+- **接手 stale `.done` 缺原子 claim**（1/20 雙 DONE）與 **`--abort` 不參與 claim**（曾 7/12 對成功的 run 偽造 FAILED）→
+  依 round 5 DA 的結構建議一次收掉：終態處理只剩單一 `claimTerminal`（`--poll`／`--wait`／`--abort`／接手共用），接手以
+  `.done` 內的 `O_EXCL` 標記為 claim、**不引入第三種目錄名**；`lockHolder() -> pid_t?` 整個刪除，12 個呼叫點改為 `switch`
+  窮舉三態（Swift 編譯器強制），「無法判斷」在任何路徑都不再被讀成「已結束」。
+- **`lstat` 失敗折進「沒有 lock」**（EACCES／EIO 等被當已結束）→ 只有 ENOENT 算沒有，其餘為「無法檢查」→ exit 1。
+- **`removeDefaultOutput` 信任 `meta.output`** → 同 uid 寫 base 可遞迴刪任意目錄；改為只 `unlink` 可推導的
+  `<base>/<id>.out.md`。契約 §6 第二列的傷害上界改寫。
+- `rename` ENOENT 分流（另一個 poll claim vs abort／GC 已刪，兩者皆不建議 retry）；GC 對 `.done` 用 mtime／ctime 較新者；
+  abort 撞上 poll 的 claim 不再誤報 `could not remove`；readiness 逾時先殺持鎖者再殺 driver；
+  `--wait N` 不再超過 N；`setsid` 移除（對 group leader 依定義必失敗，存活靠 Foundation 的獨立 pgid）；
+  `openOurLock` 回傳原因，不再印陳舊 errno。
+- `tailOfFile`：`O_NOFOLLOW`＋一般檔案檢查＋`O_NONBLOCK`（FIFO 曾讓 poll 無限阻塞）、保留尾端位元組、剝除 bidi／Tags／BOM。
+- `--_selftest-claim-age` 只對 selftest run 生效；契約 §7 補三個隱藏旗標；§2 的 exit-1 答案列舉補齊。（round 6 regression：本行原本還寫「`--help` 補 `--wait`」，在 `880785a` 上並不成立——round 7 才補，見下。）
+- 測試：`Codex-R4-3` 的 `pgrep -f -- "--_worker"` 改為只數本 checkout 的 worker（曾因同機其他 codex-call 6/6 假 RED）；
+  `--wait 500` 斷言改用活 id 並比對訊息；補 worker 提早退出四條 log、GC 對 untrusted 舊 run、abort 撞 prelock 的案例；
+  teardown 先 `chflags -R nouchg`。detach bats 43 → 63。
+
+### Fixed（round 6 verify：六方一致 FAIL + Devil's Advocate，修於 round 7）
+
+round 6 的結論：round 5 六條 blocking 六條全關、`lockState` 三態成立，但**「恰好回報一次」不是一個函式能保證的**——五方都把「唯一 claim」當充分條件，它只是必要條件（DA-1）。round 7 依 DA 的封閉列舉 S1–S8：
+
+- **S1 逾時兜底先 claim 再 kill**（RC1a：`terminate()` 曾在 claim 之外 kill＋刪＋印，兩個 poll 打同一個逾時 run **10/10 雙終態**）；kill 後**重讀 status**——逾時瞬間剛收尾的 run 以 status 為準、不再被刪輸出報 TIMEOUT（RC1c）；`removeRun` 回傳值不再丟（RC1b）。
+- **S2 `resolveRun` 不再看年齡、不再刪任何東西**（RC2：無 status 的 `.done` 曾被當殘留刪掉，而 worker 還活著——abort 先 claim 但 kill 未收斂的殘局）。`.done` 內 worker 持鎖 → `RUNNING`／逾時兜底。
+- **S3 接手標記改成 `.done/.claimed` 上的 fcntl 寫鎖、持到程序結束**——與 worker 鎖同一個原語，一次消掉 `lstat→unlink→O_EXCL` 的 ABA、60 s mtime lease、`touch` 偽造、接手者慢而非死被搶（RC3a）；標記完整性檢查與 errno 分流回 `.failed`，EACCES／ENOSPC 不再被說成「別人拿走了、不要 retry」（RC3b）。`CLAIM_MARKER_STALE_SECONDS`、`resolveRun` 的 ctime 門檻與 `--_selftest-claim-age` 一併移除（單一機制）。
+- **S4 印任何終態之前先讓 `reported` 落地**（`rename(status, reported)`，缺 status 則 `O_EXCL` 建立；失敗則不印、exit 1、run 保留）。有 `reported` 的殘留永不重報（RC4：DONE 後清理失敗曾在 65 s 後被改報 FAILED）。**S3 與 S4 同 commit**——DA-2：fcntl 標記單獨出貨會把重報視窗從 60 s 縮成 0 s。
+- **S5 `--abort` 的 stdout 只有 `ABORTED` 或空**：輸給併發 poll、run 已消失、已 `reported` → 空 stdout、exit 0（後置條件成立）；`ABORTED` 專指本次呼叫終止了它（RC6）。engine step 4 同步：非 ABORTED 的結果不是 leg 失敗也不是判決。契約 §2 改為精確表。
+- **S6 CI 錨點**：macOS job 改裝 Homebrew bash 並斷言 `bash ≥ 5`（RC7：runner 的 bats 跑在 bash 3.2，63 個中文名 detach case **四個 head 從未在 CI 執行**，job 一直是紅的、PR body 卻寫「全綠」）；TAP `1..N` 必須等於執行數；verify 的 freshness gate 加「head check-runs 全綠」。
+- **S7 `test/lint-bats.sh`**（零例外、含會失敗的 fixture 自測，進 `run.sh` 與兩個 CI job）：裸 `!` 斷言在 bats errexit 下是 no-op，散文規則寫了四次都復發（RC11：`R5-S3`／`R5-L8` 的 mutant 偵測率 0/10，改寫後 10/10）。三處改寫。
+- **S8 誠實化**：`--help` 真的補上 `--wait`（round 5 宣稱過但沒做）；`--_selftest-gc-age` 只掃 selftest run（RC5：曾掃掉正式 run 與已交付輸出）；契約 §2 第 53／57／58／62–64 行、§4、§5、§7 逐行對齊，新增 **§8 Known limitations**（dirfd/openat、`--wait 120` vs harness timeout、`.untrusted` 回收、`O_RDWR` 探測、`did not terminate` 的第二 token 例外——DA 3.2 的付費 run 無法回收也在 Known limitations）；Tests 段不再出現「N 個先驗 RED」這類無腳本可重現的數字（RC13）。
+
+### Fixed（round 7 verify：requirements／regression FAIL + logic／security 初稿四條新根因，修於 round 8）
+
+round 7 的新根因全部在 `.claimed` 這個新物件上——它的生命週期（誰建、誰刪、刪的順序）沒寫成不變式：
+
+- **`.claimed` 只由 rename 成功者建立、接手者只 open 不建立**（regression B-CRIT：A 的 `removeRun` 遞迴 unlink 先刪掉標記名，B 的 `O_CREAT` 建出**新 inode**並取得鎖 → 三路併發接手無 status 的 `.done`，`1514d40` 上 **7/150 雙 `FAILED status missing`**；契約「沒有 ABA」實測為偽——ABA 從 `claimMarker` 換到 `removeRun` 這扇門）。接手時 ENOENT → `.gone`（正在被清除或 claim 未完成），不回報。`R7-X` 的接手迴圈改三路 ×10。
+- **`openTrusted` 加 `O_NONBLOCK`**（logic L-R7-1／security F-SEC-1：`mkfifo <id>.done/.claimed` 讓 GC 的 `open` 永久阻塞 → 之後每一次 `--detach` 掛死）。`R8-FIFO`。
+- **`markerHeld` 只在 `F_GETLK` 明確回報持鎖者時才算持有**（logic L-R7-2／security F-SEC-2：目錄／symlink／`chmod 000` 的標記曾讓 `.done` 永遠不被 GC）；完整性失敗的標記對 poll／abort 仍是 `.failed` exit 1。`R8-RC3b`（regression 的 CE mutant：errno 摺成 `takenByOther` 讓 abort exit 0 而 worker 仍活）、`R8-GC2`（GC2 mutant）——**這兩個是護欄型：在 `1514d40` 上就綠**，鑑別力在對應 mutant 上，不宣稱能區分修法前後；在 `1514d40` 上為紅的是 `R7-X`（三路 ×十輪，重現 B-CRIT）與 `R8-FIFO`（detach 掛住，SIGALRM 142）。
+- **CI 的兩個環境相依斷言**（第一次真的在 CI 執行就照出來）：`Codex-R4-3` prelock 90／上界 60；`R5-S5` 以 `perl -e 'alarm'` 取代 macOS runner 沒有的 `timeout`（round 7 得到 127 被讀成「不是 2」）。
+- 誠實化：契約第 63 行「stdout 只有兩種」與自己的表矛盾（改為三種）；四處封閉列舉補「不得類推」；重複的 `## 8.` → `## 9.`；§9 補 rename→建立標記之間崩潰的洩漏、標記完整性失敗、`reported`→print 視窗、`FAILED worker did not terminate` 之後的第二 token 實測是 `FAILED status missing`；`reported`／`.claimed` 的同 uid 偽造面揭露；case 數改由 grep 產生。
+- 兩個 mutant 判為等價、不補測試並在此宣告：S1 逾時兜底「只 rename 不取標記鎖」（S4 的 `reported` 已保證至多印一次，S1 留著是為性質 (3) 的對稱）；S2 detach readiness 清理不 claim（id 尚未印出，沒有第二個 caller 能撞到）。
+
+### Fixed（round 8 verify：FAIL + Devil's Advocate 裁決「有條件換設計」，Stage A 修於 round 9）
+
+round 8 的 CI **首度全綠**（TAP plan 86 == executed 86、bash 5.3.15）、round 7 的五條 blocking **全部關閉**（B-CRIT 儀器化 0/150，round 7 是 7/150）。但三個 lens 獨立收斂到同一格：**`<id>.done` 存在、`.claimed` 不存在**。DA 裁決連續三輪（6→7→8）的根因是同一個結構特徵——「名字 ＋ 事後建立的檔案」是兩個不可組合的系統呼叫——**有條件換設計，但先做兩條與設計無關的修法，且必須在舊設計上就綠**。本節是那兩條（Stage A）：
+
+- **A1 止血與回報分離**（round 8 L-R8-1 實測）：`--abort` 先問 worker 鎖、該殺就殺，**不再被 claim 協定擋住**；claim 只決定誰回報終態、誰刪 run。round 8 把兩者綁在一起的後果是：一個標記從未建成的 `.done`，`--abort` 回 **exit 0**（契約說那代表「不會再跑、不會再花錢」）**而 worker 仍在跑，且此後沒有任何命令能終止它**。同時把 `.gone` 拆成兩列：真的消失 → exit 0 靜默；**claim 不可得但 run 還在磁碟上 → exit 1，明說「worker 已終止、清理沒做成」**——後置條件只成立一半就不得用 exit 0 宣稱全部成立。`R9-A1`／`R9-A1b`。
+- **A2 `markerHeld` → `markerState` 三答案**（round 8 DA §3 實測）：`held`／`unheld`／`untrusted`，GC 對 `untrusted` **不刪、記錄一行**。round 8 的 `Bool` 把「不可判定」摺成「沒鎖」，方向正好是本專案自己 R4-S1 紀律點名的那個：同 uid 對標記 `ln` 一個 hard link 就讓 GC 印「claimer died first」並掃掉一個 **claimer 全程存活**的 `.done`；**非對抗入口**是 `F_GETLK` 在 NFS／SMB 的 `$HOME` 上失敗，不需要攻擊者。代價（這種 `.done` 需人工清理）寫進契約 §9——round 7 L-R7-2 的原始問題是「沒有回收路徑」，用「不可判定就刪」去修它是錯的方向。`R9-A2`（hard link／目錄／`chmod 000` 三變體）。
+- **`R8-FIFO` 的斷言隨語意一起改（明講，不靜默）**：它原本斷言 FIFO 標記的 `.done` **會被 GC 掃掉**——那是 round 8 的決定，方向與 R4-S1 相反。A2 之後它斷言 `.done` **存活**且 stderr 有拒掃的理由；案例的原始價值（`O_NONBLOCK`：detach 與 poll 都不掛住）原封不動。改測試去配合新行為需要理由才不算移動球門，理由就是上一條。
+- 測試護欄：`no_worker_for <id>`（run-id 級的孤兒斷言；`own_workers` 是 checkout 級，一個案例的孤兒會污染後面每一個案例——round 5 F-3 把 scope 從機器全域縮到 checkout，這裡再縮一級）；`bats_require_minimum_version 1.5.0`。
+
+**Stage B — 換設計（round 8 DA §1.7 三個前置條件已滿足：Stage A 在舊設計上綠、建立順序寫進契約、明寫消不掉什麼）**
+
+連續三輪（6→7→8）每一輪的修法製造下一輪的根因，全部在同一個 claim 協定裡；DA 判定共同的結構特徵是**「一個名字 ＋ 一個事後才建立的檔案」是兩個不可組合的系統呼叫**。Stage B 刪掉那個特徵本身：
+
+- **`claim` 檔由 `--detach` 與 run 一起建立**（`lock` 也是），在 spawn worker 之前、印出 id 之前。**任何 caller 都不建立它**（`open` 不帶 `O_CREAT`）：輸掉是 `EAGAIN` 不是第二個 inode，「檔案不在」是「run 正在被清除」不是「輪到我建」。
+- **取消 `rename(<id>, <id>.done)` claim、取消 `.done` 這個名字、取消接手（adoption）分支**。接手不再是特例，就是「拿得到鎖」——claimer 崩潰 → kernel 釋放鎖 → 下一個 caller 直接拿到。連帶消失的還有：第二個目錄名、年齡門檻、`ctime`／`mtime` 兩個時鐘（`R5-L6` 因此刪除，教訓移入 `gcStaleRuns` 的 doc-comment）。
+- **claim 檔不在但 run 目錄還在 ＝ `.failed`，不是 `gone`**（round 8 R8-A：一個帶著已付費結果、還躺在磁碟上的 run 曾被說成「gone — 不要 retry」）。這一格在新設計上只剩同 uid `rm <id>/claim` 一條入口，**它沒有消失**，寫進契約 §9——不把「結構上不存在」講成假話（DA 條件 3）。
+- **附帶收益（DA §1.6 指出、`R9-B7` 守）**：取消 rename 之後 run 目錄名終生不變，worker 手上的路徑字串永遠有效，契約 §9 原本第一項「rename 之後才收尾的 run 被誤報 TIMEOUT」**結構上關閉**，不需要 dirfd／`openat` 重構。
+- **對外契約一個旗標都沒動**：`--detach`／`--poll`／`--abort` 的旗標名、stdout token、exit code、id 格式、base 路徑與 round 8 逐字相同；engine（`*.js`／`*.mjs`）與兩份 SKILL.md 零改動。run 目錄的內部布局從來不是 §8 的 STABLE 面——**因此不需要 major bump**（DA 特別要求寫明：否則「換 claim 協定」最可能死於「破壞相容性」的誤讀）。
+- **被刪機制的失敗史不得淨損失**（DA 遷移完整性）：round 5 的第三種目錄名、round 6 的 `O_EXCL`＋60 s lease、round 7–8 的 rename＋marker ABA 與它造成的黑洞，全部保留在 `ClaimResult` 的 WHY NOT doc-comment 與契約 §2「為什麼不是前三種設計」。
+- **三條 wall-clock 餘裕斷言改成錨定事實**（`R7-M05`／`R9-B7` 錨在「claim 鎖已被持有」，用唯讀 `F_GETLK` 查詢、不自己取鎖以免跟被測的 caller 搶；`R5-L9` 的上界改成自校準——先量這台機器此刻的 swift 啟動成本再加 N）。它們在單獨跑時綠、跟整套一起跑時紅：量到的是「啟動＋行為」而不是行為。這與 round 8 CI 首度真的執行套件後照出的兩條（`Codex-R4-3`、`R5-S5`）是同一類。
+- 新驗收案例：`R9-B3`（claim 開不起來的四種變體，`--poll` 一律不得說 gone、已付費結果原地保留）、`R9-B5`（建立順序）、`R9-B6`（claim inode 全程不變 ＋ 靜態：用到 `CLAIM_FILE` 的 open 零個帶 `O_CREAT`）、`R9-B7`（不再誤報 TIMEOUT）。既有 21 個引用 `.done`／`.claimed` 的案例全部遷移，`R5-L6` 明確刪除並說明。
+
+**Stage C — 誠實化**
+
+- 契約 §2 末新增**狀態叉積表**（5 種 run 狀態 × 6 種 caller 配對，每格填 stdout token 與 exit code，**不留空格**；不可達要寫理由）。放契約而不是 CHANGELOG 或 PR 留言，理由是 DA 第五題：**round 8 的兩條 blocking 正好落在 round 7 那張表沒有的格子裡**，表在契約裡，下一輪逐格驗證才會撞上空白。
+- 契約 §6 的傷害上界句改成**封閉列舉五項**（同一句話已兩次為假：round 5 修了刪除面、round 8 DA 實測回報面仍在——改寫 `meta.json` 的 `output` 可讓 `--poll` 印出攻擊者選定的路徑，直接餵進 prompt-injection 鏈的下游）。
+- §9 的「上列五項」改成可數的「上列各項」（實際 10 條，round 8 DA §4.3）。
+
+### Removed
+
+- `bin/pai-codex-review` 與 `test/pai-codex-review.bats`（從未進 main）。
+
+### Tests
+
+- 新增 `test/codex-call-detach.bats`（macOS job，**95 個 case**（`grep -c "^@test" test/codex-call-detach.bats`）；round 3 後 12 → 31，round 4 後 → 43，round 5 後 → 63，round 7 後 → 70，round 8 後 → 73，round 9 Stage A 後 → 76，Stage B／C 後 → 79，round 10 後 → 91（+12 `R10-*`），round 11 後 → 95（+4 `R11-*`）——**這個數字自 round 10 起由 `test/lint-changelog-counts.sh` 對照括號內那條命令的實際輸出（run.sh 與 CI 都跑）**；round 9 verify 抓到本行在宣稱「由 grep 產生、不手打」的同一句裡寫 76、實際 79，RC13 第五度復發，散文規則已證明無效：+8 `R7-*`（含 `R7-X` 狀態叉積補格）、+3 `R8-*`、+3 `R9-A*`、−1 `Codex-R4-1`（年齡判準已不存在）、5 個改寫。round 7 verify 抓到本行曾寫 69／+7——`R7-X` 加在段落寫完之後，數字沒跟上：RC13 第四度，所以 round 8 起 case 數由 `grep -c "^@test" test/codex-call-detach.bats` 產生、不手打）。
+  走**同一條** detach／lock／poll／abort 路徑，只以 `--_selftest-*` 把 HTTP 換成 sleep + 寫檔。
+  **round 7 的 RED-first 證據以名稱列出、原始輸出貼在 PR #47 的 round 7 留言**（round 6 regression 實測 round 5 寫在這裡的「13 個先驗 RED／7 個護欄型」名單有 4 個成員是錯的，而且沒有腳本能重現那些數字——所以不再寫數字）：
+  在 `880785a` 上為 RED 的案例：`R7-A`（雙逾時 poll ×10）、`R7-D`（`.done` 內活 worker）、`R7-R`（reported 痕跡）、`R7-M05`（kill 等待中 lock 變不可信；含新 hook `--_selftest-ignore-term`，RED 一部分來自旗標不存在）、`R7-RC1c`（逾時瞬間 status 已落地）、`R7-GC`（GC hook 只掃 selftest run）、`R7-S5`（abort 輸家 stdout 空）、`R7-X`（狀態叉積補格：poll×abort 逾時、abort×abort、接手×接手無 status）、`R3-L10/R7`、`R4-L3/R7`、`R5-L2`（拿掉 hook 後）、`R5-S6/R7`。
+  `R5-S3`、`R5-L8` 的改寫是護欄（裸 `!` → `run cmd; [ "$status" -ne 0 ]`），修法前後皆綠，其鑑別力由 round 6 regression 的 mutant 量得（0/10 → 10/10）。
+- 新增 `test/lint-bats.sh` + `test/fixtures/lint-bats-bad.bats`：裸 `!` 斷言的機械護欄，先自測（fixture 必須被拒）再掃套件。
+- `test/ensemble-workflow.test.mjs` 改為新契約（**31 個**；round 7 +1：`--abort` 的空 stdout／非零退出不是判決）；補 `--instructions` 與 wrapper 路徑的
+  `shQuote()` 正向斷言（round 2 指出零覆蓋）。
+
+### Known limitations（誠實邊界）
+
+- **codex-pro 的 vendored 快照仍是 2.22.1 之前的 `codex-call`**，須在該 repo 另行 re-vendor
+  （其 openspec spec 規定 byte-for-byte snapshot；觸及 `provenance.json` ×3、`THIRD_PARTY_NOTICES` ×2、
+  `tests/codex-runtime.sh` pinned 值、`codex-pro-call` 的 `EXPECTED_SHA256`）。
+- 威脅模型是封閉列舉的三列（同 uid／caller 環境完整性／跨 uid）：同 uid 與 `HOME` 注入在模型之外；lock 完整性與 base 硬化把「寫得到 base」的傷害縮到「殺自己的 worker」，但不把它們宣稱為提權防禦。
+- Claude lens 的同類 stall（#44）、目錄型 artifact（#45）、`xhigh` 治理（#43）、
+  `response.completed` 的 tier／usage 可觀測性——皆不在本版。**issue #37 Expected 第 3 點（leg 被放棄時回報已花成本）
+  依賴後者，明確延後至該獨立 issue**；本版 leg 缺席時的 integrity finding 只標記缺席、不含 token 數（round 5 D-1）。
+- Swift script 每次啟動約 1.5–2.5 s（compile cache）；poll 是分開 tool call、間隔數十秒，屬雜訊——但 bats 內任何「未逾時應回 RUNNING」的斷言必須把這個啟動時間算進 `max-time + grace` 的餘裕（round 7 R7-D 實測 3 s 的 deadline 會被啟動時間吃掉）。
+- round 7 明確排除的五項見契約 §9（round 10 之前這裡寫 §8——§8 是穩定性承諾）：worker 以路徑字串寫 status（dirfd/`openat` 未做）、`--wait 120` 與 harness timeout、`.untrusted` run 無回收、`O_RDWR` 探測、`FAILED worker did not terminate` 後的第二 token。DA 3.2：被硬殺的 agent 留下的付費 run 沒有 `--list`，只能等 24 h GC。
+### Fixed（round 10 verify：FAIL 但收斂——六個 blocking 族全是文件層＋三個一行／三行 code 改動；round 11 依 DA 封閉列舉七項，**唯一的新機制是一個 lint**）
+
+round 10 verify（4 lens，requirements／security 各兩個盲驗實例，＋ DA ＋ **round 7 以來首次有額度的 Codex**）判 FAIL：round 9 的 blocking 是行為的，round 10 剩下的是契約文字＋三個小改動——但**同型的手打封閉列舉缺陷在同一輪契約裡復發四次**（force-reap stdout 少一種 token、exit-1 少一個答案、§6 lead-in「五項」句尾「六項」、abort 表「十一列」實有十二列），而 round 10 剛把同一個教訓機械化到 CHANGELOG 卻沒推到契約。round 11 做的是 DA 的七項：
+
+- **R11-1 `test/lint-contract-enumerations.sh`**（本輪唯一的新東西）：五項檢查——(A) `doPoll`／`doAbort`／`doForceReap` 每個 `print` 字面 token 必須出現在契約**對應小節**（全域出現不算：round 10 的漏項正是「abort 表有、force-reap 節沒有」）；(B) exit-1 答案雙向——§2 列舉的每個反引號片語（`…`／`<path>` 當萬用）要對得到 code 的 die 字串，反過來五個入口函式的每個 `die` 要對得到契約（§2 ∪ abort 表 ∪ force-reap 節）的某個反引號答案；(C) abort 表資料列數 = 「上表封閉（N 列）」；(D) §6 `(n)` 項數 = lead-in = 句尾；(E) `R10-B5s` 三個 grep pattern 各唯一。`--selftest` 對五個 fixture（四個壞契約＋一個雙 spawn 的壞 code）各自拒絕、對真契約接受；接進 `run.sh` 與 CI（bats 之前）。對修前契約 RED 7 處（A／B×4／C／D）。**lint 自己也被抓到一次假綠**：force-reap 的 print 改成三元式後，anchored 在 `print("` 的 regex 什麼都沒抽到就通過——改成掃 `print(` 括號內全部字串字面。
+- **R11-2 契約文字一批**（全部有 round 10 findings 編號可追）：force-reap 的 stdout／exit-1 封閉列舉補齊（含 `FAILED could not remove run dir <dir>; output kept at <path>`、`cannot enumerate processes (ps failed)`）並把 `REAPED` 改寫成**後置條件**、身分句改成「`ps -o args=` 文字含相鄰兩 token，不是 argv 邊界檢查」（B6；不做 KERN_PROCARGS2）；abort 表補兩列（`.gone`／`.failed` × 無法確認 worker 停止）並改成十四列、第 11 列與 §2 exit-1 列舉補三個 `could not confirm` 答案；§2 性質 (3) 的例外改為「恰好兩個」（GC 與 `--force-reap`，B3a）；§2:53 與 §5 的 abort exit 碼改 0（B3b/c）；「stderr 無任何行」×3 改成「stdout 無 token、stderr 一行」（B2a）；§6 lead-in 改六項、item (1) 的 `rename` 歸因改到 (6)、(5) 擴到 `prompt.txt`／`instructions`（S10-4，#54）、(6) 機制補 `rename`；§7 `--_selftest-ignore-term` 改成實況；§9 補「到 `FAILED worker did not terminate` 的第二條路」（B2c）、2 s 重查的 lstat fold（F6）、`.done` 殘留與封閉句後的多餘項搬回；`--wait` 一句寫清楚「不超過 N」指等待迴圈（F2）；叉積表補 force-reap 說明與 live-expired 格的 L9-1 例外（F8）。
+- **R11-3 一行修 B5**：`if unterminated || !killHolderConverged(dir)` → `if !killHolderConverged(dir)`——claim 之後的探測是真相，記憶的值只決定 exit-1 的措辭。**誠實邊界**：DA 描述的分歧情境（第一輪沒收斂、claim 取得前 worker 退出）**黑箱不可構造**——第一輪回 false 只有 lock 不可判定一途，而 kill 輪結束到 claimRun 之間只有微秒，沒有讓 lock 從不可判定翻回已釋放的窗口；round 10 Logic 之所以量到「成功的 run 被印成 FAILED」是因為 B4 的 bug 讓 worker 提早退出。所以本輪**沒有** `R11-ABORT-LATE` 這個 case，改以 `R11-ABORT-MSG` 守同一分支可觀測的性質（見下），並在此明寫這條修法沒有黑箱測試。
+- **R11-4 修 B4（測試鉤子回歸）**：`--_selftest-ignore-term` 的 handler 觸發後 `sleep()` 被 EINTR 提早返回、worker 0 秒內結束——4/91 個 case（`R7-M05`／`R9-B7`／`R10-L9-1`／`1b`）綠的理由靜默變了。改成 deadline 迴圈 `while remaining > 0 { remaining = sleep(remaining) }`（三行、無新旗標、同時保住存活與 `term-seen` 錨點）；handler 的 `open` 加 `O_NOFOLLOW`（全檔唯一沒帶的，S10-5 實測 symlink 目標被建出）；路徑在安裝前 `strdup` 成 C 字串，handler 不碰 Swift String（round 10 的「async-signal-safe」註解對一半）。新增 **`R11-HOOK`** 斷言這個前提本身（SIGTERM 後 3 s 仍活、無 status）——它從來沒被任何測試斷言過，所以才會靜默壞掉。
+- **R11-5 force-reap 清理失敗仍取得回輸出**：`removeRun` 失敗時 token 帶上 `<id>.out.md` 路徑（`FAILED could not remove run dir <dir>; output kept at <path>`，exit 2）；新增 **`R11-FR5`**（`chmod 0500 base`）。
+- **R11-6 收緊 `R10-REG-A2`**：背景拆除者記下刪除時刻，若刪除發生在 poll 已過啟動之後就**只接受** `gone`，不再讓修前也會出現的 `unknown run id` 靜默過關（L-R10-11）。
+- **訊息誠實化（L-R10-2）**：`--abort` 兩輪訊號後 `killHolderConverged` 回 false 有兩個成因（持鎖者沒死／lock 變不可判定），round 10 的訊息只講前者、宣稱「the run is still spending」——在測試自己造的情境裡就是假話。三個 exit-1 分支與 stderr 全改成「could not confirm the worker stopped」；新增 **`R11-ABORT-MSG`**。
+- **R11-7**：Expected 第 3 點（abandoned leg 回報成本）已立案 **#52**，#37 body 記錄移交；`?? left` 的取捨立 **#53**；§6 (5) 的配額竊取面立 **#54**（本輪已順手擴寫，#54 核對後關）。
+- 2.23.0 的日期改為實際發布輪（原本停在 round 3 的 09-03，排在 2.22.2 的 09-09 之上）；round 7 排除項的章節引用 §8 → §9。
+
+**明確不做**（DA 封閉列舉）：KERN_PROCARGS2（換設計）；改 `lockState` 的 ENOENT 語意（S9-1 根因，已揭露）；第四種 claim 協定；`?? left` 改 fail-closed（#53）；SIGKILL 升級輪第二個旗標（R11-4 後 `R7-M05`／`R9-B7` 自然重新走到）；動 §6 三列；實測 `.gone × unterminated`（表內標「靜態可達、未實測」）。
+
+**Merge 判準（round 10 DA）**：round 11 之後只需 targeted verify（R11-1 lint 含 selftest、`R11-HOOK`／`R11-ABORT-MSG`／`R11-FR5`、12 個 `R10-*`、CI 兩 job），不再召集四 lens＋DA。若 R11-1 綠而事後仍見同型缺陷，那才是重新召集全員的訊號。
+
+### Fixed（round 9 verify：FAIL——round 8 DA 的收斂判準成立，round 10 依封閉列舉六項**接受並揭露，不換設計**）
+
+round 9 出現三條修法自帶的新根因（R9-REG-A／S9-2／L9-1），判準原文：「不做第三次換設計，改為接受並揭露（寫進 §9 封閉列舉、叉積表標『不保證』、給一條逃生命令），然後 merge」。round 10 只做那六項：
+
+- **R9-REG-A（訊息三句假話）**：`claimRun` 對「claim 檔 ENOENT、run 目錄還在」的訊息說「不是本工具刪的／沒有別的 poll／retry 沒用」——而最常見的入口是**本工具自己的併發拆除**（`removeRun` 遞迴 unlink 先刪 claim、最後才 rmdir；round 9 實測 13/150 = 8.7 %，無攻擊者）。現在先做 **2 s 有界重查**：目錄消失 → `gone`；仍在才回 `cannot claim … still on disk`，訊息指向契約 §9 與 `--force-reap`。`R10-REG-A`（訊息）、`R10-REG-A2`（拆除視窗，自校準排程）。
+- **L9-1（abort 的 `FAILED worker did not terminate` 逃出 claim）**：round 9 A1 把止血搬到 claim 之前時順帶把這個 stdout token 搬了出去，兩個併發 abort 會各印一次。現在 kill 是否收斂先記住、claim 之後才印；claim 被別人持有 → stdout 空、**exit 1**（worker 還活著，後置條件沒成立，不得用輸家的 exit 0）；claim 不可得／run 已消失 → exit 1 並說明。`R10-L9-1`／`R10-L9-1b`（錨點：selftest worker 在 `--_selftest-ignore-term` 下收到 SIGTERM 會 touch `<run>/term-seen`，測試等它再讓 lock 在 grace 視窗內變不可判定——取代賭啟動時間）。
+- **R9-REG-B／C（契約自相矛盾）**：叉積表「claim 被第三方持有」欄四格對 `--abort` 寫 exit 1、實測 0 → 改成 poll／abort 分寫；`--abort` 第一條 bullet 寫的 `claimTerminal` 在程式碼裡不存在、順序也已被 A1 反轉 → 改為描述現行順序。`R10-C`。
+- **S9-3（GC 捏造一個死掉的 claimer）**：對「有 status、無 reported、無人持 claim」的 run，GC 印「its claimer died first」——Stage B 之後那最常是「跑完沒被 poll」，兩者已分不出來。訊息改為只說已知的事。`R10-S9-3`。
+- **逃生命令 `--force-reap <id>`**（round 8 DA 預先授權；契約 §2 新小節）：「我知道我在繞過 claim 協定」。**完全不信任 lock**——以 `ps` 找同 uid 且 argv 含相鄰 `--_worker <id>` 的程序（CSPRNG id 撞不到、植不進 victim），SIGTERM → SIGKILL；**永不**對 `F_GETLK` 回報的 pid 送訊號（`rename` 進來的 victim lock 會過全部檢查，逃生口不得變成殺 victim 的原語）；不取 claim、不落地 `reported`，直接清 run；`<base>/<id>.out.md` 存在則印 `REAPED <path>` 並保留給 caller，否則印 `REAPED`；S9-1 之後目錄已被刪的孤兒只靠 argv 找——「沒目錄且沒程序」才是 `unknown run id`。engine 的 prompt **不得**自動使用它。`R10-FR1`（S9-2 重現＋逃生）、`R10-FR2`（取回結果）、`R10-FR3`（驗證與互斥、不發訊號）、`R10-FR4`（繞過被持有的 claim）。
+- **揭露**：契約 §6 補第六項（讓工具對活 worker 印終態並刪 run／讓 `--abort` 永久無法止血）、§9 補 R9-REG-A 的非對抗入口與 S9-1／S9-2（各自寫明**為什麼不修**）、叉積表加「不保證的格子」段。
+- **把契約補到真的（Stage C 沒做完的部分）**：§3 run 目錄列舉補 `claim`／`reported`、去掉 `.done`；§4 GC 依 mtime 單一時鐘、`.claimed` → `claim`；§5 整段從「`.done` 中繼目錄／接手」改成「finalize 所有權＝拿到 `<id>/claim` 的鎖」；§8 把 `--force-reap` 納入 STABLE。`R10-C` 靜態守：契約無 `claimTerminal`，§3–§5 提到舊名字的行必須同時說它已移除。
+- **RC13 機械化**：新增 `test/lint-changelog-counts.sh`（＋ `--selftest` 與 fixture），對 CHANGELOG 每一個「N 個 case（`grep -c "^@test" <file>`）」宣稱實際跑那條命令比對；接進 `test/run.sh` 與 CI。`R10-RC13`。
+- **R9-B5 補牙**：動態半（`--_selftest-prelock-sleep 6`）對 mutant「建立搬到 `p.run()` 之後」5/5 全綠——swift 啟動 1.5 s 遠慢於檔案建立，順序從外部觀察不到。加靜態半 `R10-B5s`：建立行號 < `try p.run()` 行號 < `print(id)` 行號；本輪實際做了 mutant，動態半 3/3 綠、靜態半紅，還原後綠。
+
+**誠實邊界（round 10 明確不做）**：S9-1／S9-2 本身不修——在「寫得到 base」的前提下沒有任何檢查能區分「我們建的 lock」與「別人放的一般檔」（§4 早已寫明），修法只會是第四種設計；R9-REG-A 的 2 s 重查分不出「正在拆除」與「被 `rm`」（前者慢過 2 s 幾乎不可能、後者白等 2 s）；`--force-reap` 的身分來源是 `ps` 的 argv，同 uid 可偽造——它本來就在 §6 第一列之外。
+
 ## [2.22.2] - 2026-09-09
 
 ### Added
