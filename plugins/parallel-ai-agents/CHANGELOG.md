@@ -37,7 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 其 `validate.yml` 併入 root `test.yml` 為獨立 job（`manifests-and-lens-pack`）——
   併入後落在 `plugins/` 下的 workflow 不會被 GitHub 執行，故移除以免誤導。
 - **主 plugin 的 `description` 不再累積歷代 release note**，只保留功能敘述 + 當版一行。
-  > **揭露（#33 verify R10 M9）**：這個動作刪掉了 v2.19.0–v2.22.0 五版的註記，而那些是使用者
+  > **揭露（#33 verify R10 M9）**：這個動作刪掉了 v2.19.0–v2.21.0 四段的註記，而那些是使用者
   > 在 `/plugin` 清單裡看得到的唯一版本說明（CHANGELOG 不在 plugin UI 裡）。先前 Fixed 段
   > 只寫「接回功能敘述」，讀起來像單純還原，**沒有揭露刪除** —— 本 PR 一路在抓的
   > 「修一半的宣稱」在變更紀錄層的鏡像。歷史註記從此以 CHANGELOG 為準。
@@ -454,7 +454,7 @@ R11 的 15 列有 11 列真的修好（各 lens 自建 fixture 重現，不只�
 - **description 版號閘門的「第一個＝最新」沒有規格也沒有測試**（MEDIUM）：改成取最後一個 match 全套仍綠。
   補雙向測試（舊在前 → warning；新在前 → 無），靶清單加「first→last」；慣例寫進 root `CLAUDE.md` 版本同步表。
   另記錄一個取捨（R12 regression R12-7）：兩份 description 統一後只列最近兩版（v2.24.0 / v2.23.0），
-  v2.19.0–v2.22.0 **五版**的敘述移出 —— 歷史看 CHANGELOG，這裡是 `/plugin` 清單的一句話。
+  v2.19.0–v2.21.0 **四段**的敘述移出 —— 歷史看 CHANGELOG，這裡是 `/plugin` 清單的一句話。
 - 零星：`bin/pai-list-profiles` 補 containment（第七處，這一處是**執行**不只讀）；root `CLAUDE.md:38/:52`
   的「純資料無程式碼」與 README 對齊（R11 只修了 README —— 同類只修一處第 N 次）；`test.yml` 的 `on:`
   補回指 `EVENTS` 的對稱註解；`validate.py` 引用已刪 `.gitignore` 的註解改寫；`note: pack 在 base 時位於 …`
@@ -503,8 +503,50 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
 - **`main()` 逐閘門隔離讓 8 個 mutation 靶假存活**（本輪修法自己的副作用，全輪量測抓到）：守衛被刪掉後
   只剩一條「validator 內部錯誤」，rc 仍 1、沒 traceback，舊的「不 crash」測試分不出「守衛在」與「由 gate()
   兜住」。`test_validate.py` 的 `Fixture.run` 預設把那個字串視為失敗（一處，不是八條測試各補一句）。
-  測試 89 → 97 條（`grep -c "    def test_" ../pai-lenses/scripts/test_validate.py`）；靶清單 75 → 83 個。
+  測試 89 → 97 條；靶清單 75 → 83 個（lint 形式的宣稱只留在最新一段——舊段的數字是當時的紀錄）。
   量測（R13 後）見 `scripts/test_validate.py` 檔頭。
+- **verify R14（4 lens + DA；Codex 第四輪 429）— R13 的 12 列 9 fixed、2 partial、1 機制修好但同 commit 裝進假理由。**
+  失守的仍是「同類只修一處」，本輪兩個新形狀：R13 放行條件 #2 的**後半**（讀檔站點改成封閉列舉）整條沒做；
+  在修前一輪缺陷的同一個 commit 裡用另一個工具（sed）重劃錯了同一條邊界。修法：
+  - **`repo_root()` 回 None 時五道閘門靜默蒸發、rc=0**（logic L-1，唯一具「安靜綠燈」形狀的一條）：fork 把
+    `.claude-plugin/marketplace.json` 改名就做得到，還印一句假 warning（「沒有 ensemble-code-review 這支 skill」）、
+    並重開 R9 的 `lenses/` symlink 外洩。現在 `report_no_repo()` 一處分流（CI error／本機 note，與 no-base 同形）、
+    各閘門對 None 靜默 return、`lenses/` 目錄層 containment 的邊界退回 pack 自身、缺 repo 時不跑接線啟發式。
+  - **讀檔／執行站點的封閉列舉**（logic L-2 / security S1 / regression E-2）：`READ_SITES` 表 18 列，每個
+    `read_text(`/`.open(`/`subprocess.run(`/`iterdir(` 帶 `# READ-SITE k/N` 標記，測試機械比對（缺標記、總數不一、
+    與表列數不合 → 紅）；補第十處（root `marketplace.json`，先前直接 `load_obj`——DA 更正：完整 git round-trip 是
+    rc=1 不是 rc=0，反向 glob 會抓到；仍是無守衛）與第 11 處（`collector_wiring` 的 SKILL.md）；lister 呼叫時
+    **顯式傳入** `PAI_HARNESS`（檢查的路徑 = 求值的路徑，逐字是 R6 修過的缺陷第二次）；harness 求值的 stderr
+    **一律不進 annotation**（路徑守衛擋不住 in-repo 合法 JS 去 `import` repo 外的檔——內容再無管道；R13 的
+    `wc()` 那一半先前零測試零靶，logic L-6）。表旁明寫守什麼／守不住什麼（hardlink、bind mount、被求值的程式碼
+    自己讀什麼），containment 是佈局健檢不是安全邊界。
+  - **CI 中和只剩一份實作**（logic L-4 / security S2 / S3 / L-5 / regression E-1 / requirements F2）：新增
+    `scripts/neutralise.py`（stdin → `LineSanitiser` → stdout），兩個 job 所有會印 PR 可控文字的 step
+    （兩處 py_compile、test_validate.py、mutation_check.py、regen 腳本）都經它；sed 版刪除（`[[:space:]]` 比 .NET
+    IsWhiteSpace 小——NBSP 開頭的 `::` 穿過；`^` 只認 `\n`——含 CR 的檔名穿過）。兩個 job 各有 step 級封閉列舉
+    的註解（bats／node tests 明寫不過濾：它們執行 PR 自己的程式碼）。**DA 的定價更正**：這整族洩漏／偽造在
+    `on: pull_request` + `contents: read` + 零 secrets 下不擴大攻擊者已有的能力（同 job 本來就執行 fork 的
+    Python）——修的是「新增的控制自己可繞過」與「兩份不會一起改的規格」，不是爆炸半徑。
+  - `gate()` 的相依（logic L-3，DA 降 LOW）：`check_lens_dir_shape` 未跑完時 `check_csvs` 具名回報「沒有跑」；
+    gate 訊息不再說「其餘閘門的結果仍在下面」；drain 迴圈保護（emit 拋例外時退化成 ASCII 留痕，其餘照印）。
+  - `EXPECTED_SURVIVE` 第四條移除（requirements F3；DA 降 LOW：committed symlink 在 `git show HEAD:` 就 return，
+    只有 dirty worktree 到得了那行 print，CI 產不出）——現在有 dirty-worktree 形狀的測試網，靶轉殺；規則明寫：
+    每一條進來的靶都要能回答「關掉它，哪一行輸出會變」。
+  - ubuntu job 補 `pai-collect-lens-layers.bats` 的 no-skip step（R13 row 11 / R14 F4：pack 改名時整合錨點會靜默
+    skip）；`regen-builtin-lenses.sh` 進兩份 shellcheck 清單（N9）。
+  - **明示不修的 LOW（R13 row 11 / R14 F4，記錄在此免得下輪重報）**：`emit()` 的 4000 上限只約束訊息、命令頭
+    無上限（N7：頭是 validator 自己組的固定字串，不含 PR 文字）；`prop()` 的靶只守 5 字元中的 2 個（N6）；
+    `run.sh` 的 drift 檢查會改寫工作樹（reg R13-4：那正是「請 commit」的用意，run.sh 內已註明）；
+    `Fixture.run` 的內部錯誤判定是全輸出子字串比對，有假紅路徑無假綠路徑（L-8）；`gate()` 的 `repr(e)` 會印
+    例外攜帶的檔案位元組（S6，目前不可達）。
+  - 文件 errata：description 版號段是 **v2.19.0–v2.21.0 四段**（requirements F5 / DA：main 全部歷史從無 `v2.22.0:`
+    段，R13 把「五版／四段」統一到錯的那個，兩個數字都錯；上面 2.22.0 那條與本段 R12 條已改）；「一輪 mutation
+    約十分鐘」五處全是三倍低估（DA-N1：21 s × 84 ≈ 30 分；靶數 20→83 一路更新，唯獨相乘的這個數字沒動——本 PR
+    第七次同一症狀）；靶數改成 lint 認的第三種宣稱形式；`pai-list-profiles.bats` 登記進 test/README；
+    「containment 的第八處」不再指到兩個站點（E-11）。
+  測試 97 → 111 條（`grep -c "    def test_" ../pai-lenses/scripts/test_validate.py`）；
+  靶清單 83 → 92 個（`grep -c "^    (\"" ../pai-lenses/scripts/mutation_check.py`）（3 個 EXPECTED_SURVIVE）。
+  量測（R14 後）見 `scripts/test_validate.py` 檔頭。
 
 ## [2.23.0] - 2026-09-10
 

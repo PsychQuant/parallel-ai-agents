@@ -29,15 +29,25 @@ jobs:
         # 寫死清單的形式本身是問題（下一個新增的 script 預設不會被檢查）—— 追蹤於 #30。
         # 這份清單與 test/run.sh 的 shellcheck 行是**兩份**寫死規格；#33 verify R11 抓到兩邊互相
         # 都不是對方的超集（這裡漏了兩支 lint、run.sh 漏了 pai-list-profiles）。改一邊請一併改另一邊。
-        run: shellcheck bin/pai-build-diff bin/pai-parse-verdict bin/pai-iter-commit bin/pai-list-profiles test/lint-bats.sh test/lint-changelog-counts.sh test/lint-contract-enumerations.sh
+        run: shellcheck bin/pai-build-diff bin/pai-parse-verdict bin/pai-iter-commit bin/pai-list-profiles references/regen-builtin-lenses.sh test/lint-bats.sh test/lint-changelog-counts.sh test/lint-contract-enumerations.sh
 
       # Round 6 RC11 (#37): a bare `!` assertion is a no-op under bats' errexit — it recurred four
       # times as a prose rule, so it is a machine rule now, and the guard proves it can fail first.
       - name: lint-bats (bare ! assertions) — selftest, then the suite
         run: bash test/lint-bats.sh --selftest && bash test/lint-bats.sh
 
+      # ── 這個 job 會把 PR 可控文字印進 step log 的 step（封閉列舉，#33 verify R14 L-5 / S3 / E-1 / F2；不得類推）──
+      #   py_compile（SyntaxError code frame）           → 經 ../pai-lenses/scripts/neutralise.py
+      #   builtin-lenses.csv drift（regen 腳本的 node 例外）→ 經 neutralise.py；diff body 本來就不印
+      #   bats / node tests                              → **不過濾**：它們執行 PR 自己的程式碼，stdout 完全由 PR 決定
+      # 中和只有**一份**實作（validate.py 的 LineSanitiser，neutralise.py 只是把 stdin 接上去）——R13 用 sed 另寫一份，
+      # 第一天就與它分岔（`[[:space:]]` 比 .NET IsWhiteSpace 小、`^` 只認 \n）。過濾器擋的是 `::`/`##[` 偽造 annotation
+      # 與跨 step 的 `::add-mask::`；真正的邊界是 `on: pull_request`（非 pull_request_target）+ `contents: read` + 零 secrets。
       - name: py_compile
-        run: python3 -m py_compile bin/pai-parse-lens-csv bin/pai-collect-lens-layers
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 -m py_compile bin/pai-parse-lens-csv bin/pai-collect-lens-layers 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
 
       # builtin-lenses.csv is generated from the harness PROFILES. It drives nothing at runtime
       # (#29 keeps the built-in baseline inside the harness), so a stale catalog is a DOCS defect,
@@ -47,7 +57,9 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          bash references/regen-builtin-lenses.sh
+          # #33 verify R14 (E-1): the regen script evaluates the harness with node — a SyntaxError code
+          # frame echoes fork-controlled source. Same filter as py_compile (single implementation).
+          bash references/regen-builtin-lenses.sh 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
           # #33 verify R13 (R13-5): do NOT print the diff body — a lens `focus` is fork-controlled
           # text and `##[…]` / `::` inside it would land in this step's log verbatim (the V1 parser
           # is IndexOf-based). `--quiet` reports drift without echoing content.
@@ -58,6 +70,19 @@ jobs:
 
       - name: bats
         run: bats test/
+
+      # #33 verify R13 row 11 / R14 F4: the pack integration anchor in pai-collect-lens-layers.bats
+      # self-skips when plugins/pai-lenses is missing. On this job that skip was invisible — the macOS
+      # job has a no-skip guard for codex-call, this job had none for the anchor that is Implementation
+      # Complete item 4's only standing guard. Same guard, one file.
+      - name: bats (pack anchor) — fail on skip
+        shell: bash
+        run: |
+          TAP=$(mktemp)
+          bats --tap test/pai-collect-lens-layers.bats | tee "$TAP"
+          if grep -qi '# skip' "$TAP"; then
+            echo "::error::pai-collect-lens-layers.bats skipped a case — the pack integration anchor is vacuous"; exit 1
+          fi
 
       # 守備範圍（#33 verify R13 security S2 / DA-4）：validate.py 的輸出邊界只守它自己那個 **step** 的 log
       # （`::stop-commands::` 是 step-scoped；跨 step 的只有 `::add-mask::`）；這裡的 node 測試（以及 bats）是 PR 自己的程式碼，stdout 原樣進 step log —— 那是
@@ -188,28 +213,37 @@ jobs:
       # 那種缺陷用讀的抓不到。每條測試對應一個真實發生過的缺陷。
       # 這套測試自己的鑑別力**用 scripts/mutation_check.py 量**，不靠宣稱（#33 verify R8：
       # 初版的 20 個閘門 mutation 有 18 個存活，而當時三處文件都寫著「都做過 mutation」）。
-      # mutation_check.py 手動跑、不進 CI（一輪 = 靶數 × 全套測試，約十分鐘）——
+      # mutation_check.py 手動跑、不進 CI（一輪 = 靶數 × 全套測試，約三三十分鐘）——
       # 這裡刻意不寫靶數，寫了就會過期，而過期的數字正是本 PR 一路在修的東西。
       # #33 verify R9 M20：py_compile 的寫死清單只涵蓋主 plugin 的兩支，本 pack 新增的
       # 三支 Python 只有 validate.py / test_validate.py 因為被執行而間接驗過語法，
       # mutation_check.py **在任何地方都沒被語法檢查**。用 glob 而非清單。
-      # #33 verify R13 DA-4：py_compile 的 SyntaxError code frame 會把 fork 可控的原始碼行原樣印進 step log
-      # （V1 `##[…]` 由 IndexOf 定位、V2 `::` 在 TrimStart 後認）。過一層與 validate.py `_neutralise`
-      # 同語意的 filter；`set -o pipefail` 讓 py_compile 的非零仍然紅。
+      # ── 這個 job 會把 PR 可控文字印進 step log 的 step（封閉列舉，#33 verify R14 L-4/L-5/S2/S3；不得類推）──
+      #   py_compile（SyntaxError code frame）、test_validate.py（unittest 把每條 docstring 第一行印在第 0 欄）、
+      #   mutation_check.py --check-targets（靶名）→ 三者都經 scripts/neutralise.py；validate.py → 自己的 LineSanitiser。
+      # R13 DA-4 之後這裡曾用一行 sed 做中和——第二份實作，第一天就分岔（`[[:space:]]` 比 .NET IsWhiteSpace 小、
+      # `^` 只認 \n；R14 L-4 / S2 各自端到端穿過）。現在「行」與「行首空白」只有 validate.py 那一個定義。
+      # `set -o pipefail` 讓上游的非零仍然紅（R14 regression E-6 實測生效）。
       - name: py_compile（pack 內所有 Python）
         shell: bash
         run: |
           set -o pipefail
-          python3 -m py_compile scripts/*.py 2>&1 | sed -e 's/^\([[:space:]]*\)::/\1∷/' -e 's/##\[/##⟦/g'
+          python3 -m py_compile scripts/*.py 2>&1 | python3 scripts/neutralise.py
 
       - name: validate.py 自身的回歸測試（stdlib unittest，無額外依賴）
-        run: python3 scripts/test_validate.py
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 scripts/test_validate.py 2>&1 | python3 scripts/neutralise.py
 
-      # 完整的 mutation 量測太慢（靶數 × 全套 ≈ 十分鐘），不進 CI。但**靶清單相對
+      # 完整的 mutation 量測太慢（靶數 × 全套 ≈ 三十分鐘），不進 CI。但**靶清單相對
       # validate.py 的漂移**便宜就能擋：改動被 mutate 的那幾行、或搬走一道閘門，靶就對不上。
       # 先前這只有在有人手動跑整輪時才會發現，而「忘了跑」是預設（#33 verify R9 M11/M24）。
       - name: mutation 靶清單沒有漂移（秒級；完整量測仍是手動）
-        run: python3 scripts/mutation_check.py --check-targets
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 scripts/mutation_check.py --check-targets 2>&1 | python3 scripts/neutralise.py
 
       # 檢查的內容不寫進 workflow 而放在 scripts/validate.py：`run: |` 區塊裡的
       # heredoc 一旦把內容放在第 0 欄就會跳出 YAML block scalar，workflow 靜默停止解析。

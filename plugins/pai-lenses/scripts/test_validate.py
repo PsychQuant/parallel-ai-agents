@@ -15,15 +15,19 @@
 mutation」。**那三句話會讓下一個維護者以為改動 `validate.py` 有測試網接著。**
 
 現在用 `scripts/mutation_check.py` 量：跑一次就知道哪些閘門沒有測試網。
-**最近一次量測（R13 後）：83 個靶 → 79 殺 / 0 存活 / 0 靶壞**（另 4 個 `EXPECTED_SURVIVE`，不計入存活；
-數字與存活清單請跑一次 `mutation_check.py`）。0 個意外存活。
-R13 修法的 `main()` 逐閘門隔離讓第一次全輪跑出 **8 個假存活**：守衛被刪掉後只剩一條「validator 內部錯誤」，rc 仍 1、
-沒 traceback，舊的「不 crash」測試分不出「守衛在」與「由 gate() 兜住」。修在 `Fixture.run`（預設拒絕那個字串）
-一處而不是八條測試各補一句 —— 那正是本 PR 三輪 verify 反覆抓到的「同類只修一處」。
-`EXPECTED_SURVIVE` 的 4 個：`_find_pack_at` git 分支的兩個守衛依構造不可達（R12 logic L3 / DA-6，保留為防禦）、
-「換回 splitlines()」（R12 的 LineSanitiser 對每一段獨立判定，過度切段只會過度消毒）、`pack_name` 讀取的 containment
-（R13 N1 第九處：symlink 時 check_version 已先報錯並 return，這裡只是不再重複讀）。R12 曾判「catalog 缺檔」為 equivalent
-——不是：守衛的價值是**說對原因**（「找不到」vs「讀取失敗：[Errno 2]」），測試現在斷言具名訊息，該靶轉殺。
+**最近一次量測（R14 後）：92 個靶 → 89 殺 / 0 存活 / 0 靶壞**（另 3 個 `EXPECTED_SURVIVE`，不計入存活；
+全輪原始結果是 88 殺／1 存活——「lister 不存在」在 stderr 不再進 annotation 之後與下游 rc=127 的訊息只差在
+說對原因，測試補斷言具名訊息後單獨重跑轉殺；斷言只加嚴，已殺者不會復活；
+數字與存活清單請跑一次 `mutation_check.py`——一輪約三十分鐘，不是先前五處寫的「十分鐘」，R14 DA-N1）。
+R14 新增 9 個靶（repo_root None 在 CI 報錯、缺 repo 不印假 warning、root manifest 與 SKILL.md 的 containment、
+lenses/ 目錄層邊界不依賴 repo_root、PAI_HARNESS 顯式傳入、lister stderr 不進 annotation、check_csvs 相依的具名回報、
+drain 保護），每個都先在副本上單獨驗過會被殺。`EXPECTED_SURVIVE` 從 4 回到 3：R13 放進去的「pack_name 讀取的
+containment」理由是假的（那個 name 會被 print；只是 committed symlink 到不了那行、dirty worktree 才到得了——R14 DA），
+現在有 dirty-worktree 形狀的測試網，靶轉殺。規則明寫在 mutation_check.py：每一條進來的靶都要能回答「關掉它，哪一行
+輸出會變」。剩下 3 個：`_find_pack_at` git 分支的兩個守衛依構造不可達（R12 logic L3 / DA-6，保留為防禦）、
+「換回 splitlines()」（R12 的 LineSanitiser 對每一段獨立判定，過度切段只會過度消毒）。
+R13 修法的 `main()` 逐閘門隔離曾讓第一次全輪跑出 8 個假存活（守衛被刪掉後只剩一條「validator 內部錯誤」），
+修在 `Fixture.run`（預設拒絕那個字串）一處；R12 曾判「catalog 缺檔」為 equivalent——不是：守衛的價值是**說對原因**。
 R11 曾寫「四個存活皆 equivalent」：一個判定為假（containment 靶，已補 `./docs/evil` fixture 轉紅）、
 兩個理由為假（那兩個是死碼，不是互為後盾）。
 
@@ -34,6 +38,7 @@ R11 曾寫「四個存活皆 equivalent」：一個判定為假（containment �
 跑法：`python3 scripts/test_validate.py`（在 pack 目錄下），或 `python3 -m unittest`。
 """
 import json
+import re
 import os
 import pathlib
 import shutil
@@ -84,7 +89,7 @@ class Fixture:
     INTERNAL = "validator 內部錯誤"
 
     def run(self, *args, ci=False, script="plugins/pai-lenses/scripts/validate.py",
-            allow_internal=False):
+            allow_internal=False, env=None):
         """回傳 (rc, 合併後的輸出)。validate.py 把 error 印到 stdout（GitHub annotation）。
 
         `allow_internal`（#33 verify R13 修法後的 mutation 量測）：`main()` 逐閘門隔離之後，
@@ -103,7 +108,7 @@ class Fixture:
         r = subprocess.run(
             [sys.executable, str(self.repo / script), *args],
             cwd=self.repo, capture_output=True, text=True,
-            env={**os.environ, "GITHUB_ACTIONS": "true" if ci else ""})
+            env={**os.environ, "GITHUB_ACTIONS": "true" if ci else "", **(env or {})})
         out = r.stdout + r.stderr
         if not allow_internal and self.INTERNAL in out:
             raise AssertionError(
@@ -293,7 +298,9 @@ class ValidateTest(unittest.TestCase):
     # ---- profile 名稱閘門（R6 M7：工具不見時先前靜默蒸發）----
     def test_profile_gate_fails_loud_when_lister_missing(self):
         (self.fx.repo / "plugins/parallel-ai-agents/bin/pai-list-profiles").unlink()
-        self.assertRed(contains="profile 名稱閘門沒有跑")
+        # R14 全輪量測：只斷言「閘門沒有跑」分不出這道守衛與下游「bash 跑不起來（rc=127）」的訊息——
+        # stderr 不再進 annotation 之後兩者只差在說對原因。守衛的價值就是**說對原因**（同 R13「catalog 缺檔」）。
+        self.assertRed(contains="找不到 plugins/parallel-ai-agents/bin/pai-list-profiles")
 
     def test_unknown_profile_filename_is_error(self):
         self.fx.write_lenses('key,focus\nx,"y"\n', profile="no-such-profile")
@@ -1276,6 +1283,209 @@ class ValidateTest(unittest.TestCase):
         line = buf.getvalue().rstrip("\n")
         self.assertTrue(line.startswith("::error file=x::"), line[:40])
         self.assertIn("…（截斷）", line)
+
+    # ---- #33 verify R14 ----
+
+    def _unlink_root_marketplace(self):
+        (self.fx.repo / ".claude-plugin" / "marketplace.json").rename(
+            self.fx.repo / ".claude-plugin" / "marketplace.json.moved")
+
+    def test_missing_root_marketplace_in_ci_is_fail_loud_not_five_silent_skips(self):
+        """R14 logic L-1：fork 把 `.claude-plugin/marketplace.json` 改名，`repo_root()` 回 None，
+        marketplace-sync／bump／lenses containment／撞名／profile 名**五道閘門**一次全部只剩 note、
+        rc=0，外加一則肯定式假 warning（「沒有 ensemble-code-review 這支 skill」）。
+        同檔的 no-base 路徑早有「本機 note ／ CI errs」分流（R4/R5），這裡沒有。"""
+        self._unlink_root_marketplace()
+        out = self.assertRed(ci=True, contains="五道閘門")
+        self.assertIn("marketplace.json", out)
+        self.assertNotIn("沒有 ensemble-code-review", out, "找不到 repo 時不得印那句假 warning")
+
+    def test_missing_root_marketplace_locally_notes_once_without_false_warning(self):
+        """同上，本機分支：可以只 note，但那句假 warning 一樣不得出現。"""
+        self._unlink_root_marketplace()
+        out = self.assertGreen()
+        self.assertIn("五道閘門", out)
+        self.assertNotIn("沒有 ensemble-code-review", out)
+
+    def test_lenses_containment_holds_even_without_monorepo_root(self):
+        """R14 logic L-1 的第二段：`repo_root()` 為 None 時 `lenses/` 目錄的 containment 整段跳過，
+        R9 標 HIGH 的 symlink 外洩就回來了。邊界退回 pack 自己（`root`），與 check_version 同形。"""
+        self._unlink_root_marketplace()
+        outside = self.fx.dir / "outside-lenses"; outside.mkdir()
+        (outside / "leak.csv").write_text("SECRET-OUTSIDE-LENS-HEADER\n", encoding="utf-8")
+        lenses = self.fx.repo / "plugins/pai-lenses/lenses"
+        shutil.rmtree(lenses); lenses.symlink_to(outside, target_is_directory=True)
+        out = self.assertRed(contains="落在 repo 外")
+        self.assertNotIn("SECRET-OUTSIDE-LENS-HEADER", out)
+
+    def test_root_marketplace_symlink_outside_repo_is_rejected_not_read(self):
+        """R14 logic L-2：containment 的第十處——repo 根的 `marketplace.json` 直接 `load_obj`，
+        repo 外內容被讀、驅動版本閘門、原樣進 `::warning`、rc=0。"""
+        outside = self.fx.dir / "outside-cp"; outside.mkdir()
+        (outside / "marketplace.json").write_text(json.dumps({"name": "x", "plugins": [
+            {"name": "OUTSIDE-CONTENT-REACHED-CI", "source": "weird", "version": "1.0.0"}]}),
+            encoding="utf-8")
+        cp = self.fx.repo / ".claude-plugin"
+        shutil.rmtree(cp); cp.symlink_to(outside, target_is_directory=True)
+        out = self.assertRed(contains="落在 repo 外")
+        self.assertNotIn("OUTSIDE-CONTENT-REACHED-CI", out)
+
+    def test_skill_md_outside_repo_is_not_read_by_collector_wiring(self):
+        """R14 logic L-2 第 11 處：`collector_wiring` 讀 `skills/ensemble-<profile>-review/SKILL.md`
+        時沒有 containment。symlink 到 repo 外時要當成「沒有這支 skill 可看」而不是讀它。"""
+        outside = self.fx.dir / "outside-skill"; outside.mkdir()
+        (outside / "SKILL.md").write_text("bin/pai-collect-lens-layers code\n", encoding="utf-8")
+        d = self.fx.repo / "plugins/parallel-ai-agents/skills/ensemble-code-review"
+        shutil.rmtree(d); d.symlink_to(outside, target_is_directory=True)
+        out = self.assertGreen()
+        self.assertIn("落在 repo 外", out, "要說出來，不能靜默當成已接線")
+
+    def test_pai_harness_env_cannot_redirect_what_gets_evaluated(self):
+        """R14 regression E-2 / logic L-7：validate.py 對預設 harness 路徑做 containment，卻讓
+        lister 繼承整個環境；`PAI_HARNESS` 一設，檢查的檔與求值的檔就是兩個（逐字是 R6 修過的缺陷）。"""
+        outside = self.fx.dir / "outside.mjs"
+        outside.write_text("this is not javascript ( { EXFIL-HARNESS-CANARY\n", encoding="utf-8")
+        rc, out = self.fx.run(env={"PAI_HARNESS": str(outside)})
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("EXFIL-HARNESS-CANARY", out)
+        self.assertNotIn("無法取得 PROFILES", out, "求值的必須是 repo 內那份 harness")
+
+    def test_harness_evaluation_stderr_never_enters_annotation(self):
+        """R14 security S1：路徑 containment 擋不住 repo 內合法 harness 去 `import` repo 外的檔——
+        node 的 code frame 把被 import 的檔案內容經 stderr → annotation 印出。類級修法：
+        harness 求值的 stderr **一律不進 annotation**（只留固定訊息 + rc），內容再也沒有管道。"""
+        outside = self.fx.dir / "leak.mjs"
+        outside.write_text("TOP-SECRET-CANARY-9f3a syntax error here (((\n", encoding="utf-8")
+        h = self.fx.repo / "plugins/parallel-ai-agents/workflows/ensemble-workflow.js"
+        h.write_text(f"import '{outside}'\n" + h.read_text(encoding="utf-8"), encoding="utf-8")
+        out = self.assertRed(contains="無法取得 PROFILES")
+        self.assertNotIn("TOP-SECRET-CANARY-9f3a", out)
+        self.assertNotIn("leak.mjs", out, "連路徑都不該進 annotation——那是 stderr 的內容")
+
+    def test_in_repo_broken_harness_leaks_nothing_either(self):
+        """R14 logic L-6：R13 #2 的另一半（stderr 走 wc()）零測試、零靶。現在改成 stderr 不進
+        annotation，這條測試釘住它：壞掉的 in-repo harness 的 `##[…]` 與內容都不得出現。"""
+        h = self.fx.repo / "plugins/parallel-ai-agents/workflows/ensemble-workflow.js"
+        h.write_text('const LEAK = "##[error]REGEN_LEAK" ) syntax error here\n'
+                     + h.read_text(encoding="utf-8"), encoding="utf-8")
+        out = self.assertRed(contains="無法取得 PROFILES")
+        self.assertNotIn("##[", out); self.assertNotIn("REGEN_LEAK", out)
+
+    def test_gate_dependency_is_named_when_lens_dir_shape_crashes(self):
+        """R14 logic L-3(a)：`check_lens_dir_shape` 拋例外 → `files` 為 None → `check_csvs` 整支不跑，
+        卻沒有任何一句話說它沒跑，而「其餘閘門的結果仍在下面」在這條路徑上是假的。"""
+        import io, contextlib
+        sys.path.insert(0, str(HERE))
+        import validate as V
+        buf = io.StringIO(); plain = io.StringIO()
+        orig = sys.argv, V.check_lens_dir_shape, V.RAW_OUT
+        def boom(*a, **k): raise RuntimeError("boom")
+        try:
+            sys.argv = ["validate.py"]; V.check_lens_dir_shape = boom; V.RAW_OUT = buf
+            with contextlib.redirect_stdout(plain):
+                rc = V.main()
+        finally:
+            sys.argv, V.check_lens_dir_shape, V.RAW_OUT = orig
+        out = buf.getvalue() + plain.getvalue()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("check_csvs", out, "要指名 check_csvs 沒有跑")
+        self.assertIn("沒有跑", out)
+        self.assertNotIn("其餘閘門的結果仍在下面", out, "這句在相依路徑上是假的，不得再印")
+
+    def test_drain_survives_an_emit_failure(self):
+        """R14 logic L-3(b)：`for e in errs: emit(e)` 不在任何 gate 內——emit() 一拋（surrogate、
+        strict locale），已累積的 annotation 全部消失 + 裸 traceback，正是 gate() 存在的理由。"""
+        import io, contextlib
+        sys.path.insert(0, str(HERE))
+        import validate as V
+        class Strict(io.StringIO):
+            def write(self, t):
+                t.encode("utf-8")            # surrogate → UnicodeEncodeError（模擬 strict stdout）
+                return super().write(t)
+        buf = Strict(); plain = io.StringIO()
+        orig = sys.argv, V.check_bumped, V.RAW_OUT
+        def bad(root, errs, base, event=None):
+            errs.append("::error::first \udcff bad"); errs.append("::error::second fine")
+        try:
+            sys.argv = ["validate.py"]; V.check_bumped = bad; V.RAW_OUT = buf
+            with contextlib.redirect_stdout(plain):
+                rc = V.main()
+        finally:
+            sys.argv, V.check_bumped, V.RAW_OUT = orig
+        out = buf.getvalue() + plain.getvalue()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("second fine", out, "後面的 annotation 不得因為前一條印不出來而消失")
+        self.assertIn("first", out, "印不出來的那條也要以退化形式留下痕跡")
+
+    def test_pack_name_containment_keeps_outside_name_out_of_log(self):
+        """R14 requirements F3：EXPECTED_SURVIVE 第四條理由是假的——`check_bumped` 會
+        `print(pack_name)`（「找不到名為 X 的 pack」），守衛拿掉時 repo 外 symlink 的 name 就進 log。
+        它不是 equivalent mutant，是一道沒有測試網的真守衛；這條測試就是那張網。"""
+        # R14 DA 更正：committed symlink 在 `git show HEAD:plugin.json` 就 return（blob 是 symlink 目標、不是 JSON），
+        # 到不了那行 print；只有 **dirty worktree**（HEAD 有真檔、工作樹是 symlink）才到得了——CI 的 checkout
+        # 產不出這個狀態，所以這是本機情境的守衛。測試就用那個形狀，讓靶不再是「沒測試網的 equivalent」。
+        pack = self.fx.repo / "plugins/pai-lenses"
+        parked = self.fx.dir / "parked-pack"; shutil.move(str(pack), str(parked))
+        base = self.fx.commit("base：還沒有 pack")
+        shutil.move(str(parked), str(pack))
+        self.fx.commit("新增整個 pack（manifest 是真檔）")
+        outside = self.fx.dir / "outside-cp2"; outside.mkdir()
+        (outside / "plugin.json").write_text('{"name":"EXFIL-CANARY-QQ7","version":"0.2.0"}\n', encoding="utf-8")
+        cp = pack / ".claude-plugin"; shutil.rmtree(cp); cp.symlink_to(outside, target_is_directory=True)
+        rc, out = self.fx.run("--base", base, "--event", "push")
+        self.assertIn("找不到名為", out, "要走到那行 print 才算測到守衛")
+        self.assertNotIn("EXFIL-CANARY-QQ7", out, out)
+
+    def test_every_filesystem_read_site_is_enumerated(self):
+        """R14 logic L-2 / security S1：R13 放行條件「validator 只讀本 repo 內的檔」改成**封閉列舉**
+        整條沒做——站點數 5→6→7→8→9→11 每次都是 reviewer 數出來的。現在 validate.py 每個讀檔／
+        執行站點都必須帶 `# READ-SITE k/N` 標記，且 N 與實際站點數、與封閉列舉表的列數一致；
+        新增一個沒標記的 `read_text(` / `.open(` / `subprocess.run(` / `iterdir(` 這條就紅。"""
+        src = (PACK / "scripts/validate.py").read_text(encoding="utf-8").splitlines()
+        call = re.compile(r"read_text\(|\.open\(|subprocess\.run\(|iterdir\(|read_bytes\(|json\.load\(")
+        tag = re.compile(r"READ-SITE (\d+)/(\d+)")
+        tagged, untagged = [], []
+        for i, line in enumerate(src):
+            if line.lstrip().startswith("#") or not call.search(line):
+                continue
+            m = tag.search(line) or (tag.search(src[i - 1]) if i else None)
+            (tagged if m else untagged).append((i + 1, line.strip()[:70]))
+            if m: tagged[-1] = (int(m.group(1)), int(m.group(2)))
+        self.assertEqual(untagged, [], f"沒有 READ-SITE 標記的讀檔／執行站點：{untagged}")
+        totals = {t for _, t in tagged}
+        self.assertEqual(len(totals), 1, f"總數 N 不一致：{totals}")
+        n = totals.pop()
+        self.assertEqual(sorted(k for k, _ in tagged), list(range(1, n + 1)), tagged)
+        self.assertIn("READ_SITES = ", "\n".join(src), "封閉列舉表 READ_SITES 必須存在")
+        sys.path.insert(0, str(HERE))
+        import validate as V
+        self.assertEqual(len(V.READ_SITES), n, "封閉列舉表的列數必須等於標記總數")
+
+    def test_ci_neutraliser_is_the_same_implementation_as_the_output_boundary(self):
+        """R14 logic L-4 / security S2：CI 的 sed 中和器是第二份實作——`[[:space:]]` 比 .NET
+        IsWhiteSpace 小（U+00A0 穿過）、`^` 只認 `\n`（含 CR 的檔名穿過）。現在 CI 用
+        scripts/neutralise.py（呼叫 LineSanitiser 同一份 `_neutralise`、同一個行界定義）。"""
+        payload = ("File \"evil\r::error file=innocent.py,line=1,title=CI PASSED::x.py\", line 1\n"
+                   "     ::stop-commands::PAYLOAD\n"
+                   "  ##[error]V1\n"
+                   " ::warning::u2028\n").encode("utf-8")
+        r = subprocess.run([sys.executable, str(PACK / "scripts/neutralise.py")],
+                           input=payload, capture_output=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = r.stdout.decode("utf-8")
+        for line in out.replace("\r", "\n").splitlines():
+            self.assertFalse(line.lstrip().startswith("::"), f"V2 穿過：{line!r}")
+            self.assertNotIn("##[", line)
+        self.assertIn("∷error file=innocent.py", out); self.assertIn("∷stop-commands", out)
+        self.assertIn("##⟦error]V1", out)
+
+    def test_ci_neutraliser_propagates_upstream_failure_and_keeps_bytes(self):
+        """neutralise.py 只是過濾器：非 UTF-8 位元組不得讓它炸（errors=replace），且它本身
+        exit 0——上游的非零由 `set -o pipefail` 保留（regression E-6 實測過 pipefail 生效）。"""
+        r = subprocess.run([sys.executable, str(PACK / "scripts/neutralise.py")],
+                           input=b"\xff\xfe::error::x\n", capture_output=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn(b"\n::error", b"\n" + r.stdout)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

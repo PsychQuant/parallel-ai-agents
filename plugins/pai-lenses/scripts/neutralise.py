@@ -1,0 +1,34 @@
+#!/usr/bin/env python3
+"""把 stdin 經 validate.py 的 `LineSanitiser` 過一遍再印到 stdout —— CI step log 的 workflow-command 中和。
+
+#33 verify R14（logic L-4 / security S2）：R13 在 test.yml 用一行 `sed` 做這件事，是**第二份實作**，
+而且第一天就分岔：`[[:space:]]` 比 .NET `IsWhiteSpace` 小（U+00A0 開頭的 `::` 穿過）、`^` 只認 `\\n`
+（含 `\\r` 的檔名穿過——而同一個 commit 的 `LineSanitiser._LINE_END` 就是 `(?<=[\\r\\n])`）。
+R11/R12 兩輪在 Python 端修掉的洞，在 shell 端重生。所以「行」與「行首空白」只能有一個定義：這支只是
+把 stdin 接到那份實作上。**所有**會把 PR 可控文字印進 step log 的 step 都經過它（清單見 test.yml 的
+job 級註解與 test/run.sh）；它自己永遠 exit 0，上游的非零由 `set -o pipefail` 保留。
+
+用法：<command> 2>&1 | python3 scripts/neutralise.py
+"""
+import pathlib
+import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from validate import LineSanitiser  # noqa: E402
+
+
+def main():
+    data = sys.stdin.buffer.read().decode("utf-8", errors="replace")   # 非 UTF-8 不得讓過濾器炸
+    out = sys.stdout
+    try:
+        out.reconfigure(errors="replace")
+    except AttributeError:                                          # 3.8 之前的 TextIOWrapper
+        pass
+    w = LineSanitiser(out)
+    w.write(data)
+    w.flush()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

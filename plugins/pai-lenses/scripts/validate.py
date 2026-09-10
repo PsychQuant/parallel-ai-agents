@@ -36,6 +36,44 @@ KNOWN_COLS = ("key", "focus", "needsSrt", "override")
 # 封閉列舉，不是判準：只略過這些已知的 OS 產物（#33 verify R9）。
 OS_ARTIFACTS = (".DS_Store", ".gitkeep", ".gitignore", "Thumbs.db")
 
+# ── 讀檔／執行站點的封閉列舉（#33 verify R14 logic L-2 / security S1）────────────────────────────
+# R13 的放行條件寫「『validator 只讀本 repo 內的檔』改成封閉列舉」——只做了前半（補被點名的站點）。
+# 站點數 5→6→7→8→9→11 每一次都是 reviewer 數出來的，而每次修法都只補被點名的那一處。
+# 現在：本檔**每一個**會碰檔案系統或起子行程的呼叫都帶 `# READ-SITE k/N` 標記，這張表一列對一個標記，
+# test_validate.py 機械比對（缺標記、總數不一、與表列數不合 → 紅）。新增讀檔站點時必須同時加一列。
+#
+# **這層守什麼／守不住什麼（明寫，不得依性質相似類推）**：
+#   守：symlink（檔案層與目錄層——`resolve()` 連父層一起解析）、絕對路徑、`..` 繞出去。
+#   守不住：hardlink（git 產生不了，不在 fork PR 的攻擊面）、bind mount、以及**被求值的程式碼自己去讀什麼**
+#   （harness 是 repo 內合法 JS 但 `import` repo 外的檔——路徑守衛擋不住求值；所以 READ-SITE 17 的 stderr
+#   一律不進 annotation，內容再無管道）。containment 是佈局健檢，不是安全邊界；真正的邊界是
+#   `on: pull_request` + `contents: read` + 零 secrets（見 test.yml 的 job 級說明）。
+# 「git object」欄：對 `git show`/`ls-tree`/`diff` 讀到的是 **repo 自己的物件庫**，路徑由 validator 組、
+# 不經檔案系統 symlink，依構造在 repo 內。
+READ_SITES = (
+    ( 1, "load_obj：通用 JSON 讀取器",                      "由呼叫端保證：站點 2/3/5 都先 _inside 再呼叫"),
+    ( 2, "collector_wiring：skills/…/SKILL.md",             "_inside（R14 新增，第 11 處）"),
+    ( 3, "_find_pack_at：git diff --name-status",          "git object"),
+    ( 4, "_find_pack_at：git cat-file -e",                 "git object"),
+    ( 5, "_find_pack_at：git ls-tree",                     "git object"),
+    ( 6, "_find_pack_at：git show（候選 plugin.json）",     "git object"),
+    ( 7, "check_bumped：pack 自身 plugin.json（pack_name）", "_inside（R13 第九處；R14 requirements F3 補測試，不再列 EXPECTED_SURVIVE）"),
+    ( 8, "check_bumped：git rev-parse --verify base",       "git object"),
+    ( 9, "check_bumped：git merge-base",                    "git object"),
+    (10, "check_bumped：git status --porcelain",            "git object"),
+    (11, "check_bumped：git diff --name-only",              "git object"),
+    (12, "check_bumped：git show HEAD:plugin.json",         "git object"),
+    (13, "check_bumped：git show base:plugin.json",         "git object"),
+    (14, "check_bumped：git show base:<改名前路徑>",         "git object"),
+    (15, "check_lens_dir_shape：lenses/ iterdir",           "_inside（目錄層；R14 起邊界退回 pack 自身，不再依賴 repo_root）+ 逐條目拒 symlink"),
+    (16, "builtin_lens_keys：references/builtin-lenses.csv", "_inside（R10 第三處）"),
+    (17, "check_csvs：執行 bin/pai-list-profiles（求值 harness）", "_inside（lister 與 harness）+ PAI_HARNESS 顯式傳入 + stderr 不進 annotation"),
+    (18, "check_csvs：lenses/<profile>.csv",                "站點 15 已拒 symlink；_inside 目錄層"),
+)
+# 另有三個**不經本檔讀取**但 validator 依賴的輸入：root `.claude-plugin/marketplace.json`（站點 1 的呼叫端，
+# check_marketplace_sync 先 _inside——R14 第十處）、entry 指向的 plugin 目錄與其 plugin.json（站點 1 的呼叫端，
+# 兩層都判）、反向 glob 找到的 plugin.json（站點 1 的呼叫端，_inside）。
+
 
 def _truthy(value):
     """與生產端 `bin/pai-parse-lens-csv` 的 `_truthy` **逐字同義**。
@@ -258,7 +296,7 @@ def load_obj(path_or_text, label, errs, *, is_text=False):
     裸 traceback、零 annotation），而 R6 的測試餵的是語法壞掉的 JSON，走的是另一條 except，
     所以抓不到。這是同一個缺陷的第二個站點。"""
     try:
-        raw = path_or_text if is_text else pathlib.Path(path_or_text).read_text(encoding="utf-8")
+        raw = path_or_text if is_text else pathlib.Path(path_or_text).read_text(encoding="utf-8")   # READ-SITE 1/18
         obj = json.loads(raw)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
         errs.append(f"::error file={prop(label)}::讀取失敗：{e}")
@@ -271,9 +309,30 @@ def load_obj(path_or_text, label, errs, *, is_text=False):
 
 
 def repo_root(root):
-    """併回主 repo 後，root 的祖父目錄就是 monorepo root。獨立使用時回 None。"""
+    """併回主 repo 後，root 的祖父目錄就是 monorepo root。獨立使用時回 None。
+
+    #33 verify R14（logic L-1）：這個 None 先前讓**五道閘門**各自安靜蒸發——marketplace 同步（root
+    CLAUDE.md 標 CRITICAL）、bump、lenses/ 目錄層 containment、撞名、profile 名——每道只留一句 `note:`，
+    rc=0；而 fork 只要把 `.claude-plugin/marketplace.json` 改名就做得到。同檔的 no-base 路徑（R4/R5）
+    早有「本機 note ／ CI errs」分流，這裡沒有。現在分流集中在 `report_no_repo()`（main() 呼叫一次），
+    各閘門對 None 一律**靜默 return**，不再各印各的。"""
     cand = root.parent.parent
     return cand if (cand / ".claude-plugin" / "marketplace.json").is_file() else None
+
+
+NO_REPO_GATES = ("check_marketplace_sync", "check_bumped", "lenses/ 目錄層 containment 的 repo 邊界",
+                 "撞名（builtin-lenses.csv）", "profile 名（pai-list-profiles）")
+
+
+def report_no_repo(errs):
+    """`repo_root()` 為 None 的唯一回報點。CI 裡（`manifests-and-lens-pack` job 跑在 monorepo checkout）
+    這依構造不可能合法發生 → error；本機獨立使用 pack 才是合法情境 → 一句 note。"""
+    what = ("找不到 <repo>/.claude-plugin/marketplace.json（不在 monorepo 內）—— 五道閘門都沒有跑："
+            + "、".join(NO_REPO_GATES) + "。這不是「通過」")
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        errs.append("::error::" + what + "；CI 的 checkout 必定是 monorepo，這個檔案被改名或刪了")
+    else:
+        print("note: " + what + "（本機獨立使用 pack 時可忽略）")
 
 
 def collector_wiring(repo, profile):
@@ -296,7 +355,10 @@ def collector_wiring(repo, profile):
     d = repo / "plugins" / "parallel-ai-agents" / "skills" / f"ensemble-{profile}-review"
     if not (d / "SKILL.md").is_file():
         return None, None
-    lines = (d / "SKILL.md").read_text(encoding="utf-8", errors="replace").splitlines()
+    # #33 verify R14（logic L-2 第 11 處）：這裡讀的是 repo 內另一個 plugin 的檔，先前沒有 containment。
+    if not _inside((d / "SKILL.md").resolve(), repo.resolve()):
+        return d.name, "outside"
+    lines = (d / "SKILL.md").read_text(encoding="utf-8", errors="replace").splitlines()   # READ-SITE 2/18
     wired = any("pai-collect-lens-layers" in ln and not ln.lstrip().startswith("#")
                 for ln in lines)
     return d.name, wired
@@ -353,9 +415,14 @@ def check_marketplace_sync(root, errs):
     entry」，走的是同一段 code。所以現在**雙向**：entry → 檔案（版本一致）、檔案 → entry（存在）。"""
     repo = repo_root(root)
     if repo is None:
-        print("note: 不在 monorepo 內 —— 略過 marketplace 版本一致檢查")
-        return
+        return                                   # 回報集中在 report_no_repo()（R14 L-1）
     mp = repo / ".claude-plugin" / "marketplace.json"
+    # #33 verify R14（logic L-2）：containment 的第十處——這是 validator 最核心的輸入，先前直接讀。
+    # 完整 git round-trip（commit symlink → clone → run）證明 repo 外內容會被讀、驅動整道版本閘門、原樣進 annotation。
+    if not _inside(mp.resolve(), repo.resolve()):
+        errs.append("::error::.claude-plugin/marketplace.json 解析後落在 repo 外（可能是 symlink）—— "
+                    "拒絕讀取。marketplace 同步閘門與反向檢查都沒有跑")
+        return
     mp_obj = load_obj(mp, mp, errs)
     if mp_obj is None:
         return
@@ -586,6 +653,7 @@ def _find_pack_at(repo, ref, pj_rel, name):
     # （改目錄通常也改 plugin 名），git 就把它判成 A+D 而非 R —— 但同一次改名裡
     # 其他檔案（README/LICENSE/scripts）仍是 R100。取多數決還原舊的 pack 根目錄。
     pack_rel = pj_rel[: -len("/.claude-plugin/plugin.json")]
+    # READ-SITE 3/18
     dt = subprocess.run(["git", "diff", "--name-status", "-M", ref, "HEAD"],
                         cwd=repo, capture_output=True, text=True, errors="replace")
     if dt.returncode == 0:
@@ -612,12 +680,14 @@ def _find_pack_at(repo, ref, pj_rel, name):
         if votes:
             old_pack = max(votes, key=votes.get)
             candidate = f"{old_pack}/.claude-plugin/plugin.json"
+            # READ-SITE 4/18
             if candidate != pj_rel and subprocess.run(
                     ["git", "cat-file", "-e", f"{ref}:{candidate}"],
                     cwd=repo, capture_output=True).returncode == 0:
                 return candidate
     if not name:
         return None
+    # READ-SITE 5/18
     ls = subprocess.run(["git", "ls-tree", "-r", "--name-only", ref],
                         cwd=repo, capture_output=True, text=True, errors="replace")
     if ls.returncode != 0:
@@ -625,6 +695,7 @@ def _find_pack_at(repo, ref, pj_rel, name):
     for path in ls.stdout.splitlines():
         if not path.endswith(".claude-plugin/plugin.json"):
             continue
+        # READ-SITE 6/18
         blob = subprocess.run(["git", "show", f"{ref}:{path}"],
                               cwd=repo, capture_output=True, text=True, errors="replace")
         if blob.returncode != 0:
@@ -655,8 +726,7 @@ def check_bumped(root, errs, base, event=None):
     push 要問「這次 push 讓 main 的樹變成什麼」（exact tree，兩點）。"""
     repo = repo_root(root)
     if repo is None:
-        print("note: 不在 monorepo 內 —— 略過 bump 檢查")
-        return
+        return                                   # 回報集中在 report_no_repo()（R14 L-1）
     if not base:
         # #33 verify R4：CI 的 push-to-main 事件沒有 pull_request.base.sha，先前會走到這裡
         # 靜默略過 —— 「CI 宣稱的核心發布閘門在 push-to-main 上結構性不存在」。
@@ -699,7 +769,7 @@ def check_bumped(root, errs, base, event=None):
     _pj_path = root / ".claude-plugin" / "plugin.json"
     if _inside(_pj_path.resolve(), repo.resolve()):          # R13 logic N1：第九處 containment
         try:
-            _pk = json.loads(_pj_path.read_text(encoding="utf-8"))
+            _pk = json.loads(_pj_path.read_text(encoding="utf-8"))          # READ-SITE 7/18
             pack_name = _pk.get("name") if isinstance(_pk, dict) else None
         except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             pack_name = None
@@ -707,6 +777,7 @@ def check_bumped(root, errs, base, event=None):
     pj_rel = f"{pack_rel}/.claude-plugin/plugin.json"
     # #33 verify R4：先前只堵 returncode != 0。git 對「pathspec 指向 base 不存在的路徑」
     # 是成功 + 空輸出 —— 與「真的沒改」不可區分。先確認 base 這個 ref 本身存在。
+    # READ-SITE 8/18
     if subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"{base}^{{commit}}"],
                       cwd=repo, capture_output=True).returncode != 0:
         # #33 verify R6：先前訊息一律叫人「確認 checkout 帶 fetch-depth: 0」。但對
@@ -730,6 +801,7 @@ def check_bumped(root, errs, base, event=None):
     # （「這次 push 讓 main 變成什麼」）才是對的，而 CI 一律會傳 --event。
     cmp_base = base
     if event != "push":
+        # READ-SITE 9/18
         mb = subprocess.run(["git", "merge-base", base, "HEAD"],
                             cwd=repo, capture_output=True, text=True, errors="replace")
         if mb.returncode != 0 or not mb.stdout.strip():
@@ -749,6 +821,7 @@ def check_bumped(root, errs, base, event=None):
     #   lenses/code.csv: 2 條 lens ✓                ← 同一次執行看到了那條新 lens
     # 現在三個讀取點全部取自 committed history，並且**先**把未 commit 的差異講出來 ——
     # 那句提示必須在「無變更」那條路徑上也印得到，否則假綠燈依舊。
+    # READ-SITE 10/18
     dirty = subprocess.run(["git", "status", "--porcelain", "--", rel, pj_rel],
                            cwd=repo, capture_output=True, text=True, errors="replace")
     if dirty.returncode == 0 and dirty.stdout.strip():
@@ -767,6 +840,7 @@ def check_bumped(root, errs, base, event=None):
     if moved_pj:
         old_lens = moved_pj[: -len("/.claude-plugin/plugin.json")] + "/lenses"
         pathspec = [old_lens, rel]
+    # READ-SITE 11/18
     changed = subprocess.run(
         ["git", "diff", "--name-status", "-M", cmp_base, "HEAD", "--", *pathspec],
         cwd=repo, capture_output=True, text=True, errors="replace")
@@ -793,6 +867,7 @@ def check_bumped(root, errs, base, event=None):
         print(msg)
         return
     pj = root / ".claude-plugin" / "plugin.json"
+    # READ-SITE 12/18
     cur = subprocess.run(["git", "show", f"HEAD:{pj_rel}"],
                          cwd=repo, capture_output=True, text=True, errors="replace")
     if cur.returncode != 0:
@@ -813,6 +888,7 @@ def check_bumped(root, errs, base, event=None):
     if now_obj is None:
         return
     now = now_obj.get("version", "")
+    # READ-SITE 13/18
     old = subprocess.run(
         ["git", "show", f"{cmp_base}:{pj_rel}"],
         cwd=repo, capture_output=True, text=True, errors="replace")
@@ -824,6 +900,7 @@ def check_bumped(root, errs, base, event=None):
         if moved:
             print(f"note: pack 在 base 時位於 {moved[: -len('/.claude-plugin/plugin.json')]}"
                   f"（本次改名為 {pack_rel}）—— 用舊路徑比對版本")
+            # READ-SITE 14/18
             old = subprocess.run(["git", "show", f"{cmp_base}:{moved}"],
                                  cwd=repo, capture_output=True, text=True, errors="replace")
             if old.returncode != 0:
@@ -862,18 +939,18 @@ def check_lens_dir_shape(root, errs):
     # **自己**是 symlink 時整個逃逸 —— 實測把它指向 repo 外的目錄，validator 會把該目錄的
     # 檔名逐一印進 CI annotation，並讀取其中的檔案、把第一行內容印出來。
     # 「同類洞只修一半」在同一輪裡又發生一次；`_inside` 已是現成的共用函式。
-    repo_for_containment = repo_root(root)
-    if repo_for_containment is not None:
-        repo_abs = repo_for_containment.resolve()
-        if not _inside(d.resolve(), repo_abs):
-            errs.append(f"::error::{d.relative_to(root)} 解析後落在 repo 外"
-                        "（可能是 symlink）—— 拒絕讀取。validator 只能讀本 repo 內的 lens")
-            return []
+    # #33 verify R14（logic L-1）：先前 `repo_root()` 為 None 時整段跳過——R9 標 HIGH 的 symlink 外洩
+    # 就回來了。邊界退回 pack 自身（與 check_version 的 `repo_root(root) or root` 同形）。
+    repo_abs = (repo_root(root) or root).resolve()
+    if not _inside(d.resolve(), repo_abs):
+        errs.append(f"::error::{d.relative_to(root)} 解析後落在 repo 外"
+                    "（可能是 symlink）—— 拒絕讀取。validator 只能讀本 repo 內的 lens")
+        return []
     if not d.is_dir():
         errs.append(f"::error::找不到 {d} —— 空的 pack 不貢獻任何東西")
         return []
     good = []
-    for p in sorted(d.iterdir()):
+    for p in sorted(d.iterdir()):                                        # READ-SITE 15/18
         rel = ann_path(p, root)
         # #33 verify R6：先前用 `p.suffix != ".csv"` 判定，而 pathlib 對 dotfile 回傳空
         # suffix（`Path(".DS_Store").suffix == ""`）→ 一個 .DS_Store 就讓整支 exit 1，
@@ -950,7 +1027,7 @@ def builtin_lens_keys(repo, errs):
         return None
     out = {}
     try:
-        with cat.open(newline="", encoding="utf-8-sig") as fh:
+        with cat.open(newline="", encoding="utf-8-sig") as fh:             # READ-SITE 16/18
             reader = csv.DictReader(fh)
             fields = list(reader.fieldnames or [])
             if "profile" not in fields or "key" not in fields:
@@ -994,16 +1071,26 @@ def check_csvs(root, errs, files):
             errs.append(f"::error::{lister.relative_to(repo)} 解析後落在 repo 外（可能是 symlink）"
                         "—— 拒絕執行。profile 名稱閘門沒有跑")
         elif not _inside(harness.resolve(), repo.resolve()):
-            # #33 verify R13（requirements R13-4）：第八處 —— R12 補了執行點（lister），沒補它**求值的輸入**。
+            # #33 verify R13（requirements R13-4）：R12 補了執行點（lister），沒補它**求值的輸入**（READ_SITES 17）。
             # harness 是 symlink 到 repo 外時，node 的 SyntaxError code frame 會把該檔內容經 stderr →
             # errs → annotation 印出來（與 R9 的 lenses symlink 洩漏同一類）。
             errs.append(f"::error::{harness.relative_to(repo)} 解析後落在 repo 外（可能是 symlink）"
                         "—— 拒絕求值。profile 名稱閘門沒有跑")
         else:
-            r = subprocess.run(["bash", str(lister)], capture_output=True, text=True, errors="replace")
+            # #33 verify R14（regression E-2 / logic L-7）：lister 讀 `PAI_HARNESS`，先前繼承整個環境——
+            # 「檢查的路徑」與「求值的路徑」是兩份規格（逐字是 R6 在 check_marketplace_sync 修過的缺陷）。
+            # 顯式傳入被 containment 過的那一個。
+            # READ-SITE 17/18
+            r = subprocess.run(["bash", str(lister)], capture_output=True, text=True, errors="replace",
+                               env={**os.environ, "PAI_HARNESS": str(harness)})
             if r.returncode != 0:
-                # stderr 走 wc()：截斷 + 中和，不讓 node 的 code frame 把整段檔案內容帶進 annotation。
-                errs.append(f"::error::無法取得 PROFILES 清單：{wc(r.stderr.strip())}")
+                # #33 verify R14（security S1 / logic L-6）：R13 讓 stderr 走 wc()（截斷 + 中和）。但洩漏的機制
+                # 從來不是路徑：node 求值的是 fork 可控的 JS，合法的 in-repo harness 只要 `import` repo 外的檔，
+                # code frame 就把該檔內容經 stderr 帶進來——路徑守衛擋不住求值。類級修法：stderr **一律不進
+                # annotation**，內容再也沒有管道；診斷請本機執行 bin/pai-list-profiles。
+                errs.append(f"::error::無法取得 PROFILES 清單（pai-list-profiles rc={r.returncode}；它求值的是 "
+                            "PR 可控的 JS，其 stderr 不進 annotation —— 本機執行 bin/pai-list-profiles 看原因）。"
+                            "profile 名稱閘門沒有跑")
             elif not r.stdout.split():
                 # rc=0 但空輸出 → known_profiles 會是空 set，於是**每一個** CSV 都被報
                 # 「不是既有 profile（真源 PROFILES 有：）」，清單還是空的 —— 讀者無從判斷
@@ -1018,7 +1105,7 @@ def check_csvs(root, errs, files):
         # #33 verify R4：header 要看 reader.fieldnames，不能從 rows[0].keys() 反推 ——
         # 反推看不出重複欄位（DictReader 會覆蓋），也看不出多餘欄位（跑進 restkey）。
         try:
-            with path.open(newline="", encoding="utf-8-sig") as fh:
+            with path.open(newline="", encoding="utf-8-sig") as fh:        # READ-SITE 18/18
                 reader = csv.DictReader(fh, restkey="__extra__", restval=None)
                 fieldnames = list(reader.fieldnames or [])
                 rows = list(reader)
@@ -1131,8 +1218,18 @@ def check_csvs(root, errs, files):
         print(f"{rel}: {len(rows)} 條 lens ✓（profile '{profile}'）")
 
         # 這段是**啟發式提示**，不是事實判定 —— 見 collector_wiring() 的註解。
-        own, wired = collector_wiring(repo, profile)
-        if own is None:
+        # R14 L-1：repo 拿不到時整段不跑——先前印「沒有 ensemble-<profile>-review 這支 skill」，那是假的
+        # （skill 明明在，只是找不到 repo）；缺 repo 的回報集中在 report_no_repo()。
+        if repo is None:
+            own, wired = "(no repo)", "skip"
+        else:
+            own, wired = collector_wiring(repo, profile)
+        if wired == "skip":
+            pass
+        elif wired == "outside":
+            emit(f"::warning file={rel}::`/{own}` 的 SKILL.md 解析後落在 repo 外（可能是 symlink）"
+                 "—— 拒絕讀取，接線狀態未知")
+        elif own is None:
             emit(f"::warning file={rel}::profile '{profile}' 沒有 ensemble-{profile}-review "
                   f"這支專屬 skill —— 這裡的 lens 只會在 /ensemble-compose --base {profile} "
                   f"時被載入")
@@ -1194,16 +1291,29 @@ def main():
             return fn(*args)
         except Exception as e:                      # noqa: BLE001 —— 這裡就是要接住一切
             errs.append(f"::error::validator 內部錯誤（閘門 {name} 未跑完）：{wc(repr(e))}。"
-                        "這不是「該閘門通過」—— 是它沒跑完；其餘閘門的結果仍在下面")
+                        "這不是「該閘門通過」—— 是它沒跑完；其餘閘門各自回報")
             return None
+    if repo_root(root) is None:
+        report_no_repo(errs)                        # R14 L-1：五道閘門的缺席一次說清楚，CI 裡是 error
     gate("check_version", check_version, root, errs)
     gate("check_marketplace_sync", check_marketplace_sync, root, errs)
     gate("check_bumped", check_bumped, root, errs, base, event)
     files = gate("check_lens_dir_shape", check_lens_dir_shape, root, errs)
     if files:
         gate("check_csvs", check_csvs, root, errs, files)
+    elif files is None:
+        # #33 verify R14（logic L-3a）：隔離做到了每道閘門，閘門之間的相依沒做——前一道拋例外時這一道整支
+        # 不跑，卻沒有任何一句話說它沒跑。本檔對每一道跑不成的閘門都有一句具名的「沒有跑」，這裡也要。
+        errs.append("::error::check_csvs 沒有跑（前一道閘門 check_lens_dir_shape 未跑完，拿不到 lens 檔案清單）"
+                    "—— 撞名、profile 名、CSV 形狀三項都沒有檢查")
+    # #33 verify R14（logic L-3b）：drain 迴圈先前不在任何 gate 內——emit() 一拋（surrogate + strict locale），
+    # 已累積的 annotation 全部消失 + 裸 traceback，正是 gate() 存在的理由本身。印不出來的那條退化成 ASCII 留痕。
     for e in errs:
-        emit(e)
+        try:
+            emit(e)
+        except Exception as ex:                     # noqa: BLE001
+            (RAW_OUT or sys.stdout).write("::error::（下面這條 annotation 印不出來，退化為 ASCII）"
+                                          f"{ascii(e)[:4000]} —— {ascii(ex)[:200]}\n")
     return 1 if errs else 0
 
 

@@ -7,7 +7,7 @@ cd "$(dirname "$0")/.."
 echo "── shellcheck (bash scripts) ──"
 # 這份清單與 .github/workflows/test.yml 的 shellcheck step 是兩份寫死的規格（#30 追蹤自動列舉）；
 # #33 verify R11 抓到兩邊互相都不是對方的超集 —— 改其中一邊時請一併改另一邊。
-shellcheck bin/pai-build-diff bin/pai-parse-verdict bin/pai-iter-commit bin/pai-list-profiles test/lint-bats.sh test/lint-changelog-counts.sh test/lint-contract-enumerations.sh
+shellcheck bin/pai-build-diff bin/pai-parse-verdict bin/pai-iter-commit bin/pai-list-profiles references/regen-builtin-lenses.sh test/lint-bats.sh test/lint-changelog-counts.sh test/lint-contract-enumerations.sh
 
 echo "── py_compile (python scripts) ──"
 python3 -m py_compile bin/pai-parse-lens-csv bin/pai-collect-lens-layers
@@ -32,12 +32,18 @@ for t in test/*.test.mjs; do echo "  $t"; node "$t"; done
 
 # #33 verify R11：pack（plugins/pai-lenses）的 python 測試先前沒有任何本機入口，只有 CI 的
 # manifests-and-lens-pack job 會跑；test/README.md 卻寫「CI 跑同一組」。這裡對齊那個 job
-# （完整 mutation 量測仍是手動：python3 scripts/mutation_check.py，約十分鐘）。
+# （完整 mutation 量測仍是手動：python3 scripts/mutation_check.py，約三三十分鐘）。
 # #33 verify R12：CI 的 builtin-lenses.csv drift step 也搬過來 —— 它是 run.sh 與 CI 之間最後一處分岔。
 echo "── builtin-lenses.csv drift (regenerate → expect no diff) ──"
 # R13 logic N4：非 git checkout（plugin cache 副本）下 `git diff` rc=129，不能拿它當「過期」。
 if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  bash references/regen-builtin-lenses.sh
+  # R14 regression E-1：regen 腳本的 node 例外會印 harness 原始碼——與 CI 同一份過濾器（monorepo 才有）。
+  # 注意這一步會**改寫工作樹**（catalog 過期時留下重生後的檔）——R13 reg R13-4，明示不改：那正是「請 commit」的用意。
+  if [ -f ../pai-lenses/scripts/neutralise.py ]; then
+    ( set -o pipefail; bash references/regen-builtin-lenses.sh 2>&1 | python3 ../pai-lenses/scripts/neutralise.py )
+  else
+    bash references/regen-builtin-lenses.sh
+  fi
   # R13 requirements R13-5：不印 diff 內容 —— catalog 的 focus 是 fork 可控文字，`##[…]`/`::` 會原樣進 step log。
   git diff --quiet -- references/builtin-lenses.csv || { echo "references/builtin-lenses.csv 過期 —— 上面已重生，請 commit（內容不印：見 git diff）"; exit 1; }
 else

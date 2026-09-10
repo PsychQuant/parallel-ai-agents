@@ -128,8 +128,8 @@ MUTATIONS = [
      'ap.add_argument("--event", metavar="<github-event-name>",'),
     ("check_version 的 semver 閘門", "    if version_tuple(version) is None:", "    if False:"),
     ("rcN prerelease warning", "        if risky:", "        if False:"),
-    ("lenses/ 目錄本身的 containment", "        if not _inside(d.resolve(), repo_abs):",
-     "        if False:"),
+    ("lenses/ 目錄本身的 containment", "    if not _inside(d.resolve(), repo_abs):",
+     "    if False:"),
     ("catalog 的 containment", "    if not _inside(cat.resolve(), repo.resolve()):",
      "    if False:"),
     ("check_bumped 的 now 型別守衛", "    if now_obj is None:", "    if False and now_obj is None:"),
@@ -216,7 +216,31 @@ MUTATIONS += [
     ("git show 解碼 errors=replace（HEAD 側）",
      '    cur = subprocess.run(["git", "show", f"HEAD:{pj_rel}"],\n                         cwd=repo, capture_output=True, text=True, errors="replace")',
      '    cur = subprocess.run(["git", "show", f"HEAD:{pj_rel}"],\n                         cwd=repo, capture_output=True, text=True)'),
+    # ── #33 verify R14 ──
+    ("repo_root None 在 CI 報錯（R14 L-1：五道閘門不得靜默蒸發）",
+     '    if os.environ.get("GITHUB_ACTIONS") == "true":\n        errs.append("::error::" + what',
+     '    if False:\n        errs.append("::error::" + what'),
+    ("collector_wiring 缺 repo 不印假 warning（R14 L-1）",
+     '        if repo is None:\n            own, wired = "(no repo)", "skip"',
+     '        if False:\n            own, wired = "(no repo)", "skip"'),
+    ("root marketplace.json 的 containment（R14 L-2 第十處）",
+     "    if not _inside(mp.resolve(), repo.resolve()):", "    if False:"),
+    ("SKILL.md 的 containment（R14 L-2 第 11 處）",
+     '    if not _inside((d / "SKILL.md").resolve(), repo.resolve()):', "    if False:"),
+    ("lenses/ 目錄層 containment 不依賴 repo_root（R14 L-1）",
+     "    repo_abs = (repo_root(root) or root).resolve()",
+     '    repo_abs = (repo_root(root) or pathlib.Path("/")).resolve()'),
+    ("PAI_HARNESS 顯式傳入（R14 E-2 / L-7）",
+     'env={**os.environ, "PAI_HARNESS": str(harness)})', "env={**os.environ})"),
+    ("lister stderr 不進 annotation（R14 S1 / L-6）",
+     'errs.append(f"::error::無法取得 PROFILES 清單（pai-list-profiles rc={r.returncode}；',
+     'errs.append(f"::error::無法取得 PROFILES 清單：{r.stderr.strip()}（pai-list-profiles rc={r.returncode}；'),
+    ("check_csvs 沒有跑的具名訊息（R14 L-3a gate 相依）", "    elif files is None:", "    elif False:"),
+    ("drain 迴圈的保護（R14 L-3b）",
+     "        except Exception as ex:                     # noqa: BLE001", "        except () as ex:"),
 ]
+# neutralise.py 不在 mutation 範圍（本 harness 只 mutate validate.py）；它的行為由 test_validate.py 的
+# 兩條 CI 中和測試釘住，且它本身只是把 stdin 接到 LineSanitiser——LineSanitiser 的靶在上面。
 
 EXPECTED_SURVIVE = {
     "pack 內部改名不投票（依構造不可達，保留為防禦）",
@@ -224,9 +248,10 @@ EXPECTED_SURVIVE = {
     # R12 修法後 LineSanitiser 對**每一段**獨立判 `lstrip().startswith("::")`、不再靠行首旗標——
     # 換回 splitlines() 只會多切幾段、多消毒幾次，方向安全。靶保留是為了釘住「不得再引入旗標」的設計意圖。
     "輸出邊界的行定義（runner 的，不是 splitlines）",
-    # R13：pack_name 讀取的 containment 是縱深防禦 —— 讀取結果不輸出（只影響改名偵測的 name 比對），
-    # check_version 對同一個 symlink 已先報錯，所以關掉這一處看不出行為差異。保留守衛：不讀 repo 外的檔。
-    "pack_name 讀取的 containment（R13 N1 第九處）",
+    # R14 requirements F3：R13 把「pack_name 讀取的 containment」放進這裡，理由是「讀取結果不輸出」——假的：
+    # check_bumped 的「找不到名為 X 的 pack」會 print(pack_name)，守衛拿掉時 repo 外 symlink 的 name 就進 log。
+    # DA-5 預言的後門一輪之後就實現了。現在它有測試網（test_pack_name_containment_keeps_outside_name_out_of_log），
+    # 從這裡移除。**每一條進來的靶都要能回答「關掉它，哪一行輸出會變」——答不出來就不是 equivalent，是沒測試。**
 }
 
 
@@ -245,7 +270,7 @@ def _apply(name, old, new, src):
 def check_targets_only():
     """只驗每個靶是否恰好命中一次 —— 秒級，可以進 CI（#33 verify R9 M11/M24）。
 
-    完整的 mutation 量測太慢（靶數 × 全套測試 ≈ 十分鐘），不適合每個 PR 跑。但**靶清單
+    完整的 mutation 量測太慢（靶數 × 全套測試 ≈ 三十分鐘），不適合每個 PR 跑。但**靶清單
     相對 validate.py 的漂移**是可以便宜擋住的：有人改動被 mutate 的那幾行、或搬走一道閘門，
     靶就對不上。先前這件事只有在有人手動跑整輪時才會發現，而「忘了跑」是預設。
     """
@@ -283,7 +308,7 @@ def check_targets_only():
 
 def main():
     # #33 verify R10 M6：先前是 `if "--check-targets" in sys.argv[1:]` —— 手寫解析，
-    # 打錯旗標（`--check-target`）會被靜默忽略，然後**直接跑十分鐘的就地改寫迴圈**。
+    # 打錯旗標（`--check-target`）會被靜默忽略，然後**直接跑三十分鐘的就地改寫迴圈**。
     # R9 才剛把 validate.py 的同一種解析拆掉，理由逐字適用於這裡。
     ap = argparse.ArgumentParser(
         prog="mutation_check.py",

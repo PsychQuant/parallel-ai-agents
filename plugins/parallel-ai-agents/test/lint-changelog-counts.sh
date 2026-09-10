@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# 機械護欄（RC13，round 10）：CHANGELOG 裡任何「N 個 case（`grep -c "^@test" <file>`）」的宣稱，
-# N 必須等於那條命令**此刻**的輸出。
+# 機械護欄（RC13，round 10）：CHANGELOG 裡任何「N 個 case（`grep -c "^@test" <file>`）」、「N 條（`grep -c …`）」、
+# 「N 個（`grep -c …`）」的宣稱（三種形式見下方 CLAIM），N 必須等於那條命令**此刻**的輸出。
 #
 # 為什麼：這個數字手打錯了五次（round 7：69 vs 76；round 9：76 vs 79）——而 round 8 起那一句
 # 自己就宣稱「由 grep -c 產生、不手打」。散文規則寫了四次都沒用，所以跟 lint-bats 一樣改成機器擋：
@@ -32,10 +32,12 @@ if [ "${#files[@]}" -eq 0 ]; then files=(CHANGELOG.md); fi
 python3 - "${files[@]}" <<'PY'
 import os, re, subprocess, sys
 # 「N 個 case」之後、括號之前允許 markdown 裝飾（**），括號可全形或半形；命令逐字取自宣稱本身。
-# 兩種宣稱形式（封閉列舉，#33 verify R13 R13-1 加第二種——pack 的 python 測試數在隔壁一格照樣手打錯）：
+# 三種宣稱形式（封閉列舉，不得類推第四種；#33 verify R13 R13-1 加第二種、R14 L-10/E-5 加第三種——
+# 靶數在測試數的同一句話裡照樣手打）：
 #   N 個 case（`grep -c "^@test" <file>`）
 #   N 條（`grep -c "<pattern>" <file>`）        ← pattern 逐字取自宣稱，lint 只是真的去跑它
-CLAIM = re.compile(r'(\d+)\s*(?:個\s*case|條)[^（(]*[（(]`grep -c "((?:[^"\\]|\\.)+)" ([^`]+)`[）)]')
+#   N 個（`grep -c "<pattern>" <file>`）        ← 靶數：MUTATIONS 的每個 tuple 恰以 `    ("` 起頭
+CLAIM = re.compile(r'(\d+)\s*(?:個\s*case|條|個)[^（(]*[（(]`grep -c "((?:[^"\\]|\\.)+)" ([^`]+)`[）)]')
 rc, seen = 0, 0
 for f in sys.argv[1:]:
     for n, line in enumerate(open(f, encoding='utf-8'), 1):
