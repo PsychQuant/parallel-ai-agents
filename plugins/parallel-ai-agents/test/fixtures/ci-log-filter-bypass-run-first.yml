@@ -1,4 +1,5 @@
 # fixture for test/lint-ci-log-filter.sh --selftest（R16 requirements F3：step 以 `- run:` 開頭、沒有 name）
+# EXPECT: rule-red
 jobs:
   j:
     steps:

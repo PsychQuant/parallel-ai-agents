@@ -1,4 +1,5 @@
 # fixture（R17 logic L-1 A）：bare `-`，鍵在下一行——合法 block sequence entry
+# EXPECT: rule-red
 jobs:
   j:
     steps:

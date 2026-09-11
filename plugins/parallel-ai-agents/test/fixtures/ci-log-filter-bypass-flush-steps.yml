@@ -1,4 +1,5 @@
 # R20：dash 與 steps: 同縮排（合法 YAML，yaml.safe_load 語意相同）先前讓整個 job 隱形
+# EXPECT: rule-red
 name: t
 on:
   pull_request:

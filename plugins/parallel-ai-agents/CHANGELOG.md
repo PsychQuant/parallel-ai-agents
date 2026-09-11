@@ -618,6 +618,82 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
     （security S-4 / regression F3，改成 lint 認的形式）；mutation 耗時再上修為 30–50 分（logic 實測 29 s × 96 ≈ 47 分）。
   測試 118 → 124 條；靶清單 96 → 98 個（3 個 EXPECTED_SURVIVE；lint 形式的宣稱只留在最新一段）。
   量測（R16 後）：全輪 98 靶 93 殺／2 存活（emit 自己的中和層，補單元測試後單靶轉殺）→ 95／0／3（複合值）。
+- **verify R22（4 lens + DA + **Codex 跨模型 leg 恢復**）— 白名單做在結構層，兩個判定述詞仍是
+  對原始文字的正規式。0 HIGH、5 MEDIUM blocking。**
+  **本輪的大事：R10 以來第一次成功取得跨模型 leg**（R11–R21 連續九輪 429）。Codex 五條裡**三條是
+  四個 Claude lens 都沒提出的**，DA 在隔離樹逐一實測後**五條全部成立**，其中一條被評為本輪最銳利。
+  這是「5-AI 同家族夠不夠」的直接資料點：不夠。修法：
+  - **兩個判定述詞共用同一個抽取函式**（R22 的 meta 根因）。`ok = (PIPED_RE …) or (LOGFILTER_RE …)`
+    是兩個判斷，R21 只白名單化了右邊；左邊對原始文字搜尋，於是 YAML 行尾註解、shell 註解、字串裡
+    「提到」管線都算已過濾。而 `COMMENT` 的分類又排在白名單**之上**，只看 `strip()` 是否以 `#` 開頭
+    ——requirements 的控制組把因果釘死：拿掉那個 `#` 就變 rc=1 並印「本 lint 不解析這一行」，
+    **白名單本來抓得到**。現在 `split_code_and_comment()` 把每一行切成「會被執行」與「不會被執行」
+    兩半（引號內容整段挖空），管線判定只看前者、`# LOG-FILTER:` 只看後者。
+  - **結構／分類層的五種殘留**：`BLOCK_SCALAR_RE` 只認 chomping 在前的指示子順序，而 YAML 兩種都
+    合法（`|2-`／`>2-`／`|2+`）；跨行引號 scalar 的續行被當成註解。**`ff0f215` 也有這些洞**，是這一族
+    未關閉的成員、不是 R21 的回歸。另外修掉 R21 自己帶進來的一個：`run: |` 的 `|` 是 block scalar
+    **指示子**不是程式碼，接上下一行會**憑空造出一條管線**。
+  - **誤擋與繞過同時關**（R22 裁決 3 與 5：22 個 fixture 裡 8 個**只靠 parse-reject 變紅**，而
+    parse-reject 正是修誤擋必須放寬的機制——selftest 分不出兩種紅，就等於「修誤擋會靜默重開繞過」）。
+    R22 的 DA 在 26 份合法 workflow 上量到先前誤擋 20 份（那份 corpus 是它臨時蒐集的、無法逐字
+    重現，故本輪另做了下方可重跑的量測），根因是把「清單項一定是 mapping」當成不成文前提，於是
+    `on: push: branches:` 底下的 `- main`（Actions 最常見的寫法之一）被拒、訊息還是**假診斷**。
+    判別式改用 **YAML 自己的**：rest 含 `": "` 或以 `":"` 結尾才是 mapping。**每個拒絕訊息現在帶
+    `RULE:`／`PARSE:` 來源標記**，每個 fixture 用 `# EXPECT:` 宣告它該是哪一種，selftest 逐一比對
+    （斷言的是**紅的種類**，不只是 rc）。**那 8 個「只靠 parse-reject 變紅」的 bypass fixture 在本版
+    逐一實測：8 個全部仍紅、且仍是 `PARSE:` 紅，零個被放行**——被放寬的（清單項的 mapping 判準、
+    `---`、純 `uses:`、指示子順序）與它們依賴的不是同一個機制。base 上那 22 個的 14 rule／8 parse
+    分佈也逐一重跑核對過，與 R22 的裁決相符。
+    正向 fixture 從 **1 個增為 9 個**（負向 23 → 30）——先前 24 個 fixture 裡只有一個是正向，
+    沒有東西在證明它放得過好輸入，誤擋失控正是這個不對稱的必然結果。（**更正**：本段初稿寫成
+    「補上 9 個正向、先前 22 個全是負向」，兩個數字都錯——22 是 `bypass-*` 的數量，`bad.yml` 與
+    既有的 `good.yml` 沒算進去。這種「把子集講成全集」正是本輪在修的同一個形狀，寫在這裡而不是
+    默默改掉。）`---`／`...` 文件標記與純 `uses:` workflow 也不再被拒（vacuity 保護改由
+    selftest 專用的 `--require-run-steps` 提供）。
+    **在真實 workflow 上的前後量測**（fixture 是自己寫的，證不了「對別人的檔也對」）：本機 21 個
+    repo 的 33 份 `.github/workflows/*.yml`，同一份清單各跑一次 base 與本版 ——
+    假診斷「清單項的 key 不是 plain 形式」**23 處／5 檔 → 0**；純 `uses:` workflow 的 vacuity 拒絕
+    **1 檔 → 0**；而 `RULE:` 那 137 行**逐行完全相同**。最後這一項正是 R22 裁決 5 擔心的事
+    （放寬解析層會不會連規則層一起放掉）的直接反證。**仍會被拒的一種，明寫**：欄位用 YAML
+    anchor／alias 帶入時（corpus 裡 1 檔 2 處）本 lint 印 `PARSE:` 並拒絕 —— 這是**刻意 fail-closed**
+    （alias 後面可以藏 `run:`），訊息也誠實寫「本 lint 不解析」，不是假診斷。
+  - **taint 的鏈補完**（security S-1；R12 第 5 條的缺陷類別靠這個洞回來了）：傳播沿參數但**不沿
+    回傳值**，而主要閘門又都經 `gate(name, fn, …)` **間接呼叫**——兩者相加讓 `check_csvs` 的
+    `files`／`path` 一路到 `:1189` 都沒染色，剝掉那裡的 `ann_path` 全套仍綠且無靶。補三件：
+    回傳值傳播、gate 間接呼叫解析、**fixpoint 不再用會短路的 `any()`**（後面的函式那一輪不會被
+    分析，迴圈可能在收斂前結束）。鏈打通後**立刻在乾淨樹上抓到 8 個未包裹的站點**（`profile` 來自
+    lens 檔名、`own` 來自 collector_wiring），全部補 `wc()` 並各自驗紅。
+  - **解碼不變式改成驗值**（Codex #3，DA 評為最銳利）：前一版只檢查 `errors` keyword **存在**，所以
+    `errors="replace"` → `errors="strict"`／`None` 照樣綠，而子行程吐 `\xff` 時仍會讓整道 `check_csvs`
+    退化成「validator 內部錯誤」。站點集合也補上 `text=1`／`universal_newlines=`／`check_output`／
+    `Path.open(encoding=)`。四種破壞方式各自驗紅。
+  - **`REMOTE_SOURCES` 對齊官方表**（Codex #4，DA 更正 Codex 只講對一半）：官方是
+    `github`／`url`／`git-subdir`／`npm`／`archive`／`command`——R21 寫的**漏三種、且多一個官方表裡
+    沒有的 `git`**。
+  - **changelog fixture 的對照組改用固定值**（Codex #5）：先前用「測試 130 條」當對照，而正式測試數
+    已增長，於是 fixture 失敗的原因變成**數字不符**而不是未知錨點被拒——把 R18 的後門重新引入，
+    selftest 仍會報 ok。對照宣稱改指向本檔一行固定標記，selftest 並斷言**拒絕的理由**。
+  - **更正 R21 的三句假宣稱**（R22 裁決 4）：`_LINE_BREAKS` 的副本否認同時出現在 commit message、
+    CHANGELOG **與那份副本上方兩行的程式碼註解**——`OTHER_BREAKS` 逐位元就是它減掉兩個條目且順序
+    相同。**現在不列舉了**：改用 Python 自己的 `splitlines()` 推導，副本整個移除。另外「matrix/defaults
+    零誤擋」為假（block 形式會被拒）、「PR body 數字由 `lint-changelog-counts.sh` 機械重算」為假
+    （那支 lint 只讀 `CHANGELOG.md`，PR body 是人工抄本）。
+  - **補做 R21 漏掉且未揭露的一項**：`bin/pai-collect-lens-layers` 的 `profile` 直接接成檔名、零驗證，
+    `..` 與絕對路徑都逃得出去。改成封閉字元集。**R21 的八項 LOW 修 5 留 3 而 commit message 與
+    CHANGELOG 都沒揭露——未揭露本身被定為 MEDIUM，這裡一併補記。** 仍未修的：`SEED_CALLS`／
+    `READ_CALLS` 不對齊、`wc()` 的 `##[` 與截斷無專屬靶（行為上有網）。
+  - **本輪自己的三個數字也寫錯過，一併揭露**：fixture 的「22 個全是負向」（實為 24 個 = 23 負向 + 1 正向）、
+    taint 形狀的「5 → 8」（實為 6 → 8）、PR body 的「數字由 lint 機械重算」（那支 lint 只讀 CHANGELOG）。
+    三個都在 commit 前用 `grep`／`ls` 核出來並就地更正。**三個的共同點是它們都不在 lint 認得的宣稱形式裡**
+    （`N（\`grep -c "…" path\`）`）——會被機械驗的那兩個數字（測試條數、靶數）本輪一次都沒錯。
+    這不是巧合，是「散文裡的數字沒有網」的直接證據；把 fixture 分佈之類的宣稱也納入 lint 形式列為下一輪候選，
+    本輪不動（改 lint 的文法屬於另一件事，而它自己也需要一輪 verify）。
+  測試 137 → 137 條（`grep -c "    def test_" ../pai-lenses/scripts/test_validate.py`）——**數字不動是實情**，
+  本輪擴充的是既有測試的涵蓋（taint 形狀從 6 種增為 8 種——第 8 種與第 7 種共用同一條斷言、
+  註解已說明；解碼不變式改成驗值並多四類站點），沒有新增 test 函式；
+  靶清單 112 → 114 個（`grep -c "^    (\"" ../pai-lenses/scripts/mutation_check.py`）（3 個 EXPECTED_SURVIVE）。
+  量測（R23 後）：單一副本（`git archive` 取）完整一輪 **114 靶 → 111 殺 / 0 存活 / 0 靶壞**（另 3 個 `EXPECTED_SURVIVE`），實測 **72.2 分鐘 = 每靶 38.0 s**。
+  **順手收斂了一處漂移**：同一個「最近一輪」的數字先前散在 `mutation_check.py` 兩處 docstring、`test/run.sh` 一處與 `test_validate.py` 檔頭共四份（其中一處還重複貼上了半句），現在只留檔頭那一份、其餘指回去。**CHANGELOG 的各輪數字不在此列**——那是歷史紀錄，每一條記的是當輪的值、本來就不該被更新。
 - **verify R20（4 lens + DA；Codex 第九輪 429）— R19 換方向的檢定：方向對，但只套用到兩層裡的一層。**
   R18 的四條 blocking 有**三條確認真的修好**且 DA 逐一嘗試推翻失敗（taint 容器累積、`prop()` 五個轉義、
   containment 兩個方向）。lint 那條 partial：第一階段的**行形式**白名單守得住（DA 在能穿過第二階段的 job 裡
@@ -651,8 +727,8 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
     不擴大 glob——composite 的 step 語意不同，硬套會假紅）。
   **流程**：本輪發生過共用 checkout 污染（有 agent 變異 tracked 檔、而 `git status` 當下讀起來乾淨），
   DA 全程改用 `git archive` 的獨立樹並逐位元驗過。**往後 lens 的破壞性實驗一律 `git archive`，不得 `cp -R`。**
-  測試 133 → 137 條（`grep -c "    def test_" ../pai-lenses/scripts/test_validate.py`）；
-  靶清單 111 → 112 個（`grep -c "^    (\"" ../pai-lenses/scripts/mutation_check.py`）（3 個 EXPECTED_SURVIVE）。
+  測試 133 → 137 條；
+  靶清單 111 → 112 個（3 個 EXPECTED_SURVIVE；lint 形式的宣稱只留在最新一段）。
   量測（R21 後）：單一副本（`git archive` 取）完整一輪 112 靶 → 109 殺 / 0 存活 / 0 靶壞（另 3 個 `EXPECTED_SURVIVE`），
   實測 64.2 分鐘 = 每靶 34.4 s。**耗時不再寫固定區間**——靶數每輪增加，舊區間連四輪被抓到低估；
   散文只留「靶數 × 全套測試」的關係，數字由 `mutation_check.py` 收尾自己印。

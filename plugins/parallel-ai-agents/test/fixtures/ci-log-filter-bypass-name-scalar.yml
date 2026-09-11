@@ -1,4 +1,5 @@
 # R20 security S-1：`name: |` 的 scalar 內容不是註解，不得用來放行
+# EXPECT: rule-red
 name: t
 on:
   pull_request:

@@ -1,0 +1,16 @@
+# R22 logic / Codex #1：shell 註解 + R21 的整塊合併造出的假匹配
+# EXPECT: rule-red
+name: t
+on:
+  pull_request:
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: compliant
+        run: echo hi | python3 ../pai-lenses/scripts/neutralise.py
+      - name: shell comment pipe
+        run: |
+          # echo ignored |
+          python3 ../pai-lenses/scripts/neutralise.py
+          printf '%s\n' "$PR_TITLE"

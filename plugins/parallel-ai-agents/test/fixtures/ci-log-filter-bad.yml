@@ -1,4 +1,5 @@
 # fixture for test/lint-ci-log-filter.sh --selftest：一個 run step 既沒有 neutralise.py 也沒有 LOG-FILTER
+# EXPECT: rule-red
 jobs:
   j:
     steps:

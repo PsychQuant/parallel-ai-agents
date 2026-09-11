@@ -1,4 +1,5 @@
 name: t
+# EXPECT: rule-red
 on:
   pull_request:
 jobs:

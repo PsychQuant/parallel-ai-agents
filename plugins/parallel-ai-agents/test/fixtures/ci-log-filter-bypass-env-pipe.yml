@@ -1,4 +1,5 @@
 # R17 DA-B ⑤ fixture：`neutralise.py` 寫在 `env:` 的 value 裡、形狀像管線，但不在 `run:` 區塊內。
+# EXPECT: rule-red
 # 期望：rc=1（sneaky 那個 step 沒有真的過濾）。同檔另放一個合規 step，避免 `seen==0` 的 vacuity 守衛假紅。
 name: t
 on:

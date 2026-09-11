@@ -1,4 +1,5 @@
 # fixture for test/lint-ci-log-filter.sh --selftest（R16 requirements F3：flow mapping 寫法的 step）
+# EXPECT: parse-red
 jobs:
   j:
     steps:

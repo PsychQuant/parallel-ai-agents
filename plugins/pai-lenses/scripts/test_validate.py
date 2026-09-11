@@ -15,9 +15,10 @@
 mutation」。**那三句話會讓下一個維護者以為改動 `validate.py` 有測試網接著。**
 
 現在用 `scripts/mutation_check.py` 量：跑一次就知道哪些閘門沒有測試網。
-**最近一次量測（R21 後）：112 個靶 → 109 殺 / 0 存活 / 0 靶壞**（另 3 個 `EXPECTED_SURVIVE`）。
+**最近一次量測（R23 後）：114 個靶 → 111 殺 / 0 存活 / 0 靶壞**（另 3 個 `EXPECTED_SURVIVE`）。
 單一副本上的完整一輪，副本用 `git archive` 取（**不是 `cp -R`**：R20 有 agent 在共用 checkout 裡變異 tracked 檔，
-另一個 lens 的 `cp -R` 拍到活的變異體而當時 `git status` 讀起來乾淨）。實測 **64.2 分鐘 / 112 靶 = 每靶 34.4 s**。
+另一個 lens 的 `cp -R` 拍到活的變異體而當時 `git status` 讀起來乾淨）。實測 **72.2 分鐘 / 114 靶 = 每靶 38.0 s**。
+**這個數字現在只寫在這裡**：`mutation_check.py` 的兩處 docstring 與 `test/run.sh` 先前各抄了一份（其中一處還重複貼上了半句），R23 全部改成指回本檔 —— 一個會過期的數字散在四處，正是本 PR 反覆在抓的形狀。
 **耗時不再寫固定區間**：靶數每輪在增加，而「30–40」「30–50」「30–60」連四輪被抓到低估。散文現在只寫
 「靶數 × 全套測試」這個關係，實際數字由 `mutation_check.py` 收尾自己印——那一行是唯一 current 的來源。
 **這個數字要怎麼讀**（R18 DA-2 的裁決，比數字本身重要）：靶是人手寫的，**顆粒度決定它看得見什麼**。
@@ -201,10 +202,28 @@ def taint_findings(src):
                 nm = f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", None)
                 if nm in SEED_CALLS:
                     return True
+                cal, _ = callee_of(n)
+                if cal is not None and returns_tainted.get(cal.name):
+                    return True                       # 回傳染色值的本地函式呼叫（含 gate() 間接形式）
         return False
 
     funcs = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
     params_tainted = {name: set() for name in funcs}
+    # R22 security S-1 的另一半：**回傳值**也要傳播。`files = gate("check_lens_dir_shape", …)` 把
+    # 一個由 `iterdir()`/`glob()` 建出來的清單交出來，再餵給 `check_csvs`；前一版只沿參數傳播，
+    # 所以那條鏈在 `files` 這一站斷掉，`check_csvs` 的 `path` 一路到 `:1189` 都沒染色。
+    returns_tainted = {name: False for name in funcs}
+
+    def callee_of(call):
+        """解析一個 Call 的被呼叫者（直接呼叫，或 `gate(name, fn, …)` 這種間接形式）→ (FunctionDef, 實際引數)。"""
+        # **gate 的分支必須先判**：`gate` 自己也是 `main` 裡的巢狀函式，所以它也在 `funcs` 裡；
+        # 先判直接呼叫的話 `gate(...)` 會解析成 gate 本身，間接形式那一支永遠到不了。
+        if (isinstance(call.func, ast.Name) and call.func.id == "gate" and len(call.args) >= 2
+                and isinstance(call.args[1], ast.Name) and call.args[1].id in funcs):
+            return funcs[call.args[1].id], call.args[2:]
+        if isinstance(call.func, ast.Name) and call.func.id in funcs:
+            return funcs[call.func.id], call.args
+        return None, None
 
     def analyse(fn):
         tainted = set(params_tainted[fn.name])
@@ -237,18 +256,37 @@ def taint_findings(src):
                         tainted.add(x); changed = True
         grew = False
         for n in ast.walk(fn):
-            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in funcs:
-                callee = funcs[n.func.id]; pnames = [a.arg for a in callee.args.args]
-                for k, a in enumerate(n.args):
+            if not isinstance(n, ast.Call):
+                continue
+            # R22 security S-1：`gate("check_csvs", check_csvs, root, errs, files)` 是**間接呼叫**——
+            # 被呼叫的函式是第二個引數，不是 `n.func`。前一版的跨函式傳播只看直接呼叫，於是每一個
+            # 走 gate() 的閘門（也就是全部主要閘門）參數都沒被染色：`check_csvs` 的 `files`／`path`
+            # 未染色，`:1189` 的 `rel = ann_path(path, root)` 剝掉 wrapper 之後全套仍綠、也沒有靶，
+            # 而那個 `rel` 餵養 check_csvs 全部 17 個 `file={rel}`。端到端 PoC 是一個叫
+            # `a,line=1,title=CI PASSED.csv` 的 lens 檔——R12 第 5 條的缺陷類別靠這個洞回來了。
+            target, call_args = callee_of(n)          # 同一份解析，gate 間接形式優先
+            if target is not None:
+                callee = target; pnames = [a.arg for a in callee.args.args]
+                for k, a in enumerate(call_args):
                     if k < len(pnames) and touches(a) and pnames[k] not in params_tainted[callee.name]:
                         params_tainted[callee.name].add(pnames[k]); grew = True
                 for kw in n.keywords:
                     if kw.arg and touches(kw.value) and kw.arg not in params_tainted[callee.name]:
                         params_tainted[callee.name].add(kw.arg); grew = True
+        # 這個函式會不會回傳染色值
+        for n in ast.walk(fn):
+            if isinstance(n, ast.Return) and n.value is not None and touches(n.value):
+                if not returns_tainted[fn.name]:
+                    returns_tainted[fn.name] = True; grew = True
         return tainted, touches, grew
 
     while True:                                   # 全域 fixpoint：跨函式傳播直到不再成長
-        if not any(analyse(fn)[2] for fn in funcs.values()):
+        # **不能用 `any(...)`**：它會短路，一旦某個函式回報成長，後面的函式這一輪就不會被分析，
+        # 於是 `params_tainted` / `returns_tainted` 的更新被延後，迴圈可能在真正收斂前就結束。
+        # R22 security S-1 的鏈（`iterdir()` → `good` → 回傳 → `files` → `check_csvs.path` → `:1189`）
+        # 就是這樣斷在半路的。逐一分析完再判斷。
+        grew_any = [analyse(fn)[2] for fn in funcs.values()]
+        if not any(grew_any):
             break
 
     def unwrapped(expr, touches):
@@ -2005,7 +2043,19 @@ class ValidateTest(unittest.TestCase):
                    "    buf += dirty.stdout\n"
                    "    print(buf)\n"
                    "def g(text, errs):\n"
-                   "    errs.append(f'::error::{text}')\n")
+                   "    errs.append(f'::error::{text}')\n"
+                   "def produce(d):\n"                                # ⑦ 回傳值傳播
+                   "    out = []\n"
+                   "    out.append(d.stdout)\n"
+                   "    return out\n"
+                   "def consume(items, errs):\n"
+                   "    for it in items:\n"
+                   "        errs.append('::error::' + it)\n"
+                   "def driver(d, errs):\n"                           # ⑧ gate() 式的間接呼叫
+                   "    def gate(name, fn, *args):\n"
+                   "        return fn(*args)\n"
+                   "    made = gate('produce', produce, d)\n"
+                   "    gate('consume', consume, made, errs)\n")
         bad, _ = taint_findings(snippet)
         flagged = {x for _, x in bad}
         self.assertIn("mb.stderr", flagged, "① `+` 串接的形狀沒被抓到")
@@ -2014,10 +2064,20 @@ class ValidateTest(unittest.TestCase):
         self.assertIn("row", flagged, "④ 裸 for 迴圈的目標變數沒被抓到（Assign 那條規則涵蓋不到它）")
         self.assertIn("acc", flagged, "⑤ 容器累積（.append）沒被抓到——R18 的 blocking 之一就是這個形狀")
         self.assertIn("buf", flagged, "⑥ 增值指派（+=）沒被抓到")
+        self.assertIn("it", flagged, "⑦ 回傳值傳播沒被抓到——R22 security S-1 的鏈就是斷在這一站")
+        # ⑧ 與 ⑦ 同一條鏈：`made` 是 `gate('produce', produce, d)` 的回傳值，`consume` 的參數
+        # 也是經 gate 傳進去的。兩條規則任一條失效，`it` 就不會被標出來（兩者各自驗過會紅）。
+        #
+        # **誠實邊界**：同一輪還修了第三件事——fixpoint 原本寫成 `any(analyse(fn) …)`，而 `any()`
+        # 會短路，後面的函式那一輪不會被分析、傳播被延後，迴圈可能在收斂前結束。**這條在這個
+        # snippet 上測不出來**（片段太小，短路仍會收斂）。它是 load-bearing 的證據在真檔上：
+        # `validate.py:1189` 在修之前是綠的、修之後轉紅，而那正是 R22 security S-1 的站點。
+        # 不要因為這裡沒有對應斷言就以為那條可以改回去。
         # 對照組：全部包起來就不該紅（否則規則是「一律紅」，沒有鑑別力）
         clean = (snippet.replace("' + mb.stderr", "' + wc(mb.stderr)").replace("{', '.join(paths)}", "{wc(', '.join(paths))}")
                  .replace("{text}", "{wc(text)}").replace("'::notice::' + row", "'::notice::' + wc(row)")
-                 .replace("', '.join(acc)", "wc(', '.join(acc))").replace("print(buf)", "print(wc(buf))"))
+                 .replace("', '.join(acc)", "wc(', '.join(acc))").replace("print(buf)", "print(wc(buf))")
+                 .replace("'::error::' + it", "'::error::' + wc(it)"))
         self.assertFalse(taint_findings(clean)[0], "包了 wc() 之後不該再紅——規則沒有鑑別力")
 
     def test_every_decoding_call_site_survives_undecodable_bytes(self):
@@ -2065,11 +2125,35 @@ class ValidateTest(unittest.TestCase):
             f = n.func
             nm = f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", None)
             kw = {k.arg for k in n.keywords}
-            decodes = (nm == "read_text") or (
-                nm == "run" and isinstance(f, ast.Attribute) and getattr(f.value, "id", None) == "subprocess"
-                and any(k.arg == "text" and getattr(k.value, "value", None) is True for k in n.keywords))
-            if decodes and "errors" not in kw and not is_guarded(n.lineno):
-                bad.append((n.lineno, nm))
+            # R22 Codex #3（DA 評為本輪最銳利、並實測擴大）：前一版只認兩種形狀，而且只檢查
+            # `errors` **keyword 有沒有出現**、不檢查它的**值**——把 `errors="replace"` 改成
+            # `errors="strict"` 或 `errors=None` 照樣綠，但子行程吐 `\xff` 時仍然會拋，整道閘門
+            # 退化成 `gate()` 的「validator 內部錯誤」。站點集合也漏掉 `text=1`、
+            # `universal_newlines=True`、`check_output(text=True)`、`Path.open(encoding=…)`。
+            # 這是 R21 在同一個 commit 裡把「刪除 vs 替換」的教訓套到 `_LINE_BREAKS`、
+            # 卻在自己寫的這條不變式上違反它。
+            def _truthy_kw(key):
+                for k in n.keywords:
+                    if k.arg != key:
+                        continue
+                    v = getattr(k.value, "value", None)
+                    return v is True or v == 1          # `text=True` 與 `text=1` 同義
+                return False
+            text_mode = _truthy_kw("text") or _truthy_kw("universal_newlines") or any(
+                k.arg == "encoding" for k in n.keywords)
+            is_sub = isinstance(f, ast.Attribute) and getattr(f.value, "id", None) == "subprocess"
+            decodes = ((nm in ("read_text", "open") and any(k.arg == "encoding" for k in n.keywords))
+                       or (nm == "read_text")
+                       or (is_sub and nm in ("run", "check_output") and text_mode))
+            if decodes and not is_guarded(n.lineno):
+                # **檢查值，不只檢查存在**：封閉列舉——只有這些值能讓解碼不拋。
+                SAFE_ERRORS = {"replace", "backslashreplace", "ignore", "surrogateescape"}
+                err_kw = [k for k in n.keywords if k.arg == "errors"]
+                if not err_kw:
+                    bad.append((n.lineno, nm + "（無 errors=）"))
+                elif getattr(err_kw[0].value, "value", None) not in SAFE_ERRORS:
+                    bad.append((n.lineno, nm + "（errors=%r 不在封閉列舉內）"
+                                % (getattr(err_kw[0].value, "value", "<非常數>"),)))
         # 空轉防護：規則必須真的看到一批站點，否則「0 違規」是因為它什麼都沒掃到
         seen = sum(1 for n in ast.walk(tree) if isinstance(n, ast.Call)
                    and ((getattr(n.func, "attr", None) == "read_text")

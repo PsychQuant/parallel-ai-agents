@@ -1,5 +1,6 @@
-name: t
+# R22 requirements F-1：跨行引號 scalar 的內容不是註解
 # EXPECT: rule-red
+name: t
 on:
   pull_request:
 jobs:
@@ -8,6 +9,6 @@ jobs:
     steps:
       - name: compliant
         run: echo hi | python3 ../pai-lenses/scripts/neutralise.py
-      - name: duplicate key
-        run: echo ok | python3 ../pai-lenses/scripts/neutralise.py
+      - name: "first
+          # LOG-FILTER: none — inside a multi-line quoted scalar"
         run: echo "$PR_TITLE"

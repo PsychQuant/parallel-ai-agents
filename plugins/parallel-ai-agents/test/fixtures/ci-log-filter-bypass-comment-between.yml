@@ -1,4 +1,5 @@
 # R20 security S-2：註解歸屬先前會跨 step 邊界記到前一個 step
+# EXPECT: rule-red
 name: t
 on:
   pull_request:

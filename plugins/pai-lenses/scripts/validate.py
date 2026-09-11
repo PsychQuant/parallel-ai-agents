@@ -109,7 +109,11 @@ READ_SITES = (
 
 # marketplace entry 的遠端 source 種類（封閉列舉，R20 DA-4）。列舉內 → 具名跳過版本閘門；
 # 列舉外 → 具名報錯。**不得依性質相似類推第 N+1 種**：要支援新的遠端來源就加在這裡並補一條測試。
-REMOTE_SOURCES = ("github", "url", "npm", "git")
+# R22 Codex #4（DA 更正：Codex 只講對一半）：官方 marketplace source 表是下面六種。R21 寫的
+# `("github","url","npm","git")` **漏掉三種合法型別**（`git-subdir`／`archive`／`command`）
+# **而且含有一個官方表裡沒有的 `git`**。漏掉會讓合法 entry 掉進「不在認得的來源列舉內」的
+# error 分支；多出來的那個則是憑空放行一種不存在的型別。封閉列舉，不得依性質相似類推。
+REMOTE_SOURCES = ("github", "url", "git-subdir", "npm", "archive", "command")
 
 
 def _truthy(value):
@@ -1282,7 +1286,7 @@ def check_csvs(root, errs, files):
             )
             if overriding:
                 emit(f"::warning file={rel}::這個 PR 會**取代** built-in lens {wc(overriding)}"
-                      f"（profile '{profile}'）—— 原本那條會從所有使用者的審閱裡消失。"
+                      f"（profile '{wc(profile)}'）—— 原本那條會從所有使用者的審閱裡消失。"
                       "請以「刪除既有 lens 的 PR」的標準審查：PR 描述必須說明原本那條為何不夠用")
             if clash:
                 errs.append(
@@ -1294,7 +1298,7 @@ def check_csvs(root, errs, files):
 
         if known_profiles is not None and profile not in known_profiles:
             errs.append(
-                f"::error file={rel}::'{profile}' 不是既有 profile"
+                f"::error file={rel}::'{wc(profile)}' 不是既有 profile"
                 f"（真源 PROFILES 有：{wc(', '.join(sorted(known_profiles)))}）。"
                 "pack 只能為既有 profile 加 lens —— CSV 描述不了 profile 級的 "
                 "title/daFocus/codexDefault，新 profile 必須改 PROFILES（層 ①）")
@@ -1302,9 +1306,9 @@ def check_csvs(root, errs, files):
 
         if known_profiles is None:
             # R15 DA-4：profile 名沒驗（不在 monorepo 內／lister 拿不到）就不能打勾——那是肯定式假訊息的形狀。
-            print(f"{rel}: {len(rows)} 條 lens（CSV 形狀 ✓；profile '{profile}' 名未驗——profile 名稱閘門沒有跑）")
+            print(f"{rel}: {len(rows)} 條 lens（CSV 形狀 ✓；profile '{wc(profile)}' 名未驗——profile 名稱閘門沒有跑）")
         else:
-            print(f"{rel}: {len(rows)} 條 lens ✓（profile '{profile}'）")
+            print(f"{rel}: {len(rows)} 條 lens ✓（profile '{wc(profile)}'）")
 
         # 這段是**啟發式提示**，不是事實判定 —— 見 collector_wiring() 的註解。
         # R14 L-1：repo 拿不到時整段不跑——先前印「沒有 ensemble-<profile>-review 這支 skill」，那是假的
@@ -1316,16 +1320,16 @@ def check_csvs(root, errs, files):
         if wired == "skip":
             pass
         elif wired == "outside":
-            emit(f"::warning file={rel}::`/{own}` 的 SKILL.md 解析後落在 repo 外（可能是 symlink）"
+            emit(f"::warning file={rel}::`/{wc(own)}` 的 SKILL.md 解析後落在 repo 外（可能是 symlink）"
                  "—— 拒絕讀取，接線狀態未知")
         elif own is None:
-            emit(f"::warning file={rel}::profile '{profile}' 沒有 ensemble-{profile}-review "
-                  f"這支專屬 skill —— 這裡的 lens 只會在 /ensemble-compose --base {profile} "
+            emit(f"::warning file={rel}::profile '{wc(profile)}' 沒有 ensemble-{wc(profile)}-review "
+                  f"這支專屬 skill —— 這裡的 lens 只會在 /ensemble-compose --base {wc(profile)} "
                   f"時被載入")
         elif wired is False:
-            emit(f"::warning file={rel}::在 `/{own}` 的 SKILL.md 裡找不到 "
+            emit(f"::warning file={rel}::在 `/{wc(own)}` 的 SKILL.md 裡找不到 "
                   f"pai-collect-lens-layers 的呼叫 —— 若確實沒接，這裡的 lens 不會出現在"
-                  f"它的審閱裡，只會在 /ensemble-compose --base {profile} 時被載入"
+                  f"它的審閱裡，只會在 /ensemble-compose --base {wc(profile)} 時被載入"
                   f"（那是該 skill 的接線缺口，追蹤於 #40，不是本 pack 的問題）。"
                   f"**本檢查是掃 SKILL.md 文字的啟發式，可能誤判，請人工確認**")
 

@@ -1,0 +1,13 @@
+# 正向 fixture：折疊 scalar 的跨行管線
+# EXPECT: pass
+name: t
+on:
+  pull_request:
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: a
+        run: >
+          echo hi |
+          python3 ../pai-lenses/scripts/neutralise.py

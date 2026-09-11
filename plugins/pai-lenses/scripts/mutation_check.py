@@ -21,7 +21,9 @@
     python3 scripts/mutation_check.py                  # 完整量測（慢）
     python3 scripts/mutation_check.py --check-targets  # 只驗靶還對得上（秒級，CI 會跑）
 
-**手動跑，不進 CI**（一輪 = 靶數 × 全套測試，一輪 = 靶數 × 全套測試（本機最近一輪：112 靶 / 64.2 分 / 每靶 34.4 s，由 mutation_check.py 收尾自己印）；比照 `ensemble-eval` 的定位）。
+**手動跑，不進 CI**（一輪 = 靶數 × 全套測試；比照 `ensemble-eval` 的定位）。
+**最近一輪的實測數字只寫在一個地方**：`scripts/test_validate.py` 檔頭。這裡與 `test/run.sh` 先前各抄了一份、
+連同本行原本還有一段重複貼上的半句 —— 同一個會過期的數字散在四處，正是本 PR 反覆在抓的漂移形狀（#33 verify R23）。
 改動 `validate.py` 的閘門、或新增閘門之後跑一次；存活清單就是待補的測試。
 
 ## 兩個誠實邊界
@@ -275,6 +277,12 @@ MUTATIONS += [
     ("version 字串進 annotation 經 wc()（R16）",
      "需要 semver version（現在是 '{wc(version)}'）", "需要 semver version（現在是 '{version}'）"),
     ("dirty 路徑清單進 annotation 經 wc()（R16）", '              + wc(", ".join(paths)))', '              + ", ".join(paths))'),
+    # R22 security S-1：taint 的鏈補上 gate() 間接呼叫與回傳值之後才看得見的兩個站點。
+    ("check_csvs 的 rel 經 ann_path（R22 S-1：R12 第 5 條的缺陷類別靠這個洞回來）",
+     "        rel = ann_path(path, root)", "        rel = str(path)"),
+    ("profile 名進 annotation 經 wc()（R22 S-1 鏈打通後才看得見）",
+     "::error file={rel}::'{wc(profile)}' 不是既有 profile",
+     "::error file={rel}::'{profile}' 不是既有 profile"),
     ("entry name 進 annotation 經 wc()（R17 logic L-3/L-4：taint 網涵蓋 manifest 來源）",
      "f\"::error file={prop(mp)}::{wc(entry.get('name'))} 的 source {wc(repr(src))} \"",
      "f\"::error file={prop(mp)}::{entry.get('name')} 的 source {wc(repr(src))} \""),
@@ -327,7 +335,7 @@ def _apply(name, old, new, src):
 def check_targets_only():
     """只驗每個靶是否恰好命中一次 —— 秒級，可以進 CI（#33 verify R9 M11/M24）。
 
-    完整的 mutation 量測太慢（一輪 = 靶數 × 全套測試（本機最近一輪：112 靶 / 64.2 分 / 每靶 34.4 s，由 mutation_check.py 收尾自己印）），不適合每個 PR 跑。但**靶清單
+    完整的 mutation 量測太慢（一輪 = 靶數 × 全套測試；實測數字見 `scripts/test_validate.py` 檔頭），不適合每個 PR 跑。但**靶清單
     相對 validate.py 的漂移**是可以便宜擋住的：有人改動被 mutate 的那幾行、或搬走一道閘門，
     靶就對不上。先前這件事只有在有人手動跑整輪時才會發現，而「忘了跑」是預設。
     """
@@ -365,7 +373,7 @@ def check_targets_only():
 
 def main():
     # #33 verify R10 M6：先前是 `if "--check-targets" in sys.argv[1:]` —— 手寫解析，
-    # 打錯旗標（`--check-target`）會被靜默忽略，然後**直接跑 64.2 分鐘量級的就地改寫迴圈**。
+    # 打錯旗標（`--check-target`）會被靜默忽略，然後**直接跑整輪（一小時量級）的就地改寫迴圈**。
     # R9 才剛把 validate.py 的同一種解析拆掉，理由逐字適用於這裡。
     ap = argparse.ArgumentParser(
         prog="mutation_check.py",

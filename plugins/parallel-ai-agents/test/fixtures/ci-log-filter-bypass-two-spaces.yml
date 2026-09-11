@@ -1,4 +1,5 @@
 # fixture（R17 logic L-1 B）：dash 後兩個空白
+# EXPECT: rule-red
 jobs:
   j:
     steps:

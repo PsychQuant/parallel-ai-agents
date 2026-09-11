@@ -20,10 +20,19 @@ if [ "${1:-}" = "--selftest" ]; then
   # 先前的規則是「錨點不存在就跳過」，於是打錯字的 `../pai-lensez` 與繞路的 `../bogus/../real`
   # 各自成為永久豁免——同一個後門的第三、四次。這兩條釘住新規則：未知錨點一律**拒絕**。
   for f in changelog-count-unknown-anchor changelog-count-unknown-anchor-deep; do
-    if bash test/lint-changelog-counts.sh "test/fixtures/$f.md" >/dev/null 2>&1; then
-      echo "lint-changelog-counts selftest FAILED: $f.md 的錨點不在封閉列舉裡，必須拒絕而不是跳過" >&2
+    if out=$(bash test/lint-changelog-counts.sh "test/fixtures/${f}.md" 2>&1); then
+      echo "lint-changelog-counts selftest FAILED: ${f}.md 的錨點不在封閉列舉裡，必須拒絕而不是跳過" >&2
       exit 1
     fi
+    # **紅得對不對也要驗**（R22 Codex #5）：這兩個 fixture 先前用「測試 130 條」當對照組，
+    # 而正式測試數已增長，於是它們失敗的原因變成數字不符**而不是**未知錨點被拒——把後門
+    # 重新引入，selftest 仍會報 ok。現在斷言訊息裡確實有錨點診斷。
+    case "${out}" in
+      *"不是已知的佈局錨點"*) : ;;
+      *) echo "lint-changelog-counts selftest FAILED: ${f}.md 是因為別的原因紅的，不是未知錨點：" >&2
+         printf '%s\n' "${out}" | head -2 >&2
+         exit 1 ;;
+    esac
   done
   # R15：sibling 目錄在、檔案不在 → 必須拒絕（不然 `../pai-lenses/no-such.py` 就是永久豁免）
   # R16 logic L-3：這條斷言只在 sibling 目錄真的存在（monorepo 佈局）時成立——非 monorepo 下第二條斷言的前提

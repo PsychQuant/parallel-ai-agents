@@ -1,12 +1,12 @@
+# 正向 fixture：`---` 文件標記
+# EXPECT: pass
+---
 name: t
-# EXPECT: parse-red
 on:
   pull_request:
 jobs:
   j:
     runs-on: ubuntu-latest
     steps:
-      - name: compliant
+      - name: a
         run: echo hi | python3 ../pai-lenses/scripts/neutralise.py
-      - name: space before colon
-        run : echo "$PR_TITLE"

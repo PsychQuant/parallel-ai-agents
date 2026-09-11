@@ -1,0 +1,16 @@
+# 正向 fixture：含冒號但不是 mapping 的純量（`services.*.ports` 的 `"5432:5432"`）
+# EXPECT: pass
+name: t
+on:
+  pull_request:
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    services:
+      db:
+        image: postgres
+        ports:
+          - "5432:5432"
+    steps:
+      - name: a
+        run: echo hi | python3 ../pai-lenses/scripts/neutralise.py

@@ -1,3 +1,4 @@
+# EXPECT: pass
 # fixture for test/lint-ci-log-filter.sh --selftest：每個 run step 都有交代
 jobs:
   j:
