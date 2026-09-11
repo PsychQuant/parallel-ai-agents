@@ -15,16 +15,15 @@
 mutation」。**那三句話會讓下一個維護者以為改動 `validate.py` 有測試網接著。**
 
 現在用 `scripts/mutation_check.py` 量：跑一次就知道哪些閘門沒有測試網。
-**最近一次量測（R17 後）：100 個靶 → 97 殺 / 0 存活 / 0 靶壞**（另 3 個 `EXPECTED_SURVIVE`，不計入存活）。
-**這是單一副本上的完整一輪，不是複合值**：跑的那棵樹與 commit 的 `validate.py` / `test_validate.py` /
-`mutation_check.py` 三檔 SHA-256 逐位元相同，中途未改任何檔。實測 **46.3 分鐘 / 100 靶 = 每靶 27.8 s**
-——這個數字由 `mutation_check.py` 自己在收尾印出，**不要再手填散文區間**（R14→R17 連四輪被抓到低估）。
-**前一輪（同一份修法、尚未補 emit 測試）是 95 殺 / 2 存活**，而那兩個存活值得記下來：它們是 `emit()`
-自己那一層的 `collapse_lines()` 與 `##[` → `##⟦`，**不是 equivalent mutant**——實測拿掉之後 `\n`／`\r`／
-U+2028／U+2029／`\v`／`\f`／U+0085 全部原樣輸出，runner 會在新的一行看到第二個**偽造的** workflow command。
-R16 檔頭曾寫「補一條直接呼叫 `emit()` 的單元測試後單靶轉殺」——**那句是假的**，既有四條 `emit` 測試驗的是
-截斷。根因：縱深防禦的兩層（`emit` 與輸出邊界 `LineSanitiser`）共用同一個端到端斷言，拆掉其中一層另一層
-仍會擋，測試照樣綠。**每一層各自要有網。** 補兩條直接餵 `emit()` 的測試後，本輪那兩個靶被殺。
+**最近一次量測（R19 後）：111 個靶 → 108 殺 / 0 存活 / 0 靶壞**（另 3 個 `EXPECTED_SURVIVE`）。
+單一副本上的完整一輪：跑的那棵樹與 commit 的 `validate.py` / `test_validate.py` / `mutation_check.py`
+三檔 SHA-256 逐位元相同。實測 **55.1 分鐘 / 111 靶 = 每靶 29.8 s**，由 `mutation_check.py` 自己印。
+**這個數字要怎麼讀**（R18 DA-2 的裁決，比數字本身重要）：靶是人手寫的，**顆粒度決定它看得見什麼**。
+R18 抽樣三個「一個靶蓋住一個概念」的粗靶——`prop()` 的五個轉義、containment 的兩層、`_LINE_BREAKS` 的
+11 個分隔符——**三個都藏著細顆粒缺口**：同一個概念在兩處實作時，粗靶被其中一處的測試殺掉，另一處
+沒有網也看不出來。當時那一輪是 97 殺／0 存活，數字是真的，顆粒度是錯的。R19 把這三處拆成細靶
+（五個轉義各一個、兩層各一個、三個未涵蓋的分隔符各一個），所以 111 > 105 不是「又多測了幾件事」，
+是**同樣的事情量得比較細**。看到「0 存活」請先問：有沒有哪個靶其實蓋住了兩個實作？
 `EXPECTED_SURVIVE` 3 個：`_find_pack_at` git 分支的兩個守衛依構造不可達（R12 logic L3 / DA-6，保留為防禦）、
 「換回 splitlines()」（LineSanitiser 對每一段獨立判定，過度切段只會過度消毒）。規則明寫在 mutation_check.py：每一條
 進來的靶都要能回答「關掉它，哪一行輸出會變」（R14 把「pack_name 讀取的 containment」放進去的理由是假的——
@@ -172,6 +171,16 @@ SEED_ATTRS = {"stdout", "stderr", "fieldnames"}
 WRAPPERS = {"wc", "prop", "ann_path"}
 SAFE_CALLS = {"len", "type", "isinstance", "bool", "int"}          # 回傳數字／型別，不是內容
 SAFE_ATTRS = {"returncode", "__name__"}
+# 容器累積也是傳播（R18 requirements F-2 / logic / regression B-3）：R17 版只認 Assign／For／
+# comprehension，於是 `dup.append(f"…{k}…")` 之後的 `'、'.join(dup)` 不算染色——而 `k` 正是 CSV 的
+# key 欄名，本 validator 唯一真正 fork 可控的輸入。`validate.py:1218` 與 `:962` 都是這個形狀。
+ACCUM_METHODS = {"append", "add", "extend", "insert"}
+# `errs` 是 **sink 容器**：往它 append 染色字串正是這條規則要檢查的事情本身，不是傳播。
+# **誠實邊界**：R18 的三份 findings 都預測不排除它會讓 drain 迴圈假紅；我實測了——把這個集合清空，
+# 對真 `validate.py` 的那條測試**仍然是綠的**，所以它現在**不是 load-bearing**，是防禦性守衛：
+# 目前 `errs` 的消費端沒有把它整個餵進 sink 的寫法，將來有的話這行才會生效。不要因為它現在
+# 沒有在擋東西就刪掉，也不要宣稱它擋住了什麼。
+SINK_CONTAINERS = {"errs"}
 
 
 def taint_findings(src):
@@ -216,6 +225,13 @@ def taint_findings(src):
                     new = [x for t in n.targets for x in names_of(t)]
                 elif isinstance(n, (ast.For, ast.comprehension)) and touches(n.iter):
                     new = names_of(n.target)
+                elif isinstance(n, ast.AugAssign) and touches(n.value):
+                    new = names_of(n.target)                       # `buf += 染色`
+                elif (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                      and n.func.attr in ACCUM_METHODS and isinstance(n.func.value, ast.Name)
+                      and n.func.value.id not in SINK_CONTAINERS
+                      and any(touches(a) for a in n.args)):
+                    new = [n.func.value.id]                        # `dup.append(染色)` → dup 染色
                 for x in new:
                     if x not in tainted:
                         tainted.add(x); changed = True
@@ -336,6 +352,25 @@ class ValidateTest(unittest.TestCase):
                 self.assertEqual(rc, 1, out)
                 self.assertIn("相對路徑", out)
 
+    def test_non_string_source_path_is_named_not_an_internal_error(self):
+        """R18 security S-4：`source.path` 的型別沒被檢查，fork 可控的 JSON 值（int／list／dict／
+        bool／含 NUL 的字串）會讓 `repo_abs / rel` 拋 TypeError，被 `gate()` 吞成「validator 內部錯誤」
+        ——**這道標為 CRITICAL 的版本同步閘門整個不跑**，同 PR 裡真正的版本不同步因此不被回報。
+        依這個 repo 自己的 `Fixture.run` 標準，看到「內部錯誤」就代表少一道守衛。"""
+        for bad, label in [(123, "int"), ([1], "list"), ({"a": 1}, "dict"), (True, "bool")]:
+            self.fx.add_entry("evil-" + label, {"source": "local", "path": bad})
+        out = self.assertRed(contains="source.path 不是字串")
+        self.assertNotIn("validator 內部錯誤", out)
+        for label in ("int", "list", "dict", "bool"):
+            self.assertIn("evil-" + label, out, f"{label} 型別的 entry 沒有被具名回報：{out[:200]}")
+
+    def test_source_of_an_unknown_shape_is_named_not_silently_skipped(self):
+        """同上的另一半：`source` 整個不是字串也不是物件時，先前落到 `if not rel: continue`，
+        也就是**靜默跳過**版本閘門。"""
+        self.fx.add_entry("evil", [1, 2, 3])
+        out = self.assertRed(contains="既不是字串也不是物件")
+        self.assertNotIn("validator 內部錯誤", out)
+
     def test_symlinked_claude_plugin_dir_cannot_escape_repo(self):
         """R6 H4：containment 判定的是實際要讀的檔，不是它的祖先目錄。"""
         outside = self.fx.dir / "outside"
@@ -344,6 +379,23 @@ class ValidateTest(unittest.TestCase):
         evil = self.fx.repo / "plugins/evil"
         evil.mkdir(parents=True)
         (evil / ".claude-plugin").symlink_to(outside, target_is_directory=True)
+        self.fx.add_entry("evil", "./plugins/evil")
+        self.assertRed(contains="落在 repo 外")
+
+    def test_plugin_dir_symlinked_outside_is_caught_even_when_the_json_resolves_inside(self):
+        """R18 security S-3 + DA-1：containment 有**兩層**（plugin 目錄、實際要讀的 plugin.json），
+        而只有一層有網。上一條測的是「目錄合法、`.claude-plugin` 指到外面」；這一條是**反方向**：
+        `plugins/evil` 本身 symlink 到 repo 外，而外面那個目錄的 `.claude-plugin` 再 symlink 回
+        repo 內一份合法的 plugin.json —— 於是只檢查後者的版本會通過。
+
+        DA 實測：拿掉目錄那一層，全套測試仍全綠，而 validator 會對一個**解析後落在 repo 外**的
+        plugin 印出「marketplace 版本一致 ✓」。那不是 equivalent mutant，是缺網。閘門宣稱的是
+        「版本閘門只能比對本 repo 內的 plugin」，這個形狀直接推翻它。"""
+        outside = self.fx.dir / "outside_pack"
+        outside.mkdir()
+        (outside / ".claude-plugin").symlink_to(
+            self.fx.repo / "plugins/pai-lenses/.claude-plugin", target_is_directory=True)
+        (self.fx.repo / "plugins/evil").symlink_to(outside, target_is_directory=True)
         self.fx.add_entry("evil", "./plugins/evil")
         self.assertRed(contains="落在 repo 外")
 
@@ -1069,6 +1121,38 @@ class ValidateTest(unittest.TestCase):
         self.assertIn("v9.9.9", out)
         self.assertIn("description", out)
 
+    def test_every_property_escape_has_its_own_test(self):
+        """R18 regression B-1 + DA-2：`prop()` 有五個轉義，但**只有 `,` 有網**——拿掉 `%`／`\\r`／`\\n`／`:`
+        任何一個，127 條全綠；而那一個 mutation 靶又只涵蓋 `:`／`,`，所以靠 `,` 那條測試就被殺掉。
+        **粗顆粒的靶蓋住了細顆粒的缺口**，這是「97 殺 / 0 存活」這個數字的判讀陷阱。
+
+        沒有網的 `%` 正是**可利用**的那個：runner 先解碼 `%XX`，所以一個 fork 可控的檔名
+        `a%2Cline%3D1%2Ctitle%3DCI-PASSED.csv` 在乾淨版會輸出 `%252C`（`%` 先被轉義），
+        在拿掉 `%` 轉義的版本會輸出 `%2C`，runner 解碼回 `,` 與 `=` —— 正是 `prop()` docstring
+        指名要防的 property 偽造。每個轉義各一條斷言，各一個靶。"""
+        sys.path.insert(0, str(HERE))
+        import validate as V
+        for raw, enc, why in [("%", "%25", "必須**第一個**轉義，否則後面產生的 %XX 會被二次解碼"),
+                              ("\r", "%0D", "CR 在 runner 眼中是換行 → 可另起一個 command"),
+                              ("\n", "%0A", "LF 同上"),
+                              (":", "%3A", "分隔 command 頭與內容"),
+                              (",", "%2C", "分隔 property")]:
+            out = V.prop("a" + raw + "b")
+            # 斷言**完整輸出**而不是「原字元不得出現」——`%` 的轉義結果 `%25` 自己就含 `%`，
+            # 後者對它結構上不可能成立（本輪自查：第一版就是這樣寫而紅的）。
+            self.assertEqual(out, "a" + enc + "b",
+                             f"`{raw!r}` 沒有被轉義成 {enc}（{why}）：{out!r}")
+
+    def test_percent_escape_defeats_the_double_decode_forgery(self):
+        """上一條的 PoC 版（R18 DA-2 實測）：fork 可控的檔名把 `,` 與 `=` 寫成 `%2C`／`%3D`，
+        期待 runner 解碼回來。`%` 必須先被轉義成 `%25`，否則偽造成立。"""
+        sys.path.insert(0, str(HERE))
+        import validate as V
+        out = V.prop("lenses/a%2Cline%3D1%2Ctitle%3DCI-PASSED.csv")
+        self.assertIn("%252C", out, f"`%` 沒有先被轉義 → runner 會把 %2C 解碼回逗號：{out!r}")
+        self.assertNotIn("%2C,", out)
+        self.assertNotIn("a%2Cline", out, f"原樣的 %2C 留在輸出裡即可偽造 property：{out!r}")
+
     def test_comma_in_filename_cannot_forge_annotation_properties(self):
         """R11 #6：runner 用 `,` 切 property、`=` 切 key/value；`file=` 位置從未消毒。
         檔名 `x,line=99,title=CI PASSED.CSV` 會被渲染成第 99 行、標題「CI PASSED」。"""
@@ -1311,6 +1395,21 @@ class ValidateTest(unittest.TestCase):
         self.assertGreater(line.find("::", 2), 0, "命令頭（第二個 ::）被截掉了")
         self.assertIn("…（截斷）", line)
         self.assertNotIn("##[", line)
+
+    def test_wc_collapses_every_separator_in_the_table(self):
+        """R18 DA-2：`_LINE_BREAKS` 有 11 個分隔符，但只有 8 個有網——`\\x1c`／`\\x1d`／`\\x1e` 拿掉
+        全套仍綠。而且 `wc()` **自己那層**的 `collapse_lines()` 呼叫也沒有靶（`emit()` 那層有）。
+        這是「粗顆粒的靶蓋住細顆粒的缺口」在第三處重演。
+
+        這條**直接走表**（`for br in V._LINE_BREAKS`），所以往表裡加一個分隔符會自動被斷言涵蓋，
+        不需要記得同步改測試——寫死清單會漂，這個 repo 已經有兩份 shellcheck 清單的前例。"""
+        sys.path.insert(0, str(HERE))
+        import validate as V
+        self.assertGreaterEqual(len(V._LINE_BREAKS), 11, "分隔符表變短了——是刻意的嗎？")
+        for br in V._LINE_BREAKS:
+            out = V.wc("a" + br + "b")
+            self.assertNotIn(br, out, f"分隔符 {br!r} 原樣留在 wc() 的輸出裡：{out!r}")
+            self.assertEqual(out, "a⏎b", f"分隔符 {br!r} 沒有被收成單行：{out!r}")
 
     def test_emit_collapses_every_separator_the_runner_treats_as_a_new_line(self):
         """R17 全輪 mutation：`collapse_lines()` 在 emit() 這一層**沒有任何測試網**（靶「workflow-command
@@ -1871,6 +1970,12 @@ class ValidateTest(unittest.TestCase):
                    "    g(mb.stdout, errs)\n"                            # ③ 跨函式（位置引數）
                    "    for row in mb.stdout.splitlines():\n"            # ④ 裸 for 迴圈的目標變數
                    "        print('::notice::' + row)\n"
+                   "    acc = []\n"                                       # ⑤ 容器累積（.append）
+                   "    acc.append('k=' + mb.stderr)\n"
+                   "    emit(', '.join(acc))\n"
+                   "    buf = ''\n"                                       # ⑥ 增值指派（+=）
+                   "    buf += dirty.stdout\n"
+                   "    print(buf)\n"
                    "def g(text, errs):\n"
                    "    errs.append(f'::error::{text}')\n")
         bad, _ = taint_findings(snippet)
@@ -1879,9 +1984,12 @@ class ValidateTest(unittest.TestCase):
         self.assertIn("paths", flagged, "② comprehension 衍生的清單沒被抓到")
         self.assertIn("text", flagged, "③ 跨函式參數傳播沒被抓到——這條是 R17 DA-E 點名的那半句宣稱的網")
         self.assertIn("row", flagged, "④ 裸 for 迴圈的目標變數沒被抓到（Assign 那條規則涵蓋不到它）")
+        self.assertIn("acc", flagged, "⑤ 容器累積（.append）沒被抓到——R18 的 blocking 之一就是這個形狀")
+        self.assertIn("buf", flagged, "⑥ 增值指派（+=）沒被抓到")
         # 對照組：全部包起來就不該紅（否則規則是「一律紅」，沒有鑑別力）
         clean = (snippet.replace("' + mb.stderr", "' + wc(mb.stderr)").replace("{', '.join(paths)}", "{wc(', '.join(paths))}")
-                 .replace("{text}", "{wc(text)}").replace("'::notice::' + row", "'::notice::' + wc(row)"))
+                 .replace("{text}", "{wc(text)}").replace("'::notice::' + row", "'::notice::' + wc(row)")
+                 .replace("', '.join(acc)", "wc(', '.join(acc))").replace("print(buf)", "print(wc(buf))"))
         self.assertFalse(taint_findings(clean)[0], "包了 wc() 之後不該再紅——規則沒有鑑別力")
 
     def test_events_match_workflow_triggers(self):

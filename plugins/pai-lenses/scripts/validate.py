@@ -521,6 +521,24 @@ def check_marketplace_sync(root, errs):
                 continue
         elif isinstance(src, dict) and src.get("source") in (None, "local", "path"):
             rel = src.get("path")
+            # R18 security S-4：`path` 是 fork 可控的 JSON 值，型別沒有被檢查。給它一個 int／list／
+            # dict／bool／含 NUL 的字串，下面的 `repo_abs / rel` 就拋 TypeError，被 gate() 當成
+            # 「validator 內部錯誤」吞掉——**這道被標 CRITICAL 的版本同步閘門整個不跑**，同一個 PR 裡
+            # 真正的版本不同步因此不被回報。rc 仍是 1（fail-loud），但看到「內部錯誤」就代表少一道守衛。
+            if rel is not None and not isinstance(rel, str):
+                errs.append(f"::error file={prop(mp)}::{wc(entry.get('name'))} 的 source.path 不是字串"
+                            f"（type={type(rel).__name__}）—— 版本閘門無法用它組路徑")
+                continue
+            if isinstance(rel, str) and "\x00" in rel:
+                errs.append(f"::error file={prop(mp)}::{wc(entry.get('name'))} 的 source.path 含 NUL —— "
+                            "作業系統不接受這種路徑，版本閘門無法比對")
+                continue
+        elif src is not None:
+            # 既不是字串也不是物件（list／int／bool…）：先前落到下面的 `if not rel: continue`，
+            # 也就是**靜默跳過**這道閘門。靜默跳過正是本 PR 一路在修的病，改成具名回報。
+            errs.append(f"::error file={prop(mp)}::{wc(entry.get('name'))} 的 source 既不是字串也不是物件"
+                        f"（type={type(src).__name__}）—— 版本閘門不認得這種寫法")
+            continue
         if not rel:
             continue                           # github/url/npm 等物件式遠端來源
         # #33 verify R5：先前直接 `repo / rel` 組路徑，完全沒有 containment 檢查。

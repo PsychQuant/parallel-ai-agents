@@ -1,0 +1,12 @@
+name: t
+on:
+  pull_request:
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: compliant
+        run: echo hi | python3 ../pai-lenses/scripts/neutralise.py
+      - name: no filter
+        run: echo "$PR_TITLE"
+# LOG-FILTER: none — column zero, outside any step

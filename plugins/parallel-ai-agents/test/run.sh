@@ -29,6 +29,9 @@ bash test/lint-ci-log-filter.sh --selftest
 # R16 logic L-2：非 monorepo 佈局沒有 .github/ —— 明說略過，不是 traceback。
 if [ -f ../../.github/workflows/test.yml ]; then bash test/lint-ci-log-filter.sh; else echo "（非 monorepo 佈局，略過 workflow 檢查）"; fi
 
+echo "── assert-tap-complete selftest（守門的東西自己要有網——R18 requirements F-7）──"
+bash test/assert-tap-complete.sh --selftest
+
 echo "── bats test/ ──"
 bats test/
 

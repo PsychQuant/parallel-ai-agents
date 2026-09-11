@@ -16,22 +16,21 @@ if [ "${1:-}" = "--selftest" ]; then
     echo "lint-changelog-counts selftest FAILED: the fixture with a wrong count was accepted" >&2
     exit 1
   fi
-  # #33 verify R13：宣稱可以指向 sibling plugin（`../pai-lenses/…`）。那個檔在 plugin cache 副本裡不存在，
-  # 此時要「跳過並註明」而不是報「數字錯」—— 後者是 R12 #4 那種對錯誤佈局的肯定式假診斷。
-  if ! bash test/lint-changelog-counts.sh test/fixtures/changelog-count-sibling-absent.md >/dev/null 2>&1; then
-    echo "lint-changelog-counts selftest FAILED: a claim on an absent ../sibling file must be skipped, not rejected" >&2
-    exit 1
-  fi
+  # R18：`../` 的跳過改成**封閉列舉**（只有 ../pai-lenses 與 ../../.github 兩個真實佈局錨點）。
+  # 先前的規則是「錨點不存在就跳過」，於是打錯字的 `../pai-lensez` 與繞路的 `../bogus/../real`
+  # 各自成為永久豁免——同一個後門的第三、四次。這兩條釘住新規則：未知錨點一律**拒絕**。
+  for f in changelog-count-unknown-anchor changelog-count-unknown-anchor-deep; do
+    if bash test/lint-changelog-counts.sh "test/fixtures/$f.md" >/dev/null 2>&1; then
+      echo "lint-changelog-counts selftest FAILED: $f.md 的錨點不在封閉列舉裡，必須拒絕而不是跳過" >&2
+      exit 1
+    fi
+  done
   # R15：sibling 目錄在、檔案不在 → 必須拒絕（不然 `../pai-lenses/no-such.py` 就是永久豁免）
   # R16 logic L-3：這條斷言只在 sibling 目錄真的存在（monorepo 佈局）時成立——非 monorepo 下第二條斷言的前提
   # 就是「沒有 sibling」，兩條不能同時要求；缺 sibling 時明說略過。
   # R17 logic L-5：這兩條**與佈局無關**（一個必拒、一個必收），所以放在 sibling 判斷之外。
   if bash test/lint-changelog-counts.sh test/fixtures/changelog-count-parent-file-missing.md >/dev/null 2>&1; then
     echo "lint-changelog-counts selftest FAILED: ../<missing file> 只差一層，錨點是永遠存在的 ..，必須拒絕" >&2
-    exit 1
-  fi
-  if ! bash test/lint-changelog-counts.sh test/fixtures/changelog-count-anchor-dir-missing.md >/dev/null 2>&1; then
-    echo "lint-changelog-counts selftest FAILED: 錨點目錄缺席的宣稱必須跳過（rc=0），現在被判失敗" >&2
     exit 1
   fi
   if [ -d ../pai-lenses ]; then
@@ -42,7 +41,13 @@ if [ "${1:-}" = "--selftest" ]; then
       fi
     done
   else
-    echo "lint-changelog-counts selftest: ../pai-lenses 不在（非 monorepo 佈局），sibling-file-missing 那條斷言略過" >&2
+    # 真正的「佈局缺席 → 跳過」只有在這裡才驗得到：plugin-only 佈局下 `../pai-lenses` 真的不在，
+    # 此時指向它的宣稱必須跳過並註明，不得報成「數字錯」（R12 #4 的肯定式假診斷）。
+    if ! bash test/lint-changelog-counts.sh test/fixtures/changelog-count-sibling-file-missing.md >/dev/null 2>&1; then
+      echo "lint-changelog-counts selftest FAILED: plugin-only 佈局下指向 ../pai-lenses 的宣稱必須跳過" >&2
+      exit 1
+    fi
+    echo "lint-changelog-counts selftest: ../pai-lenses 不在（非 monorepo 佈局），已改驗「跳過」那一側" >&2
   fi
   echo "lint-changelog-counts selftest ok: fixture rejected"
   exit 0
@@ -73,12 +78,23 @@ for f in sys.argv[1:]:
                 # R17 logic L-5：R16 的 dirname 判準讓「多寫一層不存在的子目錄」重新拿到永久豁免。封閉規則：只看**第一個
                 # 非 `..` 的路徑段**所指的目錄（`../pai-lenses`、`../../.github`）——那是佈局的錨點；錨點不在 → 佈局缺席 →
                 # 跳過（訊息只說錨點不在，不斷言佈局）；錨點在而檔案不在 → 照常算失敗。
-                parts = path.split('/')
+                # R18：錨點判準被第三、四種構造穿過——打錯字的 `../pai-lensez` 與
+                # `../bogus/../real/file` 都讓「錨點不存在 → 跳過」變成永久豁免。前兩輪的修法都是
+                # 「再收窄一點」，而這是第四次。改成**封閉列舉**：只有這個 repo 真實存在的兩個
+                # 佈局錨點可以觸發跳過，其餘一律照常驗證（打錯字會紅，這正是要的）。
+                norm = os.path.normpath(path)            # `../bogus/../real` → `../real`
+                parts = norm.split('/')
                 k = next((i for i, seg in enumerate(parts) if seg != '..'), None)
                 # 錨點必須是一個**目錄段**：`../pai-lenses/scripts/x.py` → `../pai-lenses`。若第一個非 `..` 段
                 # 就是路徑最後一段（`../nothing.md`），那條路徑的容身處只有 `..`，在任何佈局都存在 → **不得跳過**，
                 # 否則「往上一層指一個不存在的檔」又是一個永久豁免（這正是本規則要關的形狀，第一版自己漏了）。
                 anchor = '/'.join(parts[:k + 1]) if (k is not None and k + 1 < len(parts)) else None
+                KNOWN_ANCHORS = ('../pai-lenses', '../../.github')   # 封閉列舉，不得依性質相似類推
+                if anchor is not None and anchor not in KNOWN_ANCHORS:
+                    print(f"{f}:{n}: `{anchor}` 不是已知的佈局錨點（只有 {', '.join(KNOWN_ANCHORS)}）"
+                          " —— 拼錯的路徑不會被當成「佈局缺席」而跳過", file=sys.stderr)
+                    rc = 1
+                    continue
                 if anchor is not None and not os.path.isdir(anchor):
                     print(f"{f}:{n}: note: {anchor} 不在這個 checkout —— 這條宣稱本次無法驗證，跳過", file=sys.stderr)
                     continue

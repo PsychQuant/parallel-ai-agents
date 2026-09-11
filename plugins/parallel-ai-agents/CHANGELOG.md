@@ -618,6 +618,45 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
     （security S-4 / regression F3，改成 lint 認的形式）；mutation 耗時再上修為 30–50 分（logic 實測 29 s × 96 ≈ 47 分）。
   測試 118 → 124 條；靶清單 96 → 98 個（3 個 EXPECTED_SURVIVE；lint 形式的宣稱只留在最新一段）。
   量測（R16 後）：全輪 98 靶 93 殺／2 存活（emit 自己的中和層，補單元測試後單靶轉殺）→ 95／0／3（複合值）。
+- **verify R18（4 lens + DA；Codex 第八輪 429）— R17 的兩條 blocking 主體都修好了，CI 三 job 全綠；
+  失守的性質變了：不是又漏一個 case，而是**量測工具的顆粒度比缺口粗**。修法一律往結構走，不加特例：**
+  - **`lint-ci-log-filter.sh` 改成白名單解析器**（四份 findings + DA 去重後仍有 **7 個互不相同的根因**：
+    `run :` 冒號前空白、`"\x72un":` 雙引號跳脫、`? run` 顯式 key、重複 `run:` key、`steps: [{…}]`、
+    column-0 的 `# LOG-FILTER:`、`env:` block scalar 裡的假 run 區塊、較早的 key 的 scalar 裡一行 `- `
+    讓整個 `run:` 消失）。R15–R17 三輪都在加「拒絕這種寫法」的特例，而合法 YAML 比任何手寫黑名單大。
+    現在只認明確列出的結構（plain key、block 清單、block scalar），**其餘一律 fail-loud**；七個根因裡有
+    四個的來源是同一件事——沒有正確消化 block scalar，現在 scalar 內容是不透明文字，結構上不可能再被
+    誤讀成 key 或清單項。白名單的**作用域**也要對：`with:`／`env:` 底下的巢狀鍵不是 step 欄位（第一版
+    把它們也拿去比對，誤擋了真 `test.yml` 的四個鍵）。驗收：真 `test.yml` **0 誤擋**、19 個 bypass fixture
+    **全部是規則紅**、`--selftest` 會斷言紅得對（種一個沒有 run step 的 fixture 進去，selftest 必須紅）。
+    順帶移除一個靜默 fallback：傳不存在的檔先前會改去 lint 真的 `test.yml`。
+  - **taint 傳播補容器累積**（requirements F-2 / logic / regression B-3）：`.append()`／`+=`／`.extend()`／
+    `.add()` 先前斷鏈，於是 `validate.py:1218`（CSV `key` 欄名，本 validator **唯一真正 fork 可控的輸入**）
+    與 `:962`（子行程 stdout）剝掉 `wc()` 之後那條測試綠、全套綠、連靶都沒有。兩個站點各自驗紅並進靶清單；
+    形狀測試加第 ⑤⑥ 種並各自驗過會紅。`errs` 列為 sink 容器——**誠實邊界**：實測清空那個集合仍然全綠，
+    所以它現在是防禦性守衛、不是 load-bearing，註解照實寫。
+  - **粗顆粒的靶拆成細顆粒**（regression B-1 / security S-3 / DA-1 / DA-2 —— 本輪的共同根因）：
+    `prop()` 的五個轉義共用一個靶，靠 `,` 那條測試就被殺掉，另外四個沒有網，而**沒有網的 `%` 正是可利用
+    的那個**（fork 可控的檔名 `a%2Cline%3D1%2Ctitle%3DCI-PASSED.csv` 讓 runner 解碼回 `,`／`=`）→ 拆成五個靶、
+    五條斷言、外加一條 PoC 測試。containment 的兩層（plugin 目錄／實際要讀的 plugin.json）共用一個靶，
+    拿掉目錄層 **rc=0、全套全綠**，而 `plugins/evil` symlink 到 repo 外、`.claude-plugin` 再 symlink 回來時
+    validator 會印「marketplace 版本一致 ✓」→ 拆成兩個方向、補反方向的 fixture。`_LINE_BREAKS` 的 11 個
+    分隔符只有 8 個有網、`wc()` 自己那層的 `collapse_lines` 沒有靶 → 測試改成**走表**（加分隔符自動涵蓋）、
+    補四個靶。三處各自驗紅。
+  - **`source` 的型別守衛**（security S-4）：`source.path` 是 fork 可控的 JSON 值，給它 int／list／dict／bool
+    會讓 `repo_abs / rel` 拋 `TypeError` 被 `gate()` 吞成「validator 內部錯誤」——這道標為 CRITICAL 的版本
+    同步閘門整個不跑，同 PR 裡真正的版本不同步因此不被回報。改成具名回報；`source` 整個不是字串也不是
+    物件時先前**靜默跳過**，也改成具名回報。兩個各一個靶。
+  - **`lint-changelog-counts` 的 `../` 自我豁免改封閉列舉**（第四次）：`../pai-lensez`（打錯字）與
+    `../bogus/../real/file`（繞路）各穿過一次。只有 `../pai-lenses` 與 `../../.github` 兩個真實佈局錨點
+    可以觸發跳過，其餘照常驗證；路徑先 `normpath`。兩個 fixture 的語意隨規則反轉（名字說「必須跳過」而
+    斷言是拒絕，正是這個 PR 在修的漂移），真正的「佈局缺席 → 跳過」改在 plugin-only 分支驗。
+  - **`assert-tap-complete.sh` 補 `--selftest`**（requirements F-7）：它是 repo 裡唯一沒有網、不在 mutation
+    範圍的守衛，而它守的正是「假綠」。六種 TAP 輸入各自判對，並掛進 `run.sh` 與 CI 兩個 job。
+  測試 130 → 133 條（`grep -c "    def test_" ../pai-lenses/scripts/test_validate.py`）；
+  靶清單 105 → 111 個（`grep -c "^    (\"" ../pai-lenses/scripts/mutation_check.py`）（3 個 EXPECTED_SURVIVE）。
+  量測（R19 後）：單一副本完整一輪 111 靶 → 108 殺 / 0 存活 / 0 靶壞（另 3 個 `EXPECTED_SURVIVE`），
+  實測 55.1 分鐘 = 每靶 29.8 s。**靶數從 105 增為 111 不是多測了幾件事，是同樣的事量得比較細**（見檔頭）。
 - **verify R17（4 lens + DA；Codex 第七輪 429）— R16 的 HIGH（CI 回歸）已清、CI 三 job 全綠、regression lens 首次 PASS；
   其餘三份 FAIL 全是「新閘門自己的假綠」（第七次同一形狀）。修法：**
   - `lint-ci-log-filter.sh` 第 5–9 種繞過（requirements F-1 / security S-1 / logic L-1 / L-7）：key 加引號的 `- "run":`；
@@ -672,8 +711,8 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
   - `EVENTS` 與 test.yml `on:` 兩份規格（logic L-8）：測試機械比對 `on:` 的 trigger ⊆ EVENTS。
   - mutation 耗時再上修為 30–60 分（regression 實測 ≈54 分；每套測試 20–35 s × 靶數）；neutralise.py docstring 重複句
     （L-11）；test/README 的 lint 描述改成全部 workflow。
-  測試 124 → 127 條（`grep -c "    def test_" ../pai-lenses/scripts/test_validate.py`）；
-  靶清單 98 → 100 個（`grep -c "^    (\"" ../pai-lenses/scripts/mutation_check.py`）（3 個 EXPECTED_SURVIVE）。
+  測試 124 → 127 條；
+  靶清單 98 → 100 個（3 個 EXPECTED_SURVIVE；lint 形式的宣稱只留在最新一段）。
   量測（R17 後）：單一副本完整一輪 100 靶 → 97 殺 / 0 存活 / 0 靶壞（另 3 個 `EXPECTED_SURVIVE`），
   實測 46.3 分鐘 = 每靶 27.8 s（由 `mutation_check.py` 自己印）；細節與前一輪的兩個真缺口見 `scripts/test_validate.py` 檔頭。
 

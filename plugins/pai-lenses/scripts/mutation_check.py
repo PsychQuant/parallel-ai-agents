@@ -63,9 +63,16 @@ MUTATIONS = [
     ("seen == 0 保險", "    if seen == 0:", "    if False:"),
     ("反向檢查（缺 entry）",
      "        if pathlib.Path(os.path.normpath(pdir)) not in claimed:", "        if False:"),
-    ("containment（只判目錄層）",
+    # R18 security S-3 / DA-1：兩層 containment 共用一個靶，於是只有一層有網。兩層各自一個靶。
+    ("containment：實際要讀的 plugin.json（.claude-plugin 是 symlink）",
      "        outside = [p for p in (resolved, pj) if not _inside(p, repo_abs)]",
      "        outside = [p for p in (resolved,) if not _inside(p, repo_abs)]"),
+    ("containment：plugin 目錄本身（plugins/evil 是 symlink，json 解析回 repo 內）",
+     "        outside = [p for p in (resolved, pj) if not _inside(p, repo_abs)]",
+     "        outside = [p for p in (pj,) if not _inside(p, repo_abs)]"),
+    # R18 security S-4：fork 可控的 JSON 型別讓這道 CRITICAL 閘門拋 TypeError 被 gate() 吞掉。
+    ("source.path 型別守衛", "            if rel is not None and not isinstance(rel, str):", "            if False:"),
+    ("source 形狀守衛（非字串非物件）", "        elif src is not None:", "        elif False:"),
     ("abs/.. 前置檢查",
      '        if os.path.isabs(rel) or ".." in pathlib.PurePosixPath(rel).parts:',
      "        if False:"),
@@ -177,8 +184,14 @@ MUTATIONS = [
     ("check_version 的 containment（R13 N1）", "    if not _inside(manifest.resolve(), ws):", "    if False:"),
     ("反向 glob 的 containment",
      "        if not _inside(found.resolve(), repo_abs):", "        if False:"),
-    ("annotation property 轉義（prop）",
-     '                      .replace(":", "%3A").replace(",", "%2C"))', "                      )"),
+    # R18 regression B-1 / DA-2：一個粗靶蓋住五個轉義，靠 `,` 那條測試就被殺掉，另外四個沒有網。
+    # 靶的顆粒度要對齊**被測的那一件事**，不是對齊「一行程式碼」。沒有網的 `%` 正是可利用的那個。
+    ("property 轉義 %（prop；必須第一個，否則 %XX 被二次解碼）",
+     'str(value).replace("%", "%25")', "str(value)"),
+    ("property 轉義 CR（prop）", '.replace("\\r", "%0D")', ""),
+    ("property 轉義 LF（prop）", '.replace("\\n", "%0A")', ""),
+    ("property 轉義 :（prop）", '.replace(":", "%3A")', ""),
+    ("property 轉義 ,（prop）", '.replace(",", "%2C")', ""),
     # R12（三 lens + DA）：輸出邊界的「行」必須是 runner 的定義。把它換回 Python splitlines() 就是 R11 的洞。
     ("輸出邊界的行定義（runner 的，不是 splitlines）",
      "        segs = [x for x in self._LINE_END.split(data) if x]",
@@ -196,6 +209,12 @@ MUTATIONS = [
     # R12 DA-1：runner 的第二套語法。V1 是 IndexOf，只能全行取代。
     ("V1 `##[` 中和（輸出邊界）", '        return line.replace("##[", "##⟦")', "        return line"),
     ("輸出邊界緩衝未完成的一行", '        if segs and not segs[-1].endswith(("\\n", "\\r")):', "        if False:"),
+    # R18 DA-2：`wc()` 自己那層的 collapse_lines 沒有靶（emit 那層有），而 `_LINE_BREAKS` 的
+    # 11 個分隔符只有 8 個有網。粗顆粒的靶蓋住細顆粒的缺口，第三處。
+    ("wc() 自己那層的 collapse_lines", "    t = collapse_lines(str(value))", "    t = str(value)"),
+    ("分隔符表：\\x1c", '"\\x1c", ', ""),
+    ("分隔符表：\\x1d", '"\\x1d", ', ""),
+    ("分隔符表：\\x1e", '"\\x1e", ', ""),
     ("V1 `##[` 中和（emit）", '    t = t.replace("##[", "##⟦")', "    t = t"),
     ("emit 截斷保留命令頭", "    if len(msg) > 4000:", "    if False:"),
     # R12 DA-6：這兩個守衛在目前的入口條件（`old_path.endswith("/" + suffix)`）下**依構造不可達**

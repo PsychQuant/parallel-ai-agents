@@ -46,7 +46,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          { bash test/lint-bats.sh --selftest && bash test/lint-bats.sh; } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
+          { bash test/assert-tap-complete.sh --selftest && bash test/lint-bats.sh --selftest && bash test/lint-bats.sh; } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
 
       # #33 verify R15: the step-level "which steps echo PR text" list is a lint, not prose (see top of job).
       - name: lint-ci-log-filter — selftest, then this workflow
@@ -148,7 +148,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          { bash test/lint-bats.sh --selftest && bash test/lint-bats.sh; } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
+          { bash test/assert-tap-complete.sh --selftest && bash test/lint-bats.sh --selftest && bash test/lint-bats.sh; } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
 
       # Round 10 (RC13, fifth recurrence): the CHANGELOG's "N 個 case（`grep -c "^@test" …`）"
       # claims are checked by running the very command they cite. Prose said "not typed by hand"
