@@ -10,8 +10,6 @@ R11/R12 兩輪在 Python 端修掉的洞，在 shell 端重生。所以「行」
 `set -o pipefail` 保留。它本身是 PR 可控的檔（fork 可以把它改成 cat）——那是 `on: pull_request` 執行 PR 程式碼的
 固有面，test.yml 開頭已明寫。
 
-哪些 step 經過它、哪些明示不過濾：`test/lint-ci-log-filter.sh` 對 test.yml 每一個 run step 機械檢查（R15 L-2 / S-3 / F2）。
-
 用法：<command> 2>&1 | python3 scripts/neutralise.py
 """
 import pathlib

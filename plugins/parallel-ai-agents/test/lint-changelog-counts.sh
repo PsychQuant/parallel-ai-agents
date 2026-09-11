@@ -25,11 +25,22 @@ if [ "${1:-}" = "--selftest" ]; then
   # R15：sibling 目錄在、檔案不在 → 必須拒絕（不然 `../pai-lenses/no-such.py` 就是永久豁免）
   # R16 logic L-3：這條斷言只在 sibling 目錄真的存在（monorepo 佈局）時成立——非 monorepo 下第二條斷言的前提
   # 就是「沒有 sibling」，兩條不能同時要求；缺 sibling 時明說略過。
+  # R17 logic L-5：這兩條**與佈局無關**（一個必拒、一個必收），所以放在 sibling 判斷之外。
+  if bash test/lint-changelog-counts.sh test/fixtures/changelog-count-parent-file-missing.md >/dev/null 2>&1; then
+    echo "lint-changelog-counts selftest FAILED: ../<missing file> 只差一層，錨點是永遠存在的 ..，必須拒絕" >&2
+    exit 1
+  fi
+  if ! bash test/lint-changelog-counts.sh test/fixtures/changelog-count-anchor-dir-missing.md >/dev/null 2>&1; then
+    echo "lint-changelog-counts selftest FAILED: 錨點目錄缺席的宣稱必須跳過（rc=0），現在被判失敗" >&2
+    exit 1
+  fi
   if [ -d ../pai-lenses ]; then
-    if bash test/lint-changelog-counts.sh test/fixtures/changelog-count-sibling-file-missing.md >/dev/null 2>&1; then
-      echo "lint-changelog-counts selftest FAILED: a claim on a missing file inside a PRESENT ../sibling must be rejected" >&2
-      exit 1
-    fi
+    for f in changelog-count-sibling-file-missing changelog-count-sibling-subdir-missing; do
+      if bash test/lint-changelog-counts.sh "test/fixtures/$f.md" >/dev/null 2>&1; then
+        echo "lint-changelog-counts selftest FAILED: $f.md (present ../sibling, missing file/subdir) must be rejected" >&2
+        exit 1
+      fi
+    done
   else
     echo "lint-changelog-counts selftest: ../pai-lenses 不在（非 monorepo 佈局），sibling-file-missing 那條斷言略過" >&2
   fi
@@ -59,11 +70,17 @@ for f in sys.argv[1:]:
             # R14 版只看「檔案不存在」，一條指向 `../pai-lenses/沒有的檔` 的宣稱在 monorepo 裡也會被跳過、永遠不被驗
             # （R14 S5 / R15 security LOW：`99999` rc=0 的自我豁免後門）。sibling 目錄在、檔案不在 → 照常算失敗。
             if path.startswith('../') and not os.path.exists(path):
-                # R16 logic L-2 同類：判「佈局缺席」看的是檔案**所在目錄**（`../pai-lenses/scripts`、`../../.github/workflows`），
-                # 不是前兩段路徑——`../../.github/...` 的前兩段是 `../..`，在任何佈局都存在。
-                where = os.path.dirname(path)
-                if not os.path.isdir(where):
-                    print(f"{f}:{n}: note: {where} 不在這個 checkout（非 monorepo 佈局）—— 這條宣稱本次無法驗證，跳過", file=sys.stderr)
+                # R17 logic L-5：R16 的 dirname 判準讓「多寫一層不存在的子目錄」重新拿到永久豁免。封閉規則：只看**第一個
+                # 非 `..` 的路徑段**所指的目錄（`../pai-lenses`、`../../.github`）——那是佈局的錨點；錨點不在 → 佈局缺席 →
+                # 跳過（訊息只說錨點不在，不斷言佈局）；錨點在而檔案不在 → 照常算失敗。
+                parts = path.split('/')
+                k = next((i for i, seg in enumerate(parts) if seg != '..'), None)
+                # 錨點必須是一個**目錄段**：`../pai-lenses/scripts/x.py` → `../pai-lenses`。若第一個非 `..` 段
+                # 就是路徑最後一段（`../nothing.md`），那條路徑的容身處只有 `..`，在任何佈局都存在 → **不得跳過**，
+                # 否則「往上一層指一個不存在的檔」又是一個永久豁免（這正是本規則要關的形狀，第一版自己漏了）。
+                anchor = '/'.join(parts[:k + 1]) if (k is not None and k + 1 < len(parts)) else None
+                if anchor is not None and not os.path.isdir(anchor):
+                    print(f"{f}:{n}: note: {anchor} 不在這個 checkout —— 這條宣稱本次無法驗證，跳過", file=sys.stderr)
                     continue
             out = subprocess.run(['grep', '-c', pattern, path], capture_output=True, text=True)
             actual = out.stdout.strip()

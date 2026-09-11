@@ -59,7 +59,8 @@ OS_ARTIFACTS = (".DS_Store", ".gitkeep", ".gitignore", "Thumbs.db")
 # 「git object」欄：對 `git show`/`ls-tree`/`diff` 讀到的是 **repo 自己的物件庫**，路徑由 validator 組、
 # 不經檔案系統 symlink，依構造在 repo 內。
 READ_CALLS = frozenset({"open", "read_text", "read_bytes", "iterdir", "glob", "rglob", "listdir", "scandir", "walk",
-                        "load", "run", "Popen", "check_output", "check_call", "call", "popen", "system"})
+                        "load", "run", "Popen", "check_output", "check_call", "call", "popen", "system",
+                        "FileType", "getoutput", "getstatusoutput", "fdopen"})   # R17 security S-3 / logic L-9：argparse.FileType 也讀檔
 READ_MODULES = frozenset({"subprocess", "shutil", "os"})
 READ_MODULE_PURE = frozenset({"environ", "get", "sep", "fspath", "getenv",                     # os.environ.get / os.sep
                               "normpath", "isabs", "join", "basename", "dirname", "splitext",    # os.path.* 純字串運算
@@ -89,10 +90,18 @@ READ_SITES = (
     (18, "check_csvs：lenses/<profile>.csv",                "站點 15 已拒 symlink；_inside 目錄層"),
     (19, "check_marketplace_sync：反向 glob plugins/*/.claude-plugin/plugin.json", "逐一 _inside（R11 第六處）；R15 前是表外站點"),
 )
-# **外部字串進 annotation 的站點**（R15 security S-2 / R16 requirements：「三處」的列舉當天就不封閉）——規則是
-# 「任何不是 validator 自己組的字串，進 annotation 前一律經 wc()（截斷 + 中和）或 prop()（property 位置）」，
-# 不再維護站點清單；test_validate.py 對每一類各釘一條測試（profile 名、base 字串、version 字串、dirty 路徑清單、
-# merge-base／diff 的 stderr）。
+# **外部字串進 annotation**（R15 S-2 → R16 → R17 logic L-3／L-4）：R16 寫「任何不是 validator 自己組的字串一律
+# wc()/prop()」——在本檔即為假（entry name、CSV 欄名等數十處沒包）。現在改成 **taint 網 + 封閉列舉**：
+#   (1) test_validate.py 的 taint 測試從這些**來源**出發染色——子行程的 .stdout/.stderr、load_obj()/json.loads() 的回傳、
+#       csv.DictReader 的列與 fieldnames、iterdir()/glob() 的路徑——逐函式並跨函式傳播；任何進 errs.append/emit/print
+#       的染色子運算式都必須是 wc()/prop()/ann_path()。這是機械保證，不是散文。
+#   (2) 其餘字串（gate 名、常數、validator 自己組的路徑）不經 wc()；emit() 對**每一行**仍做兩套語法中和與 4000 上限——
+#       那是偽造 annotation 的安全邊界，wc() 的 200 字只是洩漏頻寬上限。
+# 不再宣稱「一律」；宣稱的範圍就是 (1) 的**封閉**來源列舉，測試會對每一類 RED 驗證。
+# **不得依性質相似類推第 N+1 類來源**：要納入新來源就去改 test_validate.py 的 SEED_CALLS／SEED_ATTRS
+# 並補一條 RED 驗證，不要在這段散文上加「等等」「之類」——那會讓列舉悄悄變回開放判準。
+# 本檔的 READ_SITES（上一段）就是同一條教訓的前例：R13 的放行條件寫「改成封閉列舉」，
+# 只補了被點名的站點、沒寫明封閉性，於是 R14 又長出第十處。
 # 另有三個**不經本檔讀取**但 validator 依賴的輸入：root `.claude-plugin/marketplace.json`（站點 1 的呼叫端，
 # check_marketplace_sync 先 _inside——R14 第十處）、entry 指向的 plugin 目錄與其 plugin.json（站點 1 的呼叫端，
 # 兩層都判）、反向 glob 找到的 plugin.json（站點 1 的呼叫端，_inside）。
@@ -326,7 +335,7 @@ def load_obj(path_or_text, label, errs, *, is_text=False):
         return None
     if not isinstance(obj, dict):
         errs.append(f"::error file={prop(label)}::內容是合法 JSON 但不是物件"
-                    f"（是 {type(obj).__name__}）—— manifest 必須是 JSON object")
+                    f"（是 {wc(type(obj).__name__)}）—— manifest 必須是 JSON object")
         return None
     return obj
 
@@ -401,7 +410,7 @@ def check_version(root, errs):
     if d is None:
         return
     version = d.get("version", "")
-    print(f"version = {wc(version) or '<missing>'}")          # R16：外部字串進輸出一律 wc()（note 也一樣）
+    print(f"version = {wc(version) or '<missing>'}")          # load_obj() 的回傳＝檔頭封閉列舉裡的來源，故經 wc()
     m = SEMVER.fullmatch(str(version or ""))
     if m and m["pre"]:
         # `rc9` / `beta2` 這種把數字黏在字母後面的 identifier，semver 規定按 ASCII 比較 ——
@@ -409,7 +418,7 @@ def check_version(root, errs):
         risky = [x for x in m["pre"].split(".")
                  if not x.isdigit() and any(c.isdigit() for c in x)]
         if risky:
-            emit(f"::warning file={prop(manifest)}::prerelease identifier {risky} 把數字黏在字母後面 —— "
+            emit(f"::warning file={prop(manifest)}::prerelease identifier {wc(risky)} 把數字黏在字母後面 —— "
                   "semver §11 對這種 identifier 按 ASCII 比較，於是 `rc9` 排在 `rc10` **之後**，"
                   "遞增發布會被 bump 閘門擋下。請改用點分隔（`rc.9` / `rc.10`），數字段才會按整數比較")
     if version_tuple(version) is None:
@@ -464,7 +473,7 @@ def check_marketplace_sync(root, errs):
     for entry in plugins:
         if not isinstance(entry, dict):
             errs.append(f"::error file={prop(mp)}::`plugins` 的元素必須是物件"
-                        f"（有一個是 {type(entry).__name__}：{entry!r}）")
+                        f"（有一個是 {type(entry).__name__}：{wc(repr(entry))}）")
             continue
         src = entry.get("source")
         # #33 verify R4：先前用字串前綴 './' 當「在本 repo 內」的判準，少寫 './' 的
@@ -506,7 +515,7 @@ def check_marketplace_sync(root, errs):
             elif (repo / src.split("/", 1)[0]).is_dir():
                 rel = src                          # 第一段在本 repo 內存在 → 當相對路徑
             else:
-                emit(f"::warning file={prop(mp)}::判不出 {entry.get('name')} 的 source {src!r} "
+                emit(f"::warning file={prop(mp)}::判不出 {wc(entry.get('name'))} 的 source {wc(repr(src))} "
                       "是本 repo 路徑還是遠端來源 —— **未納入版本閘門**。"
                       "本 repo 內的 plugin 請用 './' 開頭的相對路徑")
                 continue
@@ -544,12 +553,12 @@ def check_marketplace_sync(root, errs):
         pj = (resolved / ".claude-plugin" / "plugin.json").resolve()
         outside = [p for p in (resolved, pj) if not _inside(p, repo_abs)]
         if outside:
-            errs.append(f"::error file={prop(mp)}::{entry.get('name')} 的 source {src!r} "
-                        f"解析後落在 repo 外（{outside[0]}）—— 可能是 symlink。"
+            errs.append(f"::error file={prop(mp)}::{wc(entry.get('name'))} 的 source {wc(repr(src))} "
+                        f"解析後落在 repo 外（{wc(outside[0])}）—— 可能是 symlink。"
                         "版本閘門只能比對本 repo 內的 plugin")
             continue
         if not pj.is_file():
-            errs.append(f"::error file={prop(mp)}::{entry.get('name')} 的 source 指向 {src}，"
+            errs.append(f"::error file={prop(mp)}::{wc(entry.get('name'))} 的 source 指向 {wc(src)}，"
                         "但該處沒有 .claude-plugin/plugin.json")
             continue
         pj_obj = load_obj(pj, pj, errs)
@@ -563,14 +572,14 @@ def check_marketplace_sync(root, errs):
         # CRITICAL 並宣稱「機械閘門守這條」—— 那句話漏掉了身分這一半。
         ent_name, pj_name = entry.get("name"), pj_obj.get("name")
         if not ent_name:
-            errs.append(f"::error file={prop(mp)}::有一個指向 {rel} 的 entry 沒有 name —— "
+            errs.append(f"::error file={prop(mp)}::有一個指向 {wc(rel)} 的 entry 沒有 name —— "
                         "使用者 `/plugin install <name>@<marketplace>` 沒有名字可用")
         elif pj_name and ent_name != pj_name:
-            errs.append(f"::error file={prop(mp)}::entry name '{ent_name}' 與 {rel} 的 "
-                        f"plugin.json name '{pj_name}' 不一致 —— 兩者必須相同，"
+            errs.append(f"::error file={prop(mp)}::entry name '{wc(ent_name)}' 與 {wc(rel)} 的 "
+                        f"plugin.json name '{wc(pj_name)}' 不一致 —— 兩者必須相同，"
                         "否則使用者用哪一個名字都可能裝不到")
         if resolved in claimed_paths:
-            errs.append(f"::error file={prop(mp)}::有兩個 entry 指向同一個目錄 {rel} —— "
+            errs.append(f"::error file={prop(mp)}::有兩個 entry 指向同一個目錄 {wc(rel)} —— "
                         "無法判斷哪一個才是那個 plugin 的 entry")
         claimed_paths.add(resolved)
 
@@ -581,20 +590,20 @@ def check_marketplace_sync(root, errs):
         # cache 目錄名不是 semver 時 consumer 的 glob 定位不到，那是逐 plugin 成立的失敗。
         for label, val in (("plugin.json", pj_ver), ("marketplace.json", mp_ver)):
             if val is not None and version_tuple(val) is None:
-                errs.append(f"::error file={prop(mp)}::{entry.get('name')} 的 {label} version "
+                errs.append(f"::error file={prop(mp)}::{wc(entry.get('name'))} 的 {wc(label)} version "
                             f"'{wc(val)}' 不是 semver —— cache 目錄名會退回 commit SHA 或 unknown，"
                             "consumer 的 semver glob 定位不到這個 plugin")
         # #33 verify R4：先前 `mp_ver != pj_ver` 把「兩邊都沒有 version」判為一致並印 ✓ ——
         # 而那正是 pack README 說會讓 pack 靜默消失（cache 目錄名不是 semver）的條件。
         if pj_ver is None or mp_ver is None:
             errs.append(
-                f"::error file={prop(mp)}::{entry.get('name')} 缺 version"
+                f"::error file={prop(mp)}::{wc(entry.get('name'))} 缺 version"
                 f"（plugin.json={wc(repr(pj_ver))}、marketplace.json={wc(repr(mp_ver))}）。"
                 "兩邊都沒有不是「一致」—— cache 目錄名會退回 commit SHA，consumer 定位不到"
             )
         elif mp_ver != pj_ver:
             errs.append(
-                f"::error file={prop(mp)}::{entry.get('name')} version 不同步 —— "
+                f"::error file={prop(mp)}::{wc(entry.get('name'))} version 不同步 —— "
                 f"plugin.json={wc(pj_ver)} 但 marketplace.json={wc(mp_ver)}。"
                 "兩者不一致時使用者 /plugin update 收不到新版，且不會有任何錯誤訊息"
             )
@@ -608,7 +617,7 @@ def check_marketplace_sync(root, errs):
         pj_desc = pj_obj.get("description")      # R11 #13：同一份已解析的物件，不再重讀重解
         mp_desc = entry.get("description")
         if pj_desc is not None and mp_desc is not None and pj_desc != mp_desc:
-            emit(f"::warning file={prop(mp)}::{entry.get('name')} 的 description 兩處不同步 —— "
+            emit(f"::warning file={prop(mp)}::{wc(entry.get('name'))} 的 description 兩處不同步 —— "
                   "使用者在 /plugin 看到的是 marketplace 那份，可能在敘述舊版本的內容")
         # #33 verify R11 #3：上面那道閘門只比兩份**彼此**是否相同 —— rebase 把 version 改成
         # 2.24.0 而兩份 description 都還寫「v2.23.0: …」時，它印綠。description 若以
@@ -618,7 +627,7 @@ def check_marketplace_sync(root, errs):
             # 改成「前一個字元不是 ASCII 英數」，讓中文緊鄰的版號也算「第一個」。
             m_desc = re.search(r"(?<![A-Za-z0-9])v(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?):", str(desc or ""))
             if m_desc and pj_ver and m_desc.group(1) != pj_ver:
-                emit(f"::warning file={prop(mp)}::{entry.get('name')} 的 {label} description 最新一段標示 "
+                emit(f"::warning file={prop(mp)}::{wc(entry.get('name'))} 的 {wc(label)} description 最新一段標示 "
                       f"v{wc(m_desc.group(1))}，但 version 是 {wc(pj_ver)} —— 使用者會把這一版的內容"
                       "歸給另一個版號。發版時 description 的版號前綴要跟著改")
     if seen == 0:
@@ -631,7 +640,7 @@ def check_marketplace_sync(root, errs):
         # #33 verify R11 #12：`glob` 會跟隨 symlink —— 五處 `_inside` 硬化漏了這第六處，
         # `plugins/evil -> repo 外` 的 plugin.json 會被讀。與正向路徑同一判準：先判、再讀。
         if not _inside(found.resolve(), repo_abs):
-            errs.append(f"::error file={prop(mp)}::{pdir.relative_to(repo_abs)} 解析後落在 repo 外"
+            errs.append(f"::error file={prop(mp)}::{wc(pdir.relative_to(repo_abs))} 解析後落在 repo 外"
                         "（可能是 symlink）—— 拒絕讀取。validator 只能讀本 repo 內的 plugin")
             continue
         if pathlib.Path(os.path.normpath(pdir)) not in claimed:
@@ -653,13 +662,13 @@ def check_marketplace_sync(root, errs):
                 shown = "（entry 沒有 source 欄位）" if culprit is None else f"（{wc(repr(culprit))}）"
                 errs.append(
                     f"::error file={prop(mp)}::有一個名為 {wc(dir_name)} 的 entry，但它的 source "
-                    f"{shown}沒有指向 {pdir.relative_to(repo_abs)} —— "
+                    f"{wc(shown)}沒有指向 {wc(pdir.relative_to(repo_abs))} —— "
                     "**要修的是那條 entry 的 source，不是再加一條 entry**")
             else:
                 errs.append(
-                    f"::error file={prop(mp)}::{pdir.relative_to(repo_abs)} 有 plugin.json，"
+                    f"::error file={prop(mp)}::{wc(pdir.relative_to(repo_abs))} 有 plugin.json，"
                     f"但 marketplace.json 裡沒有指向它的 entry —— 使用者 "
-                    f"`/plugin install {pdir.name}@<marketplace>` 會直接裝不到，且沒有任何錯誤訊息")
+                    f"`/plugin install {wc(pdir.name)}@<marketplace>` 會直接裝不到，且沒有任何錯誤訊息")
 
 
 
@@ -922,6 +931,11 @@ def check_bumped(root, errs, base, event=None):
         # 找得到就是改名，用它的舊路徑比對，閘門照跑。找不到才是真的新增。
         moved = moved_pj
         if moved:
+            # R17 regression F7：這個 `wc()` **目前沒有端到端測試網**（全輪 mutation 中它存活）。
+            # 它不像 READ_SITES 第 9 條的 merge-base sha 那樣「結構上不可觸發」—— pack 目錄名是
+            # PR 可控的，理論上測得出來，只是要在 fixture 裡真的改名一個 pack 才觸發得到這條路徑。
+            # 明寫成已知缺口而不是假裝有網：R16 的 commit message 把六個站點一併說成「各釘測試與
+            # 靶」，那句對這裡與 `:836` 不成立（那正是本 PR 反覆失守的形狀的最小殘留版本）。
             print(f"note: pack 在 base 時位於 {wc(moved[: -len('/.claude-plugin/plugin.json')])}"
                   f"（本次改名為 {pack_rel}）—— 用舊路徑比對版本")
             # READ-SITE 14/19
@@ -1011,7 +1025,7 @@ def check_lens_dir_shape(root, errs):
             errs.append(f"::error file={rel}::lenses/ 下不能有子目錄 —— consumer 只讀 "
                         "lenses/<profile>.csv 單層，放在這裡的 lens 不會被載入")
         elif p.suffix != ".csv":
-            errs.append(f"::error file={rel}::副檔名必須是小寫 .csv（現在是 '{p.suffix}'）—— "
+            errs.append(f"::error file={rel}::副檔名必須是小寫 .csv（現在是 '{wc(p.suffix)}'）—— "
                         "consumer 用 <profile>.csv 精確比對，大小寫不同的檔案不會被載入")
         else:
             good.append(p)
@@ -1056,7 +1070,7 @@ def builtin_lens_keys(repo, errs):
             fields = list(reader.fieldnames or [])
             if "profile" not in fields or "key" not in fields:
                 errs.append(f"::error file={prop(cat.relative_to(repo))}::header 缺 profile 或 key 欄"
-                            f"（現在是 {fields}）—— 撞名閘門沒有跑。這個檔由 "
+                            f"（現在是 {wc(fields)}）—— 撞名閘門沒有跑。這個檔由 "
                             "references/regen-builtin-lenses.sh 產生，格式變了要同步改這裡")
                 return None
             for r in reader:
@@ -1161,7 +1175,7 @@ def check_csvs(root, errs, files):
 
         extra = [i for i, r in enumerate(rows, start=2) if r.get("__extra__")]
         if extra:
-            errs.append(f"::error file={rel}::第 {extra} 列的欄位數多於 header —— "
+            errs.append(f"::error file={rel}::第 {wc(extra)} 列的欄位數多於 header —— "
                         "多出來的值會被丟棄。最常見原因是 focus 裡的逗號沒有用雙引號包起來，"
                         "那會讓 focus 被截斷、後面的欄位整個錯位")
             continue
@@ -1174,7 +1188,7 @@ def check_csvs(root, errs, files):
         bad = [i for i, r in enumerate(rows, start=2)
                if not ((r.get("key") or "").strip() and (r.get("focus") or "").strip())]
         if bad:
-            errs.append(f"::error file={rel}::第 {bad} 列缺 key 或 focus —— 這些列會被解析器整列丟棄")
+            errs.append(f"::error file={rel}::第 {wc(bad)} 列缺 key 或 focus —— 這些列會被解析器整列丟棄")
             continue
         if not rows:
             errs.append(f"::error file={rel}::解析出 0 條 lens —— 存在卻不貢獻任何東西的檔案比沒有更糟")
@@ -1221,12 +1235,12 @@ def check_csvs(root, errs, files):
                 and _truthy(rows[i - 2].get("override"))
             )
             if overriding:
-                emit(f"::warning file={rel}::這個 PR 會**取代** built-in lens {overriding}"
+                emit(f"::warning file={rel}::這個 PR 會**取代** built-in lens {wc(overriding)}"
                       f"（profile '{profile}'）—— 原本那條會從所有使用者的審閱裡消失。"
                       "請以「刪除既有 lens 的 PR」的標準審查：PR 描述必須說明原本那條為何不夠用")
             if clash:
                 errs.append(
-                    f"::error file={rel}::{clash} 與 built-in 的同名 lens 撞名，且未標 override "
+                    f"::error file={rel}::{wc(clash)} 與 built-in 的同名 lens 撞名，且未標 override "
                     f"—— harness 會判為 ignored，這些 lens 一個 agent 都不會派。"
                     "要嘛改名，要嘛標 override=true 並在 PR 說明為何原本那條不夠用"
                     "（override 會讓一條調校過的 built-in lens 消失，等於替所有人做這個決定）")

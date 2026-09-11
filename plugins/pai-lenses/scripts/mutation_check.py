@@ -21,7 +21,7 @@
     python3 scripts/mutation_check.py                  # 完整量測（慢）
     python3 scripts/mutation_check.py --check-targets  # 只驗靶還對得上（秒級，CI 會跑）
 
-**手動跑，不進 CI**（一輪 = 靶數 × 全套測試，每套測試 20–30 s × 靶數，目前約 30–50 分鐘；比照 `ensemble-eval` 的定位）。
+**手動跑，不進 CI**（一輪 = 靶數 × 全套測試，每套測試 20–35 s × 靶數，目前約 30–60 分鐘；比照 `ensemble-eval` 的定位）。
 改動 `validate.py` 的閘門、或新增閘門之後跑一次；存活清單就是待補的測試。
 
 ## 兩個誠實邊界
@@ -45,6 +45,7 @@ mutation test 本身也需要被驗證有沒有真的打中。
 """
 import argparse
 import pathlib
+import time
 import signal
 import subprocess
 import sys
@@ -251,6 +252,11 @@ MUTATIONS += [
     ("version 字串進 annotation 經 wc()（R16）",
      "需要 semver version（現在是 '{wc(version)}'）", "需要 semver version（現在是 '{version}'）"),
     ("dirty 路徑清單進 annotation 經 wc()（R16）", '              + wc(", ".join(paths)))', '              + ", ".join(paths))'),
+    ("entry name 進 annotation 經 wc()（R17 logic L-3/L-4：taint 網涵蓋 manifest 來源）",
+     "f\"::error file={prop(mp)}::{wc(entry.get('name'))} 的 source {wc(repr(src))} \"",
+     "f\"::error file={prop(mp)}::{entry.get('name')} 的 source {wc(repr(src))} \""),
+    ("CSV 欄名進 annotation 經 wc()（R17 L-4）",
+     "（現在是 {wc(fields)}）", "（現在是 {fields}）"),
     ("profile 清單經 wc() 進 annotation（R15 S-2）",
      "f\"（真源 PROFILES 有：{wc(', '.join(sorted(known_profiles)))}）。\"",
      "f\"（真源 PROFILES 有：{', '.join(sorted(known_profiles))}）。\""),
@@ -298,7 +304,7 @@ def _apply(name, old, new, src):
 def check_targets_only():
     """只驗每個靶是否恰好命中一次 —— 秒級，可以進 CI（#33 verify R9 M11/M24）。
 
-    完整的 mutation 量測太慢（靶數 × 全套測試 ≈ 30–50 分鐘），不適合每個 PR 跑。但**靶清單
+    完整的 mutation 量測太慢（靶數 × 全套測試 ≈ 30–60 分鐘），不適合每個 PR 跑。但**靶清單
     相對 validate.py 的漂移**是可以便宜擋住的：有人改動被 mutate 的那幾行、或搬走一道閘門，
     靶就對不上。先前這件事只有在有人手動跑整輪時才會發現，而「忘了跑」是預設。
     """
@@ -336,7 +342,7 @@ def check_targets_only():
 
 def main():
     # #33 verify R10 M6：先前是 `if "--check-targets" in sys.argv[1:]` —— 手寫解析，
-    # 打錯旗標（`--check-target`）會被靜默忽略，然後**直接跑 30–50 分鐘的就地改寫迴圈**。
+    # 打錯旗標（`--check-target`）會被靜默忽略，然後**直接跑 30–60 分鐘的就地改寫迴圈**。
     # R9 才剛把 validate.py 的同一種解析拆掉，理由逐字適用於這裡。
     ap = argparse.ArgumentParser(
         prog="mutation_check.py",
@@ -353,6 +359,7 @@ def main():
     # 改 validate.py 改到一半），**每一個 mutation 都會被判為「殺掉」** —— harness 回報
     # 漂亮的「0 存活」，而它其實什麼都沒量到。這是它自己版本的「肯定式綠燈」。
     print("前置：確認未 mutate 的測試套件是綠的 …", flush=True)
+    t0 = time.monotonic()
     pre = subprocess.run([sys.executable, str(TESTS)], cwd=PACK, capture_output=True, text=True)
     if pre.returncode != 0:
         print("✗ 基準測試就沒過 —— 先把測試修綠再量 mutation，"
@@ -390,6 +397,13 @@ def main():
     finally:
         VALIDATE.write_text(original, encoding="utf-8")
 
+    # R17 DA-H：耗時別再手填。散文裡的區間會漂（R14→R17 連四輪被抓到低估），所以這一輪起
+    # **由程式自己量並印出**；文件只保留粗估並指向這一行。
+    elapsed = time.monotonic() - t0
+    n_run = len(killed) + len(survived) + len(broken)
+    if n_run:
+        print(f"\n本輪實測耗時：{elapsed/60:.1f} 分鐘 / {n_run} 靶 = 每靶 {elapsed/n_run:.1f} s"
+              "（把這個數字填回 test_validate.py 檔頭與 CHANGELOG，不要沿用舊區間）")
     expected = [n for n in survived if n in EXPECTED_SURVIVE]
     survived = [n for n in survived if n not in EXPECTED_SURVIVE]
     print(f"\n殺掉 {len(killed)} / 存活 {len(survived)} / 預期存活 {len(expected)} / 靶壞 {len(broken)}")

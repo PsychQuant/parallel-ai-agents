@@ -80,7 +80,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   鐵律「絕不讀真實 lens pack」在同一個 commit 新增的整合錨點裡就已為假。
   **一句已經為假的不變式比沒有更糟** —— 下一個人會據以判斷而繞路。三處都改了。
 - **CI 新增 `mutation_check.py --check-targets`**（#33 verify R9 M11/M24）。完整量測太慢
-  （靶數 × 全套 ≈ 30–50 分鐘）不進 CI，但**靶清單相對 `validate.py` 的漂移**秒級就能擋：
+  （靶數 × 全套 ≈ 30–60 分鐘）不進 CI，但**靶清單相對 `validate.py` 的漂移**秒級就能擋：
   改動被 mutate 的那幾行、或搬走一道閘門，靶就對不上。先前這件事只有在有人手動跑整輪時
   才會發現，而「忘了跑」是預設。
   > **量測（R9 後）：46 個靶 → 45 殺掉 / 1 存活 / 0 靶壞**（R8 後是 35 殺 / 1 存活 / 0 靶壞；
@@ -139,7 +139,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`mutation_check.py` 自己的三個問題**（#33 verify R10 M5/M6）：`--check-targets` 對特殊靶
   只驗了兩個 anchor 的其中一個、且沒驗唯一性（而未驗的那個是一句**註解**）；
   它自己還在用 R9 剛從 `validate.py` 拆掉的手寫 argv 解析（打錯旗標會靜默忽略，
-  然後直接跑 30–50 分鐘的就地改寫迴圈）。兩者都改。
+  然後直接跑 30–60 分鐘的就地改寫迴圈）。兩者都改。
 
 - **argv 解析改用 argparse**（#33 verify R9 HIGH）。手寫解析的每一個洞，後果都是**安靜地
   換掉判準**，而 R8 只修了「未知**旗標**」那一半 —— workflow 實際傳的是旗標**值**。
@@ -544,7 +544,8 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
     v2.22.0（R11 抓到的 description 不同步正是這件事），聯集五個版號。R13 的「五版／四段」其實各指一件事，R14 把
     正確的一半改錯；本段與 2.22.0 那條現在寫成「兩份各四段、領頭不同」。「一輪 mutation 約十分鐘」六處全是低估
     （DA-N1 五處 + ASCII 的「10 分鐘」第六處；R14 的批次替換還把兩處弄成「三三十分鐘」——R15 F4/L-3）：每套測試
-    20–30 s × 92 靶 ≈ 30–50 分，六處統一；靶數改成 lint 認的第三種宣稱形式；`pai-list-profiles.bats` 登記進 test/README；
+    20–30 s × 92 靶 ≈ 30–50 分，六處統一（**這兩個數字 R17 實測仍低估，見該段**——歷史條目保留當時寫的值，
+    不回頭改，否則 CHANGELOG 就不再是「當時宣稱了什麼」的紀錄）；靶數改成 lint 認的第三種宣稱形式；`pai-list-profiles.bats` 登記進 test/README；
     「containment 的第八處」不再指到兩個站點（E-11）。
   測試 97 → 111 條；靶清單 83 → 92 個（3 個 EXPECTED_SURVIVE；lint 形式的宣稱只留在最新一段）。
   量測（R14 後）：全輪 88 殺／1 存活（「lister 不存在」補斷言後單靶重跑轉殺）／3 預期存活。
@@ -615,9 +616,66 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
     （DA-5）。
   - 數字：「三個 job、15 step」實為 20 個 run step（`grep -c "^        run:" ../../.github/workflows/test.yml`）
     （security S-4 / regression F3，改成 lint 認的形式）；mutation 耗時再上修為 30–50 分（logic 實測 29 s × 96 ≈ 47 分）。
-  測試 118 → 124 條（`grep -c "    def test_" ../pai-lenses/scripts/test_validate.py`）；
-  靶清單 96 → 98 個（`grep -c "^    (\"" ../pai-lenses/scripts/mutation_check.py`）（3 個 EXPECTED_SURVIVE）。
-  量測（R16 後）見 `scripts/test_validate.py` 檔頭。
+  測試 118 → 124 條；靶清單 96 → 98 個（3 個 EXPECTED_SURVIVE；lint 形式的宣稱只留在最新一段）。
+  量測（R16 後）：全輪 98 靶 93 殺／2 存活（emit 自己的中和層，補單元測試後單靶轉殺）→ 95／0／3（複合值）。
+- **verify R17（4 lens + DA；Codex 第七輪 429）— R16 的 HIGH（CI 回歸）已清、CI 三 job 全綠、regression lens 首次 PASS；
+  其餘三份 FAIL 全是「新閘門自己的假綠」（第七次同一形狀）。修法：**
+  - `lint-ci-log-filter.sh` 第 5–9 種繞過（requirements F-1 / security S-1 / logic L-1 / L-7）：key 加引號的 `- "run":`；
+    `.yaml` 副檔名不在 glob；`neutralise.py` 只要被**提到**（字串、`env:` value）就算；bare `-`（鍵在下一行）與 dash 後
+    雙空白的項被併進前一個 step 而繼承豁免；`<<:` merge key 帶入的 `run` 看不見。改：step 正規式 `-(\s|$)`、key 去引號、
+    glob 含 `*.yaml`、`neutralise.py` 必須是 pipeline 的一段、merge key／anchor／alias 起頭一律拒絕（本 lint 不解析就
+    fail-loud）；`neutralise.py` 的判定再縮到 **`run:` 區塊之內的管線位置**（`env:` value 裡寫個像管線的字不算，R17 DA-B ⑤）；
+    每一種各補一個 bypass fixture，selftest 改用 **glob** 逐一驗（寫死清單自己會跟目錄漂——同 repo 已有兩份 shellcheck 清單互不為超集的前例）。
+  - taint 網（requirements F-2 / security S-2 / logic L-2 / L-3 / L-4）：R16 版只看 f-string、不跨函式，而「任何外部字串
+    一律 wc()」在檔內有數十個反例、38 個 wc() 站點過半無回歸網。改成**來源封閉列舉 + 跨函式 taint**：從子行程
+    `.stdout`/`.stderr`、`load_obj()`／`json.loads()` 回傳、`csv.DictReader` 列與 `.fieldnames`、`iterdir()`／`glob()`
+    路徑出發，逐函式沿 Assign／for／comprehension 染色並跨函式（染色引數 → 被呼叫端參數，全域 fixpoint）；sink
+    （`errs.append`／`emit`／`print`）引數裡任何未包 `wc()`／`prop()`／`ann_path()` 的染色子運算式一律紅，語法形式
+    無關；`len`／`type`／`.returncode` 之類衍生值明示安全。網一開就抓到 40 個站點（entry name／source、`rel`、
+    `pdir`、CSV 欄名／重複 key／未知欄位、列號清單、override 清單…）——全部補 `wc()`；規則措辭改成封閉列舉
+    （來源列舉經 wc()，其餘只由 emit() 的兩套語法中和與 4000 上限守），不再宣稱「一律」。三種形狀（`+` 串接、
+    跨函式參數、comprehension 衍生清單）與 entry name／CSV 欄名兩個新靶各自驗過會紅。
+  - **自查（不是 lens 找到的，本輪修法自己的缺陷）**：為了證明 taint 規則「會紅」而寫的形狀測試
+    **出廠即空轉**——它建了一段 snippet，卻只斷言裡面的函式叫什麼名字，從頭到尾沒跑判定；把跨函式
+    傳播整段關掉它照樣綠。也就是說 R8 以來一路在修的那個缺陷（新機制沒有 RED 驗證），這次出現在
+    **為了做 RED 驗證而寫的那條測試裡**。修法：判定抽成模組層的 `taint_findings()` 一份實作，真檔那條
+    與形狀測試共用；形狀測試改成真的跑它，四種形狀（`+` 串接、comprehension 衍生清單、跨函式位置
+    引數、裸 `for` 的目標變數）各自斷言被抓到，外加一個「全部包 `wc()` 就不該紅」的對照組。五種
+    破壞方式（關掉 Assign／For／跨函式傳播、sink 退回只認 f-string、sink 漏掉 `print`）各自驗過會紅。
+  - **更正 R16 commit message 的一句宣稱**（regression F7）：`dcd5c19` 寫「補 git status 路徑清單、manifest
+    version 五處 echo、version note，**各釘測試與靶**」——全輪 mutation 實測六個站點裡有兩個存活：`:836`
+    的 merge-base sha（`READ_SITES` 第 9 條早就註明結構上不可觸發，是正確的設計判斷）與 `:934` 的改名前
+    路徑（這個是真缺口，理論上可測）。commit message 已 push、不改寫歷史，更正記在這裡；`:934` 就地
+    補上「已知缺口」註記，不再假裝有網。
+  - **issue #33 的 Implementation Complete comment 加註時效**（requirements F-4）：那張 Verification 表停在
+    2026-08-12（plugin 2.23.0、46 條測試、37 靶、「九輪 verify」），而它是 IDD 規定的實作真源。加一則註記
+    指向兩個 current 來源（PR body 的機械重算數字、`test_validate.py` 檔頭的 mutation 量測），**不改 Checklist**、
+    也不就地把數字換新——把過期的表留著才看得出漂移。這是本輪唯一一次 diff 之外的寫入。
+  - **全輪 mutation 抓到兩個真缺口，並推翻 R16 檔頭的一句宣稱**：`emit()` 自己那一層的
+    `collapse_lines()` 與 `##[` → `##⟦` 兩個靶**零測試網**而存活。R16 檔頭寫「補一條直接呼叫 `emit()` 的
+    單元測試後單靶轉殺」——**那句是假的**，既有四條 `emit` 測試驗的是截斷。而且它們**不是** equivalent
+    mutant：實測拿掉 emit 這一層之後，`\n`／`\r`／U+2028／U+2029／`\v`／`\f`／U+0085 全部原樣輸出，
+    runner 會在新的一行看到第二個**偽造的** workflow command；`##[error]` 同理。原因是縱深防禦的兩層
+    （emit 與輸出邊界 `LineSanitiser`）共用同一個端到端斷言，拆掉其中一層另一層仍會擋 —— **每一層各自
+    要有網**。補兩條直接餵 `emit()` 的測試（八種分隔符逐一驗），四個相關靶現在全部驗過會被殺。
+  - 偵測器入口（security S-3 / S-5 / logic L-9）：`argparse.FileType`／`subprocess.getoutput`／`os.fdopen` 進
+    `READ_CALLS`、禁 `fromfile_prefix_chars`；動態派發內建改看**任何** Name 引用（`_g = getattr` 綁變數先前能穿過）。
+  - **自查之二**：L-5 的第一版修法**自己留了同一個後門**——「第一個非 `..` 段」若就是路徑最後一段
+    （`../nothing-at-all.md`），錨點會等於那個不存在的檔本身 → `isdir` 為假 → 靜默跳過。錨點必須是
+    **目錄段**；只差一層的路徑其容身處是 `..`，任何佈局都存在，因此不得跳過。兩個 fixture（必拒／必收）
+    進 selftest，且三個舊版判準（R14 的「`../` 一律跳過」、R16 的 `dirname`、本輪第一版）各自驗過會紅。
+    順帶記一筆方法論：驗這條時我**連兩次**把 vacuity 守衛的紅當成規則的紅（`no claims found` 也是 rc=1），
+    與 R17 DA-B 抓到 regression 的是同一個實驗設計缺陷——fixture 必須同檔附一條驗得過的宣稱。
+  - `lint-changelog-counts` 的 `../` 跳過再收窄（logic L-5：R16 的 dirname 判準讓「多寫一層不存在的子目錄」重開豁免）：
+    只看第一個非 `..` 路徑段所指的**錨點目錄**（`../pai-lenses`、`../../.github`）不在才跳過，訊息不斷言佈局；補
+    fixture。
+  - `EVENTS` 與 test.yml `on:` 兩份規格（logic L-8）：測試機械比對 `on:` 的 trigger ⊆ EVENTS。
+  - mutation 耗時再上修為 30–60 分（regression 實測 ≈54 分；每套測試 20–35 s × 靶數）；neutralise.py docstring 重複句
+    （L-11）；test/README 的 lint 描述改成全部 workflow。
+  測試 124 → 127 條（`grep -c "    def test_" ../pai-lenses/scripts/test_validate.py`）；
+  靶清單 98 → 100 個（`grep -c "^    (\"" ../pai-lenses/scripts/mutation_check.py`）（3 個 EXPECTED_SURVIVE）。
+  量測（R17 後）：單一副本完整一輪 100 靶 → 97 殺 / 0 存活 / 0 靶壞（另 3 個 `EXPECTED_SURVIVE`），
+  實測 46.3 分鐘 = 每靶 27.8 s（由 `mutation_check.py` 自己印）；細節與前一輪的兩個真缺口見 `scripts/test_validate.py` 檔頭。
 
 ## [2.23.0] - 2026-09-10
 
