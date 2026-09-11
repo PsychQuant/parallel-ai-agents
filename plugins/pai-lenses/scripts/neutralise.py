@@ -8,6 +8,8 @@ R11/R12 兩輪在 Python 端修掉的洞，在 shell 端重生。所以「行」
 把 stdin 接到那份實作上。**所有**會把 PR 可控文字印進 step log 的 step 都經過它（清單見 test.yml 的
 job 級註解與 test/run.sh）；它自己永遠 exit 0，上游的非零由 `set -o pipefail` 保留。
 
+哪些 step 經過它、哪些明示不過濾：`test/lint-ci-log-filter.sh` 對 test.yml 每一個 run step 機械檢查（R15 L-2 / S-3 / F2）。
+
 用法：<command> 2>&1 | python3 scripts/neutralise.py
 """
 import pathlib

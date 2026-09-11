@@ -37,7 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 其 `validate.yml` 併入 root `test.yml` 為獨立 job（`manifests-and-lens-pack`）——
   併入後落在 `plugins/` 下的 workflow 不會被 GitHub 執行，故移除以免誤導。
 - **主 plugin 的 `description` 不再累積歷代 release note**，只保留功能敘述 + 當版一行。
-  > **揭露（#33 verify R10 M9）**：這個動作刪掉了 v2.19.0–v2.21.0 四段的註記，而那些是使用者
+  > **揭露（#33 verify R10 M9）**：這個動作刪掉了 v2.19.0–v2.22.0 之間的版號註記（兩份 manifest 在 base 上各四段且不一致：marketplace.json 領頭 v2.21.0、plugin.json 領頭 v2.22.0——正是 R11 抓到的不同步；聯集五個版號），而那些是使用者
   > 在 `/plugin` 清單裡看得到的唯一版本說明（CHANGELOG 不在 plugin UI 裡）。先前 Fixed 段
   > 只寫「接回功能敘述」，讀起來像單純還原，**沒有揭露刪除** —— 本 PR 一路在抓的
   > 「修一半的宣稱」在變更紀錄層的鏡像。歷史註記從此以 CHANGELOG 為準。
@@ -80,7 +80,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   鐵律「絕不讀真實 lens pack」在同一個 commit 新增的整合錨點裡就已為假。
   **一句已經為假的不變式比沒有更糟** —— 下一個人會據以判斷而繞路。三處都改了。
 - **CI 新增 `mutation_check.py --check-targets`**（#33 verify R9 M11/M24）。完整量測太慢
-  （靶數 × 全套 ≈ 十分鐘）不進 CI，但**靶清單相對 `validate.py` 的漂移**秒級就能擋：
+  （靶數 × 全套 ≈ 30–40 分鐘）不進 CI，但**靶清單相對 `validate.py` 的漂移**秒級就能擋：
   改動被 mutate 的那幾行、或搬走一道閘門，靶就對不上。先前這件事只有在有人手動跑整輪時
   才會發現，而「忘了跑」是預設。
   > **量測（R9 後）：46 個靶 → 45 殺掉 / 1 存活 / 0 靶壞**（R8 後是 35 殺 / 1 存活 / 0 靶壞；
@@ -139,7 +139,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`mutation_check.py` 自己的三個問題**（#33 verify R10 M5/M6）：`--check-targets` 對特殊靶
   只驗了兩個 anchor 的其中一個、且沒驗唯一性（而未驗的那個是一句**註解**）；
   它自己還在用 R9 剛從 `validate.py` 拆掉的手寫 argv 解析（打錯旗標會靜默忽略，
-  然後直接跑十分鐘的就地改寫迴圈）。兩者都改。
+  然後直接跑三四十分鐘的就地改寫迴圈）。兩者都改。
 
 - **argv 解析改用 argparse**（#33 verify R9 HIGH）。手寫解析的每一個洞，後果都是**安靜地
   換掉判準**，而 R8 只修了「未知**旗標**」那一半 —— workflow 實際傳的是旗標**值**。
@@ -454,7 +454,7 @@ R11 的 15 列有 11 列真的修好（各 lens 自建 fixture 重現，不只�
 - **description 版號閘門的「第一個＝最新」沒有規格也沒有測試**（MEDIUM）：改成取最後一個 match 全套仍綠。
   補雙向測試（舊在前 → warning；新在前 → 無），靶清單加「first→last」；慣例寫進 root `CLAUDE.md` 版本同步表。
   另記錄一個取捨（R12 regression R12-7）：兩份 description 統一後只列最近兩版（v2.24.0 / v2.23.0），
-  v2.19.0–v2.21.0 **四段**的敘述移出 —— 歷史看 CHANGELOG，這裡是 `/plugin` 清單的一句話。
+  v2.19.0–v2.22.0 之間的敘述移出（兩份 manifest 各四段、領頭版號不同） —— 歷史看 CHANGELOG，這裡是 `/plugin` 清單的一句話。
 - 零星：`bin/pai-list-profiles` 補 containment（第七處，這一處是**執行**不只讀）；root `CLAUDE.md:38/:52`
   的「純資料無程式碼」與 README 對齊（R11 只修了 README —— 同類只修一處第 N 次）；`test.yml` 的 `on:`
   補回指 `EVENTS` 的對稱註解；`validate.py` 引用已刪 `.gitignore` 的註解改寫；`note: pack 在 base 時位於 …`
@@ -539,14 +539,46 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
     `run.sh` 的 drift 檢查會改寫工作樹（reg R13-4：那正是「請 commit」的用意，run.sh 內已註明）；
     `Fixture.run` 的內部錯誤判定是全輸出子字串比對，有假紅路徑無假綠路徑（L-8）；`gate()` 的 `repr(e)` 會印
     例外攜帶的檔案位元組（S6，目前不可達）。
-  - 文件 errata：description 版號段是 **v2.19.0–v2.21.0 四段**（requirements F5 / DA：main 全部歷史從無 `v2.22.0:`
-    段，R13 把「五版／四段」統一到錯的那個，兩個數字都錯；上面 2.22.0 那條與本段 R12 條已改）；「一輪 mutation
-    約十分鐘」五處全是三倍低估（DA-N1：21 s × 84 ≈ 30 分；靶數 20→83 一路更新，唯獨相乘的這個數字沒動——本 PR
-    第七次同一症狀）；靶數改成 lint 認的第三種宣稱形式；`pai-list-profiles.bats` 登記進 test/README；
+  - 文件 errata：description 版號段——R14 寫「v2.19.0–v2.21.0 四段、main 從無 v2.22.0」是**錯的**（R15 三個 lens 各自
+    查證）：base `5eab1e4` 的**兩份** manifest 各四段但不一致——marketplace.json 領頭 v2.21.0、plugin.json 領頭
+    v2.22.0（R11 抓到的 description 不同步正是這件事），聯集五個版號。R13 的「五版／四段」其實各指一件事，R14 把
+    正確的一半改錯；本段與 2.22.0 那條現在寫成「兩份各四段、領頭不同」。「一輪 mutation 約十分鐘」六處全是低估
+    （DA-N1 五處 + ASCII 的「10 分鐘」第六處；R14 的批次替換還把兩處弄成「三三十分鐘」——R15 F4/L-3）：每套測試
+    20–30 s × 92 靶 ≈ 30–40 分，六處統一；靶數改成 lint 認的第三種宣稱形式；`pai-list-profiles.bats` 登記進 test/README；
     「containment 的第八處」不再指到兩個站點（E-11）。
-  測試 97 → 111 條（`grep -c "    def test_" ../pai-lenses/scripts/test_validate.py`）；
-  靶清單 83 → 92 個（`grep -c "^    (\"" ../pai-lenses/scripts/mutation_check.py`）（3 個 EXPECTED_SURVIVE）。
-  量測（R14 後）見 `scripts/test_validate.py` 檔頭。
+  測試 97 → 111 條；靶清單 83 → 92 個（3 個 EXPECTED_SURVIVE；lint 形式的宣稱只留在最新一段）。
+  量測（R14 後）：全輪 88 殺／1 存活（「lister 不存在」補斷言後單靶重跑轉殺）／3 預期存活。
+- **verify R15（4 lens + DA；Codex 第五輪 429）— R14 的三條 blocking 全部確認修好、零 HIGH；四份共同指向兩件事：
+  「宣稱封閉的列舉不封閉」（READ_SITES 的偵測器只認六種字面；step 級列舉漏 shellcheck／lint-* 與整個 macOS job）
+  與「errata 本身又改錯」。**修法：**
+  - READ_SITES 的偵測改走 **AST**（logic L-1 / requirements F1 / security S-1 / regression F4）：三個封閉集合
+    `READ_CALLS`／`READ_MODULES`／`READ_MODULE_PURE`，任何 Call 命中就必須帶 `READ-SITE` 標記；純 metadata 述詞
+    （is_file／resolve／exists／os.path.*）明示不在列舉內。四個 lens 注入的七種形狀（裸 `open(`、`glob`、`Popen`、
+    `os.listdir`、`check_output`、`shutil.copy`、`os.scandir`）逐一驗過會紅；反向檢查的 `glob(` 補為第 19 處。
+  - CI 的 step 級列舉改成 **lint**（logic L-2 / security S-3 / requirements F2 / regression F5）：新增
+    `test/lint-ci-log-filter.sh`（＋ good／bad fixture selftest），test.yml **每一個** run step 都必須經
+    `neutralise.py` 或帶 `# LOG-FILTER:` 註解明示不過濾與理由（三個 job、15 個 step 全部交代；shellcheck／
+    lint-*／pack 錨點 bats 改經過濾器）；接進 run.sh 與 CI。
+  - harness **stdout** 也是管道（security S-2）：profile 名清單進 annotation 經 `wc()`；READ_SITES 旁列出所有
+    「子行程輸出 → annotation」站點（三處，皆經 wc()）。
+  - pack 錨點 no-skip 守衛（regression F1 → **DA 推翻**：reviewer 的 `grep` 是 Claude Code shell snapshot 裡帶 `-I` 的
+    ugrep，CI 的 GNU grep 會命中；本機用同一個 shell 也重現了「漏」，所以 `-a` 仍加上——它讓守衛不依賴 grep 對
+    CJK 截斷後 binary 判定的實作差異——並補上 macOS job 那份的 plan-vs-executed 檢查（R14 版是它的真子集）。
+    run.sh 同步這份守衛。**教訓**：reviewer 自己的工具鏈也會「同一概念兩套實作」。
+  - gate 相依第二半（logic L-4）：`files == []`（lenses/ 沒有合法 CSV）時 check_csvs 具名回報「沒有跑」。
+  - `mutation_check.py` 掛 SIGTERM／SIGHUP handler 轉 SystemExit（requirements F9：被砍掉時 mutated 的
+    validate.py 無聲留在工作樹——只有 Ctrl-C 走得到還原）。
+  - `lint-changelog-counts` 的 `../` 跳過只在 **sibling 目錄**缺席時生效（R14 S5 / R15 security LOW：檔案缺席就跳
+    在 monorepo 裡是永久豁免；補 fixture 讓「目錄在、檔不在」被拒）。
+  - errata 的 errata：description 版號段見上面 2.22.0 那條（R14 改錯了正確的一半）；「十分鐘」第六處（ASCII
+    `10 分鐘`）、兩處「三三十分鐘」與 CHANGELOG 本段內再兩處（DA-6，四份都漏）改對（30–40 分）；`NO_REPO_GATES`
+    的訊息改由清單算數量、測試逐名比對並加靶（DA-3）；獨立 pack 下 profile 名未驗時不再印 ✓（DA-4）；
+    merge-base 的 stderr 也經 `wc()`（DA-5）；`README.md` 與 plugin `CLAUDE.md` 把 minutes 的第四個 lens
+    寫成不存在的 `actionability`（真源 `cross-document`，requirements F5，十輪未抓到）；neutralise.py docstring
+    指向的清單改指 lint；`test/run.sh` 與 `lint-ci-log-filter.sh` 進兩份 shellcheck 清單。
+  測試 111 → 118 條（`grep -c "    def test_" ../pai-lenses/scripts/test_validate.py`）；
+  靶清單 92 → 96 個（`grep -c "^    (\"" ../pai-lenses/scripts/mutation_check.py`）（3 個 EXPECTED_SURVIVE）。
+  量測（R15 後）見 `scripts/test_validate.py` 檔頭。
 
 ## [2.23.0] - 2026-09-10
 

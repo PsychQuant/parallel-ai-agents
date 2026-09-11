@@ -39,8 +39,15 @@ OS_ARTIFACTS = (".DS_Store", ".gitkeep", ".gitignore", "Thumbs.db")
 # ── 讀檔／執行站點的封閉列舉（#33 verify R14 logic L-2 / security S1）────────────────────────────
 # R13 的放行條件寫「『validator 只讀本 repo 內的檔』改成封閉列舉」——只做了前半（補被點名的站點）。
 # 站點數 5→6→7→8→9→11 每一次都是 reviewer 數出來的，而每次修法都只補被點名的那一處。
-# 現在：本檔**每一個**會碰檔案系統或起子行程的呼叫都帶 `# READ-SITE k/N` 標記，這張表一列對一個標記，
-# test_validate.py 機械比對（缺標記、總數不一、與表列數不合 → 紅）。新增讀檔站點時必須同時加一列。
+# 現在：本檔**每一個讀內容或起子行程**的呼叫都帶 `# READ-SITE k/N` 標記，這張表一列對一個標記，
+# test_validate.py 用 **AST** 機械比對（缺標記、總數不一、與表列數不合 → 紅）。新增讀檔站點時必須同時加一列。
+# #33 verify R15（logic L-1 / requirements F1 / security S-1 / regression F4）：R14 的偵測器是六種字面拼法的
+# regex，四個 lens 各自注入 `open(`／`glob`／`Popen`／`os.listdir`／`check_output`／`shutil.copy` 全部穿過，
+# 而反向檢查的 `glob(` 本來就是表外站點。偵測的判準改成下面三個封閉集合（不得類推）：
+#   READ_CALLS       ：呼叫名在此集合 → 是站點（不管 base 是什麼）
+#   READ_MODULES     ：base 是這些模組 → 是站點（除了 READ_MODULE_PURE 裡的純函式）
+#   純 metadata 述詞（is_file / is_dir / exists / stat / resolve / relative_to / os.environ）**不在列舉內**：
+#   它們不回傳內容也不起子行程，containment 本身就是由 resolve() 組成的。這是刻意的收窄，不是遺漏。
 #
 # **這層守什麼／守不住什麼（明寫，不得依性質相似類推）**：
 #   守：symlink（檔案層與目錄層——`resolve()` 連父層一起解析）、絕對路徑、`..` 繞出去。
@@ -50,6 +57,11 @@ OS_ARTIFACTS = (".DS_Store", ".gitkeep", ".gitignore", "Thumbs.db")
 #   `on: pull_request` + `contents: read` + 零 secrets（見 test.yml 的 job 級說明）。
 # 「git object」欄：對 `git show`/`ls-tree`/`diff` 讀到的是 **repo 自己的物件庫**，路徑由 validator 組、
 # 不經檔案系統 symlink，依構造在 repo 內。
+READ_CALLS = frozenset({"open", "read_text", "read_bytes", "iterdir", "glob", "rglob", "listdir", "scandir", "walk",
+                        "load", "run", "Popen", "check_output", "check_call", "call", "popen", "system"})
+READ_MODULES = frozenset({"subprocess", "shutil", "os"})
+READ_MODULE_PURE = frozenset({"environ", "get", "sep", "fspath", "getenv",                     # os.environ.get / os.sep
+                              "normpath", "isabs", "join", "basename", "dirname", "splitext"})  # os.path.* 純字串運算
 READ_SITES = (
     ( 1, "load_obj：通用 JSON 讀取器",                      "由呼叫端保證：站點 2/3/5 都先 _inside 再呼叫"),
     ( 2, "collector_wiring：skills/…/SKILL.md",             "_inside（R14 新增，第 11 處）"),
@@ -59,7 +71,7 @@ READ_SITES = (
     ( 6, "_find_pack_at：git show（候選 plugin.json）",     "git object"),
     ( 7, "check_bumped：pack 自身 plugin.json（pack_name）", "_inside（R13 第九處；R14 requirements F3 補測試，不再列 EXPECTED_SURVIVE）"),
     ( 8, "check_bumped：git rev-parse --verify base",       "git object"),
-    ( 9, "check_bumped：git merge-base",                    "git object"),
+    ( 9, "check_bumped：git merge-base",                    "git object；stderr 經 wc()（無共同祖先時 git 不印 stderr——此站點的 wc 無法被測試觸發，故不列靶；可觸發的同類是 base 字串本身，有靶）"),
     (10, "check_bumped：git status --porcelain",            "git object"),
     (11, "check_bumped：git diff --name-only",              "git object"),
     (12, "check_bumped：git show HEAD:plugin.json",         "git object"),
@@ -69,7 +81,11 @@ READ_SITES = (
     (16, "builtin_lens_keys：references/builtin-lenses.csv", "_inside（R10 第三處）"),
     (17, "check_csvs：執行 bin/pai-list-profiles（求值 harness）", "_inside（lister 與 harness）+ PAI_HARNESS 顯式傳入 + stderr 不進 annotation"),
     (18, "check_csvs：lenses/<profile>.csv",                "站點 15 已拒 symlink；_inside 目錄層"),
+    (19, "check_marketplace_sync：反向 glob plugins/*/.claude-plugin/plugin.json", "逐一 _inside（R11 第六處）；R15 前是表外站點"),
 )
+# 子行程**輸出**進 annotation 的站點（R15 security S-2：stderr 關掉了，stdout 是第二條管道）——一律經 wc()
+# （截斷 + 中和）：站點 17 的 profile 名清單、站點 9 的 merge-base stderr、站點 11 的 diff stderr。git 的 stdout
+# 只當路徑／JSON 用，不直接進訊息（路徑經 prop()）。
 # 另有三個**不經本檔讀取**但 validator 依賴的輸入：root `.claude-plugin/marketplace.json`（站點 1 的呼叫端，
 # check_marketplace_sync 先 _inside——R14 第十處）、entry 指向的 plugin 目錄與其 plugin.json（站點 1 的呼叫端，
 # 兩層都判）、反向 glob 找到的 plugin.json（站點 1 的呼叫端，_inside）。
@@ -296,7 +312,7 @@ def load_obj(path_or_text, label, errs, *, is_text=False):
     裸 traceback、零 annotation），而 R6 的測試餵的是語法壞掉的 JSON，走的是另一條 except，
     所以抓不到。這是同一個缺陷的第二個站點。"""
     try:
-        raw = path_or_text if is_text else pathlib.Path(path_or_text).read_text(encoding="utf-8")   # READ-SITE 1/18
+        raw = path_or_text if is_text else pathlib.Path(path_or_text).read_text(encoding="utf-8")   # READ-SITE 1/19
         obj = json.loads(raw)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
         errs.append(f"::error file={prop(label)}::讀取失敗：{e}")
@@ -327,7 +343,8 @@ NO_REPO_GATES = ("check_marketplace_sync", "check_bumped", "lenses/ 目錄層 co
 def report_no_repo(errs):
     """`repo_root()` 為 None 的唯一回報點。CI 裡（`manifests-and-lens-pack` job 跑在 monorepo checkout）
     這依構造不可能合法發生 → error；本機獨立使用 pack 才是合法情境 → 一句 note。"""
-    what = ("找不到 <repo>/.claude-plugin/marketplace.json（不在 monorepo 內）—— 五道閘門都沒有跑："
+    # R15 DA-3：NO_REPO_GATES 是手寫封閉列舉——數量由清單算、名字逐一印，測試逐一比對，刪一條就紅。
+    what = (f"找不到 <repo>/.claude-plugin/marketplace.json（不在 monorepo 內）—— {len(NO_REPO_GATES)} 道閘門都沒有跑："
             + "、".join(NO_REPO_GATES) + "。這不是「通過」")
     if os.environ.get("GITHUB_ACTIONS") == "true":
         errs.append("::error::" + what + "；CI 的 checkout 必定是 monorepo，這個檔案被改名或刪了")
@@ -358,7 +375,7 @@ def collector_wiring(repo, profile):
     # #33 verify R14（logic L-2 第 11 處）：這裡讀的是 repo 內另一個 plugin 的檔，先前沒有 containment。
     if not _inside((d / "SKILL.md").resolve(), repo.resolve()):
         return d.name, "outside"
-    lines = (d / "SKILL.md").read_text(encoding="utf-8", errors="replace").splitlines()   # READ-SITE 2/18
+    lines = (d / "SKILL.md").read_text(encoding="utf-8", errors="replace").splitlines()   # READ-SITE 2/19
     wired = any("pai-collect-lens-layers" in ln and not ln.lstrip().startswith("#")
                 for ln in lines)
     return d.name, wired
@@ -602,7 +619,7 @@ def check_marketplace_sync(root, errs):
 
     # 反向：檔案系統 → marketplace entry。缺 entry 的 plugin 使用者根本裝不到，
     # 而正向迴圈**結構上**看不到它（它不在 plugins 陣列裡）。#33 verify R6。
-    for found in sorted(repo_abs.glob("plugins/*/.claude-plugin/plugin.json")):
+    for found in sorted(repo_abs.glob("plugins/*/.claude-plugin/plugin.json")):   # READ-SITE 19/19
         pdir = found.parent.parent
         # #33 verify R11 #12：`glob` 會跟隨 symlink —— 五處 `_inside` 硬化漏了這第六處，
         # `plugins/evil -> repo 外` 的 plugin.json 會被讀。與正向路徑同一判準：先判、再讀。
@@ -653,7 +670,7 @@ def _find_pack_at(repo, ref, pj_rel, name):
     # （改目錄通常也改 plugin 名），git 就把它判成 A+D 而非 R —— 但同一次改名裡
     # 其他檔案（README/LICENSE/scripts）仍是 R100。取多數決還原舊的 pack 根目錄。
     pack_rel = pj_rel[: -len("/.claude-plugin/plugin.json")]
-    # READ-SITE 3/18
+    # READ-SITE 3/19
     dt = subprocess.run(["git", "diff", "--name-status", "-M", ref, "HEAD"],
                         cwd=repo, capture_output=True, text=True, errors="replace")
     if dt.returncode == 0:
@@ -680,14 +697,14 @@ def _find_pack_at(repo, ref, pj_rel, name):
         if votes:
             old_pack = max(votes, key=votes.get)
             candidate = f"{old_pack}/.claude-plugin/plugin.json"
-            # READ-SITE 4/18
+            # READ-SITE 4/19
             if candidate != pj_rel and subprocess.run(
                     ["git", "cat-file", "-e", f"{ref}:{candidate}"],
                     cwd=repo, capture_output=True).returncode == 0:
                 return candidate
     if not name:
         return None
-    # READ-SITE 5/18
+    # READ-SITE 5/19
     ls = subprocess.run(["git", "ls-tree", "-r", "--name-only", ref],
                         cwd=repo, capture_output=True, text=True, errors="replace")
     if ls.returncode != 0:
@@ -695,7 +712,7 @@ def _find_pack_at(repo, ref, pj_rel, name):
     for path in ls.stdout.splitlines():
         if not path.endswith(".claude-plugin/plugin.json"):
             continue
-        # READ-SITE 6/18
+        # READ-SITE 6/19
         blob = subprocess.run(["git", "show", f"{ref}:{path}"],
                               cwd=repo, capture_output=True, text=True, errors="replace")
         if blob.returncode != 0:
@@ -769,7 +786,7 @@ def check_bumped(root, errs, base, event=None):
     _pj_path = root / ".claude-plugin" / "plugin.json"
     if _inside(_pj_path.resolve(), repo.resolve()):          # R13 logic N1：第九處 containment
         try:
-            _pk = json.loads(_pj_path.read_text(encoding="utf-8"))          # READ-SITE 7/18
+            _pk = json.loads(_pj_path.read_text(encoding="utf-8"))          # READ-SITE 7/19
             pack_name = _pk.get("name") if isinstance(_pk, dict) else None
         except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             pack_name = None
@@ -777,7 +794,7 @@ def check_bumped(root, errs, base, event=None):
     pj_rel = f"{pack_rel}/.claude-plugin/plugin.json"
     # #33 verify R4：先前只堵 returncode != 0。git 對「pathspec 指向 base 不存在的路徑」
     # 是成功 + 空輸出 —— 與「真的沒改」不可區分。先確認 base 這個 ref 本身存在。
-    # READ-SITE 8/18
+    # READ-SITE 8/19
     if subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"{base}^{{commit}}"],
                       cwd=repo, capture_output=True).returncode != 0:
         # #33 verify R6：先前訊息一律叫人「確認 checkout 帶 fetch-depth: 0」。但對
@@ -786,12 +803,12 @@ def check_bumped(root, errs, base, event=None):
         # 照那句建議做完全無效。誠實的處置是說清楚「這個情境無法判定」而不是給錯的補救。
         if event == "push":
             errs.append(
-                f"::error::base '{base}' 不在本地歷史內 —— bump 檢查**沒有跑**（不是「無需 bump」）。"
+                f"::error::base '{wc(base)}' 不在本地歷史內 —— bump 檢查**沒有跑**（不是「無需 bump」）。"
                 "push 事件最常見的成因是 force-push：舊 tip 已不被任何 ref 指到，"
                 "`actions/checkout` 只 fetch ref 可達的物件，`fetch-depth: 0` 也拿不到它。"
                 "**force-push 到 main 不在這道閘門的守備範圍**；請人工確認這次 push 有沒有動 lens")
         else:
-            errs.append(f"::error::base ref '{base}' 不在本地歷史內 —— bump 檢查沒有跑。"
+            errs.append(f"::error::base ref '{wc(base)}' 不在本地歷史內 —— bump 檢查沒有跑。"
                         "CI 請確認 checkout 帶 fetch-depth: 0")
         return
     # #33 verify R6：先前 `--event` 缺省 → exact-tree。但本檔自己印的提示叫人在本機跑
@@ -801,11 +818,11 @@ def check_bumped(root, errs, base, event=None):
     # （「這次 push 讓 main 變成什麼」）才是對的，而 CI 一律會傳 --event。
     cmp_base = base
     if event != "push":
-        # READ-SITE 9/18
+        # READ-SITE 9/19
         mb = subprocess.run(["git", "merge-base", base, "HEAD"],
                             cwd=repo, capture_output=True, text=True, errors="replace")
         if mb.returncode != 0 or not mb.stdout.strip():
-            errs.append(f"::error::算不出 merge-base({base}, HEAD)：{mb.stderr.strip()}。"
+            errs.append(f"::error::算不出 merge-base({base}, HEAD)：{wc(mb.stderr.strip())}。"
                         "這不是「無需 bump」—— 是這道閘門沒有跑")
             return
         cmp_base = mb.stdout.strip()
@@ -821,7 +838,7 @@ def check_bumped(root, errs, base, event=None):
     #   lenses/code.csv: 2 條 lens ✓                ← 同一次執行看到了那條新 lens
     # 現在三個讀取點全部取自 committed history，並且**先**把未 commit 的差異講出來 ——
     # 那句提示必須在「無變更」那條路徑上也印得到，否則假綠燈依舊。
-    # READ-SITE 10/18
+    # READ-SITE 10/19
     dirty = subprocess.run(["git", "status", "--porcelain", "--", rel, pj_rel],
                            cwd=repo, capture_output=True, text=True, errors="replace")
     if dirty.returncode == 0 and dirty.stdout.strip():
@@ -840,7 +857,7 @@ def check_bumped(root, errs, base, event=None):
     if moved_pj:
         old_lens = moved_pj[: -len("/.claude-plugin/plugin.json")] + "/lenses"
         pathspec = [old_lens, rel]
-    # READ-SITE 11/18
+    # READ-SITE 11/19
     changed = subprocess.run(
         ["git", "diff", "--name-status", "-M", cmp_base, "HEAD", "--", *pathspec],
         cwd=repo, capture_output=True, text=True, errors="replace")
@@ -867,7 +884,7 @@ def check_bumped(root, errs, base, event=None):
         print(msg)
         return
     pj = root / ".claude-plugin" / "plugin.json"
-    # READ-SITE 12/18
+    # READ-SITE 12/19
     cur = subprocess.run(["git", "show", f"HEAD:{pj_rel}"],
                          cwd=repo, capture_output=True, text=True, errors="replace")
     if cur.returncode != 0:
@@ -888,7 +905,7 @@ def check_bumped(root, errs, base, event=None):
     if now_obj is None:
         return
     now = now_obj.get("version", "")
-    # READ-SITE 13/18
+    # READ-SITE 13/19
     old = subprocess.run(
         ["git", "show", f"{cmp_base}:{pj_rel}"],
         cwd=repo, capture_output=True, text=True, errors="replace")
@@ -900,7 +917,7 @@ def check_bumped(root, errs, base, event=None):
         if moved:
             print(f"note: pack 在 base 時位於 {moved[: -len('/.claude-plugin/plugin.json')]}"
                   f"（本次改名為 {pack_rel}）—— 用舊路徑比對版本")
-            # READ-SITE 14/18
+            # READ-SITE 14/19
             old = subprocess.run(["git", "show", f"{cmp_base}:{moved}"],
                                  cwd=repo, capture_output=True, text=True, errors="replace")
             if old.returncode != 0:
@@ -950,7 +967,7 @@ def check_lens_dir_shape(root, errs):
         errs.append(f"::error::找不到 {d} —— 空的 pack 不貢獻任何東西")
         return []
     good = []
-    for p in sorted(d.iterdir()):                                        # READ-SITE 15/18
+    for p in sorted(d.iterdir()):                                        # READ-SITE 15/19
         rel = ann_path(p, root)
         # #33 verify R6：先前用 `p.suffix != ".csv"` 判定，而 pathlib 對 dotfile 回傳空
         # suffix（`Path(".DS_Store").suffix == ""`）→ 一個 .DS_Store 就讓整支 exit 1，
@@ -1027,7 +1044,7 @@ def builtin_lens_keys(repo, errs):
         return None
     out = {}
     try:
-        with cat.open(newline="", encoding="utf-8-sig") as fh:             # READ-SITE 16/18
+        with cat.open(newline="", encoding="utf-8-sig") as fh:             # READ-SITE 16/19
             reader = csv.DictReader(fh)
             fields = list(reader.fieldnames or [])
             if "profile" not in fields or "key" not in fields:
@@ -1080,7 +1097,7 @@ def check_csvs(root, errs, files):
             # #33 verify R14（regression E-2 / logic L-7）：lister 讀 `PAI_HARNESS`，先前繼承整個環境——
             # 「檢查的路徑」與「求值的路徑」是兩份規格（逐字是 R6 在 check_marketplace_sync 修過的缺陷）。
             # 顯式傳入被 containment 過的那一個。
-            # READ-SITE 17/18
+            # READ-SITE 17/19
             r = subprocess.run(["bash", str(lister)], capture_output=True, text=True, errors="replace",
                                env={**os.environ, "PAI_HARNESS": str(harness)})
             if r.returncode != 0:
@@ -1105,7 +1122,7 @@ def check_csvs(root, errs, files):
         # #33 verify R4：header 要看 reader.fieldnames，不能從 rows[0].keys() 反推 ——
         # 反推看不出重複欄位（DictReader 會覆蓋），也看不出多餘欄位（跑進 restkey）。
         try:
-            with path.open(newline="", encoding="utf-8-sig") as fh:        # READ-SITE 18/18
+            with path.open(newline="", encoding="utf-8-sig") as fh:        # READ-SITE 18/19
                 reader = csv.DictReader(fh, restkey="__extra__", restval=None)
                 fieldnames = list(reader.fieldnames or [])
                 rows = list(reader)
@@ -1210,12 +1227,16 @@ def check_csvs(root, errs, files):
         if known_profiles is not None and profile not in known_profiles:
             errs.append(
                 f"::error file={rel}::'{profile}' 不是既有 profile"
-                f"（真源 PROFILES 有：{', '.join(sorted(known_profiles))}）。"
+                f"（真源 PROFILES 有：{wc(', '.join(sorted(known_profiles)))}）。"
                 "pack 只能為既有 profile 加 lens —— CSV 描述不了 profile 級的 "
                 "title/daFocus/codexDefault，新 profile 必須改 PROFILES（層 ①）")
             continue
 
-        print(f"{rel}: {len(rows)} 條 lens ✓（profile '{profile}'）")
+        if known_profiles is None:
+            # R15 DA-4：profile 名沒驗（不在 monorepo 內／lister 拿不到）就不能打勾——那是肯定式假訊息的形狀。
+            print(f"{rel}: {len(rows)} 條 lens（CSV 形狀 ✓；profile '{profile}' 名未驗——profile 名稱閘門沒有跑）")
+        else:
+            print(f"{rel}: {len(rows)} 條 lens ✓（profile '{profile}'）")
 
         # 這段是**啟發式提示**，不是事實判定 —— 見 collector_wiring() 的註解。
         # R14 L-1：repo 拿不到時整段不跑——先前印「沒有 ensemble-<profile>-review 這支 skill」，那是假的
@@ -1306,6 +1327,10 @@ def main():
         # 不跑，卻沒有任何一句話說它沒跑。本檔對每一道跑不成的閘門都有一句具名的「沒有跑」，這裡也要。
         errs.append("::error::check_csvs 沒有跑（前一道閘門 check_lens_dir_shape 未跑完，拿不到 lens 檔案清單）"
                     "—— 撞名、profile 名、CSV 形狀三項都沒有檢查")
+    else:
+        # #33 verify R15（logic L-4）：R14 只修了 None，`[]`（lenses/ 沒有任何合法 CSV）同樣讓四道檢查整段不跑且零訊息。
+        errs.append("::error::check_csvs 沒有跑（lenses/ 沒有任何合法的 CSV 檔）—— 撞名、profile 名、CSV 形狀、"
+                    "catalog 與 pai-list-profiles 的存在性都沒有檢查；上面的檔名錯誤修好後它們才會跑")
     # #33 verify R14（logic L-3b）：drain 迴圈先前不在任何 gate 內——emit() 一拋（surrogate + strict locale），
     # 已累積的 annotation 全部消失 + 裸 traceback，正是 gate() 存在的理由本身。印不出來的那條退化成 ASCII 留痕。
     for e in errs:

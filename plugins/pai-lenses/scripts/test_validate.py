@@ -15,19 +15,19 @@
 mutation」。**那三句話會讓下一個維護者以為改動 `validate.py` 有測試網接著。**
 
 現在用 `scripts/mutation_check.py` 量：跑一次就知道哪些閘門沒有測試網。
-**最近一次量測（R14 後）：92 個靶 → 89 殺 / 0 存活 / 0 靶壞**（另 3 個 `EXPECTED_SURVIVE`，不計入存活；
-全輪原始結果是 88 殺／1 存活——「lister 不存在」在 stderr 不再進 annotation 之後與下游 rc=127 的訊息只差在
-說對原因，測試補斷言具名訊息後單獨重跑轉殺；斷言只加嚴，已殺者不會復活；
-數字與存活清單請跑一次 `mutation_check.py`——一輪約三十分鐘，不是先前五處寫的「十分鐘」，R14 DA-N1）。
-R14 新增 9 個靶（repo_root None 在 CI 報錯、缺 repo 不印假 warning、root manifest 與 SKILL.md 的 containment、
-lenses/ 目錄層邊界不依賴 repo_root、PAI_HARNESS 顯式傳入、lister stderr 不進 annotation、check_csvs 相依的具名回報、
-drain 保護），每個都先在副本上單獨驗過會被殺。`EXPECTED_SURVIVE` 從 4 回到 3：R13 放進去的「pack_name 讀取的
-containment」理由是假的（那個 name 會被 print；只是 committed symlink 到不了那行、dirty worktree 才到得了——R14 DA），
-現在有 dirty-worktree 形狀的測試網，靶轉殺。規則明寫在 mutation_check.py：每一條進來的靶都要能回答「關掉它，哪一行
-輸出會變」。剩下 3 個：`_find_pack_at` git 分支的兩個守衛依構造不可達（R12 logic L3 / DA-6，保留為防禦）、
-「換回 splitlines()」（R12 的 LineSanitiser 對每一段獨立判定，過度切段只會過度消毒）。
-R13 修法的 `main()` 逐閘門隔離曾讓第一次全輪跑出 8 個假存活（守衛被刪掉後只剩一條「validator 內部錯誤」），
-修在 `Fixture.run`（預設拒絕那個字串）一處；R12 曾判「catalog 缺檔」為 equivalent——不是：守衛的價值是**說對原因**。
+**最近一次量測（R15 後）：96 個靶 → 93 殺 / 0 存活 / 0 靶壞**（另 3 個 `EXPECTED_SURVIVE`，不計入存活；
+數字與存活清單請跑一次 `mutation_check.py`——一輪約 30–40 分鐘）。**這是複合值，明寫**：全輪跑的是 DA 修補前的
+副本（94 靶）→ 89 殺／2 存活（「沒有合法 csv」與「check_csvs 沒有跑的具名訊息」——main() 新加的 `[]` 訊息與
+它們各自的訊息共用了「沒有任何合法」／「check_csvs 沒有跑」字串，測試補斷言具名原因後單靶重跑轉殺）；DA 修補新增的
+2 靶（NO_REPO_GATES 少列一道、base 字串經 wc()）各自單獨驗殺。斷言只加嚴、已殺者不會復活，但下一輪請重跑全輪。
+R15 新增 4 個靶（check_csvs 空清單的具名訊息、profile 清單經 wc()、NO_REPO_GATES 少列一道、merge-base stderr 經 wc()），各自單獨驗過會被殺。R14 的量測是
+88 殺／1 存活（「lister 不存在」在 stderr 不再進 annotation 後與 rc=127 的訊息只差在說對原因，補斷言後單靶重跑轉殺）。
+`EXPECTED_SURVIVE` 3 個：`_find_pack_at` git 分支的兩個守衛依構造不可達（R12 logic L3 / DA-6，保留為防禦）、
+「換回 splitlines()」（LineSanitiser 對每一段獨立判定，過度切段只會過度消毒）。規則明寫在 mutation_check.py：每一條
+進來的靶都要能回答「關掉它，哪一行輸出會變」（R14 把「pack_name 讀取的 containment」放進去的理由是假的——
+dirty worktree 到得了那行 print——現在它有測試網）。
+R13 修法的 `main()` 逐閘門隔離曾讓一輪跑出 8 個假存活（守衛被刪掉後只剩一條「validator 內部錯誤」），修在
+`Fixture.run`（預設拒絕那個字串）一處；R12 曾判「catalog 缺檔」為 equivalent——不是：守衛的價值是**說對原因**。
 R11 曾寫「四個存活皆 equivalent」：一個判定為假（containment 靶，已補 `./docs/evil` fixture 轉紅）、
 兩個理由為假（那兩個是死碼，不是互為後盾）。
 
@@ -479,7 +479,9 @@ class ValidateTest(unittest.TestCase):
     def test_lenses_dir_with_no_csv_is_error(self):
         for f in (self.fx.repo / "plugins/pai-lenses/lenses").iterdir():
             f.unlink()
-        self.assertRed(contains="沒有任何合法")
+        # R15 全輪量測：check_lens_dir_shape 自己的訊息與 main() 新加的「check_csvs 沒有跑（沒有合法 CSV）」都含
+        # 「沒有任何合法」——只斷言那四個字分不出這道守衛。守衛的價值是**說對原因**（同 R13/R14 的兩個先例）。
+        self.assertRed(contains="lenses/ 下沒有任何合法的 <profile>.csv")
 
     def test_unrecognised_truthy_value_warns(self):
         """`override=maybe` 會被當成 false —— 貢獻者以為標了。"""
@@ -1296,7 +1298,7 @@ class ValidateTest(unittest.TestCase):
         rc=0，外加一則肯定式假 warning（「沒有 ensemble-code-review 這支 skill」）。
         同檔的 no-base 路徑早有「本機 note ／ CI errs」分流（R4/R5），這裡沒有。"""
         self._unlink_root_marketplace()
-        out = self.assertRed(ci=True, contains="五道閘門")
+        out = self.assertRed(ci=True, contains="道閘門都沒有跑")
         self.assertIn("marketplace.json", out)
         self.assertNotIn("沒有 ensemble-code-review", out, "找不到 repo 時不得印那句假 warning")
 
@@ -1304,7 +1306,7 @@ class ValidateTest(unittest.TestCase):
         """同上，本機分支：可以只 note，但那句假 warning 一樣不得出現。"""
         self._unlink_root_marketplace()
         out = self.assertGreen()
-        self.assertIn("五道閘門", out)
+        self.assertIn("道閘門都沒有跑", out)
         self.assertNotIn("沒有 ensemble-code-review", out)
 
     def test_lenses_containment_holds_even_without_monorepo_root(self):
@@ -1388,8 +1390,9 @@ class ValidateTest(unittest.TestCase):
             sys.argv, V.check_lens_dir_shape, V.RAW_OUT = orig
         out = buf.getvalue() + plain.getvalue()
         self.assertEqual(rc, 1, out)
-        self.assertIn("check_csvs", out, "要指名 check_csvs 沒有跑")
-        self.assertIn("沒有跑", out)
+        self.assertIn("check_csvs 沒有跑（前一道閘門 check_lens_dir_shape 未跑完", out,
+                      "要指名 check_csvs 沒有跑，且說對原因（R15 全輪：`elif files is None` 被關掉會落到 `[]` 的訊息）")
+        self.assertNotIn("沒有任何合法的 CSV 檔", out, "None 與 [] 是兩個原因，不得混")
         self.assertNotIn("其餘閘門的結果仍在下面", out, "這句在相依路徑上是假的，不得再印")
 
     def test_drain_survives_an_emit_failure(self):
@@ -1437,29 +1440,73 @@ class ValidateTest(unittest.TestCase):
         self.assertNotIn("EXFIL-CANARY-QQ7", out, out)
 
     def test_every_filesystem_read_site_is_enumerated(self):
-        """R14 logic L-2 / security S1：R13 放行條件「validator 只讀本 repo 內的檔」改成**封閉列舉**
-        整條沒做——站點數 5→6→7→8→9→11 每次都是 reviewer 數出來的。現在 validate.py 每個讀檔／
-        執行站點都必須帶 `# READ-SITE k/N` 標記，且 N 與實際站點數、與封閉列舉表的列數一致；
-        新增一個沒標記的 `read_text(` / `.open(` / `subprocess.run(` / `iterdir(` 這條就紅。"""
-        src = (PACK / "scripts/validate.py").read_text(encoding="utf-8").splitlines()
-        call = re.compile(r"read_text\(|\.open\(|subprocess\.run\(|iterdir\(|read_bytes\(|json\.load\(")
+        """R14 logic L-2 / security S1 → R15 L-1 / F1 / F4 / S-1：R14 用**六種字面拼法的 regex** 當偵測器，
+        四個 lens 各自注入 `open(`／`glob`／`Popen`／`os.listdir`／`check_output`／`shutil.copy` 全部靜默穿過，
+        而 `validate.py` 反向檢查的 `glob(` 本來就是表外站點。偵測改走 AST：任何 Call 只要呼叫名落在
+        `READ_CALLS`（封閉列舉，寫在 validate.py 旁邊）或 base 是 `subprocess`／`shutil`／`os` 的 spawn／walk
+        家族，就必須帶 `# READ-SITE k/N`（同一行或前一行），且 N == len(READ_SITES) == 標記數。
+        純 metadata 述詞（is_file/is_dir/exists/stat/resolve/relative_to）**不在列舉內、不得類推**：
+        它們不回傳內容也不起子行程，containment 本身就是由 resolve() 組成的。"""
+        import ast
+        path = PACK / "scripts/validate.py"
+        src = path.read_text(encoding="utf-8"); lines = src.split("\n")   # 不用 splitlines：檔內有 \v／U+2028 字面
+        sys.path.insert(0, str(HERE)); import validate as V
+        tree = ast.parse(src)
         tag = re.compile(r"READ-SITE (\d+)/(\d+)")
-        tagged, untagged = [], []
-        for i, line in enumerate(src):
-            if line.lstrip().startswith("#") or not call.search(line):
+        hits, untagged, tagged = [], [], []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
                 continue
-            m = tag.search(line) or (tag.search(src[i - 1]) if i else None)
-            (tagged if m else untagged).append((i + 1, line.strip()[:70]))
-            if m: tagged[-1] = (int(m.group(1)), int(m.group(2)))
+            f = node.func
+            name = f.attr if isinstance(f, ast.Attribute) else (f.id if isinstance(f, ast.Name) else None)
+            base = None
+            if isinstance(f, ast.Attribute):
+                b = f.value
+                while isinstance(b, ast.Attribute):
+                    b = b.value
+                base = b.id if isinstance(b, ast.Name) else None
+            flagged = (name in V.READ_CALLS) or (base in V.READ_MODULES and name not in V.READ_MODULE_PURE)
+            if not flagged:
+                continue
+            ln = node.lineno
+            m = tag.search(lines[ln - 1]) or (tag.search(lines[ln - 2]) if ln >= 2 else None)
+            hits.append((ln, name))
+            if m:
+                tagged.append((int(m.group(1)), int(m.group(2))))
+            else:
+                untagged.append((ln, name, lines[ln - 1].strip()[:60]))
         self.assertEqual(untagged, [], f"沒有 READ-SITE 標記的讀檔／執行站點：{untagged}")
         totals = {t for _, t in tagged}
         self.assertEqual(len(totals), 1, f"總數 N 不一致：{totals}")
         n = totals.pop()
         self.assertEqual(sorted(k for k, _ in tagged), list(range(1, n + 1)), tagged)
-        self.assertIn("READ_SITES = ", "\n".join(src), "封閉列舉表 READ_SITES 必須存在")
-        sys.path.insert(0, str(HERE))
-        import validate as V
         self.assertEqual(len(V.READ_SITES), n, "封閉列舉表的列數必須等於標記總數")
+        self.assertGreaterEqual(len(hits), 19, "AST 至少要看到 R15 點名的反向 glob 那一處")
+
+    def test_read_site_detector_catches_unlisted_call_shapes(self):
+        """R15 的 lens 各自注入的七種形狀，逐一確認新偵測器會紅（在本測試自己的 AST 走訪上驗，不改 tracked 檔）。"""
+        import ast
+        sys.path.insert(0, str(HERE)); import validate as V
+        def any_flagged(snippet):
+            for node in ast.walk(ast.parse(snippet)):
+                if not isinstance(node, ast.Call):
+                    continue
+                f = node.func
+                name = f.attr if isinstance(f, ast.Attribute) else (f.id if isinstance(f, ast.Name) else None)
+                b = f.value if isinstance(f, ast.Attribute) else None
+                while isinstance(b, ast.Attribute):
+                    b = b.value
+                base = b.id if isinstance(b, ast.Name) else None
+                if (name in V.READ_CALLS) or (base in V.READ_MODULES and name not in V.READ_MODULE_PURE):
+                    return True
+            return False
+        for snippet in ("open(p).read()", "p.glob('*')", "subprocess.Popen(['x'])", "os.listdir(p)",
+                        "subprocess.check_output(['x'])", "shutil.copy(a, b)", "os.scandir(p)", "p.rglob('*')",
+                        "os.walk(p)", "os.popen('x')", "json.load(fh)", "p.read_bytes()", "os.system('x')"):
+            self.assertTrue(any_flagged(snippet), f"{snippet} 沒被偵測器認出")
+        for snippet in ("p.is_file()", "p.resolve()", "p.exists()", "os.environ.get('X')", "p.relative_to(r)",
+                        "os.path.normpath(x)", "os.path.isabs(x)"):
+            self.assertFalse(any_flagged(snippet), f"{snippet} 是 metadata／環境／純字串運算，明示不在列舉內")
 
     def test_ci_neutraliser_is_the_same_implementation_as_the_output_boundary(self):
         """R14 logic L-4 / security S2：CI 的 sed 中和器是第二份實作——`[[:space:]]` 比 .NET
@@ -1486,6 +1533,75 @@ class ValidateTest(unittest.TestCase):
                            input=b"\xff\xfe::error::x\n", capture_output=True)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertNotIn(b"\n::error", b"\n" + r.stdout)
+
+    # ---- #33 verify R15 ----
+
+    def test_check_csvs_not_running_on_empty_lens_list_is_named(self):
+        """R15 logic L-4：gate 相依只修了 `files is None`；`files == []`（lenses/ 沒有任何合法 CSV）時
+        check_csvs 整支不跑（撞名、profile 名、catalog 與 lister 存在性四道檢查）且零訊息。"""
+        lenses = self.fx.repo / "plugins/pai-lenses/lenses"
+        for p in lenses.iterdir():
+            p.unlink()
+        (lenses / "BAD.CSV").write_text("key,focus\n", encoding="utf-8")
+        out = self.assertRed()
+        self.assertIn("check_csvs 沒有跑", out, out)
+
+    def test_profile_list_in_annotation_is_neutralised_and_bounded(self):
+        """R15 security S-2：lister 的 stderr 不進 annotation 了，但 **stdout**（PROFILES 的 key）仍原樣進
+        「真源 PROFILES 有：…」——harness 是 PR 可控的 JS，key 可以是任意字串（含 `::`），也可以從
+        repo 外檔案算出來。類級規則：任何子行程輸出進 annotation 都經 wc()（截斷 + 中和），這裡是第二處。"""
+        h = self.fx.repo / "plugins/parallel-ai-agents/workflows/ensemble-workflow.js"
+        src = h.read_text(encoding="utf-8")
+        canary = "SECRET-FROM-OUTSIDE-" + "X" * 400
+        src = src.replace("const PROFILES = {", "const PROFILES = {\n  '" + canary + "': { lenses: [] },", 1)
+        h.write_text(src, encoding="utf-8")
+        self.fx.write_lenses('key,focus\nx,"y"\n', profile="no-such-profile")
+        out = self.assertRed(contains="真源 PROFILES 有")
+        line = next(l for l in out.splitlines() if "真源 PROFILES 有" in l)
+        self.assertIn("…（截斷）", line, "子行程 stdout 進 annotation 必須經 wc() 截斷")
+        self.assertNotIn(canary, line, "整段內容不得原樣進 annotation")
+
+    def test_mutation_check_restores_validate_on_sigterm(self):
+        """R15 requirements F9：mutation 一輪被 SIGTERM 砍掉時（不是 Ctrl-C），被 mutate 的 validate.py
+        無聲留在工作樹。handler 把 SIGTERM／SIGHUP 轉成 SystemExit，讓既有的 BaseException 還原路徑跑到。"""
+        import signal
+        sys.path.insert(0, str(HERE)); import mutation_check as M
+        M.install_restore_signals()
+        for sig in (signal.SIGTERM, signal.SIGHUP):
+            h = signal.getsignal(sig)
+            self.assertTrue(callable(h) and h is M._on_term, f"{sig} 沒有掛上還原 handler")
+        with self.assertRaises(SystemExit):
+            M._on_term(signal.SIGTERM, None)
+
+    def test_no_repo_report_names_every_gate_in_the_closed_list(self):
+        """R15 DA-3：`NO_REPO_GATES` 是本 commit 新造的手寫封閉列舉，零測試零靶。訊息必須逐一點名清單裡的每道閘門，
+        且數量由清單算出——刪掉一條就紅。"""
+        sys.path.insert(0, str(HERE)); import validate as V
+        self._unlink_root_marketplace()
+        out = self.assertRed(ci=True)
+        for g in V.NO_REPO_GATES:
+            self.assertIn(g, out, f"缺 repo 的回報必須點名 {g}")
+        self.assertIn(f"{len(V.NO_REPO_GATES)} 道閘門", out)
+        self.assertGreaterEqual(len(V.NO_REPO_GATES), 5)
+
+    def test_no_repo_local_run_does_not_print_affirmative_tick_for_unverified_profile(self):
+        """R15 DA-4：report_no_repo() 拿掉了否定式假訊息，卻留下肯定式的——獨立 pack 下不存在的 profile 仍印
+        「N 條 lens ✓（profile 'x'）」。profile 名沒驗就不能打勾。"""
+        self._unlink_root_marketplace()
+        self.fx.write_lenses('key,focus\nx,"y"\n', profile="no-such-profile")
+        out = self.assertGreen()
+        self.assertNotIn("✓（profile 'no-such-profile'）", out, out)
+        self.assertIn("名未驗——profile 名稱閘門沒有跑", out)
+
+    def test_external_strings_entering_annotations_go_through_wc(self):
+        """R15 DA-5：`mb.stderr` 沒走 wc() 而相鄰的 `changed.stderr` 走了。同類且**可觸發**的站點是 `--base` 字串
+        本身（「base ref 'X' 不在本地歷史內」原樣回印）——merge-base 失敗時 git 不印 stderr，那一處的 wc() 是防禦、
+        測不到；這裡釘住同一條規則：任何外部字串進 annotation 一律經 wc()。"""
+        base = "nope-" + "z" * 400
+        rc, out = self.fx.run("--base", base, "--event", "pull_request")
+        self.assertEqual(rc, 1, out)
+        self.assertNotIn("z" * 300, out, "外部字串原樣進了 annotation")
+        self.assertIn("…（截斷）", out)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

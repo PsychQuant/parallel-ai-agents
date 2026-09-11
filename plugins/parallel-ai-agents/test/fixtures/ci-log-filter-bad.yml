@@ -1,0 +1,9 @@
+# fixture for test/lint-ci-log-filter.sh --selftest：一個 run step 既沒有 neutralise.py 也沒有 LOG-FILTER
+jobs:
+  j:
+    steps:
+      - uses: actions/checkout@v4
+      - name: filtered
+        run: echo x | python3 scripts/neutralise.py
+      - name: unmarked
+        run: shellcheck foo.sh

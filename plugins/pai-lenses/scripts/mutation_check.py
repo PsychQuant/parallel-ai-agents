@@ -21,7 +21,7 @@
     python3 scripts/mutation_check.py                  # 完整量測（慢）
     python3 scripts/mutation_check.py --check-targets  # 只驗靶還對得上（秒級，CI 會跑）
 
-**手動跑，不進 CI**（一輪 = 靶數 × 全套測試，目前約 10 分鐘；比照 `ensemble-eval` 的定位）。
+**手動跑，不進 CI**（一輪 = 靶數 × 全套測試，每套測試 20–30 s × 靶數，目前約 30–40 分鐘；比照 `ensemble-eval` 的定位）。
 改動 `validate.py` 的閘門、或新增閘門之後跑一次；存活清單就是待補的測試。
 
 ## 兩個誠實邊界
@@ -45,6 +45,7 @@ mutation test 本身也需要被驗證有沒有真的打中。
 """
 import argparse
 import pathlib
+import signal
 import subprocess
 import sys
 
@@ -238,6 +239,18 @@ MUTATIONS += [
     ("check_csvs 沒有跑的具名訊息（R14 L-3a gate 相依）", "    elif files is None:", "    elif False:"),
     ("drain 迴圈的保護（R14 L-3b）",
      "        except Exception as ex:                     # noqa: BLE001", "        except () as ex:"),
+    # ── #33 verify R15 ──
+    ("check_csvs 空清單的具名訊息（R15 L-4）",
+     '        errs.append("::error::check_csvs 沒有跑（lenses/ 沒有任何合法的 CSV 檔）',
+     '        pass  # ("::error::check_csvs 沒有跑（lenses/ 沒有任何合法的 CSV 檔）'),
+    ("NO_REPO_GATES 少列一道（R15 DA-3：手寫封閉列舉要有網）",
+     '"撞名（builtin-lenses.csv）", ', ''),
+    ("base 字串進 annotation 經 wc()（R15 DA-5 同類：外部字串進 annotation 一律 wc）",
+     "errs.append(f\"::error::base ref '{wc(base)}' 不在本地歷史內",
+     "errs.append(f\"::error::base ref '{base}' 不在本地歷史內"),
+    ("profile 清單經 wc() 進 annotation（R15 S-2）",
+     "f\"（真源 PROFILES 有：{wc(', '.join(sorted(known_profiles)))}）。\"",
+     "f\"（真源 PROFILES 有：{', '.join(sorted(known_profiles))}）。\""),
 ]
 # neutralise.py 不在 mutation 範圍（本 harness 只 mutate validate.py）；它的行為由 test_validate.py 的
 # 兩條 CI 中和測試釘住，且它本身只是把 stdin 接到 LineSanitiser——LineSanitiser 的靶在上面。
@@ -253,6 +266,18 @@ EXPECTED_SURVIVE = {
     # DA-5 預言的後門一輪之後就實現了。現在它有測試網（test_pack_name_containment_keeps_outside_name_out_of_log），
     # 從這裡移除。**每一條進來的靶都要能回答「關掉它，哪一行輸出會變」——答不出來就不是 equivalent，是沒測試。**
 }
+
+
+def _on_term(signum, _frame):
+    """R15 requirements F9：SIGTERM／SIGHUP（不是 Ctrl-C）砍掉一輪時，被 mutate 的 validate.py 無聲留在工作樹——
+    BaseException 那條還原路徑只在 KeyboardInterrupt 才會走。把終止訊號轉成 SystemExit（同樣是 BaseException），
+    讓同一條路徑還原並印提示。SIGKILL 仍救不了：那正是還原提示叫人跑 `git checkout` 的原因。"""
+    raise SystemExit(128 + signum)
+
+
+def install_restore_signals():
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, _on_term)
 
 
 def _apply(name, old, new, src):
@@ -332,6 +357,7 @@ def main():
         return 1
 
     original = VALIDATE.read_text(encoding="utf-8")
+    install_restore_signals()
     survived, killed, broken = [], [], []
     try:
         for name, old, new in MUTATIONS:

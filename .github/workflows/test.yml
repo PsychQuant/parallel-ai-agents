@@ -21,7 +21,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # ── step log 的 PR 可控文字怎麼處理，由 test/lint-ci-log-filter.sh 對**每一個** run step 機械檢查（#33 verify R15）：
+      #    經 ../pai-lenses/scripts/neutralise.py（validate.py LineSanitiser 那一份實作），或 `# LOG-FILTER:` 明示不過濾與理由。
+      #    R14 把這件事寫成散文列舉，R15 四個 lens 各自找到列舉外的 step（shellcheck、lint-*、整個 macOS job）。
+      #    過濾器擋的是 `::`/`##[` 偽造 annotation 與跨 step 的 `::add-mask::`；真正的邊界是 `on: pull_request`
+      #    （非 pull_request_target）+ `contents: read` + 零 secrets——每個 job 本來就執行 PR 自己的程式碼。
       - name: Install bats
+        # LOG-FILTER: none — installs tooling only; prints no PR-controlled text
         run: sudo apt-get update && sudo apt-get install -y bats
         # shellcheck 已預裝在 ubuntu-latest runner
 
@@ -29,20 +35,28 @@ jobs:
         # 寫死清單的形式本身是問題（下一個新增的 script 預設不會被檢查）—— 追蹤於 #30。
         # 這份清單與 test/run.sh 的 shellcheck 行是**兩份**寫死規格；#33 verify R11 抓到兩邊互相
         # 都不是對方的超集（這裡漏了兩支 lint、run.sh 漏了 pai-list-profiles）。改一邊請一併改另一邊。
-        run: shellcheck bin/pai-build-diff bin/pai-parse-verdict bin/pai-iter-commit bin/pai-list-profiles references/regen-builtin-lenses.sh test/lint-bats.sh test/lint-changelog-counts.sh test/lint-contract-enumerations.sh
+        shell: bash
+        run: |
+          set -o pipefail
+          shellcheck bin/pai-build-diff bin/pai-parse-verdict bin/pai-iter-commit bin/pai-list-profiles references/regen-builtin-lenses.sh test/run.sh test/lint-bats.sh test/lint-changelog-counts.sh test/lint-contract-enumerations.sh test/lint-ci-log-filter.sh 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
 
       # Round 6 RC11 (#37): a bare `!` assertion is a no-op under bats' errexit — it recurred four
       # times as a prose rule, so it is a machine rule now, and the guard proves it can fail first.
       - name: lint-bats (bare ! assertions) — selftest, then the suite
-        run: bash test/lint-bats.sh --selftest && bash test/lint-bats.sh
+        shell: bash
+        run: |
+          set -o pipefail
+          { bash test/lint-bats.sh --selftest && bash test/lint-bats.sh; } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
 
-      # ── 這個 job 會把 PR 可控文字印進 step log 的 step（封閉列舉，#33 verify R14 L-5 / S3 / E-1 / F2；不得類推）──
-      #   py_compile（SyntaxError code frame）           → 經 ../pai-lenses/scripts/neutralise.py
-      #   builtin-lenses.csv drift（regen 腳本的 node 例外）→ 經 neutralise.py；diff body 本來就不印
-      #   bats / node tests                              → **不過濾**：它們執行 PR 自己的程式碼，stdout 完全由 PR 決定
+      # #33 verify R15: the step-level "which steps echo PR text" list is a lint, not prose (see top of job).
+      - name: lint-ci-log-filter — selftest, then this workflow
+        shell: bash
+        run: |
+          set -o pipefail
+          { bash test/lint-ci-log-filter.sh --selftest && bash test/lint-ci-log-filter.sh; } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
+
       # 中和只有**一份**實作（validate.py 的 LineSanitiser，neutralise.py 只是把 stdin 接上去）——R13 用 sed 另寫一份，
-      # 第一天就與它分岔（`[[:space:]]` 比 .NET IsWhiteSpace 小、`^` 只認 \n）。過濾器擋的是 `::`/`##[` 偽造 annotation
-      # 與跨 step 的 `::add-mask::`；真正的邊界是 `on: pull_request`（非 pull_request_target）+ `contents: read` + 零 secrets。
+      # 第一天就與它分岔（`[[:space:]]` 比 .NET IsWhiteSpace 小、`^` 只認 \n；R14 L-4 / S2）。
       - name: py_compile
         shell: bash
         run: |
@@ -69,26 +83,43 @@ jobs:
           }
 
       - name: bats
+        # LOG-FILTER: none — runs PR-authored tests; their stdout is the PR's by construction
         run: bats test/
 
       # #33 verify R13 row 11 / R14 F4: the pack integration anchor in pai-collect-lens-layers.bats
       # self-skips when plugins/pai-lenses is missing. On this job that skip was invisible — the macOS
       # job has a no-skip guard for codex-call, this job had none for the anchor that is Implementation
       # Complete item 4's only standing guard. Same guard, one file.
-      - name: bats (pack anchor) — fail on skip
+      # #33 verify R15 (regression F1): R14's copy of the guard could not fire — bats truncates the CJK
+      # skip reason mid-codepoint, grep sees a binary file and `-q` reports no match. `-a` reads it as
+      # text; and the TAP plan-vs-executed check from the macOS job comes along (it was a strict subset).
+      - name: bats (pack anchor) — fail on failure OR on skip
         shell: bash
         run: |
-          TAP=$(mktemp)
-          bats --tap test/pai-collect-lens-layers.bats | tee "$TAP"
-          if grep -qi '# skip' "$TAP"; then
+          set -o pipefail
+          TAP="${RUNNER_TEMP:-/tmp}/pack-anchor.tap"
+          rc=0
+          bats --formatter tap test/pai-collect-lens-layers.bats 2>&1 | tee "$TAP" | python3 ../pai-lenses/scripts/neutralise.py || rc=$?
+          if grep -aq '^not ok' "$TAP"; then
+            echo "::error::a pack-anchor test failed"; exit 1
+          fi
+          if grep -aqi '# skip' "$TAP"; then
             echo "::error::pai-collect-lens-layers.bats skipped a case — the pack integration anchor is vacuous"; exit 1
           fi
+          plan="$(grep -a -m1 -oE '^1\.\.[0-9]+' "$TAP" | sed 's/^1\.\.//')"
+          ran="$(grep -acE '^(ok|not ok) ' "$TAP" || true)"
+          if [ -z "$plan" ] || [ "$ran" -ne "$plan" ]; then
+            echo "::error::TAP plan announces $plan tests but $ran executed — cases were skipped or unknown to bats"; exit 1
+          fi
+          echo "TAP plan $plan == executed $ran"
+          exit "$rc"
 
       # 守備範圍（#33 verify R13 security S2 / DA-4）：validate.py 的輸出邊界只守它自己那個 **step** 的 log
       # （`::stop-commands::` 是 step-scoped；跨 step 的只有 `::add-mask::`）；這裡的 node 測試（以及 bats）是 PR 自己的程式碼，stdout 原樣進 step log —— 那是
       # `on: pull_request` 跑 PR 測試的固有面（`contents: read`、無 secrets、非 pull_request_target），
       # 不是 validate.py 能守的。
       - name: node tests
+        # LOG-FILTER: none — runs PR-authored tests; their stdout is the PR's by construction
         run: for t in test/*.test.mjs; do echo "$t"; node "$t"; done
 
   # codex-call 是 `#!/usr/bin/swift` script（釘 Xcode CLT swift，見 plugin CLAUDE.md），
@@ -109,10 +140,13 @@ jobs:
       # names — every CJK-named case became `unknown test name` and the detach suite executed
       # ZERO cases for four consecutive PR heads while the PR body said "bats 全綠". The job
       # went red each time (the vacuous-green guards below did their job); nobody read it.
+      # ── step log 處理由 test/lint-ci-log-filter.sh 對每一個 run step 機械檢查（見第一個 job 的說明；#33 verify R15）。
       - name: Install bats + a bash that can run it
+        # LOG-FILTER: none — installs tooling only; prints no PR-controlled text
         run: brew install bats-core bash
 
       - name: Assert bats will run under bash ≥ 5 (the system bash 3.2 mangles CJK test names)
+        # LOG-FILTER: none — prints tool versions only
         shell: bash
         run: |
           echo "bats shebang: $(head -1 "$(command -v bats)")"
@@ -122,23 +156,30 @@ jobs:
 
       - name: lint-bats (bare ! assertions) — selftest, then the suite
         shell: bash
-        run: bash test/lint-bats.sh --selftest && bash test/lint-bats.sh
+        run: |
+          set -o pipefail
+          { bash test/lint-bats.sh --selftest && bash test/lint-bats.sh; } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
 
       # Round 10 (RC13, fifth recurrence): the CHANGELOG's "N 個 case（`grep -c "^@test" …`）"
       # claims are checked by running the very command they cite. Prose said "not typed by hand"
       # and was wrong twice; a number that a lint recomputes cannot drift.
       - name: lint-changelog-counts — selftest, then CHANGELOG.md
         shell: bash
-        run: bash test/lint-changelog-counts.sh --selftest && bash test/lint-changelog-counts.sh
+        run: |
+          set -o pipefail
+          { bash test/lint-changelog-counts.sh --selftest && bash test/lint-changelog-counts.sh; } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
 
       # Round 11 (R11-1): the contract's self-declared closed lists (stdout tokens per section,
       # exit-1 answers, abort-table row count, §6 cardinality, R10-B5s pattern uniqueness) are
       # checked against bin/codex-call. Round 10 drifted on four of them in one commit.
       - name: lint-contract-enumerations — selftest, then the real contract
         shell: bash
-        run: bash test/lint-contract-enumerations.sh --selftest && bash test/lint-contract-enumerations.sh
+        run: |
+          set -o pipefail
+          { bash test/lint-contract-enumerations.sh --selftest && bash test/lint-contract-enumerations.sh; } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
 
       - name: Assert swift toolchain is usable (the real gate — a present shim is not enough)
+        # LOG-FILTER: none — prints tool versions only
         run: swift --version
 
       # Glob rather than an explicit list, so a future macOS-only bats file is picked up
@@ -153,6 +194,7 @@ jobs:
         # since `grep -q '^ok'` alone is satisfied by any single passing sibling.
         shell: bash
         run: |
+          # LOG-FILTER: none — runs PR-authored tests; their stdout is the PR's by construction
           set -o pipefail
           TAP="${RUNNER_TEMP:-/tmp}/codex-call-bats.tap"
           # Capture bats' status instead of letting errexit abort here: with pipefail
@@ -213,14 +255,13 @@ jobs:
       # 那種缺陷用讀的抓不到。每條測試對應一個真實發生過的缺陷。
       # 這套測試自己的鑑別力**用 scripts/mutation_check.py 量**，不靠宣稱（#33 verify R8：
       # 初版的 20 個閘門 mutation 有 18 個存活，而當時三處文件都寫著「都做過 mutation」）。
-      # mutation_check.py 手動跑、不進 CI（一輪 = 靶數 × 全套測試，約三三十分鐘）——
+      # mutation_check.py 手動跑、不進 CI（一輪 = 靶數 × 全套測試，約 30–40 分鐘）——
       # 這裡刻意不寫靶數，寫了就會過期，而過期的數字正是本 PR 一路在修的東西。
       # #33 verify R9 M20：py_compile 的寫死清單只涵蓋主 plugin 的兩支，本 pack 新增的
       # 三支 Python 只有 validate.py / test_validate.py 因為被執行而間接驗過語法，
       # mutation_check.py **在任何地方都沒被語法檢查**。用 glob 而非清單。
-      # ── 這個 job 會把 PR 可控文字印進 step log 的 step（封閉列舉，#33 verify R14 L-4/L-5/S2/S3；不得類推）──
-      #   py_compile（SyntaxError code frame）、test_validate.py（unittest 把每條 docstring 第一行印在第 0 欄）、
-      #   mutation_check.py --check-targets（靶名）→ 三者都經 scripts/neutralise.py；validate.py → 自己的 LineSanitiser。
+      # ── step log 處理由 test/lint-ci-log-filter.sh 對每一個 run step 機械檢查（#33 verify R15）：py_compile、
+      #   test_validate.py、mutation_check.py 經 scripts/neutralise.py；validate.py 自帶 LineSanitiser（in-process）。
       # R13 DA-4 之後這裡曾用一行 sed 做中和——第二份實作，第一天就分岔（`[[:space:]]` 比 .NET IsWhiteSpace 小、
       # `^` 只認 \n；R14 L-4 / S2 各自端到端穿過）。現在「行」與「行首空白」只有 validate.py 那一個定義。
       # `set -o pipefail` 讓上游的非零仍然紅（R14 regression E-6 實測生效）。
@@ -268,6 +309,7 @@ jobs:
           PUSH_BEFORE: ${{ github.event.before }}
           EVENT_NAME: ${{ github.event_name }}
         run: |
+          # LOG-FILTER: in-process
           BASE="$PR_BASE"
           if [ -z "$BASE" ] && [ -n "$PUSH_BEFORE" ] \
              && [ "$PUSH_BEFORE" != "0000000000000000000000000000000000000000" ]; then

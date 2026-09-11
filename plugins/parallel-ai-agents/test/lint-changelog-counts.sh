@@ -22,6 +22,11 @@ if [ "${1:-}" = "--selftest" ]; then
     echo "lint-changelog-counts selftest FAILED: a claim on an absent ../sibling file must be skipped, not rejected" >&2
     exit 1
   fi
+  # R15：sibling 目錄在、檔案不在 → 必須拒絕（不然 `../pai-lenses/no-such.py` 就是永久豁免）
+  if bash test/lint-changelog-counts.sh test/fixtures/changelog-count-sibling-file-missing.md >/dev/null 2>&1; then
+    echo "lint-changelog-counts selftest FAILED: a claim on a missing file inside a PRESENT ../sibling must be rejected" >&2
+    exit 1
+  fi
   echo "lint-changelog-counts selftest ok: fixture rejected"
   exit 0
 fi
@@ -44,11 +49,14 @@ for f in sys.argv[1:]:
         for m in CLAIM.finditer(line):
             seen += 1
             claimed, pattern, path = int(m.group(1)), m.group(2), m.group(3)
-            # 封閉規則：只有 `../` 開頭（sibling plugin）的路徑允許不存在——plugin cache 副本沒有 sibling，
-            # 那不是「數字錯」。plugin 自己底下的檔案不在就照常算失敗。
+            # 封閉規則：只有 `../<sibling>/…` 的路徑、且 **sibling 目錄本身不存在**（非 monorepo 佈局）時才跳過——
+            # R14 版只看「檔案不存在」，一條指向 `../pai-lenses/沒有的檔` 的宣稱在 monorepo 裡也會被跳過、永遠不被驗
+            # （R14 S5 / R15 security LOW：`99999` rc=0 的自我豁免後門）。sibling 目錄在、檔案不在 → 照常算失敗。
             if path.startswith('../') and not os.path.exists(path):
-                print(f"{f}:{n}: note: {path} 不在這個 checkout（非 monorepo 佈局）—— 這條宣稱本次無法驗證，跳過", file=sys.stderr)
-                continue
+                sibling = os.path.join(*path.split('/')[:2])          # `../pai-lenses`
+                if not os.path.isdir(sibling):
+                    print(f"{f}:{n}: note: {sibling} 不在這個 checkout（非 monorepo 佈局）—— 這條宣稱本次無法驗證，跳過", file=sys.stderr)
+                    continue
             out = subprocess.run(['grep', '-c', pattern, path], capture_output=True, text=True)
             actual = out.stdout.strip()
             if not actual.isdigit() or int(actual) != claimed:
