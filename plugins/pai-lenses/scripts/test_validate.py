@@ -15,13 +15,10 @@
 mutation」。**那三句話會讓下一個維護者以為改動 `validate.py` 有測試網接著。**
 
 現在用 `scripts/mutation_check.py` 量：跑一次就知道哪些閘門沒有測試網。
-**最近一次量測（R15 後）：96 個靶 → 93 殺 / 0 存活 / 0 靶壞**（另 3 個 `EXPECTED_SURVIVE`，不計入存活；
-數字與存活清單請跑一次 `mutation_check.py`——一輪約 30–40 分鐘）。**這是複合值，明寫**：全輪跑的是 DA 修補前的
-副本（94 靶）→ 89 殺／2 存活（「沒有合法 csv」與「check_csvs 沒有跑的具名訊息」——main() 新加的 `[]` 訊息與
-它們各自的訊息共用了「沒有任何合法」／「check_csvs 沒有跑」字串，測試補斷言具名原因後單靶重跑轉殺）；DA 修補新增的
-2 靶（NO_REPO_GATES 少列一道、base 字串經 wc()）各自單獨驗殺。斷言只加嚴、已殺者不會復活，但下一輪請重跑全輪。
-R15 新增 4 個靶（check_csvs 空清單的具名訊息、profile 清單經 wc()、NO_REPO_GATES 少列一道、merge-base stderr 經 wc()），各自單獨驗過會被殺。R14 的量測是
-88 殺／1 存活（「lister 不存在」在 stderr 不再進 annotation 後與 rc=127 的訊息只差在說對原因，補斷言後單靶重跑轉殺）。
+**最近一次量測（R16 後）：98 個靶 → 95 殺 / 0 存活 / 0 靶壞**（另 3 個 `EXPECTED_SURVIVE`，不計入存活；
+數字與存活清單請跑一次 `mutation_check.py`——一輪約 30–50 分鐘）。**複合值，明寫**：全輪跑的是 DA 修補前的副本（靶集相同 98 個）→ 93 殺／2 存活——存活的兩個都是 emit() 自己的中和層（上游現在都先 wc()，端到端再也碰不到它），補一條直接呼叫 emit() 的單元測試後單靶重跑轉殺；DA 修補只加測試與 wc() 包裹、不動靶。斷言只加嚴、已殺者不會復活，但下一輪請重跑全輪。
+R16 新增 2 個靶（version 字串／dirty 路徑清單進 annotation 經 wc()），各自單獨驗殺；R15 的量測是 94 靶 89／2
+（補斷言後單靶轉殺）＋ DA 修補 2 靶單獨驗殺 → 93／0／3 複合值。
 `EXPECTED_SURVIVE` 3 個：`_find_pack_at` git 分支的兩個守衛依構造不可達（R12 logic L3 / DA-6，保留為防禦）、
 「換回 splitlines()」（LineSanitiser 對每一段獨立判定，過度切段只會過度消毒）。規則明寫在 mutation_check.py：每一條
 進來的靶都要能回答「關掉它，哪一行輸出會變」（R14 把「pack_name 讀取的 containment」放進去的理由是假的——
@@ -145,6 +142,18 @@ class Fixture:
 
     def cleanup(self):
         shutil.rmtree(self.dir, ignore_errors=True)
+
+
+def read_call_flagged(call, V):
+    """validate.py 讀檔／執行站點的判定式（單一真源；R16 DA-5：先前在兩條測試裡各寫一份）。"""
+    import ast
+    f = call.func
+    name = f.attr if isinstance(f, ast.Attribute) else (f.id if isinstance(f, ast.Name) else None)
+    b = f.value if isinstance(f, ast.Attribute) else None
+    while isinstance(b, ast.Attribute):
+        b = b.value
+    base = b.id if isinstance(b, ast.Name) else None
+    return (name in V.READ_CALLS) or (base in V.READ_MODULES and name not in V.READ_MODULE_PURE)
 
 
 class ValidateTest(unittest.TestCase):
@@ -882,8 +891,19 @@ class ValidateTest(unittest.TestCase):
         rc, out = self.fx.run()
         self.assertEqual(rc, 1, out)
         cmds = [ln for ln in out.splitlines() if ln.startswith("::")]
-        self.assertTrue(any(ln.endswith("…（截斷）") for ln in cmds), out)
+        # R16：外部字串現在在進 annotation 前就先被 wc() 截到 200 字（截斷標記落在句中），emit() 的 4000 上限是
+        # 第二層——端到端只能看到第一層；第二層直接對 emit() 驗。
+        self.assertTrue(any("…（截斷）" in ln for ln in cmds), out)
         self.assertFalse(any(len(ln) > 4200 for ln in cmds), "超長的 annotation 沒被截斷")
+        import io
+        sys.path.insert(0, str(HERE)); import validate as V
+        buf = io.StringIO(); V.RAW_OUT = buf
+        try:
+            V.emit("::error::" + "A" * 5000)
+        finally:
+            V.RAW_OUT = None
+        line = buf.getvalue().rstrip("\n")
+        self.assertTrue(line.endswith("…（截斷）") and len(line) <= 4200, len(line))
 
     def test_duplicate_entry_name_with_remote_source_is_error(self):
         """R11 #2：`entry_names.add()` 在所有 `continue` 之後 —— 第二條同名 entry 只要
@@ -1457,17 +1477,10 @@ class ValidateTest(unittest.TestCase):
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
+            if not read_call_flagged(node, V):
+                continue
             f = node.func
             name = f.attr if isinstance(f, ast.Attribute) else (f.id if isinstance(f, ast.Name) else None)
-            base = None
-            if isinstance(f, ast.Attribute):
-                b = f.value
-                while isinstance(b, ast.Attribute):
-                    b = b.value
-                base = b.id if isinstance(b, ast.Name) else None
-            flagged = (name in V.READ_CALLS) or (base in V.READ_MODULES and name not in V.READ_MODULE_PURE)
-            if not flagged:
-                continue
             ln = node.lineno
             m = tag.search(lines[ln - 1]) or (tag.search(lines[ln - 2]) if ln >= 2 else None)
             hits.append((ln, name))
@@ -1488,24 +1501,14 @@ class ValidateTest(unittest.TestCase):
         import ast
         sys.path.insert(0, str(HERE)); import validate as V
         def any_flagged(snippet):
-            for node in ast.walk(ast.parse(snippet)):
-                if not isinstance(node, ast.Call):
-                    continue
-                f = node.func
-                name = f.attr if isinstance(f, ast.Attribute) else (f.id if isinstance(f, ast.Name) else None)
-                b = f.value if isinstance(f, ast.Attribute) else None
-                while isinstance(b, ast.Attribute):
-                    b = b.value
-                base = b.id if isinstance(b, ast.Name) else None
-                if (name in V.READ_CALLS) or (base in V.READ_MODULES and name not in V.READ_MODULE_PURE):
-                    return True
-            return False
+            return any(isinstance(n, ast.Call) and read_call_flagged(n, V) for n in ast.walk(ast.parse(snippet)))
         for snippet in ("open(p).read()", "p.glob('*')", "subprocess.Popen(['x'])", "os.listdir(p)",
                         "subprocess.check_output(['x'])", "shutil.copy(a, b)", "os.scandir(p)", "p.rglob('*')",
                         "os.walk(p)", "os.popen('x')", "json.load(fh)", "p.read_bytes()", "os.system('x')"):
             self.assertTrue(any_flagged(snippet), f"{snippet} 沒被偵測器認出")
         for snippet in ("p.is_file()", "p.resolve()", "p.exists()", "os.environ.get('X')", "p.relative_to(r)",
-                        "os.path.normpath(x)", "os.path.isabs(x)"):
+                        "os.path.normpath(x)", "os.path.isabs(x)", "os.path.exists(x)", "os.stat(x)",
+                        "os.path.getsize(x)", "os.path.realpath(x)"):     # R16 DA：散文說 metadata 不在列舉內，偵測器要一致
             self.assertFalse(any_flagged(snippet), f"{snippet} 是 metadata／環境／純字串運算，明示不在列舉內")
 
     def test_ci_neutraliser_is_the_same_implementation_as_the_output_boundary(self):
@@ -1602,6 +1605,163 @@ class ValidateTest(unittest.TestCase):
         self.assertEqual(rc, 1, out)
         self.assertNotIn("z" * 300, out, "外部字串原樣進了 annotation")
         self.assertIn("…（截斷）", out)
+
+    # ---- #33 verify R16 ----
+
+    def test_version_strings_entering_annotations_go_through_wc(self):
+        """R16 requirements：「子行程輸出／外部字串 → annotation 三處」的列舉當天就不封閉——manifest 的 version 字串
+        （PR 可控）原樣進「需要 semver version（現在是 '…'）」與「版本沒有增加（base=… → 現在=…）」。規則同 R15 DA-5：
+        任何外部字串進 annotation 一律 wc()。"""
+        self.fx.edit_json("plugins/pai-lenses/.claude-plugin/plugin.json",
+                          lambda d: d.__setitem__("version", "bad-" + "v" * 400))
+        out = self.assertRed(contains="需要 semver version")
+        self.assertNotIn("v" * 300, out, "version 字串原樣進了 annotation")
+        self.assertIn("…（截斷）", out)
+
+    def test_dirty_paths_list_entering_annotation_goes_through_wc(self):
+        """同上：`git status --porcelain` 的路徑清單原樣進「工作目錄有未 commit 的變更：…」。"""
+        base = self.fx.commit("base")
+        lenses = self.fx.repo / "plugins/pai-lenses/lenses"
+        for i in range(12):
+            (lenses / f"p{i:02d}-{'q' * 40}.csv").write_text("key,focus\nk,\"f\"\n", encoding="utf-8")
+        rc, out = self.fx.run("--base", base, "--event", "push")
+        line = next((l for l in out.splitlines() if "工作目錄有未 commit 的變更" in l), "")
+        self.assertTrue(line, out)
+        self.assertIn("…（截斷）", line, "路徑清單必須經 wc() 截斷")
+
+    def test_read_site_detector_forbids_import_aliasing_of_read_modules(self):
+        """R16 logic LOW：`from os import listdir as _ld` 或 `import subprocess as sp` 讓 AST 偵測器看不到 base 名——
+        118 條全綠。封閉規則：validate.py 對 READ_MODULES 只准 `import <module>`（不改名、不 from-import）；
+        本測試掃 Import／ImportFrom 節點。"""
+        import ast
+        sys.path.insert(0, str(HERE)); import validate as V
+        tree = ast.parse((PACK / "scripts/validate.py").read_text(encoding="utf-8"))
+        bad = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[0] in V.READ_MODULES:
+                bad.append((node.lineno, f"from {node.module} import …"))
+            if isinstance(node, ast.Import):
+                for a in node.names:
+                    if a.name.split(".")[0] in V.READ_MODULES and a.asname:
+                        bad.append((node.lineno, f"import {a.name} as {a.asname}"))
+        self.assertEqual(bad, [], f"READ_MODULES 只准 `import <module>`：{bad}")
+        # R16 DA：把入口封死——validate.py 的 import 全集凍結（新增一個模組就要來這裡改，且要說為什麼），
+        # 且禁動態派發內建（getattr/vars/globals/locals/exec/eval/__import__/importlib）——偵測器守的是靜態呼叫名。
+        imported = sorted({a.name.split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}
+                          | {(n.module or "").split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)})
+        self.assertEqual(imported, sorted(V.ALLOWED_IMPORTS), f"validate.py 的 import 全集變了：{imported}")
+        def _self_delegation(call):      # LineSanitiser.__getattr__ 的 getattr(self._stream, name)：對物件屬性委派，不是模組派發
+            return (call.func.id == "getattr" and call.args and isinstance(call.args[0], ast.Attribute)
+                    and isinstance(call.args[0].value, ast.Name) and call.args[0].value.id == "self")
+        dyn = [(n.lineno, n.func.id) for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+               and n.func.id in ("getattr", "vars", "globals", "locals", "exec", "eval", "__import__", "compile")
+               and not _self_delegation(n)]
+        self.assertEqual(dyn, [], f"禁用動態派發內建：{dyn}")
+        self.assertNotIn("importlib", imported)
+        # 規則本身要能紅：對一段含別名的原始碼跑同一個判定
+        alias_src = "import subprocess as sp\nfrom os import listdir as _ld\n"
+        hits = [n for n in ast.walk(ast.parse(alias_src))
+                if (isinstance(n, ast.ImportFrom) and n.module in V.READ_MODULES)
+                or (isinstance(n, ast.Import) and any(a.asname and a.name in V.READ_MODULES for a in n.names))]
+        self.assertEqual(len(hits), 2)
+
+    def test_mutation_check_main_installs_restore_signals(self):
+        """R16 logic LOW：R15 的 SIGTERM 修法 wiring 無網——把 main() 裡那行 `install_restore_signals()` 換成 `pass`，
+        118 條仍全綠。靜態網：main 的 AST 裡必須有那個呼叫，且在 mutate 迴圈之前。"""
+        import ast
+        src = (PACK / "scripts/mutation_check.py").read_text(encoding="utf-8")
+        tree = ast.parse(src)
+        main = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main")
+        calls = [n.lineno for n in ast.walk(main)
+                 if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "install_restore_signals"]
+        self.assertTrue(calls, "main() 沒有呼叫 install_restore_signals()")
+        loop = next(n.lineno for n in ast.walk(main) if isinstance(n, ast.For))
+        self.assertLess(calls[0], loop, "handler 必須在 mutate 迴圈開始前掛上")
+
+    def test_subprocess_output_in_annotations_is_always_wrapped_in_wc(self):
+        """R16 security S-2 → DA-1：直接插值版（只看 `{r.stderr}`）出廠即 vacuous——`.stdout` 常在前一個 statement
+        （`paths = [ln[3:] for ln in dirty.stdout.splitlines()]`、`now_obj = load_obj(cur.stdout, …)`）。改成 **taint
+        傳播**：從 `.stdout`/`.stderr` 出發，沿 Assign／for／comprehension／函式引數把 Name 染色；任何進 `errs.append`／
+        `emit`／`print` 的 f-string 插值若碰到染色的 Name 或 stream，必須整個是 `wc(…)`／`prop(…)`。"""
+        import ast
+        src = (PACK / "scripts/validate.py").read_text(encoding="utf-8")
+        tree = ast.parse(src)
+        def names_of(target):
+            return [n.id for n in ast.walk(target) if isinstance(n, ast.Name)]
+        def wrapped(expr):               # `wc(x)`、`prop(x)`、或 `wc(x) or '常數'` 都算已包
+            if isinstance(expr, ast.Call) and getattr(expr.func, "id", None) in ("wc", "prop"):
+                return True
+            if isinstance(expr, ast.BoolOp):
+                return all(wrapped(v) or isinstance(v, ast.Constant) for v in expr.values)
+            return False
+        bad, total_tainted = [], set()
+        # taint 是**逐函式**的（同名變數在別的函式裡是另一個變數）
+        scopes = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]
+        for fn in scopes:
+            tainted = set()
+            def touches(expr):
+                for n in ast.walk(expr):
+                    if isinstance(n, ast.Attribute) and n.attr in ("stdout", "stderr"):
+                        return True
+                    if isinstance(n, ast.Name) and n.id in tainted:
+                        return True
+                return False
+            changed = True
+            while changed:
+                changed = False
+                for n in ast.walk(fn):
+                    new = []
+                    if isinstance(n, ast.Assign) and touches(n.value):
+                        new = [x for t in n.targets for x in names_of(t)]
+                    elif isinstance(n, (ast.For, ast.comprehension)) and touches(n.iter):
+                        new = names_of(n.target)
+                    for x in new:
+                        if x not in tainted:
+                            tainted.add(x); changed = True
+            total_tainted |= {f"{fn.name}.{x}" for x in tainted}
+            for node in ast.walk(fn):
+                if not isinstance(node, ast.Call):
+                    continue
+                f = node.func
+                name = f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", None)
+                if name not in ("append", "emit", "print"):
+                    continue
+                for arg in node.args:
+                    for js in [x for x in ast.walk(arg) if isinstance(x, ast.JoinedStr)]:
+                        for fv in [v for v in js.values if isinstance(v, ast.FormattedValue)]:
+                            if touches(fv.value) and not wrapped(fv.value):
+                                bad.append((node.lineno, ast.unparse(fv.value)[:60]))
+        tainted = total_tainted
+        self.assertGreaterEqual(len(tainted), 6, f"taint 沒傳播到（{sorted(tainted)}）——測試本身 vacuous")
+        self.assertEqual(bad, [], f"染色字串未經 wc()/prop() 就進了 annotation／輸出：{bad}")
+        # 規則本身要能紅：`paths` 從 stdout 染色、插值沒包 wc
+        snippet = 'paths = [ln for ln in dirty.stdout.splitlines()]\nemit(f"x {", ".join(paths)}")'
+        t2 = ast.parse(snippet); tainted2 = set()
+        for n in ast.walk(t2):
+            if isinstance(n, ast.comprehension) and any(isinstance(a, ast.Attribute) and a.attr == "stdout" for a in ast.walk(n.iter)):
+                tainted2 |= set(names_of(n.target))
+        for n in ast.walk(t2):
+            if isinstance(n, ast.Assign) and any(isinstance(a, ast.Name) and a.id in tainted2 for a in ast.walk(n.value)):
+                tainted2 |= set(names_of(n.targets[0]))
+        self.assertIn("paths", tainted2)
+
+    def test_emit_itself_collapses_lines_and_neutralises_v1_regardless_of_upstream_wc(self):
+        """R16 全輪量測：`wc()` 現在在上游就把 `::`／`##[`／換行中和掉，端到端測試再也碰不到 emit() 自己的兩層
+        （collapse_lines 與 `##[` 替換）——兩個靶因此假存活。emit() 是唯一繞過 LineSanitiser 寫 raw stdout 的地方，
+        它自己的承諾（一行永遠是一行、V1 前綴不落地）要用直接呼叫釘住，不能靠上游剛好包了 wc()。"""
+        import io
+        sys.path.insert(0, str(HERE)); import validate as V
+        buf = io.StringIO(); V.RAW_OUT = buf
+        try:
+            V.emit("::error file=x::first line\n::stop-commands::TOKEN\r##[error]V1 \x85  tail")
+        finally:
+            V.RAW_OUT = None
+        out = buf.getvalue()
+        self.assertEqual(out.count("\n"), 1, f"emit 必須恰好輸出一行：{out!r}")
+        self.assertNotIn("\r", out); self.assertNotIn("\x85", out); self.assertNotIn(" ", out)
+        self.assertIn("⏎", out, "換行要變成 ⏎，不是被吞掉")
+        self.assertFalse(any(l.lstrip().startswith("::stop-commands") for l in out.splitlines()), out)
+        self.assertNotIn("##[", out); self.assertIn("##⟦error]V1", out)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

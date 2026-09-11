@@ -5,8 +5,10 @@
 而且第一天就分岔：`[[:space:]]` 比 .NET `IsWhiteSpace` 小（U+00A0 開頭的 `::` 穿過）、`^` 只認 `\\n`
 （含 `\\r` 的檔名穿過——而同一個 commit 的 `LineSanitiser._LINE_END` 就是 `(?<=[\\r\\n])`）。
 R11/R12 兩輪在 Python 端修掉的洞，在 shell 端重生。所以「行」與「行首空白」只能有一個定義：這支只是
-把 stdin 接到那份實作上。**所有**會把 PR 可控文字印進 step log 的 step 都經過它（清單見 test.yml 的
-job 級註解與 test/run.sh）；它自己永遠 exit 0，上游的非零由 `set -o pipefail` 保留。
+把 stdin 接到那份實作上。哪些 step 經過它、哪些明示不過濾（bats／node／codex-call bats 執行 PR 自己的程式碼，
+安裝與版本 step 不含 PR 文字）由 `test/lint-ci-log-filter.sh` 逐 step 機械檢查；它自己永遠 exit 0，上游的非零由
+`set -o pipefail` 保留。它本身是 PR 可控的檔（fork 可以把它改成 cat）——那是 `on: pull_request` 執行 PR 程式碼的
+固有面，test.yml 開頭已明寫。
 
 哪些 step 經過它、哪些明示不過濾：`test/lint-ci-log-filter.sh` 對 test.yml 每一個 run step 機械檢查（R15 L-2 / S-3 / F2）。
 

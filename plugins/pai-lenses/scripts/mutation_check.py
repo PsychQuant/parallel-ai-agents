@@ -21,7 +21,7 @@
     python3 scripts/mutation_check.py                  # 完整量測（慢）
     python3 scripts/mutation_check.py --check-targets  # 只驗靶還對得上（秒級，CI 會跑）
 
-**手動跑，不進 CI**（一輪 = 靶數 × 全套測試，每套測試 20–30 s × 靶數，目前約 30–40 分鐘；比照 `ensemble-eval` 的定位）。
+**手動跑，不進 CI**（一輪 = 靶數 × 全套測試，每套測試 20–30 s × 靶數，目前約 30–50 分鐘；比照 `ensemble-eval` 的定位）。
 改動 `validate.py` 的閘門、或新增閘門之後跑一次；存活清單就是待補的測試。
 
 ## 兩個誠實邊界
@@ -248,6 +248,9 @@ MUTATIONS += [
     ("base 字串進 annotation 經 wc()（R15 DA-5 同類：外部字串進 annotation 一律 wc）",
      "errs.append(f\"::error::base ref '{wc(base)}' 不在本地歷史內",
      "errs.append(f\"::error::base ref '{base}' 不在本地歷史內"),
+    ("version 字串進 annotation 經 wc()（R16）",
+     "需要 semver version（現在是 '{wc(version)}'）", "需要 semver version（現在是 '{version}'）"),
+    ("dirty 路徑清單進 annotation 經 wc()（R16）", '              + wc(", ".join(paths)))', '              + ", ".join(paths))'),
     ("profile 清單經 wc() 進 annotation（R15 S-2）",
      "f\"（真源 PROFILES 有：{wc(', '.join(sorted(known_profiles)))}）。\"",
      "f\"（真源 PROFILES 有：{', '.join(sorted(known_profiles))}）。\""),
@@ -295,7 +298,7 @@ def _apply(name, old, new, src):
 def check_targets_only():
     """只驗每個靶是否恰好命中一次 —— 秒級，可以進 CI（#33 verify R9 M11/M24）。
 
-    完整的 mutation 量測太慢（靶數 × 全套測試 ≈ 三十分鐘），不適合每個 PR 跑。但**靶清單
+    完整的 mutation 量測太慢（靶數 × 全套測試 ≈ 30–50 分鐘），不適合每個 PR 跑。但**靶清單
     相對 validate.py 的漂移**是可以便宜擋住的：有人改動被 mutate 的那幾行、或搬走一道閘門，
     靶就對不上。先前這件事只有在有人手動跑整輪時才會發現，而「忘了跑」是預設。
     """
@@ -333,7 +336,7 @@ def check_targets_only():
 
 def main():
     # #33 verify R10 M6：先前是 `if "--check-targets" in sys.argv[1:]` —— 手寫解析，
-    # 打錯旗標（`--check-target`）會被靜默忽略，然後**直接跑三十分鐘的就地改寫迴圈**。
+    # 打錯旗標（`--check-target`）會被靜默忽略，然後**直接跑 30–50 分鐘的就地改寫迴圈**。
     # R9 才剛把 validate.py 的同一種解析拆掉，理由逐字適用於這裡。
     ap = argparse.ArgumentParser(
         prog="mutation_check.py",

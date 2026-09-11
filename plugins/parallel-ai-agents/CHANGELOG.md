@@ -80,7 +80,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   鐵律「絕不讀真實 lens pack」在同一個 commit 新增的整合錨點裡就已為假。
   **一句已經為假的不變式比沒有更糟** —— 下一個人會據以判斷而繞路。三處都改了。
 - **CI 新增 `mutation_check.py --check-targets`**（#33 verify R9 M11/M24）。完整量測太慢
-  （靶數 × 全套 ≈ 30–40 分鐘）不進 CI，但**靶清單相對 `validate.py` 的漂移**秒級就能擋：
+  （靶數 × 全套 ≈ 30–50 分鐘）不進 CI，但**靶清單相對 `validate.py` 的漂移**秒級就能擋：
   改動被 mutate 的那幾行、或搬走一道閘門，靶就對不上。先前這件事只有在有人手動跑整輪時
   才會發現，而「忘了跑」是預設。
   > **量測（R9 後）：46 個靶 → 45 殺掉 / 1 存活 / 0 靶壞**（R8 後是 35 殺 / 1 存活 / 0 靶壞；
@@ -139,7 +139,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`mutation_check.py` 自己的三個問題**（#33 verify R10 M5/M6）：`--check-targets` 對特殊靶
   只驗了兩個 anchor 的其中一個、且沒驗唯一性（而未驗的那個是一句**註解**）；
   它自己還在用 R9 剛從 `validate.py` 拆掉的手寫 argv 解析（打錯旗標會靜默忽略，
-  然後直接跑三四十分鐘的就地改寫迴圈）。兩者都改。
+  然後直接跑 30–50 分鐘的就地改寫迴圈）。兩者都改。
 
 - **argv 解析改用 argparse**（#33 verify R9 HIGH）。手寫解析的每一個洞，後果都是**安靜地
   換掉判準**，而 R8 只修了「未知**旗標**」那一半 —— workflow 實際傳的是旗標**值**。
@@ -544,7 +544,7 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
     v2.22.0（R11 抓到的 description 不同步正是這件事），聯集五個版號。R13 的「五版／四段」其實各指一件事，R14 把
     正確的一半改錯；本段與 2.22.0 那條現在寫成「兩份各四段、領頭不同」。「一輪 mutation 約十分鐘」六處全是低估
     （DA-N1 五處 + ASCII 的「10 分鐘」第六處；R14 的批次替換還把兩處弄成「三三十分鐘」——R15 F4/L-3）：每套測試
-    20–30 s × 92 靶 ≈ 30–40 分，六處統一；靶數改成 lint 認的第三種宣稱形式；`pai-list-profiles.bats` 登記進 test/README；
+    20–30 s × 92 靶 ≈ 30–50 分，六處統一；靶數改成 lint 認的第三種宣稱形式；`pai-list-profiles.bats` 登記進 test/README；
     「containment 的第八處」不再指到兩個站點（E-11）。
   測試 97 → 111 條；靶清單 83 → 92 個（3 個 EXPECTED_SURVIVE；lint 形式的宣稱只留在最新一段）。
   量測（R14 後）：全輪 88 殺／1 存活（「lister 不存在」補斷言後單靶重跑轉殺）／3 預期存活。
@@ -557,7 +557,7 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
     `os.listdir`、`check_output`、`shutil.copy`、`os.scandir`）逐一驗過會紅；反向檢查的 `glob(` 補為第 19 處。
   - CI 的 step 級列舉改成 **lint**（logic L-2 / security S-3 / requirements F2 / regression F5）：新增
     `test/lint-ci-log-filter.sh`（＋ good／bad fixture selftest），test.yml **每一個** run step 都必須經
-    `neutralise.py` 或帶 `# LOG-FILTER:` 註解明示不過濾與理由（三個 job、15 個 step 全部交代；shellcheck／
+    `neutralise.py` 或帶 `# LOG-FILTER:` 註解明示不過濾與理由（三個 job 全部 run step 交代（20 個（`grep -c "^        run:" ../../.github/workflows/test.yml`））；shellcheck／
     lint-*／pack 錨點 bats 改經過濾器）；接進 run.sh 與 CI。
   - harness **stdout** 也是管道（security S-2）：profile 名清單進 annotation 經 `wc()`；READ_SITES 旁列出所有
     「子行程輸出 → annotation」站點（三處，皆經 wc()）。
@@ -571,14 +571,53 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
   - `lint-changelog-counts` 的 `../` 跳過只在 **sibling 目錄**缺席時生效（R14 S5 / R15 security LOW：檔案缺席就跳
     在 monorepo 裡是永久豁免；補 fixture 讓「目錄在、檔不在」被拒）。
   - errata 的 errata：description 版號段見上面 2.22.0 那條（R14 改錯了正確的一半）；「十分鐘」第六處（ASCII
-    `10 分鐘`）、兩處「三三十分鐘」與 CHANGELOG 本段內再兩處（DA-6，四份都漏）改對（30–40 分）；`NO_REPO_GATES`
+    `10 分鐘`）、兩處「三三十分鐘」與 CHANGELOG 本段內再兩處（DA-6，四份都漏）改對（30–50 分）；`NO_REPO_GATES`
     的訊息改由清單算數量、測試逐名比對並加靶（DA-3）；獨立 pack 下 profile 名未驗時不再印 ✓（DA-4）；
     merge-base 的 stderr 也經 `wc()`（DA-5）；`README.md` 與 plugin `CLAUDE.md` 把 minutes 的第四個 lens
     寫成不存在的 `actionability`（真源 `cross-document`，requirements F5，十輪未抓到）；neutralise.py docstring
     指向的清單改指 lint；`test/run.sh` 與 `lint-ci-log-filter.sh` 進兩份 shellcheck 清單。
-  測試 111 → 118 條（`grep -c "    def test_" ../pai-lenses/scripts/test_validate.py`）；
-  靶清單 92 → 96 個（`grep -c "^    (\"" ../pai-lenses/scripts/mutation_check.py`）（3 個 EXPECTED_SURVIVE）。
-  量測（R15 後）見 `scripts/test_validate.py` 檔頭。
+  測試 111 → 118 條；靶清單 92 → 96 個（3 個 EXPECTED_SURVIVE；lint 形式的宣稱只留在最新一段）。
+  量測（R15 後）：全輪 94 靶 89 殺／2 存活（補斷言後單靶轉殺）＋ DA 修補的 2 靶單獨驗殺 → 93／0／3（複合值）。
+- **verify R16（4 lens + DA；Codex 第六輪 429）— R15 的三條 blocking 全部確認修好、零 HIGH；但 R15 修法自己引進
+  一條 CI 回歸，且新蓋的機械閘門各有解析漏洞。修法：**
+  - **CI 紅在 `test/run.sh:40`（requirements H1）**：pack 錨點守衛寫成 `A && B || C`（SC2015）——本機 shellcheck 0.11 不報、
+    ubuntu runner 的版本報，`shellcheck-bats` job 紅、後面七個 step 全 skipped（含 R15 新建的兩道閘門）。改 `if`。
+    同一檢查兩份實作（shellcheck 版本）——本機請用 `shellcheck -S style`。
+  - **`lint-ci-log-filter.sh` 自己的解析漏洞**（requirements F3 / logic L-1 / security S-3 / regression F4）：`- run:`
+    起頭（無 name）的 step 整個看不見或併進前一個 step；flow mapping 寫法被跳過；`neutralise.py` 寫在註解裡也算數；
+    寫在下一個 `- name:` 上方的 `# LOG-FILTER:` 被歸給前一個 step。四種都補 fixture 進 selftest：任何 `- ` 清單項都是
+    step、flow mapping 直接拒絕、只認非註解行的 `neutralise.py`、新 step 開始時剝掉前一個 body 尾端的註解行。
+    已知限制明寫：`in-process` 是自我宣告，lint 不查證（本 repo 唯一的 in-process 是 validate.py，其 LineSanitiser
+    由 test_validate.py 釘住）。
+  - **非 monorepo 佈局回歸**（logic L-2 / L-3 / regression F1）：`lint-ci-log-filter` 找不到 `.github/` 時裸 traceback、
+    `lint-changelog-counts --selftest` 第三條斷言依賴 `../pai-lenses`、pack 錨點守衛在沒有 sibling pack 時把設計上的
+    skip 判成 vacuous——三處都改成「明說略過」，plugin-only 佈局 run.sh 重新綠（R15 的「四種佈局全綠」在 895b104
+    上不成立）。
+  - **「內容再也沒有管道」三處改成誠實的**（security S-2 / regression F2，R15 唯一放行條件的後半）：harness stdout
+    （profile 名）依構造是 PR 可控文字、仍是內容管道，經 `wc()` 截到 200 字——有上限，不是沒有管道。「子行程輸出 →
+    annotation 三處」的手寫站點清單換成 **taint 傳播的 AST 保證**（DA-1：security 建議的「直接插值必須包 wc」版本出廠即
+    vacuous、漏掉 `:848`／`:924`／`:938`／`:940`——`.stdout` 在前一個 statement）：從 `.stdout`／`.stderr` 出發，逐函式
+    沿 Assign／for／comprehension 染色，任何進 `errs.append`／`emit`／`print` 的染色插值都必須是 `wc()`／`prop()`；補
+    `git status` 路徑清單、merge-base sha、改名前路徑、manifest version 字串（五處 echo）、`version =` note。**母體明說**
+    （DA-2）：這條網守的是「子行程輸出」；manifest／CSV 的單值（version／name／source／header）另由 `prop()`（property
+    位置）與 emit() 的兩套語法中和 + 4000 上限守，**不宣稱 200 字上限對它們成立**——那是 emit 的邊界，不是 wc 的。
+  - AST 偵測器的別名繞過（logic LOW / security S-1 / DA R16-Q1）：`from os import listdir as _ld`／`import subprocess
+    as sp` 讓 base 名消失。DA 的答案比四份都強、只要兩條 AST 斷言：**凍結 validate.py 的 import 全集**（`ALLOWED_IMPORTS`
+    八個 stdlib、零 asname、零 from-import）+ **禁動態派發內建**（`getattr`／`vars`／`globals`／`locals`／`exec`／
+    `eval`／`__import__`／`compile`；唯一例外是 `LineSanitiser.__getattr__` 對 `self._stream` 的委派）——「能讀檔的
+    東西」只能經這 8 個模組的靜態呼叫名進來。metadata 述詞（`os.path.exists`／`os.stat`／`getsize`／`realpath`…）
+    從偵測器排除，讓散文與偵測器對同一組述詞給同一個答案（DA）。
+  - SIGTERM wiring 補靜態網（logic LOW）：main() 的 AST 裡必須在 mutate 迴圈前呼叫 `install_restore_signals()`。
+  - **TAP 守衛三份手抄實作抽成一支**（DA-6：這才是 H1 的根因——R15 手抄第三份時改寫成 `A && B || C`；shellcheck
+    版本只是引信）：`test/assert-tap-complete.sh`（no fail／no skip／plan == executed；`grep -a`；`plan=` 加 `|| true`
+    讓 errexit 下守衛到得了），macOS job、ubuntu pack 錨點 step、run.sh 三處呼叫；進兩份 shellcheck 清單。
+  - `lint-ci-log-filter.sh` 守備目標改成 `.github/workflows/*.yml` 全部（DA-4），read-site 判定式在測試裡只留一份
+    （DA-5）。
+  - 數字：「三個 job、15 step」實為 20 個 run step（`grep -c "^        run:" ../../.github/workflows/test.yml`）
+    （security S-4 / regression F3，改成 lint 認的形式）；mutation 耗時再上修為 30–50 分（logic 實測 29 s × 96 ≈ 47 分）。
+  測試 118 → 124 條（`grep -c "    def test_" ../pai-lenses/scripts/test_validate.py`）；
+  靶清單 96 → 98 個（`grep -c "^    (\"" ../pai-lenses/scripts/mutation_check.py`）（3 個 EXPECTED_SURVIVE）。
+  量測（R16 後）見 `scripts/test_validate.py` 檔頭。
 
 ## [2.23.0] - 2026-09-10
 

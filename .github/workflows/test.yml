@@ -38,7 +38,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          shellcheck bin/pai-build-diff bin/pai-parse-verdict bin/pai-iter-commit bin/pai-list-profiles references/regen-builtin-lenses.sh test/run.sh test/lint-bats.sh test/lint-changelog-counts.sh test/lint-contract-enumerations.sh test/lint-ci-log-filter.sh 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
+          shellcheck bin/pai-build-diff bin/pai-parse-verdict bin/pai-iter-commit bin/pai-list-profiles references/regen-builtin-lenses.sh test/run.sh test/assert-tap-complete.sh test/lint-bats.sh test/lint-changelog-counts.sh test/lint-contract-enumerations.sh test/lint-ci-log-filter.sh 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
 
       # Round 6 RC11 (#37): a bare `!` assertion is a no-op under bats' errexit — it recurred four
       # times as a prose rule, so it is a machine rule now, and the guard proves it can fail first.
@@ -100,18 +100,8 @@ jobs:
           TAP="${RUNNER_TEMP:-/tmp}/pack-anchor.tap"
           rc=0
           bats --formatter tap test/pai-collect-lens-layers.bats 2>&1 | tee "$TAP" | python3 ../pai-lenses/scripts/neutralise.py || rc=$?
-          if grep -aq '^not ok' "$TAP"; then
-            echo "::error::a pack-anchor test failed"; exit 1
-          fi
-          if grep -aqi '# skip' "$TAP"; then
-            echo "::error::pai-collect-lens-layers.bats skipped a case — the pack integration anchor is vacuous"; exit 1
-          fi
-          plan="$(grep -a -m1 -oE '^1\.\.[0-9]+' "$TAP" | sed 's/^1\.\.//')"
-          ran="$(grep -acE '^(ok|not ok) ' "$TAP" || true)"
-          if [ -z "$plan" ] || [ "$ran" -ne "$plan" ]; then
-            echo "::error::TAP plan announces $plan tests but $ran executed — cases were skipped or unknown to bats"; exit 1
-          fi
-          echo "TAP plan $plan == executed $ran"
+          # #33 verify R16 DA-6: one implementation of the TAP guard, called from three places (was three hand-copies).
+          bash test/assert-tap-complete.sh "$TAP" "pai-collect-lens-layers.bats"
           exit "$rc"
 
       # 守備範圍（#33 verify R13 security S2 / DA-4）：validate.py 的輸出邊界只守它自己那個 **step** 的 log
@@ -203,24 +193,8 @@ jobs:
           # generic "Process completed with exit code 1" would surface.
           rc=0
           bats --formatter tap test/codex-call-*.bats | tee "$TAP" || rc=$?
-          if grep -q '^not ok' "$TAP"; then
-            echo "::error::a codex-call test failed"; exit 1
-          fi
-          # -i because the TAP directive's casing is bats' choice and bats is unpinned
-          # (`brew install bats-core`); a casing change must not silently reopen the
-          # vacuous-green hole this check exists to close.
-          if grep -qi '# skip' "$TAP"; then
-            echo "::error::tests skipped on the macOS job — the regression anchor is vacuous"; exit 1
-          fi
-          grep -q '^ok' "$TAP" || { echo "::error::no tests ran (empty glob or bats bail-out)"; exit 1; }
-          # Round 6 RC7: the plan line must match what actually ran. bats only WARNS
-          # ("Executed 13 instead of expected 76") when test names fail to decode.
-          plan="$(grep -m1 -oE '^1\.\.[0-9]+' "$TAP" | sed 's/^1\.\.//')"
-          ran="$(grep -cE '^(ok|not ok) ' "$TAP" || true)"
-          if [ -z "$plan" ] || [ "$ran" -ne "$plan" ]; then
-            echo "::error::TAP plan announces $plan tests but $ran executed — cases were skipped or unknown to bats"; exit 1
-          fi
-          echo "TAP plan $plan == executed $ran"
+          # #33 verify R16 DA-6: one implementation of the TAP guard (test/assert-tap-complete.sh), three call sites.
+          bash test/assert-tap-complete.sh "$TAP" "codex-call bats (macOS)"
           exit "$rc"
 
   manifests-and-lens-pack:
@@ -255,7 +229,7 @@ jobs:
       # 那種缺陷用讀的抓不到。每條測試對應一個真實發生過的缺陷。
       # 這套測試自己的鑑別力**用 scripts/mutation_check.py 量**，不靠宣稱（#33 verify R8：
       # 初版的 20 個閘門 mutation 有 18 個存活，而當時三處文件都寫著「都做過 mutation」）。
-      # mutation_check.py 手動跑、不進 CI（一輪 = 靶數 × 全套測試，約 30–40 分鐘）——
+      # mutation_check.py 手動跑、不進 CI（一輪 = 靶數 × 全套測試，約 30–50 分鐘）——
       # 這裡刻意不寫靶數，寫了就會過期，而過期的數字正是本 PR 一路在修的東西。
       # #33 verify R9 M20：py_compile 的寫死清單只涵蓋主 plugin 的兩支，本 pack 新增的
       # 三支 Python 只有 validate.py / test_validate.py 因為被執行而間接驗過語法，
@@ -277,7 +251,7 @@ jobs:
           set -o pipefail
           python3 scripts/test_validate.py 2>&1 | python3 scripts/neutralise.py
 
-      # 完整的 mutation 量測太慢（靶數 × 全套 ≈ 三十分鐘），不進 CI。但**靶清單相對
+      # 完整的 mutation 量測太慢（靶數 × 全套 ≈ 30–50 分鐘），不進 CI。但**靶清單相對
       # validate.py 的漂移**便宜就能擋：改動被 mutate 的那幾行、或搬走一道閘門，靶就對不上。
       # 先前這只有在有人手動跑整輪時才會發現，而「忘了跑」是預設（#33 verify R9 M11/M24）。
       - name: mutation 靶清單沒有漂移（秒級；完整量測仍是手動）

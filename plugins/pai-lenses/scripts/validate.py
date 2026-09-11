@@ -53,7 +53,8 @@ OS_ARTIFACTS = (".DS_Store", ".gitkeep", ".gitignore", "Thumbs.db")
 #   守：symlink（檔案層與目錄層——`resolve()` 連父層一起解析）、絕對路徑、`..` 繞出去。
 #   守不住：hardlink（git 產生不了，不在 fork PR 的攻擊面）、bind mount、以及**被求值的程式碼自己去讀什麼**
 #   （harness 是 repo 內合法 JS 但 `import` repo 外的檔——路徑守衛擋不住求值；所以 READ-SITE 17 的 stderr
-#   一律不進 annotation，內容再無管道）。containment 是佈局健檢，不是安全邊界；真正的邊界是
+#   一律不進 annotation；它的 **stdout**（profile 名）依構造是 PR 可控文字、仍是內容管道，只是經 wc() 截到 200 字——
+#   有上限，不是沒有管道，R15 security S-2）。containment 是佈局健檢，不是安全邊界；真正的邊界是
 #   `on: pull_request` + `contents: read` + 零 secrets（見 test.yml 的 job 級說明）。
 # 「git object」欄：對 `git show`/`ls-tree`/`diff` 讀到的是 **repo 自己的物件庫**，路徑由 validator 組、
 # 不經檔案系統 symlink，依構造在 repo 內。
@@ -61,7 +62,12 @@ READ_CALLS = frozenset({"open", "read_text", "read_bytes", "iterdir", "glob", "r
                         "load", "run", "Popen", "check_output", "check_call", "call", "popen", "system"})
 READ_MODULES = frozenset({"subprocess", "shutil", "os"})
 READ_MODULE_PURE = frozenset({"environ", "get", "sep", "fspath", "getenv",                     # os.environ.get / os.sep
-                              "normpath", "isabs", "join", "basename", "dirname", "splitext"})  # os.path.* 純字串運算
+                              "normpath", "isabs", "join", "basename", "dirname", "splitext",    # os.path.* 純字串運算
+                              "exists", "stat", "lstat", "getsize", "realpath", "isfile", "isdir", "abspath",
+                              "expanduser"})   # metadata 述詞（R16 DA：散文與偵測器要對同一組述詞給同一個答案）
+# R16 DA：validate.py 的 import 全集凍結（test_validate.py 比對）——動態派發（getattr/exec/__import__/importlib）
+# 一律禁用，所以「能讀檔的東西」只能經這 8 個模組的靜態呼叫名進來，偵測器守得住。
+ALLOWED_IMPORTS = frozenset({"argparse", "csv", "json", "os", "pathlib", "re", "subprocess", "sys"})
 READ_SITES = (
     ( 1, "load_obj：通用 JSON 讀取器",                      "由呼叫端保證：站點 2/3/5 都先 _inside 再呼叫"),
     ( 2, "collector_wiring：skills/…/SKILL.md",             "_inside（R14 新增，第 11 處）"),
@@ -83,9 +89,10 @@ READ_SITES = (
     (18, "check_csvs：lenses/<profile>.csv",                "站點 15 已拒 symlink；_inside 目錄層"),
     (19, "check_marketplace_sync：反向 glob plugins/*/.claude-plugin/plugin.json", "逐一 _inside（R11 第六處）；R15 前是表外站點"),
 )
-# 子行程**輸出**進 annotation 的站點（R15 security S-2：stderr 關掉了，stdout 是第二條管道）——一律經 wc()
-# （截斷 + 中和）：站點 17 的 profile 名清單、站點 9 的 merge-base stderr、站點 11 的 diff stderr。git 的 stdout
-# 只當路徑／JSON 用，不直接進訊息（路徑經 prop()）。
+# **外部字串進 annotation 的站點**（R15 security S-2 / R16 requirements：「三處」的列舉當天就不封閉）——規則是
+# 「任何不是 validator 自己組的字串，進 annotation 前一律經 wc()（截斷 + 中和）或 prop()（property 位置）」，
+# 不再維護站點清單；test_validate.py 對每一類各釘一條測試（profile 名、base 字串、version 字串、dirty 路徑清單、
+# merge-base／diff 的 stderr）。
 # 另有三個**不經本檔讀取**但 validator 依賴的輸入：root `.claude-plugin/marketplace.json`（站點 1 的呼叫端，
 # check_marketplace_sync 先 _inside——R14 第十處）、entry 指向的 plugin 目錄與其 plugin.json（站點 1 的呼叫端，
 # 兩層都判）、反向 glob 找到的 plugin.json（站點 1 的呼叫端，_inside）。
@@ -394,7 +401,7 @@ def check_version(root, errs):
     if d is None:
         return
     version = d.get("version", "")
-    print(f"version = {version or '<missing>'}")
+    print(f"version = {wc(version) or '<missing>'}")          # R16：外部字串進輸出一律 wc()（note 也一樣）
     m = SEMVER.fullmatch(str(version or ""))
     if m and m["pre"]:
         # `rc9` / `beta2` 這種把數字黏在字母後面的 identifier，semver 規定按 ASCII 比較 ——
@@ -407,7 +414,7 @@ def check_version(root, errs):
                   "遞增發布會被 bump 閘門擋下。請改用點分隔（`rc.9` / `rc.10`），數字段才會按整數比較")
     if version_tuple(version) is None:
         errs.append(
-            f"::error file={prop(manifest)}::需要 semver version（現在是 '{version}'）—— 缺了或格式不對時 "
+            f"::error file={prop(manifest)}::需要 semver version（現在是 '{wc(version)}'）—— 缺了或格式不對時 "
             "cache 目錄名會退回 commit SHA 或 unknown，consumer 的 semver glob 定位不到這個 pack"
         )
 
@@ -575,24 +582,24 @@ def check_marketplace_sync(root, errs):
         for label, val in (("plugin.json", pj_ver), ("marketplace.json", mp_ver)):
             if val is not None and version_tuple(val) is None:
                 errs.append(f"::error file={prop(mp)}::{entry.get('name')} 的 {label} version "
-                            f"'{val}' 不是 semver —— cache 目錄名會退回 commit SHA 或 unknown，"
+                            f"'{wc(val)}' 不是 semver —— cache 目錄名會退回 commit SHA 或 unknown，"
                             "consumer 的 semver glob 定位不到這個 plugin")
         # #33 verify R4：先前 `mp_ver != pj_ver` 把「兩邊都沒有 version」判為一致並印 ✓ ——
         # 而那正是 pack README 說會讓 pack 靜默消失（cache 目錄名不是 semver）的條件。
         if pj_ver is None or mp_ver is None:
             errs.append(
                 f"::error file={prop(mp)}::{entry.get('name')} 缺 version"
-                f"（plugin.json={pj_ver!r}、marketplace.json={mp_ver!r}）。"
+                f"（plugin.json={wc(repr(pj_ver))}、marketplace.json={wc(repr(mp_ver))}）。"
                 "兩邊都沒有不是「一致」—— cache 目錄名會退回 commit SHA，consumer 定位不到"
             )
         elif mp_ver != pj_ver:
             errs.append(
                 f"::error file={prop(mp)}::{entry.get('name')} version 不同步 —— "
-                f"plugin.json={pj_ver} 但 marketplace.json={mp_ver}。"
+                f"plugin.json={wc(pj_ver)} 但 marketplace.json={wc(mp_ver)}。"
                 "兩者不一致時使用者 /plugin update 收不到新版，且不會有任何錯誤訊息"
             )
         else:
-            print(f"marketplace 版本一致：{entry.get('name')} {pj_ver} ✓")
+            print(f"marketplace 版本一致：{wc(entry.get('name'))} {wc(pj_ver)} ✓")
         # #33 verify R6：這道閘門先前只比對 version，對 description 完全無視 ——
         # 而本 PR 自己就製造了那個漂移（plugin.json 換成 v2.23.0 的說明、marketplace
         # 仍停在 v2.21.0），使用者看到的版本是 2.23.0、描述卻是兩版前的文字。
@@ -612,7 +619,7 @@ def check_marketplace_sync(root, errs):
             m_desc = re.search(r"(?<![A-Za-z0-9])v(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?):", str(desc or ""))
             if m_desc and pj_ver and m_desc.group(1) != pj_ver:
                 emit(f"::warning file={prop(mp)}::{entry.get('name')} 的 {label} description 最新一段標示 "
-                      f"v{m_desc.group(1)}，但 version 是 {pj_ver} —— 使用者會把這一版的內容"
+                      f"v{wc(m_desc.group(1))}，但 version 是 {wc(pj_ver)} —— 使用者會把這一版的內容"
                       "歸給另一個版號。發版時 description 的版號前綴要跟著改")
     if seen == 0:
         errs.append(f"::error file={prop(mp)}::沒有任何本 repo 內的 plugin 被檢查 —— 這個檢查形同虛設")
@@ -826,7 +833,7 @@ def check_bumped(root, errs, base, event=None):
                         "這不是「無需 bump」—— 是這道閘門沒有跑")
             return
         cmp_base = mb.stdout.strip()
-        print(f"bump 檢查基準：merge-base({base[:12]}, HEAD) = {cmp_base[:12]}"
+        print(f"bump 檢查基準：merge-base({wc(base[:12])}, HEAD) = {wc(cmp_base[:12])}"
               f"（{event or '預設'}：問「這個分支引入了什麼」）")
     else:
         print(f"bump 檢查基準：{base[:12]} 本身（push：exact-tree）")
@@ -846,7 +853,7 @@ def check_bumped(root, errs, base, event=None):
         # 那會吃掉第一行的前導空白（` M path` → `M path`），ln[3:] 就多切一個字元。
         paths = [ln[3:] for ln in dirty.stdout.splitlines() if len(ln) > 3]
         emit("::warning::工作目錄有未 commit 的變更，bump 檢查**只涵蓋已 commit 的內容**："
-              + ", ".join(paths))
+              + wc(", ".join(paths)))
     # #33 verify R10 M3：改名偵測先前只讓「舊版本」那一側 rename-aware，**變更清單這一側
     # 用的仍是新路徑** —— pack 目錄一改名，舊路徑下的每個 lens 在新路徑上都算「新增」，
     # `changed` 必然非空，於是一次**純目錄搬移**（lens 內容零變動）被要求 bump 版本。
@@ -915,16 +922,16 @@ def check_bumped(root, errs, base, event=None):
         # 找得到就是改名，用它的舊路徑比對，閘門照跑。找不到才是真的新增。
         moved = moved_pj
         if moved:
-            print(f"note: pack 在 base 時位於 {moved[: -len('/.claude-plugin/plugin.json')]}"
+            print(f"note: pack 在 base 時位於 {wc(moved[: -len('/.claude-plugin/plugin.json')])}"
                   f"（本次改名為 {pack_rel}）—— 用舊路徑比對版本")
             # READ-SITE 14/19
             old = subprocess.run(["git", "show", f"{cmp_base}:{moved}"],
                                  cwd=repo, capture_output=True, text=True, errors="replace")
             if old.returncode != 0:
-                errs.append(f"::error::讀不到 base 上的 {moved} —— bump 檢查沒有跑")
+                errs.append(f"::error::讀不到 base 上的 {wc(moved)} —— bump 檢查沒有跑")
                 return
         else:
-            print(f"note: base（{cmp_base[:12]}）的樹裡找不到名為 '{pack_name}' 的 pack —— "
+            print(f"note: base（{wc(cmp_base[:12])}）的樹裡找不到名為 '{wc(pack_name)}' 的 pack —— "
                   "本次在新增整個 pack，無前一版可比。這是唯一合法的略過情境")
             return
     # label 用 repo 相對路徑（R12 logic L2：先前的 `<sha>:<path>` 含裸 `:`，不是 runner 認得的
@@ -935,15 +942,15 @@ def check_bumped(root, errs, base, event=None):
     prev = prev_obj.get("version", "")
     tn, tp = version_tuple(now), version_tuple(prev)
     if tn is None or tp is None:
-        errs.append(f"::error file={prop(pj)}::版本字串不是 semver（base={prev!r}、現在={now!r}），無法比較")
+        errs.append(f"::error file={prop(pj)}::版本字串不是 semver（base={wc(repr(prev))}、現在={wc(repr(now))}），無法比較")
     elif tn <= tp:
         errs.append(
             f"::error file={prop(pj)}::lenses/ 改了（{wc(', '.join(real))}）"
-            f"但版本沒有增加（base={prev} → 現在={now}）。"
+            f"但版本沒有增加（base={wc(prev)} → 現在={wc(now)}）。"
             "版本沒變時使用者 /plugin update 收不到這些 lens，而且不會有任何錯誤訊息"
         )
     else:
-        print(f"lenses/ 有變更且已 bump：{prev} → {now} ✓")
+        print(f"lenses/ 有變更且已 bump：{wc(prev)} → {wc(now)} ✓")
 
 
 def check_lens_dir_shape(root, errs):
@@ -1104,7 +1111,8 @@ def check_csvs(root, errs, files):
                 # #33 verify R14（security S1 / logic L-6）：R13 讓 stderr 走 wc()（截斷 + 中和）。但洩漏的機制
                 # 從來不是路徑：node 求值的是 fork 可控的 JS，合法的 in-repo harness 只要 `import` repo 外的檔，
                 # code frame 就把該檔內容經 stderr 帶進來——路徑守衛擋不住求值。類級修法：stderr **一律不進
-                # annotation**，內容再也沒有管道；診斷請本機執行 bin/pai-list-profiles。
+                # annotation**（stdout 的 profile 名仍會進 annotation——那是要比對的東西，經 wc() 截斷；R15 S-2）；
+                # 診斷請本機執行 bin/pai-list-profiles。
                 errs.append(f"::error::無法取得 PROFILES 清單（pai-list-profiles rc={r.returncode}；它求值的是 "
                             "PR 可控的 JS，其 stderr 不進 annotation —— 本機執行 bin/pai-list-profiles 看原因）。"
                             "profile 名稱閘門沒有跑")

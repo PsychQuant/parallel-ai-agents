@@ -7,7 +7,7 @@ cd "$(dirname "$0")/.."
 echo "── shellcheck (bash scripts) ──"
 # 這份清單與 .github/workflows/test.yml 的 shellcheck step 是兩份寫死的規格（#30 追蹤自動列舉）；
 # #33 verify R11 抓到兩邊互相都不是對方的超集 —— 改其中一邊時請一併改另一邊。
-shellcheck bin/pai-build-diff bin/pai-parse-verdict bin/pai-iter-commit bin/pai-list-profiles references/regen-builtin-lenses.sh test/run.sh test/lint-bats.sh test/lint-changelog-counts.sh test/lint-contract-enumerations.sh test/lint-ci-log-filter.sh
+shellcheck bin/pai-build-diff bin/pai-parse-verdict bin/pai-iter-commit bin/pai-list-profiles references/regen-builtin-lenses.sh test/run.sh test/assert-tap-complete.sh test/lint-bats.sh test/lint-changelog-counts.sh test/lint-contract-enumerations.sh test/lint-ci-log-filter.sh
 
 echo "── py_compile (python scripts) ──"
 python3 -m py_compile bin/pai-parse-lens-csv bin/pai-collect-lens-layers
@@ -26,26 +26,30 @@ bash test/lint-contract-enumerations.sh
 
 echo "── lint-ci-log-filter (every CI run step must say how its log is filtered — #33 verify R15) ──"
 bash test/lint-ci-log-filter.sh --selftest
-bash test/lint-ci-log-filter.sh
+# R16 logic L-2：非 monorepo 佈局沒有 .github/ —— 明說略過，不是 traceback。
+if [ -f ../../.github/workflows/test.yml ]; then bash test/lint-ci-log-filter.sh; else echo "（非 monorepo 佈局，略過 workflow 檢查）"; fi
 
 echo "── bats test/ ──"
 bats test/
 
 # #33 verify R15（regression LOW）：CI 的 pack 錨點 no-skip 守衛（R14 新增）run.sh 沒跟上——R12 才關掉的分岔又開。
+# R16：非 monorepo 佈局（plugin cache 副本）沒有 sibling pack，錨點依設計 skip——那不是 vacuous，是不適用；只在 monorepo 跑守衛。
 echo "── bats (pack anchor) — fail on skip ──"
+if [ ! -d ../pai-lenses ]; then
+  echo "（非 monorepo 佈局，pack 錨點不適用，略過 no-skip 守衛）"
+else
 TAP="$(mktemp)"
 bats --formatter tap test/pai-collect-lens-layers.bats > "$TAP" || { cat "$TAP"; exit 1; }
-if grep -aqi '# skip' "$TAP"; then cat "$TAP"; echo "pai-collect-lens-layers.bats skipped a case — the pack integration anchor is vacuous"; exit 1; fi
-plan="$(grep -a -m1 -oE '^1\.\.[0-9]+' "$TAP" | sed 's/^1\.\.//')"; ran="$(grep -acE '^(ok|not ok) ' "$TAP" || true)"
-[ -n "$plan" ] && [ "$ran" -eq "$plan" ] || { cat "$TAP"; echo "TAP plan $plan != executed $ran"; exit 1; }
+bash test/assert-tap-complete.sh "$TAP" "pai-collect-lens-layers.bats" || { cat "$TAP"; exit 1; }
 rm -f "$TAP"
+fi
 
 echo "── node tests ──"
 for t in test/*.test.mjs; do echo "  $t"; node "$t"; done
 
 # #33 verify R11：pack（plugins/pai-lenses）的 python 測試先前沒有任何本機入口，只有 CI 的
 # manifests-and-lens-pack job 會跑；test/README.md 卻寫「CI 跑同一組」。這裡對齊那個 job
-# （完整 mutation 量測仍是手動：python3 scripts/mutation_check.py，約 30–40 分鐘）。
+# （完整 mutation 量測仍是手動：python3 scripts/mutation_check.py，約 30–50 分鐘）。
 # #33 verify R12：CI 的 builtin-lenses.csv drift step 也搬過來 —— 它是 run.sh 與 CI 之間最後一處分岔。
 echo "── builtin-lenses.csv drift (regenerate → expect no diff) ──"
 # R13 logic N4：非 git checkout（plugin cache 副本）下 `git diff` rc=129，不能拿它當「過期」。

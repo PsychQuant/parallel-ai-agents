@@ -1,0 +1,10 @@
+# fixture（R16 security S-3 ④／regression F4）：`# LOG-FILTER:` 寫在下一個 step 的 `- name:` 上方，
+# 舊解析把它算進前一個（未過濾的）step 的 body
+jobs:
+  j:
+    steps:
+      - name: unfiltered
+        run: shellcheck foo.sh
+      # LOG-FILTER: none — belongs to the NEXT step
+      - name: marked
+        run: bats test/
