@@ -9,16 +9,28 @@
 # （shellcheck、lint-*、整個 macOS job）——散文列舉在第一輪就不封閉。與 lint-bats / lint-changelog-counts 同形：
 # 規則寫成機器擋，且 `--selftest` 先證明它抓得到。
 #
+# **守備範圍（明寫，R20 security S-3）**：只看 `.github/workflows/` 底下的 workflow。composite action
+# （`.github/actions/*/action.yml`）的 `run:` step 會在同一個 job log 裡執行、對本 lint 隱形。今日 latent
+# （本 repo 沒有 `.github/actions/`）。**刻意不擴大 glob**：composite action 的 step 語意與 workflow 不同
+# （沒有 job、`shell:` 必填），硬套同一套白名單會產生假紅；真的開始用 composite action 時，該做的是為
+# 它寫一份自己的規則，不是把這一支的守備範圍偷偷放大。
+#
 # 用法：test/lint-ci-log-filter.sh [workflow.yml…]   預設 ../../.github/workflows/*.yml *.yaml（全部 workflow）
 #       test/lint-ci-log-filter.sh --selftest
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 if [ "${1:-}" = "--selftest" ]; then
-  if bash test/lint-ci-log-filter.sh test/fixtures/ci-log-filter-bad.yml >/dev/null 2>&1; then
+  bad_out=$(bash test/lint-ci-log-filter.sh test/fixtures/ci-log-filter-bad.yml 2>&1) && {
     echo "lint-ci-log-filter selftest FAILED: a run step with neither neutralise.py nor LOG-FILTER was accepted" >&2
     exit 1
-  fi
+  }
+  # R20 security LOW：vacuity 斷言先前只套在 bypass fixture 上，沒套在 bad.yml。
+  case "$bad_out" in
+    *VACUOUS*)
+      echo "lint-ci-log-filter selftest FAILED: bad.yml 是被 vacuity 守衛擋的，不是被規則擋的" >&2
+      exit 1 ;;
+  esac
   if ! bash test/lint-ci-log-filter.sh test/fixtures/ci-log-filter-good.yml >/dev/null 2>&1; then
     echo "lint-ci-log-filter selftest FAILED: the compliant fixture was rejected" >&2
     exit 1
@@ -98,7 +110,20 @@ LOGFILTER_RE = re.compile(r"^\s*#\s*LOG-FILTER:\s*(in-process|none — .+)")
 
 rc_all = 0
 for path in sys.argv[1:]:
-    raw = open(path, encoding="utf-8").read().split("\n")
+    text = open(path, encoding="utf-8").read()
+    # R20 regression R-2：前一版只用 `\n` 切行，於是一個 U+2028 藏得住第二個 `run:`（PyYAML 與
+    # libyaml 都看得到兩個 step）。**不要在這裡複製一份 `validate.py` 的 `_LINE_BREAKS`**——同一概念
+    # 兩份實作正是本 PR 反覆修的病。白名單的作法是：本 lint 只解析以 `\n` 分行的 workflow，
+    # 出現其他行界就 **fail-loud 拒絕**（不解析，不猜）。
+    OTHER_BREAKS = ("\r", "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029")
+    raw = text.split("\n")
+    stray = [(n, br) for n, ln in enumerate(raw) for br in OTHER_BREAKS if br in ln]
+    if stray:
+        n, br = stray[0]
+        print("%s:%d: 這一行含 `\\n` 以外的行界字元 %r —— YAML／runner 可能把它當換行，"
+              "本 lint 不解析這種檔案" % (path, n + 1, br), file=sys.stderr)
+        rc_all = 1
+        continue
     bad = []
     def reject(i, why):
         bad.append((i + 1, why))
@@ -154,7 +179,14 @@ for path in sys.argv[1:]:
             reject(i, "本 lint 不解析這一行（不是 plain key、不是清單項、不是 block scalar 內容）：`%s`" % st[:40])
         kind[i] = "BAD"; i += 1
 
-    # steps: 底下的每個 step
+    # ── 第二階段：step 的邊界（R20：四份各自報的多條問題是**同一個根因** —— R19 把這一階段
+    # 留成啟發式）。前一版用 `if ind <= s_indent: break` 當結束條件，暗含一個沒寫出來的前提：
+    # 「清單項一定比 `steps:` 更深」。**那不是 YAML 的規則**：block sequence 可以與它的 key 同縮排
+    # （`yaml.safe_load` 證明語意相同），於是整個 job 對 lint 隱形、rc=0 零輸出。
+    #
+    # 改法與第一階段同一個方向：**結構也白名單**。dash 的縮排由「`steps:` 之後第一個清單項」決定，
+    # 之後只認**恰好那個縮排**的清單項；區塊結束於第一個縮排更淺的非空非註解行，或與 `steps:` 同層
+    # 的下一個 key。找不到任何清單項 → **per-`steps:` fail-loud**（不解析就不放行）。
     steps = []
     for i in range(len(raw)):
         if kind[i] != "KEY":
@@ -163,40 +195,55 @@ for path in sys.argv[1:]:
         if mk.group(2) != "steps":
             continue
         s_indent = len(mk.group(1))
-        j, cur = i + 1, None
+        # dash 的縮排 = 第一個清單項的縮排（可以等於 s_indent —— flush 寫法）
+        dash_indent, j = None, i + 1
         while j < len(raw):
             if kind[j] in ("BLANK", "COMMENT", "SCALAR"):
-                if cur is not None:
-                    cur["end"] = j
                 j += 1; continue
             ind = len(raw[j]) - len(raw[j].lstrip())
-            if ind <= s_indent:
-                break
-            if seq_at[j]:
-                if cur: steps.append(cur)
-                cur = {"start": j, "end": j, "indent": ind, "kindent": None, "keys": {}, "name": "<未命名>"}
-            if cur is None:
+            if seq_at[j] and ind >= s_indent:
+                dash_indent = ind
+            break
+        if dash_indent is None:
+            reject(i, "`steps:` 底下找不到任何清單項——本 lint 不解析這種寫法（flow 寫法？空 steps？）")
+            continue
+        starts = []
+        j = i + 1
+        while j < len(raw):
+            if kind[j] in ("BLANK", "COMMENT", "SCALAR"):
                 j += 1; continue
-            cur["end"] = j
-            # **只看 step 自己那一層的 key**。`with:` / `env:` 底下的巢狀鍵是那個 mapping 的內容，
-            # 不是 step 的欄位——第一版把它們也拿去比白名單，於是真 test.yml 的 `fetch-depth:`
-            # 與三個 `env:` 變數被誤擋。白名單的作用域和它的內容一樣重要。
-            if kind[j] == "KEY":
-                k_ind = len(KEY_RE.match(norm[j]).group(1))
+            ind = len(raw[j]) - len(raw[j].lstrip())
+            if seq_at[j] and ind == dash_indent:
+                starts.append(j); j += 1; continue
+            if ind < dash_indent or (kind[j] == "KEY" and ind <= s_indent):
+                break                                  # 離開 steps:（更淺，或 steps: 的兄弟 key）
+            j += 1
+        block_end = j - 1
+        for n, st in enumerate(starts):
+            # step 的行範圍 = [start, 下一個 start - 1]，尾端的空白／註解行**不屬於這個 step**
+            en = (starts[n + 1] - 1) if n + 1 < len(starts) else block_end
+            while en > st and (not raw[en].strip() or kind[en] == "COMMENT"):
+                en -= 1
+            cur = {"start": st, "end": en, "indent": dash_indent, "kindent": None,
+                   "keys": {}, "name": "<未命名>"}
+            for k_line in range(st, en + 1):
+                if kind[k_line] != "KEY":
+                    continue
+                # **只看 step 自己那一層的 key**：`with:` / `env:` 底下的巢狀鍵是那個 mapping 的內容。
+                k_ind = len(KEY_RE.match(norm[k_line]).group(1))
                 if cur["kindent"] is None:
                     cur["kindent"] = k_ind
                 if k_ind != cur["kindent"]:
-                    j += 1; continue
-                k = KEY_RE.match(norm[j]).group(2)
+                    continue
+                k = KEY_RE.match(norm[k_line]).group(2)
                 if k in cur["keys"]:
-                    reject(j, "step 裡 `%s:` 出現兩次——YAML 取後者、lint 讀前者，本 lint 拒絕" % k)
-                cur["keys"][k] = j
+                    reject(k_line, "step 裡 `%s:` 出現兩次——YAML 取後者、lint 讀前者，本 lint 拒絕" % k)
+                cur["keys"][k] = k_line
                 if k == "name":
-                    cur["name"] = (KEY_RE.match(norm[j]).group(3) or "").strip() or "<未命名>"
+                    cur["name"] = (KEY_RE.match(norm[k_line]).group(3) or "").strip() or "<未命名>"
                 elif k not in STEP_KEYS:
-                    reject(j, "step 用了白名單外的欄位 `%s:`——本 lint 只認 %s" % (k, sorted(STEP_KEYS)))
-            j += 1
-        if cur: steps.append(cur)
+                    reject(k_line, "step 用了白名單外的欄位 `%s:`——本 lint 只認 %s" % (k, sorted(STEP_KEYS)))
+            steps.append(cur)
 
     rc, seen = 0, 0
     for s in steps:
@@ -207,11 +254,21 @@ for path in sys.argv[1:]:
         inline = KEY_RE.match(norm[r]).group(3) or ""
         run_lines = [inline] + [raw[k] for k in range(r + 1, s["end"] + 1)
                                 if kind[k] == "SCALAR" and owner[k] == r]
-        # 註解只有在 step **之內**（縮排比清單項的 dash 更深）才算數。前一版把 step 範圍內的
-        # 所有行都拿去比對，於是寫在第 0 欄、落在 job 之間或檔尾的 `# LOG-FILTER:` 也能放行。
-        body_lines = [raw[k] for k in range(s["start"], s["end"] + 1)
-                      if raw[k].strip() and (len(raw[k]) - len(raw[k].lstrip())) > s["indent"]]
-        ok = any(PIPED_RE.search(l) for l in run_lines) or any(LOGFILTER_RE.match(l) for l in body_lines)
+        # **宣告層也白名單**（R20 security S-1/S-2）：R19 讓 block scalar 的內容對「結構」判定不透明，
+        # 卻沒對「宣告」判定不透明——於是 `name: |` 的 scalar 裡寫一行 `# LOG-FILTER:` 就放行整個 step，
+        # 而那一行是 step 的**顯示名稱**不是註解（`yaml.safe_load` 可證）。註解歸屬也會跨 step 邊界。
+        # 現在只認兩種來源，其餘一律不算：
+        #   (1) 真的是**註解行**（kind == COMMENT）且落在這個 step 自己的行範圍、縮排比 dash 深；
+        #   (2) `run:` **自己**那個 block scalar 的內容（header 明文允許，repo 裡有兩個真實指令這樣寫）。
+        decl_lines = [raw[k] for k in range(s["start"], s["end"] + 1)
+                      if (kind[k] == "COMMENT" and (len(raw[k]) - len(raw[k].lstrip())) > s["indent"])
+                      or (kind[k] == "SCALAR" and owner[k] == r)]
+        # 管線可以跨行（折疊 scalar `>`，或 literal `|` 裡行尾留 `|` 續行）——R20 regression R-6：
+        # 前一版只逐行比對，於是 `echo hi |` / `python3 …neutralise.py` 分兩行寫就被誤擋。
+        # 兩種寫法下行尾的 `|` 本來就代表管線延續，所以把 run 區塊接成一串再比對是語意正確的。
+        run_joined = " ".join(l.strip() for l in run_lines)
+        ok = (any(PIPED_RE.search(l) for l in run_lines) or PIPED_RE.search(run_joined)
+              or any(LOGFILTER_RE.match(l) for l in decl_lines))
         if not ok:
             print("%s:%d: step '%s' 的 run 區塊既沒有經 neutralise.py，也沒有 `# LOG-FILTER:` 註解說明為何不過濾"
                   % (path, s["start"] + 1, s["name"]), file=sys.stderr)

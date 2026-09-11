@@ -21,7 +21,7 @@
     python3 scripts/mutation_check.py                  # 完整量測（慢）
     python3 scripts/mutation_check.py --check-targets  # 只驗靶還對得上（秒級，CI 會跑）
 
-**手動跑，不進 CI**（一輪 = 靶數 × 全套測試，每套測試 20–35 s × 靶數，目前約 30–60 分鐘；比照 `ensemble-eval` 的定位）。
+**手動跑，不進 CI**（一輪 = 靶數 × 全套測試，一輪 = 靶數 × 全套測試（本機最近一輪：112 靶 / 64.2 分 / 每靶 34.4 s，由 mutation_check.py 收尾自己印）；比照 `ensemble-eval` 的定位）。
 改動 `validate.py` 的閘門、或新增閘門之後跑一次；存活清單就是待補的測試。
 
 ## 兩個誠實邊界
@@ -72,7 +72,8 @@ MUTATIONS = [
      "        outside = [p for p in (pj,) if not _inside(p, repo_abs)]"),
     # R18 security S-4：fork 可控的 JSON 型別讓這道 CRITICAL 閘門拋 TypeError 被 gate() 吞掉。
     ("source.path 型別守衛", "            if rel is not None and not isinstance(rel, str):", "            if False:"),
-    ("source 形狀守衛（非字串非物件）", "        elif src is not None:", "        elif False:"),
+    ("source 缺席守衛（第三態）", "        elif src is None:", "        elif False:"),
+    ("source 遠端來源封閉列舉", '                if isinstance(kind, str) and kind in REMOTE_SOURCES:', "                if False:"),
     ("abs/.. 前置檢查",
      '        if os.path.isabs(rel) or ".." in pathlib.PurePosixPath(rel).parts:',
      "        if False:"),
@@ -212,9 +213,12 @@ MUTATIONS = [
     # R18 DA-2：`wc()` 自己那層的 collapse_lines 沒有靶（emit 那層有），而 `_LINE_BREAKS` 的
     # 11 個分隔符只有 8 個有網。粗顆粒的靶蓋住細顆粒的缺口，第三處。
     ("wc() 自己那層的 collapse_lines", "    t = collapse_lines(str(value))", "    t = str(value)"),
-    ("分隔符表：\\x1c", '"\\x1c", ', ""),
-    ("分隔符表：\\x1d", '"\\x1d", ', ""),
-    ("分隔符表：\\x1e", '"\\x1e", ', ""),
+    ("分隔符表：\\x1c（**替換**而非刪除——長度不變，才驗得到行為）",
+     '"\\x1c", ', '"\\x07", '),
+    ("分隔符表：\\x1d（**替換**而非刪除——長度不變，才驗得到行為）",
+     '"\\x1d", ', '"\\x07", '),
+    ("分隔符表：\\x1e（**替換**而非刪除——長度不變，才驗得到行為）",
+     '"\\x1e", ', '"\\x07", '),
     ("V1 `##[` 中和（emit）", '    t = t.replace("##[", "##⟦")', "    t = t"),
     ("emit 截斷保留命令頭", "    if len(msg) > 4000:", "    if False:"),
     # R12 DA-6：這兩個守衛在目前的入口條件（`old_path.endswith("/" + suffix)`）下**依構造不可達**
@@ -323,7 +327,7 @@ def _apply(name, old, new, src):
 def check_targets_only():
     """只驗每個靶是否恰好命中一次 —— 秒級，可以進 CI（#33 verify R9 M11/M24）。
 
-    完整的 mutation 量測太慢（靶數 × 全套測試 ≈ 30–60 分鐘），不適合每個 PR 跑。但**靶清單
+    完整的 mutation 量測太慢（一輪 = 靶數 × 全套測試（本機最近一輪：112 靶 / 64.2 分 / 每靶 34.4 s，由 mutation_check.py 收尾自己印）），不適合每個 PR 跑。但**靶清單
     相對 validate.py 的漂移**是可以便宜擋住的：有人改動被 mutate 的那幾行、或搬走一道閘門，
     靶就對不上。先前這件事只有在有人手動跑整輪時才會發現，而「忘了跑」是預設。
     """
@@ -361,7 +365,7 @@ def check_targets_only():
 
 def main():
     # #33 verify R10 M6：先前是 `if "--check-targets" in sys.argv[1:]` —— 手寫解析，
-    # 打錯旗標（`--check-target`）會被靜默忽略，然後**直接跑 30–60 分鐘的就地改寫迴圈**。
+    # 打錯旗標（`--check-target`）會被靜默忽略，然後**直接跑 64.2 分鐘量級的就地改寫迴圈**。
     # R9 才剛把 validate.py 的同一種解析拆掉，理由逐字適用於這裡。
     ap = argparse.ArgumentParser(
         prog="mutation_check.py",

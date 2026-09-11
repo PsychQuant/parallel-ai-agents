@@ -107,6 +107,11 @@ READ_SITES = (
 # 兩層都判）、反向 glob 找到的 plugin.json（站點 1 的呼叫端，_inside）。
 
 
+# marketplace entry 的遠端 source 種類（封閉列舉，R20 DA-4）。列舉內 → 具名跳過版本閘門；
+# 列舉外 → 具名報錯。**不得依性質相似類推第 N+1 種**：要支援新的遠端來源就加在這裡並補一條測試。
+REMOTE_SOURCES = ("github", "url", "npm", "git")
+
+
 def _truthy(value):
     """與生產端 `bin/pai-parse-lens-csv` 的 `_truthy` **逐字同義**。
 
@@ -519,7 +524,22 @@ def check_marketplace_sync(root, errs):
                       "是本 repo 路徑還是遠端來源 —— **未納入版本閘門**。"
                       "本 repo 內的 plugin 請用 './' 開頭的相對路徑")
                 continue
-        elif isinstance(src, dict) and src.get("source") in (None, "local", "path"):
+        elif isinstance(src, dict):
+            # **三態**（R20 DA-4）：R19 只分「本地 dict」與「其他」，於是合法的遠端物件形式
+            # `{"source":"github",…}`（`pai-lenses` 在 main 上就是這個形狀）被當成「既不是字串也不是
+            # 物件」硬報錯——對一個 dict 說它不是物件。但只把條件放寬成「非 str 非 dict 才報」，會用
+            # 一個假陽性換到**兩個靜默跳過**（不認得的 dict source、`source` 缺席／null）。所以三態：
+            #   (1) 本地 → 照常進版本閘門；(2) **列舉內**的遠端 → 具名跳過（不是靜默）；
+            #   (3) 其他 → 具名報錯。REMOTE_SOURCES 是封閉列舉，不得依性質相似類推。
+            kind = src.get("source")
+            if not (kind is None or kind in ("local", "path")):
+                if isinstance(kind, str) and kind in REMOTE_SOURCES:
+                    emit(f"::warning file={prop(mp)}::{wc(entry.get('name'))} 的 source 是遠端來源 "
+                         f"{wc(repr(kind))} —— **未納入版本閘門**（本 repo 內的 plugin 請用 './' 相對路徑）")
+                else:
+                    errs.append(f"::error file={prop(mp)}::{wc(entry.get('name'))} 的 source.source 是 "
+                                f"{wc(repr(kind))}，不在認得的來源列舉內 —— 版本閘門不知道該不該比對它")
+                continue
             rel = src.get("path")
             # R18 security S-4：`path` 是 fork 可控的 JSON 值，型別沒有被檢查。給它一個 int／list／
             # dict／bool／含 NUL 的字串，下面的 `repo_abs / rel` 就拋 TypeError，被 gate() 當成
@@ -533,9 +553,13 @@ def check_marketplace_sync(root, errs):
                 errs.append(f"::error file={prop(mp)}::{wc(entry.get('name'))} 的 source.path 含 NUL —— "
                             "作業系統不接受這種路徑，版本閘門無法比對")
                 continue
-        elif src is not None:
-            # 既不是字串也不是物件（list／int／bool…）：先前落到下面的 `if not rel: continue`，
-            # 也就是**靜默跳過**這道閘門。靜默跳過正是本 PR 一路在修的病，改成具名回報。
+        elif src is None:
+            # R20 DA-4：`source` 缺席／null 先前也是靜默跳過。第三態，具名。
+            errs.append(f"::error file={prop(mp)}::{wc(entry.get('name'))} 沒有 source —— "
+                        "版本閘門無從知道要比對哪一份 plugin.json")
+            continue
+        else:
+            # 既不是字串也不是物件（list／int／bool…）。
             errs.append(f"::error file={prop(mp)}::{wc(entry.get('name'))} 的 source 既不是字串也不是物件"
                         f"（type={type(src).__name__}）—— 版本閘門不認得這種寫法")
             continue
@@ -816,6 +840,10 @@ def check_bumped(root, errs, base, event=None):
     # #33 verify R13（security S1）：R12 說「反向 glob 是唯一沒走 load_obj 的 JSON 讀取點」——假的，
     # 這裡的 except 少列 UnicodeDecodeError，非 UTF-8 的 plugin.json 讓整支 crash、零 annotation。
     # 同一類的另一個站點是所有 `subprocess.run(text=True)`（git 輸出的解碼）—— 一律 errors="replace"。
+    # **這句不再只是散文**（R20 → R21）：`test_validate.py` 的
+    # `test_every_decoding_call_site_survives_undecodable_bytes` 對全檔做 AST 不變式——任何會解碼
+    # 外部位元組的呼叫，要嘛帶 `errors=`，要嘛包在接得住 `UnicodeDecodeError` 的 try 裡。11 個站點
+    # 逐一拆掉各自驗過會紅；零豁免清單，新站點自動涵蓋。
     pack_name = None
     _pj_path = root / ".claude-plugin" / "plugin.json"
     if _inside(_pj_path.resolve(), repo.resolve()):          # R13 logic N1：第九處 containment

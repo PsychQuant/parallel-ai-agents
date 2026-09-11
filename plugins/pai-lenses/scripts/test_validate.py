@@ -15,15 +15,15 @@
 mutation」。**那三句話會讓下一個維護者以為改動 `validate.py` 有測試網接著。**
 
 現在用 `scripts/mutation_check.py` 量：跑一次就知道哪些閘門沒有測試網。
-**最近一次量測（R19 後）：111 個靶 → 108 殺 / 0 存活 / 0 靶壞**（另 3 個 `EXPECTED_SURVIVE`）。
-單一副本上的完整一輪：跑的那棵樹與 commit 的 `validate.py` / `test_validate.py` / `mutation_check.py`
-三檔 SHA-256 逐位元相同。實測 **55.1 分鐘 / 111 靶 = 每靶 29.8 s**，由 `mutation_check.py` 自己印。
+**最近一次量測（R21 後）：112 個靶 → 109 殺 / 0 存活 / 0 靶壞**（另 3 個 `EXPECTED_SURVIVE`）。
+單一副本上的完整一輪，副本用 `git archive` 取（**不是 `cp -R`**：R20 有 agent 在共用 checkout 裡變異 tracked 檔，
+另一個 lens 的 `cp -R` 拍到活的變異體而當時 `git status` 讀起來乾淨）。實測 **64.2 分鐘 / 112 靶 = 每靶 34.4 s**。
+**耗時不再寫固定區間**：靶數每輪在增加，而「30–40」「30–50」「30–60」連四輪被抓到低估。散文現在只寫
+「靶數 × 全套測試」這個關係，實際數字由 `mutation_check.py` 收尾自己印——那一行是唯一 current 的來源。
 **這個數字要怎麼讀**（R18 DA-2 的裁決，比數字本身重要）：靶是人手寫的，**顆粒度決定它看得見什麼**。
-R18 抽樣三個「一個靶蓋住一個概念」的粗靶——`prop()` 的五個轉義、containment 的兩層、`_LINE_BREAKS` 的
-11 個分隔符——**三個都藏著細顆粒缺口**：同一個概念在兩處實作時，粗靶被其中一處的測試殺掉，另一處
-沒有網也看不出來。當時那一輪是 97 殺／0 存活，數字是真的，顆粒度是錯的。R19 把這三處拆成細靶
-（五個轉義各一個、兩層各一個、三個未涵蓋的分隔符各一個），所以 111 > 105 不是「又多測了幾件事」，
-是**同樣的事情量得比較細**。看到「0 存活」請先問：有沒有哪個靶其實蓋住了兩個實作？
+R18 抽樣三個粗靶，三個都藏著細顆粒缺口；R19 拆了三處，R20 的 DA 又在 `errors="replace"` 找到第四處
+（11 個呼叫點 1 個靶）。R21 把它改成**機械不變式**而不是再手寫 9 個靶——見
+`test_every_decoding_call_site_survives_undecodable_bytes`。看到「0 存活」請先問：有沒有哪個靶蓋住了兩個實作？
 `EXPECTED_SURVIVE` 3 個：`_find_pack_at` git 分支的兩個守衛依構造不可達（R12 logic L3 / DA-6，保留為防禦）、
 「換回 splitlines()」（LineSanitiser 對每一段獨立判定，過度切段只會過度消毒）。規則明寫在 mutation_check.py：每一條
 進來的靶都要能回答「關掉它，哪一行輸出會變」（R14 把「pack_name 讀取的 containment」放進去的理由是假的——
@@ -370,6 +370,26 @@ class ValidateTest(unittest.TestCase):
         self.fx.add_entry("evil", [1, 2, 3])
         out = self.assertRed(contains="既不是字串也不是物件")
         self.assertNotIn("validator 內部錯誤", out)
+
+    def test_legitimate_remote_object_source_is_not_an_error(self):
+        """R20 DA-4：R19 的形狀守衛把**合法**的遠端物件形式 `{"source":"github",…}` 判成
+        「既不是字串也不是物件」——對一個 dict 說它不是物件。那正是 `pai-lenses` 在 main 上的形狀
+        （DA 用 `5eab1e4` 的位元組重現）。遠端來源本來就不在版本閘門的守備範圍，該**具名跳過**。"""
+        self.fx.add_entry("remote", {"source": "github", "repo": "PsychQuant/pai-lenses"})
+        out = self.assertGreen()
+        self.assertIn("遠端來源", out, f"遠端來源應具名跳過而不是靜默：{out[:300]}")
+
+    def test_unknown_dict_source_and_missing_source_are_both_named(self):
+        """同一條的另外兩態（DA-4：只放寬成「非 str 非 dict 才報」會用一個假陽性換到兩個靜默跳過）：
+        不認得的 dict source、以及 `source` 缺席／null，兩者都必須具名，不得靜默跳過版本閘門。"""
+        self.fx.add_entry("weird", {"source": "carrier-pigeon", "path": "./x"})
+        out = self.assertRed(contains="不在認得的來源列舉內")
+        self.assertNotIn("validator 內部錯誤", out)
+
+    def test_entry_without_source_is_named(self):
+        """第三態：`source` 缺席／null。"""
+        self.fx.add_entry("nosrc", None)
+        self.assertRed(contains="沒有 source")
 
     def test_symlinked_claude_plugin_dir_cannot_escape_repo(self):
         """R6 H4：containment 判定的是實際要讀的檔，不是它的祖先目錄。"""
@@ -1396,20 +1416,28 @@ class ValidateTest(unittest.TestCase):
         self.assertIn("…（截斷）", line)
         self.assertNotIn("##[", line)
 
-    def test_wc_collapses_every_separator_in_the_table(self):
-        """R18 DA-2：`_LINE_BREAKS` 有 11 個分隔符，但只有 8 個有網——`\\x1c`／`\\x1d`／`\\x1e` 拿掉
-        全套仍綠。而且 `wc()` **自己那層**的 `collapse_lines()` 呼叫也沒有靶（`emit()` 那層有）。
-        這是「粗顆粒的靶蓋住細顆粒的缺口」在第三處重演。
+    def test_wc_collapses_every_separator_the_runner_honours(self):
+        """R20 DA-6：上一版**自己是假綠**。它只走實作的那張表（`for br in V._LINE_BREAKS`）並斷言
+        長度 ≥ 11，於是把表裡的 `\\x1c` **換成**別的字元（長度不變）→ 133 條全綠；那三個 mutation 靶
+        是被**長度斷言**殺掉的，不是被行為殺掉的。同一個「假綠」教訓第三次落在為那個教訓寫的東西上。
 
-        這條**直接走表**（`for br in V._LINE_BREAKS`），所以往表裡加一個分隔符會自動被斷言涵蓋，
-        不需要記得同步改測試——寫死清單會漂，這個 repo 已經有兩份 shellcheck 清單的前例。"""
+        修法：**測試自己陳述需求**，不要把實作的表當成規格。下面這份清單是「runner 會當成換行的字元」
+        這個**需求**（來源：`collapse_lines` 的 docstring 與 R12 對 runner 原始碼的查證），與 `validate.py`
+        的實作表**獨立**。刪一項、換一項，這條都會紅。
+
+        這不是「同一概念兩份實作」那個反模式——那個反模式是兩份**實作**漂移；測試獨立陳述需求正是
+        測試該做的事。另外仍然走一次實作的表，確保表裡沒有混進不會被收掉的垃圾條目（雙向）。"""
         sys.path.insert(0, str(HERE))
         import validate as V
-        self.assertGreaterEqual(len(V._LINE_BREAKS), 11, "分隔符表變短了——是刻意的嗎？")
-        for br in V._LINE_BREAKS:
+        REQUIRED = ("\r\n", "\n", "\r", "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029")
+        for br in REQUIRED:                      # 需求 → 實作：少一個就紅（刪除與替換都抓得到）
             out = V.wc("a" + br + "b")
-            self.assertNotIn(br, out, f"分隔符 {br!r} 原樣留在 wc() 的輸出裡：{out!r}")
-            self.assertEqual(out, "a⏎b", f"分隔符 {br!r} 沒有被收成單行：{out!r}")
+            self.assertEqual(out, "a⏎b", f"runner 會當成換行的 {br!r} 沒有被收成單行：{out!r}")
+        for br in V._LINE_BREAKS:                # 實作 → 需求：表裡不得有收不掉的垃圾條目
+            out = V.wc("a" + br + "b")
+            self.assertEqual(out, "a⏎b", f"表裡的 {br!r} 沒有被收成單行：{out!r}")
+        self.assertEqual(set(V._LINE_BREAKS), set(REQUIRED),
+                         "實作的表與需求清單不一致——要加分隔符請兩邊一起加，並說明 runner 為何會那樣處理")
 
     def test_emit_collapses_every_separator_the_runner_treats_as_a_new_line(self):
         """R17 全輪 mutation：`collapse_lines()` 在 emit() 這一層**沒有任何測試網**（靶「workflow-command
@@ -1991,6 +2019,65 @@ class ValidateTest(unittest.TestCase):
                  .replace("{text}", "{wc(text)}").replace("'::notice::' + row", "'::notice::' + wc(row)")
                  .replace("', '.join(acc)", "wc(', '.join(acc))").replace("print(buf)", "print(wc(buf))"))
         self.assertFalse(taint_findings(clean)[0], "包了 wc() 之後不該再紅——規則沒有鑑別力")
+
+    def test_every_decoding_call_site_survives_undecodable_bytes(self):
+        """R20（logic L-2 / security S-4 / regression R-3，DA 裁決為第四個粗靶）：`validate.py:818` 宣稱
+        「所有 git 子行程解碼都帶 `errors='replace'`」，而那是**散文**——11 個呼叫點只有 1 個靶。拆掉
+        `:1164`（`bash pai-list-profiles`，由 node 求值 fork 可控的 JS）→ 一個 `\\xff` 讓 `gate()` 吞掉
+        `UnicodeDecodeError`、**整個 `check_csvs` 閘門不跑**，而全套仍然綠。
+
+        出口不是手寫 9 個新靶（那份清單自己會漂），是一條**機械不變式**：任何會解碼外部位元組的呼叫，
+        要嘛帶 `errors=`，要嘛包在接得住 `UnicodeDecodeError` 的 `try` 裡。兩者都沒有 → 那個站點會把
+        解碼失敗變成「validator 內部錯誤」，也就是**閘門靜默消失**（rc 仍為 1 並具名，所以這是
+        denial-of-gate 不是 bypass —— DA 的嚴重度更正）。
+
+        零豁免清單：這條規則對乾淨的樹是 0 違規。新增讀檔／子行程站點時它自動涵蓋。"""
+        import ast
+        src = (PACK / "scripts/validate.py").read_text(encoding="utf-8")
+        tree = ast.parse(src)
+        # 每個 Try 節點的行範圍 → 它接不接得住 UnicodeDecodeError
+        guarded = []
+        for n in ast.walk(tree):
+            if not isinstance(n, ast.Try):
+                continue
+            catches = False
+            for h in n.handlers:
+                names = []
+                if isinstance(h.type, ast.Name):
+                    names = [h.type.id]
+                elif isinstance(h.type, ast.Tuple):
+                    names = [e.id for e in h.type.elts if isinstance(e, ast.Name)]
+                elif h.type is None:
+                    names = ["BaseException"]
+                if "UnicodeDecodeError" in names or "BaseException" in names or "Exception" in names:
+                    catches = True
+            if catches:
+                body_lines = [x for b in n.body for x in ast.walk(b) if hasattr(x, "lineno")]
+                if body_lines:
+                    guarded.append((min(x.lineno for x in body_lines), max(x.lineno for x in body_lines)))
+        def is_guarded(lineno):
+            return any(lo <= lineno <= hi for lo, hi in guarded)
+
+        bad = []
+        for n in ast.walk(tree):
+            if not isinstance(n, ast.Call):
+                continue
+            f = n.func
+            nm = f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", None)
+            kw = {k.arg for k in n.keywords}
+            decodes = (nm == "read_text") or (
+                nm == "run" and isinstance(f, ast.Attribute) and getattr(f.value, "id", None) == "subprocess"
+                and any(k.arg == "text" and getattr(k.value, "value", None) is True for k in n.keywords))
+            if decodes and "errors" not in kw and not is_guarded(n.lineno):
+                bad.append((n.lineno, nm))
+        # 空轉防護：規則必須真的看到一批站點，否則「0 違規」是因為它什麼都沒掃到
+        seen = sum(1 for n in ast.walk(tree) if isinstance(n, ast.Call)
+                   and ((getattr(n.func, "attr", None) == "read_text")
+                        or (getattr(n.func, "attr", None) == "run"
+                            and getattr(getattr(n.func, "value", None), "id", None) == "subprocess")))
+        self.assertGreaterEqual(seen, 12, f"解碼站點只掃到 {seen} 個——規則本身空轉了")
+        self.assertFalse(bad, "這些站點解碼外部位元組，卻既沒帶 errors= 也沒有接住 "
+                              "UnicodeDecodeError 的 try —— 一個壞位元組就讓該閘門變成「內部錯誤」：" + repr(bad))
 
     def test_events_match_workflow_triggers(self):
         """R17 logic L-8：`EVENTS`（argparse choices）與 test.yml 的 `on:` 是兩份規格——在這裡加 trigger 沒改那邊，

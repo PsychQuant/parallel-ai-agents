@@ -618,6 +618,44 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
     （security S-4 / regression F3，改成 lint 認的形式）；mutation 耗時再上修為 30–50 分（logic 實測 29 s × 96 ≈ 47 分）。
   測試 118 → 124 條；靶清單 96 → 98 個（3 個 EXPECTED_SURVIVE；lint 形式的宣稱只留在最新一段）。
   量測（R16 後）：全輪 98 靶 93 殺／2 存活（emit 自己的中和層，補單元測試後單靶轉殺）→ 95／0／3（複合值）。
+- **verify R20（4 lens + DA；Codex 第九輪 429）— R19 換方向的檢定：方向對，但只套用到兩層裡的一層。**
+  R18 的四條 blocking 有**三條確認真的修好**且 DA 逐一嘗試推翻失敗（taint 容器累積、`prop()` 五個轉義、
+  containment 兩個方向）。lint 那條 partial：第一階段的**行形式**白名單守得住（DA 在能穿過第二階段的 job 裡
+  寫 `"run":` 與 flow 寫法仍拿到具名拒絕），失敗形狀存活在**第二個解析階段**。DA 把四份各自報的多條 lint
+  問題裁決成**同一個根因**，並指明分三個 patch 修等於保證下一輪有第四個出口。修法：
+  - **第二階段整體白名單化**（不是三個 patch）。前一版用 `if ind <= s_indent: break` 當 steps 區塊的結束
+    條件，暗含一個沒寫出來的前提「清單項一定比 `steps:` 更深」——**那不是 YAML 的規則**，block sequence
+    可以與它的 key 同縮排，於是整個 job 隱形、rc=0 零輸出。現在 dash 的縮排由「`steps:` 之後第一個清單項」
+    決定、之後只認恰好那個縮排的項；找不到任何清單項 → **per-`steps:` fail-loud**。
+  - **宣告層也白名單**：`# LOG-FILTER:` 只認 (1) 真的是註解行且落在這個 step 自己的行範圍內、(2) `run:`
+    **自己**那個 block scalar 的內容。先前 `name: |` 的 scalar 裡寫一行就放行整個 step（那是 step 的顯示
+    名稱不是註解），而註解歸屬還會跨 step 邊界記到前一個 step。
+  - **行界**：非 `\n` 的行界字元一律 fail-loud 拒絕（先前一個 U+2028 藏得住第二個 `run:`）。刻意**不**在
+    lint 裡複製一份 `_LINE_BREAKS`——同一概念兩份實作正是本 PR 反覆修的病；白名單的作法是不解析就拒絕。
+  - **跨行管線**：折疊 scalar（`>`）或行尾留 `|` 續行的合規寫法先前被誤擋，現在接成一串再比對；
+    反向驗過折疊但未過濾的仍會被擋。
+  - **走表測試改成陳述需求**（DA-6，四份都沒做）：R19 為「靶顆粒度」寫的那條測試**自己是假綠**——它只走
+    實作的表並斷言長度 ≥ 11，於是把 `\x1c` **換成**別的字元（長度不變）→ 全套仍綠，那三個靶是被長度斷言
+    殺掉的、不是被行為殺掉的。現在測試獨立列出「runner 會當成換行的字元」這個**需求**，雙向斷言，
+    三個靶也改成**替換**而非刪除。刪除與替換各自驗過會紅。
+  - **解碼站點改成機械不變式**（第四個粗靶）：`errors="replace"` 的 11 個呼叫點先前只有 1 個靶，拆掉
+    `:1164`（由 node 求值 fork 可控 JS 的那個）→ 一個 `\xff` 讓 `gate()` 吞掉 `UnicodeDecodeError`、
+    **整個 `check_csvs` 閘門不跑**而全套仍綠。出口不是手寫 9 個靶（清單自己會漂），是一條 AST 不變式：
+    任何解碼外部位元組的呼叫要嘛帶 `errors=`、要嘛包在接得住 `UnicodeDecodeError` 的 try 裡。
+    **11 個站點逐一拆掉各自驗過會紅、零豁免清單。** 嚴重度按 DA 更正為 denial-of-gate（rc 仍為 1 並具名）。
+  - **`source` 三態守衛**（修掉 R19 引進的回歸）：R19 把合法的遠端物件形式 `{"source":"github",…}`（`pai-lenses`
+    在 main 上的形狀）當成「既不是字串也不是物件」硬報錯——對一個 dict 說它不是物件。但只放寬成「非 str
+    非 dict 才報」會用一個假陽性換到兩個靜默跳過，所以做三態：本地 → 進閘門；**封閉列舉內**的遠端 →
+    具名跳過；其餘（不認得的 dict source、`source` 缺席／null）→ 具名報錯。三態各一條測試。
+  - LOW：`--selftest` 的 vacuity 斷言補涵蓋 `bad.yml`；composite action 不在守備範圍**寫進 header**（依 DA
+    不擴大 glob——composite 的 step 語意不同，硬套會假紅）。
+  **流程**：本輪發生過共用 checkout 污染（有 agent 變異 tracked 檔、而 `git status` 當下讀起來乾淨），
+  DA 全程改用 `git archive` 的獨立樹並逐位元驗過。**往後 lens 的破壞性實驗一律 `git archive`，不得 `cp -R`。**
+  測試 133 → 137 條（`grep -c "    def test_" ../pai-lenses/scripts/test_validate.py`）；
+  靶清單 111 → 112 個（`grep -c "^    (\"" ../pai-lenses/scripts/mutation_check.py`）（3 個 EXPECTED_SURVIVE）。
+  量測（R21 後）：單一副本（`git archive` 取）完整一輪 112 靶 → 109 殺 / 0 存活 / 0 靶壞（另 3 個 `EXPECTED_SURVIVE`），
+  實測 64.2 分鐘 = 每靶 34.4 s。**耗時不再寫固定區間**——靶數每輪增加，舊區間連四輪被抓到低估；
+  散文只留「靶數 × 全套測試」的關係，數字由 `mutation_check.py` 收尾自己印。
 - **verify R18（4 lens + DA；Codex 第八輪 429）— R17 的兩條 blocking 主體都修好了，CI 三 job 全綠；
   失守的性質變了：不是又漏一個 case，而是**量測工具的顆粒度比缺口粗**。修法一律往結構走，不加特例：**
   - **`lint-ci-log-filter.sh` 改成白名單解析器**（四份 findings + DA 去重後仍有 **7 個互不相同的根因**：
@@ -653,8 +691,8 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
     斷言是拒絕，正是這個 PR 在修的漂移），真正的「佈局缺席 → 跳過」改在 plugin-only 分支驗。
   - **`assert-tap-complete.sh` 補 `--selftest`**（requirements F-7）：它是 repo 裡唯一沒有網、不在 mutation
     範圍的守衛，而它守的正是「假綠」。六種 TAP 輸入各自判對，並掛進 `run.sh` 與 CI 兩個 job。
-  測試 130 → 133 條（`grep -c "    def test_" ../pai-lenses/scripts/test_validate.py`）；
-  靶清單 105 → 111 個（`grep -c "^    (\"" ../pai-lenses/scripts/mutation_check.py`）（3 個 EXPECTED_SURVIVE）。
+  測試 130 → 133 條；
+  靶清單 105 → 111 個（3 個 EXPECTED_SURVIVE；lint 形式的宣稱只留在最新一段）。
   量測（R19 後）：單一副本完整一輪 111 靶 → 108 殺 / 0 存活 / 0 靶壞（另 3 個 `EXPECTED_SURVIVE`），
   實測 55.1 分鐘 = 每靶 29.8 s。**靶數從 105 增為 111 不是多測了幾件事，是同樣的事量得比較細**（見檔頭）。
 - **verify R17（4 lens + DA；Codex 第七輪 429）— R16 的 HIGH（CI 回歸）已清、CI 三 job 全綠、regression lens 首次 PASS；
