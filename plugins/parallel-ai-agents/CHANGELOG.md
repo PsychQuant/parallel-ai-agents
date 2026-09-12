@@ -618,6 +618,66 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
     （security S-4 / regression F3，改成 lint 認的形式）；mutation 耗時再上修為 30–50 分（logic 實測 29 s × 96 ≈ 47 分）。
   測試 118 → 124 條；靶清單 96 → 98 個（3 個 EXPECTED_SURVIVE；lint 形式的宣稱只留在最新一段）。
   量測（R16 後）：全輪 98 靶 93 殺／2 存活（emit 自己的中和層，補單元測試後單靶轉殺）→ 95／0／3（複合值）。
+- **verify R26（4 lens + DA + Codex 跨模型 leg）— 繞過方向乾淨、誤擋方向有回歸、新機制沒有網。
+  0 HIGH、9 MEDIUM blocking。**
+  先給 credit：regression 用 636 檔語料逐檔比對，`RED→GREEN` 零、規則層新增零行，**R25 在繞過方向的宣稱
+  完全成立**；放行條件 G1–G8 由多條 leg 各自在隔離樹拆掉驗紅、全部 PASS（G9 語料存檔 FAIL）。
+  FAIL 來自：誤擋方向兩條回歸、新引進的繞過兩條、方法層三條。修法：
+  - **mutation harness 的守備範圍擴到三個檔**（本輪最高槓桿）。「新機制沒有 RED 驗證」在本 PR
+    **發作了七次**，R26 的 DA 把它診斷到方法層：RED 驗證的對象、突變的選擇、fixture 的內容，三者都由
+    剛寫完那段程式碼的人自己挑；而 repo 早有正解——具名靶 ＋ `EXPECTED_SURVIVE`——只是守備範圍寫死
+    「只 mutate `validate.py`」。現在每個靶用第四欄選守備單位（`validate`／`lint`／`neutralise`），既有
+    114 個靶一個字都沒動。**靶數 114 → 125；11 個新靶單獨實測 10 殺 / 1 預期存活**（`<<<` 那條依構造
+    等價，理由寫在靶旁邊可檢查）。R26 對這七個機制的 sweep 是 7/7 SURVIVED，現在它們第一次有網。
+    `neutralise.py` 的串流補了 `test_neutralise_streams_instead_of_buffering_until_eof`，revert 回 `read()`
+    實測 FAILED。
+  - **`shell_scan()` 重寫（M2＋M3＋M5 同一個 patch）**：呼叫端先剝 block scalar 共同縮排（heredoc 終止
+    判定才可達——前一版在任何真實 `run: |` 裡都不可達，之後的真管線與 `# LOG-FILTER:` 一起被吞）；
+    `<<<` 一次消費三格；`$((` 深度內不判 heredoc；heredoc 佇列改 FIFO（前一版只存 `pending[0]`，註解裡
+    「其餘由分隔行順推」是假的）；`<<\EOF` 的反斜線只是引號化分隔字；**行尾 `\` 真的續行**——把下一個
+    實體行接上來、從邏輯行開頭重掃（接縫可能落在 token 中間，`cat <\` ⏎ `<EOF` 的 `<<` 就跨在接縫上）；
+    詞首判定改用 `prev_sig`，被逃脫的空白不再起註解。
+  - **`run` key 守恆不變式改結構判定**（M1）：不再補字元類。`[-{,]` 有兩個錯——漏 `[`（YAML flow 序列
+    允許無括號的單對 mapping）、`-` 命中識別字內的連字號（`dry-run:`／`operations-per-run:` 被判成藏起來
+    的 run key，**我在 R25 引進的真誤擋**，第三方語料當場 6 處）。修字元類之外，**`jobs:` 子樹裡的 flow 值
+    只在「單行且不含 mapping」時才容忍**，其餘 fail-closed：本 lint 不解析 flow mapping，不解析就不放行。
+    第一版對整份文件套用，`on: pull_request: { branches: [ main ] }` 這種合法且結構上不可能藏 step 的寫法
+    被打紅——**三軸量測當場抓到兩個第三方檔從綠翻紅**，收窄到 `jobs:` 子樹。
+  - **`yaml_decode_scalar()` 對未實作的逃脫一律拒絕**（M4，Codex 第 1 條）：前一版只是刪反斜線，
+    `"echo \x22hi | python3 …"` 被解成 `echo x22hi | python3 …`——憑空生出一條管線，而 runner 拿到的是
+    一個沒有管線的字串。**lint 與 runner 跑不同的字串**，上一層就給錯了。現在只解 `\\`／`\"`／`\n`／`\t`／
+    `\r`／`\/`，其餘 `PARSE:` 拒絕不猜。
+  - **解碼不變式的 scope 述詞**（M9，Codex 第 7／8 條）：`binary_mode` 前一版讀 `n.args[:1]` 找 `"b"`——
+    那是 `open()` 的**路徑**引數不是 mode，於是 `open("blob.txt")` 綠、`open("notes.txt")` 紅，差別只有
+    檔名裡的字母；改成依 signature 取 mode 位置、無法解析不得推定 binary。`text=` 只認 `True`／`1` 讓
+    `text=2`／`text=<變數>` 掉出 scope，改成除非能靜態證明為 false 否則算數。封閉列舉補 `getoutput`／
+    `getstatusoutput`。六個探針（四紅二綠）各自實測。
+  - **五處假宣稱改成事實**（M8）：`:428` 的「已知誤判方向」寫的形狀實測不會被拒、而真正會被誤擋的
+    沒寫——現在只寫量到的並附語料與分母；「兩種宣告來源」實為三種（`run:` 行尾註解），明寫並補正向
+    fixture；`mutation_check.py` 宣稱串流「由兩條 CI 中和測試釘住」為假，改成事實；`shell_scan` docstring
+    的「五種」封閉列舉實列六項且有第七種，**改回陳述性質**（本掃描器不判可達性）而不是再列一個會漏的清單。
+  - **語料清單進 commit**（M10）：`test/corpus/r25-workflow-corpus.txt`，**不寫本機絕對路徑**（對別人
+    不可重跑），改用內容 hash ＋ `<repo>/.github/workflows/<檔名>` 形式，可在任何有同批 checkout 的機器上
+    重新對帳。
+  - **GitHub 探針第二次（G-R27-8）**：`run: "echo x \| …"` 三個 YAML 實作都拒絕，但 R24 的前例是「兩個
+    library 拒絕、GitHub 接受」，所以再推一次一次性探針問 GitHub——**GitHub 也拒絕**（0 秒失敗、零 job）。
+    四方一致，不可利用。**教訓不是「library 總是判錯 GitHub」，是每一種形狀都得各自問**；用其中一次
+    的結果類推另一次，正是 R24 讓 coordinator 連錯兩次的動作。
+  **三軸量測（R26 M7 的方法）**，base 用 `git archive db0c0f2`，逐檔比 `RULE:`／`PARSE:`／rc，
+  **並報告 base-綠檔數當靈敏度分母**：真實語料 563 檔（分母 129）`GREEN→RED` 0、`RED→GREEN` 1（R25 的
+  `-run:` 誤擋被修好）；DA 合成的 base-綠語料 324 檔（分母 93）`GREEN→RED` 0、`RED→GREEN` **16**（正是
+  R26 指出 `db0c0f2` 誤擋的那 16 檔）。原始語料對 heredoc 誤擋的分母是 0，合成那份是 93——兩份都跑，
+  分母都寫出來。
+  **coordinator 在本輪自己犯的錯，當場抓到並修**：一個 patch 腳本把整個檔案的空行刪光（26 個）；flow
+  結構規則第一版對整份文件套用（見上）；三個新 fixture 第一版零鑑別力（`<<<` 與 `$((` 的管線寫在同一行、
+  `<<-` 終止字縮排比 block scalar 淺——那在 YAML 裡根本不是區塊內容、單引號 fixture `.py` 後面沒空白讓
+  尾錨兩種狀態都不命中）。**為了修「fixture 沒有網」而寫的 fixture，自己沒有網**——同一個形狀，
+  發生在為了修它而做的事上，第八次。
+  測試 139 → 140 條（`grep -c "    def test_" ../pai-lenses/scripts/test_validate.py`）；
+  靶清單 114 → 125 個（`grep -c "^    (\"" ../pai-lenses/scripts/mutation_check.py`）（4 個 EXPECTED_SURVIVE）。
+  lint fixture 51 → 70 個（19 正向／32 規則紅／19 解析紅，selftest 三個門檻改成等於實測值）。
+  全輪量測（125 靶，三個檔的守備範圍）：**121 殺 / 0 存活 / 4 預期存活 / 0 靶壞**，130.3 分鐘、
+  每靶 62.6 s。見 `scripts/test_validate.py` 檔頭。
 - **verify R24（4 lens + DA + Codex 跨模型 leg）— 述詞層**沒有**關閉：五個互相獨立的根因，
   加上一個 GitHub 實測確認**可利用**的繞過。0 HIGH、6 MEDIUM blocking。**
   先給 credit：R22 的五條 blocking **全部真的修好了**（regression 與 DA 各自在隔離樹逐條實測），
@@ -667,8 +727,7 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
   的未走到分支、`eval` 的字串、`$(...)` 內的巢狀命令替換，詞法上看得到管線、執行上不會跑到。
   這五種寫在該函式 docstring 的**封閉列舉**裡並明寫「不要因為這段話存在就以為它們有網」。
   要關掉它們必須真的求值 shell，不在本 lint 的範圍內。
-  測試 137 → 139 條（`grep -c "    def test_" ../pai-lenses/scripts/test_validate.py`）；
-  靶清單 114 → 114 個（`grep -c "^    (\"" ../pai-lenses/scripts/mutation_check.py`）（3 個 EXPECTED_SURVIVE）。
+  測試 137 → 139 條；靶清單 114 → 114 個（3 個 EXPECTED_SURVIVE）（當輪值；lint 形式的宣稱只留在最新一段）。
   lint fixture 51 個（11 正向／27 規則紅／13 解析紅，selftest 的三個門檻改成**等於**實測值——
   先前寫 `>=` 而實際更高，那個差額沒有網）。
   真實語料前後比對（563 檔去重，排除前幾輪 verify 自己的產物、含 142 份第三方來源）：
@@ -748,7 +807,7 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
   否則下一輪加測試時它會被重新驗而紅——R25 實際踩到）——**數字不動是實情**，
   本輪擴充的是既有測試的涵蓋（taint 形狀從 6 種增為 8 種——第 8 種與第 7 種共用同一條斷言、
   註解已說明；解碼不變式改成驗值並多四類站點），沒有新增 test 函式；
-  靶清單 112 → 114 個（`grep -c "^    (\"" ../pai-lenses/scripts/mutation_check.py`）（3 個 EXPECTED_SURVIVE）。
+  靶清單 112 → 114 個（3 個 EXPECTED_SURVIVE）（當輪值；lint 形式的宣稱只留在最新一段）。
   量測（R23 後）：單一副本（`git archive` 取）完整一輪 **114 靶 → 111 殺 / 0 存活 / 0 靶壞**（另 3 個 `EXPECTED_SURVIVE`），實測 **72.2 分鐘 = 每靶 38.0 s**。
   **順手收斂了一處漂移**：同一個「最近一輪」的數字先前散在 `mutation_check.py` 兩處 docstring、`test/run.sh` 一處與 `test_validate.py` 檔頭共四份（其中一處還重複貼上了半句），現在只留檔頭那一份、其餘指回去。**CHANGELOG 的各輪數字不在此列**——那是歷史紀錄，每一條記的是當輪的值、本來就不該被更新。
 - **verify R20（4 lens + DA；Codex 第九輪 429）— R19 換方向的檢定：方向對，但只套用到兩層裡的一層。**

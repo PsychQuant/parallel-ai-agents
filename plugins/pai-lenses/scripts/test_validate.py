@@ -15,9 +15,12 @@
 mutation」。**那三句話會讓下一個維護者以為改動 `validate.py` 有測試網接著。**
 
 現在用 `scripts/mutation_check.py` 量：跑一次就知道哪些閘門沒有測試網。
-**最近一次完整量測（R23 後）：114 個靶 → 111 殺 / 0 存活 / 0 靶壞**（另 3 個 `EXPECTED_SURVIVE`）。
-**R25 的那一輪在寫這段時還在跑**——靶數沒變（114），但 `validate.py` 與本檔都動過，所以
-**上面那組數字是 R23 的，不是 R25 的**。落地前不要把它當成本版的量測值；判準一律是自己跑一次。
+**最近一次完整量測（R27 後）：125 個靶 → 121 殺 / 0 存活 / 0 靶壞**（另 4 個 `EXPECTED_SURVIVE`），
+實測 **130.3 分鐘 / 125 靶 = 每靶 62.6 s**（比 R25 的每靶 29.4 s 慢一倍：lint 靶跑的是 selftest、
+neutralise 靶跑的是含串流測試的整套，兩者都比純 python 套件重；另一個原因是同機有別的負載）。
+**守備範圍從 R27 起是三個檔**（`validate.py`／`lint-ci-log-filter.sh`／`neutralise.py`）——
+R25 之前的「0 存活」對 lint 與 neutralise **結構上沒說任何事**（當時它們不在範圍內），
+這是 R26 DA 診斷到方法層的那一條：「新機制沒有 RED 驗證」發作七次，根因是守備範圍寫死一個檔。
 單一副本上的完整一輪，副本用 `git archive` 取（**不是 `cp -R`**：R20 有 agent 在共用 checkout 裡變異 tracked 檔，
 另一個 lens 的 `cp -R` 拍到活的變異體而當時 `git status` 讀起來乾淨）。實測 **72.2 分鐘 / 114 靶 = 每靶 38.0 s**。
 **這個數字現在只寫在這裡**：`mutation_check.py` 的兩處 docstring 與 `test/run.sh` 先前各抄了一份（其中一處還重複貼上了半句），R23 全部改成指回本檔 —— 一個會過期的數字散在四處，正是本 PR 反覆在抓的形狀。
@@ -420,6 +423,46 @@ class ValidateTest(unittest.TestCase):
         self.fx.add_entry("remote", {"source": "github", "repo": "PsychQuant/pai-lenses"})
         out = self.assertGreen()
         self.assertIn("遠端來源", out, f"遠端來源應具名跳過而不是靜默：{out[:300]}")
+
+    def test_neutralise_streams_instead_of_buffering_until_eof(self):
+        """`neutralise.py` 必須**串流**，不是讀到 EOF 才動（#33 verify R26 M6／regression R-3）。
+
+        為什麼這條非有不可：R25 把它改成串流時，**沒有任何東西會在它被改回去時變紅**——
+        一行 revert 回 `read()`，139 條全綠、114 個靶全中。而它在真實情境下的差距是
+        **整段 log 有或沒有**：`timeout-minutes` 到期或 job 被 cancel 時，runner 砍的是整個
+        process group，緩衝版當下還一個位元組都沒吐出來。
+        **fail-silent 出現在專門防 fail-silent 的機制上，而且沒有網。**
+
+        判準用「stdin 還開著就要看得到輸出」，不用睡固定秒數去賭：緩衝版在 EOF 之前
+        **結構上不可能**有輸出，所以這條對它是必紅，對串流版是必綠。
+        """
+        import os
+        import time
+        proc = subprocess.Popen([sys.executable, str(PACK / "scripts" / "neutralise.py")],
+                                stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+        try:
+            proc.stdin.write(b"first-line\n")
+            proc.stdin.flush()                      # **刻意不關 stdin**
+            os.set_blocking(proc.stdout.fileno(), False)
+            got = b""
+            deadline = time.monotonic() + 5.0       # 寬鬆上限：只用來避免測試掛住
+            while time.monotonic() < deadline and not got:
+                time.sleep(0.05)
+                try:
+                    chunk = proc.stdout.read()
+                except BlockingIOError:             # 3.8 之前的行為
+                    chunk = None
+                if chunk:
+                    got += chunk
+            self.assertTrue(got, "stdin 尚未關閉時就該看得到輸出——現在是 0 bytes，"
+                                 "表示它讀到 EOF 才動（緩衝版），step 被砍時 log 會整段消失")
+            self.assertIn(b"first-line", got)
+        finally:
+            try:
+                proc.stdin.close()
+            except Exception:
+                pass
+            proc.kill(); proc.wait()
 
     def test_sink_containers_is_load_bearing(self):
         """R24 DA-7：`SINK_CONTAINERS` 上方的「誠實邊界」註解在 R23 那個 commit 之後變成假的，
@@ -2154,7 +2197,7 @@ class ValidateTest(unittest.TestCase):
         denial-of-gate 不是 bypass —— DA 的嚴重度更正）。
 
         **涵蓋範圍是封閉列舉，不是「所有解碼站點」**（R24 DA-4 更正）：`read_text`／`open`／
-        `TextIOWrapper`／`popen`／`decode`／`communicate`，以及 `subprocess` 的 `run`／`check_output`／
+        `TextIOWrapper`／`popen`／`decode`／`communicate`、`subprocess.getoutput`／`getstatusoutput`，以及 `subprocess` 的 `run`／`check_output`／
         `Popen` 在文字模式下。清單外的寫法**沒有網**——要新增就得改這裡，不會有人替你涵蓋。
         前一版在這裡宣稱新站點會被自己納入，那句為假且 R22 已點名，R23 沒改；本輪刪除。"""
         import ast
@@ -2198,11 +2241,16 @@ class ValidateTest(unittest.TestCase):
             # 這是 R21 在同一個 commit 裡把「刪除 vs 替換」的教訓套到 `_LINE_BREAKS`、
             # 卻在自己寫的這條不變式上違反它。
             def _truthy_kw(key):
+                # R26 M9（Codex 第 8 條）：前一版只認 `True`／`1`，於是 `text=2` 與 `text=<變數>`
+                # 掉出 scope —— 而那兩種實測都會讓子行程進文字模式並對 `b"\xff"` 拋
+                # `UnicodeDecodeError`。判準改成「**除非能靜態證明為 false，否則算數**」，
+                # 與同一段對 `**kwargs` 的 fail-closed 一致。
                 for k in n.keywords:
                     if k.arg != key:
                         continue
-                    v = getattr(k.value, "value", None)
-                    return v is True or v == 1          # `text=True` 與 `text=1` 同義
+                    if not isinstance(k.value, ast.Constant):
+                        return True                     # 動態值：證不了它是 false
+                    return bool(k.value.value)
                 return False
             # R24 DA-4（Codex 第 6 條 ＋ security S-3 ＋ regression F3，成員取聯集）：
             # (a) **`errors=` 自己就會啟用 subprocess 的文字模式**——`subprocess.run(cmd, errors="strict")`
@@ -2216,13 +2264,25 @@ class ValidateTest(unittest.TestCase):
                          or any(k.arg in ("encoding", "errors") for k in n.keywords)
                          or any(k.arg is None for k in n.keywords))
             is_sub = isinstance(f, ast.Attribute) and getattr(f.value, "id", None) == "subprocess"
-            binary_mode = any(k.arg == "mode" and isinstance(getattr(k, "value", None), ast.Constant)
-                              and "b" in str(k.value.value) for k in n.keywords) or any(
-                              isinstance(a, ast.Constant) and isinstance(a.value, str) and "b" in a.value
-                              for a in n.args[:1])
+            # R26 M9（Codex 第 7 條）：前一版讀 `n.args[:1]` 找 `"b"` —— 那是 `open()` 的**路徑**引數，
+            # 不是 mode。於是**任何檔名含字母 `b` 的 `open()`** 都掉出解碼檢查：
+            # `open("blob.txt")` 綠、`open("notes.txt")` 紅，差別只有那個 `b`。
+            # 兩種 signature 的 mode 位置不同：builtin `open(file, mode)` vs `Path.open(mode)`。
+            # **無法靜態解析就不得推定 binary**（與 `**kwargs` 的 fail-closed 同一個方向）。
+            mode_pos = 1 if isinstance(f, ast.Name) else 0
+            mode_node = next((k.value for k in n.keywords if k.arg == "mode"), None)
+            if mode_node is None and len(n.args) > mode_pos:
+                mode_node = n.args[mode_pos]
+            binary_mode = (isinstance(mode_node, ast.Constant)
+                           and isinstance(mode_node.value, str) and "b" in mode_node.value)
             # **封閉列舉，不得依性質相似類推**（本 repo 的 common-spec-prose-enumeration）：
             DECODING_NAMES = ("read_text", "open", "TextIOWrapper", "popen", "decode", "communicate")
+            # R26 security S-8：`subprocess.getoutput`／`getstatusoutput` **一律**回 `str`
+            # （沒有 `text=` 可言），三者實測都會對 `b"\xff"` 拋 `UnicodeDecodeError`。
+            # 它們先前不在列舉內，而 docstring 已誠實揭露這個缺口——本輪把缺口補上。
+            ALWAYS_TEXT_SUBPROC = ("getoutput", "getstatusoutput")
             decodes = ((nm in DECODING_NAMES and not (nm == "open" and binary_mode))
+                       or (is_sub and nm in ALWAYS_TEXT_SUBPROC)
                        or (is_sub and nm in ("run", "check_output", "Popen") and text_mode))
             if decodes and not is_guarded(n.lineno):
                 # **檢查值，不只檢查存在**：封閉列舉——只有這些值能讓解碼不拋。

@@ -1,0 +1,14 @@
+name: t
+on: push
+# EXPECT: pass
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: heredoc then a real declaration
+        run: |
+          cat <<'NOTE'
+          just data
+          NOTE
+          # LOG-FILTER: none — fixture, deliberately unfiltered
+          echo "$PR_TITLE"

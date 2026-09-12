@@ -55,6 +55,23 @@ import sys
 PACK = pathlib.Path(__file__).resolve().parent.parent
 VALIDATE = PACK / "scripts" / "validate.py"
 TESTS = PACK / "scripts" / "test_validate.py"
+NEUTRALISE = PACK / "scripts" / "neutralise.py"
+PAI = PACK.parent / "parallel-ai-agents"
+LINT = PAI / "test" / "lint-ci-log-filter.sh"
+
+# ── 守備範圍（#33 verify R26 M6 / G-R27-6）───────────────────────────────────────────
+# 「新機制沒有 RED 驗證」在這個 PR **發作了七次**，而 R26 的 DA 把它診斷到方法層：
+# RED 驗證的對象、突變的選擇、fixture 的內容，**三者都由剛寫完那段程式碼的人自己挑**。
+# 而這個 repo 早就有正解——就是這支的具名靶 ＋ `EXPECTED_SURVIVE`——只是守備範圍寫死成
+# 「只 mutate validate.py」。所以修法不是再補幾個 fixture，是**把 harness 指向新程式碼**。
+#
+# 每個「守備單位」= 被 mutate 的檔 ＋ 驗它的指令 ＋ 工作目錄。靶用第四個欄位選守備單位，
+# 省略時是 `validate`（既有 114 個靶一個字都不用動）。
+SUITES = {
+    "validate":   (VALIDATE,   lambda: [sys.executable, str(TESTS)],          PACK),
+    "lint":       (LINT,       lambda: ["bash", str(LINT), "--selftest"],     PAI),
+    "neutralise": (NEUTRALISE, lambda: [sys.executable, str(TESTS)],          PACK),
+}
 
 # (名稱, 要替換的字串, 替換成什麼)。每個 old 必須在 validate.py 中**恰好出現一次**。
 # `None` 的 new 代表特殊處理（見 _apply）。
@@ -292,10 +309,51 @@ MUTATIONS += [
      "f\"（真源 PROFILES 有：{wc(', '.join(sorted(known_profiles)))}）。\"",
      "f\"（真源 PROFILES 有：{', '.join(sorted(known_profiles))}）。\""),
 ]
-# neutralise.py 不在 mutation 範圍（本 harness 只 mutate validate.py）；它的行為由 test_validate.py 的
-# 兩條 CI 中和測試釘住，且它本身只是把 stdin 接到 LineSanitiser——LineSanitiser 的靶在上面。
+# R26 regression R-3 抓到這裡曾寫「neutralise.py 的行為由兩條 CI 中和測試釘住」——**那是假的**：
+# 把它的串流一行 revert 回 `read()`，139 條全綠、114 靶全中。它現在**在 mutation 範圍內**
+# （守備單位 `neutralise`，靶在下方 R26 M6 那一段），且由 `test_neutralise_streams_instead_of_buffering_until_eof`
+# 釘住；那個靶實測會被殺掉。
+
+# ── R26 M6 / G-R27-6：守備範圍擴到 lint 與 neutralise ───────────────────────────────
+# 下面每一個靶都對應一個**本輪或上一輪新加的機制**。R26 的 sweep 對它們 7/7 SURVIVED ——
+# 也就是整段刪掉而 selftest 照樣全綠。靶進來之後，那些機制才第一次有「它有沒有在擋東西」的量測。
+MUTATIONS += [
+    ("lint: heredoc 終止判定（R26 M2：吃 YAML 縮排時這分支不可達）",
+     "            if probe.rstrip() == delim:", "            if False:", "lint"),
+    ("lint: heredoc 佇列接續（R26 M3：`pending[0]` 不是 FIFO）",
+     "                heredoc = pending.pop(0) if pending else None",
+     "                heredoc = None", "lint"),
+    # **這一條列入 EXPECTED_SURVIVE，而且理由要能被檢查**：把它關掉之後，`<<<` 會落到下面的
+    # `<<` 分支，但那裡的分隔字解析從第三個 `<` 開始讀，而 `<` 本身就在 `SHELL_WORD_BREAK` 裡，
+    # 於是 delim 為空、`if delim:` 不成立、不會產生 heredoc —— **行為等價**。
+    # 保留這個分支是為了把意圖寫成程式碼（here-string 不是 heredoc），不是因為它在擋東西。
+    # R26 說它是 off-by-one 的那個版本是 `db0c0f2` 的舊結構，本輪重寫後不再成立。
+    ("lint: `<<<` 是 here-string 不是 heredoc（依構造等價，保留為意圖宣告）",
+     '            if line.startswith("<<<", i):', "            if False:", "lint"),
+    ("lint: `$((` 深度內不判 heredoc（R26 M3）",
+     '            if line.startswith("<<", i) and not arith:',
+     '            if line.startswith("<<", i):', "lint"),
+    ("lint: `<<-` 剝 tab（R26 M3）",
+     '                if j < n and line[j] == "-":', "                if False:", "lint"),
+    ("lint: 單引號狀態分支（R26 logic MEDIUM-6：整段刪掉 selftest 仍綠）",
+     '            if quote == "\'":', "            if False:", "lint"),
+    ("lint: 續行摺疊（R26 M5：`cat <\\` ⏎ `<EOF`）",
+     "                if li + spans < len(lines):", "                if False:", "lint"),
+    ("lint: block scalar 共同縮排先剝除（R26 M2）",
+     "        run_code, shell_decls = shell_scan(dedent_block(run_lines))",
+     "        run_code, shell_decls = shell_scan(run_lines)", "lint"),
+    ("lint: YAML 引號純量先解碼（R26 M4：未實作的逃脫不得猜）",
+     "            decoded = yaml_decode_scalar(inline)", "            decoded = inline", "lint"),
+    ("lint: jobs 子樹的 flow 值 fail-closed（R26 M1(b)）",
+     '                if (":" in code_val and top_key == "jobs") or not balanced:',
+     "                if False:", "lint"),
+    ("neutralise: 串流而不是讀到 EOF 才動（R26 M6／regression R-3）",
+     "        chunk = sys.stdin.buffer.read1(65536)",
+     "        chunk = sys.stdin.buffer.read()", "neutralise"),
+]
 
 EXPECTED_SURVIVE = {
+    "lint: `<<<` 是 here-string 不是 heredoc（依構造等價，保留為意圖宣告）",
     "pack 內部改名不投票（依構造不可達，保留為防禦）",
     "純改名偵測 git 分支（依構造不可達，保留為防禦）",
     # R12 修法後 LineSanitiser 對**每一段**獨立判 `lstrip().startswith("::")`、不再靠行首旗標——
@@ -306,6 +364,11 @@ EXPECTED_SURVIVE = {
     # DA-5 預言的後門一輪之後就實現了。現在它有測試網（test_pack_name_containment_keeps_outside_name_out_of_log），
     # 從這裡移除。**每一條進來的靶都要能回答「關掉它，哪一行輸出會變」——答不出來就不是 equivalent，是沒測試。**
 }
+
+
+def suite_of(entry):
+    """靶的第四欄選守備單位；省略＝`validate`（既有 114 個靶不用動）。"""
+    return entry[3] if len(entry) > 3 else "validate"
 
 
 def _on_term(signum, _frame):
@@ -328,7 +391,7 @@ def _apply(name, old, new, src):
         return src[:i] + "    if not base:\n        return\n" + src[j:]
     n = src.count(old)
     if n != 1:
-        raise ValueError(f"靶在 validate.py 中出現 {n} 次（需恰好 1 次）")
+        raise ValueError(f"靶在目標檔中出現 {n} 次（需恰好 1 次）")
     return src.replace(old, new)
 
 
@@ -339,14 +402,17 @@ def check_targets_only():
     相對 validate.py 的漂移**是可以便宜擋住的：有人改動被 mutate 的那幾行、或搬走一道閘門，
     靶就對不上。先前這件事只有在有人手動跑整輪時才會發現，而「忘了跑」是預設。
     """
-    src = VALIDATE.read_text(encoding="utf-8")
+    srcs = {k: f.read_text(encoding="utf-8") for k, (f, _c, _d) in SUITES.items()}
+    src = srcs["validate"]
     broken = []
     # R13（regression R13-6）：EXPECTED_SURVIVE 只是名字集合 —— 靶被改名或刪掉後，這裡的名字會靜默
     # 失效（那個靶重新變成「要人判讀的存活」，或更糟：一個不存在的名字永遠「預期存活」）。
-    names = {n for n, _o, _n in MUTATIONS}
+    names = {e[0] for e in MUTATIONS}
     for n in sorted(EXPECTED_SURVIVE - names):
         broken.append((n, "列在 EXPECTED_SURVIVE 但 MUTATIONS 裡沒有這個靶"))
-    for name, old, _new in MUTATIONS:
+    for entry in MUTATIONS:
+        name, old, _new = entry[0], entry[1], entry[2]
+        where = suite_of(entry)
         if old == "__SPECIAL_NOBASE__":
             # #33 verify R10 M5：先前只驗兩個 anchor 的其中一個、而且沒驗唯一性 ——
             # 於是它印「全部恰好命中一次」時，另一個 anchor（一句**註解**）可能早就
@@ -357,11 +423,11 @@ def check_targets_only():
                 if n != 1:
                     broken.append((name, f"special anchor {anchor!r:.40} 出現 {n} 次（需 1 次）"))
             continue
-        n = src.count(old)
+        n = srcs[where].count(old)
         if n != 1:
-            broken.append((name, f"在 validate.py 中出現 {n} 次（需恰好 1 次）"))
+            broken.append((name, f"在 {SUITES[where][0].name} 中出現 {n} 次（需恰好 1 次）"))
     if broken:
-        print(f"::error::mutation 靶清單與 validate.py 漂移了（{len(broken)} 個對不上）—— "
+        print(f"::error::mutation 靶清單與被守備的檔漂移了（{len(broken)} 個對不上）—— "
               "改動閘門時請一併更新 scripts/mutation_check.py 的 MUTATIONS")
         for n, why in broken:
             print(f"  - {n} | {why}")
@@ -397,11 +463,15 @@ def main():
               "否則每個 mutation 都會被誤判為『殺掉』。\n" + pre.stdout[-2000:] + pre.stderr[-2000:])
         return 1
 
-    original = VALIDATE.read_text(encoding="utf-8")
+    originals = {k: f.read_text(encoding="utf-8") for k, (f, _c, _d) in SUITES.items()}
     install_restore_signals()
     survived, killed, broken = [], [], []
     try:
-        for name, old, new in MUTATIONS:
+        for entry in MUTATIONS:
+            name, old, new = entry[0], entry[1], entry[2]
+            where = suite_of(entry)
+            target, cmd, cwd = SUITES[where]
+            original = originals[where]
             try:
                 mutated = _apply(name, old, new, original)
             except (ValueError, IndexError) as e:
@@ -412,21 +482,25 @@ def main():
                 broken.append((name, "替換後檔案沒變"))
                 print(f"  靶壞 {name} | 替換後檔案沒變", flush=True)
                 continue
-            VALIDATE.write_text(mutated, encoding="utf-8")
-            rc = subprocess.run([sys.executable, str(TESTS)], cwd=PACK,
-                                capture_output=True, text=True).returncode
+            target.write_text(mutated, encoding="utf-8")
+            try:
+                rc = subprocess.run(cmd(), cwd=cwd, capture_output=True, text=True).returncode
+            finally:
+                target.write_text(original, encoding="utf-8")
             (survived if rc == 0 else killed).append(name)
             print(("  存活 " if rc == 0 else "  殺掉 ") + name, flush=True)
     except BaseException:
         # #33 verify R9 M16：只有 finally 保護時，SIGINT/SIGTERM 或當機會把 `if False:`
         # 留在正式的 validate.py 裡 —— 一個被 mutate 過的 validator 看起來完全正常。
         # 這裡明確印出還原提示，讓「檔案現在可能是壞的」不會靜默。
-        VALIDATE.write_text(original, encoding="utf-8")
-        print("\n⚠ 中斷 —— 已把 validate.py 還原。若程序被強制砍掉未跑到這裡，"
-              "請執行 `git checkout -- scripts/validate.py` 確認。", flush=True)
+        for k, (f, _c, _d) in SUITES.items():
+            f.write_text(originals[k], encoding="utf-8")
+        print("\n⚠ 中斷 —— 已把被 mutate 的檔還原。若程序被強制砍掉未跑到這裡，"
+              "請執行 `git status` 與 `git checkout --` 確認。", flush=True)
         raise
     finally:
-        VALIDATE.write_text(original, encoding="utf-8")
+        for k, (f, _c, _d) in SUITES.items():
+            f.write_text(originals[k], encoding="utf-8")
 
     # R17 DA-H：耗時別再手填。散文裡的區間會漂（R14→R17 連四輪被抓到低估），所以這一輪起
     # **由程式自己量並印出**；文件只保留粗估並指向這一行。
