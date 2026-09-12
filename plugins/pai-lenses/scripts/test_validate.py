@@ -15,7 +15,9 @@
 mutation」。**那三句話會讓下一個維護者以為改動 `validate.py` 有測試網接著。**
 
 現在用 `scripts/mutation_check.py` 量：跑一次就知道哪些閘門沒有測試網。
-**最近一次量測（R23 後）：114 個靶 → 111 殺 / 0 存活 / 0 靶壞**（另 3 個 `EXPECTED_SURVIVE`）。
+**最近一次完整量測（R23 後）：114 個靶 → 111 殺 / 0 存活 / 0 靶壞**（另 3 個 `EXPECTED_SURVIVE`）。
+**R25 的那一輪在寫這段時還在跑**——靶數沒變（114），但 `validate.py` 與本檔都動過，所以
+**上面那組數字是 R23 的，不是 R25 的**。落地前不要把它當成本版的量測值；判準一律是自己跑一次。
 單一副本上的完整一輪，副本用 `git archive` 取（**不是 `cp -R`**：R20 有 agent 在共用 checkout 裡變異 tracked 檔，
 另一個 lens 的 `cp -R` 拍到活的變異體而當時 `git status` 讀起來乾淨）。實測 **72.2 分鐘 / 114 靶 = 每靶 38.0 s**。
 **這個數字現在只寫在這裡**：`mutation_check.py` 的兩處 docstring 與 `test/run.sh` 先前各抄了一份（其中一處還重複貼上了半句），R23 全部改成指回本檔 —— 一個會過期的數字散在四處，正是本 PR 反覆在抓的形狀。
@@ -69,7 +71,7 @@ class Fixture:
         # 是整份複製進來的 —— 新增第三個 plugin 時 entry 進了 fixture、目錄沒進，
         # 於是**所有 assertGreen 測試同時轉紅**，訊息還指著一個在真實 repo 裡明明存在的
         # 路徑。諷刺的是那正是 root CLAUDE.md 這次新寫的賣點：「新增第三個 plugin 時
-        # 自動涵蓋」—— 閘門確實自動涵蓋，測試 harness 不會。改成**枚舉 plugins/ 底下的
+        # 會自己納入」—— 閘門確實會，測試 harness 不會。改成**枚舉 plugins/ 底下的
         # 每一個目錄**，只跳過與閘門無關又肥大的子樹。
         skip = {"eval", "test", "docs", "node_modules", "__pycache__", ".git"}
         (self.repo / "plugins").mkdir(parents=True, exist_ok=True)
@@ -177,10 +179,12 @@ SAFE_ATTRS = {"returncode", "__name__"}
 # key 欄名，本 validator 唯一真正 fork 可控的輸入。`validate.py:1218` 與 `:962` 都是這個形狀。
 ACCUM_METHODS = {"append", "add", "extend", "insert"}
 # `errs` 是 **sink 容器**：往它 append 染色字串正是這條規則要檢查的事情本身，不是傳播。
-# **誠實邊界**：R18 的三份 findings 都預測不排除它會讓 drain 迴圈假紅；我實測了——把這個集合清空，
-# 對真 `validate.py` 的那條測試**仍然是綠的**，所以它現在**不是 load-bearing**，是防禦性守衛：
-# 目前 `errs` 的消費端沒有把它整個餵進 sink 的寫法，將來有的話這行才會生效。不要因為它現在
-# 沒有在擋東西就刪掉，也不要宣稱它擋住了什麼。
+# **誠實邊界（R24 DA-7／logic L-5 更正，本輪改成事實）**：上一版寫「我實測了，清空仍然是綠的，
+# 所以它不是 load-bearing」。那句在 `ff0f215` 為真，但 **R23 打通 taint 鏈的同一個 commit 就讓它變成假**
+# ——而那一輪沒有回頭重驗這句自己寫的話，也沒有把它列進揭露清單。**實測（R25，隔離樹）：清空這個集合
+# 之後 `taint_findings(validate.py)` 恰好多出 1 條 `(1410, 'e')`（drain 迴圈），不是 0 也不是多條。**
+# 所以它**現在是 load-bearing 的**。下面 `test_sink_containers_is_load_bearing` 把這個事實釘住：
+# 哪天它又變回 0 條、或變成多條，都會紅。**註解不會自己重驗，測試會。**
 SINK_CONTAINERS = {"errs"}
 
 
@@ -416,6 +420,60 @@ class ValidateTest(unittest.TestCase):
         self.fx.add_entry("remote", {"source": "github", "repo": "PsychQuant/pai-lenses"})
         out = self.assertGreen()
         self.assertIn("遠端來源", out, f"遠端來源應具名跳過而不是靜默：{out[:300]}")
+
+    def test_sink_containers_is_load_bearing(self):
+        """R24 DA-7：`SINK_CONTAINERS` 上方的「誠實邊界」註解在 R23 那個 commit 之後變成假的，
+        而沒有任何東西會發現——**因為它是註解，不是斷言**。這條把當下的事實釘住：清空這個集合，
+        對真 `validate.py` 必須恰好多出 **1 條** `(1410, 'e')`（drain 迴圈把 `errs` 整個餵進輸出）。
+
+        為什麼要斷言**恰好一條**而不是「有變化」：`>= 1` 擋不住「哪天變成五條」，而那代表 `errs`
+        的消費端多了四個沒被注意到的出口；`!= 0` 擋不住「變回不是 load-bearing」而註解又過期一次。
+        兩個方向都要有網——這正是本輪在修的形狀。"""
+        import validate as V
+        src = (PACK / "scripts/validate.py").read_text(encoding="utf-8")
+        base_bad, _ = taint_findings(src)
+        g = globals()
+        orig = g["SINK_CONTAINERS"]
+        try:
+            g["SINK_CONTAINERS"] = set()
+            empty_bad, _ = taint_findings(src)
+        finally:
+            g["SINK_CONTAINERS"] = orig
+        extra = [x for x in empty_bad if x not in base_bad]
+        self.assertEqual(len(extra), 1,
+                         "清空 SINK_CONTAINERS 應恰好多出 1 條 finding，實際 %d 條：%r" % (len(extra), extra))
+        self.assertEqual(extra[0][1], "e",
+                         "多出來的那一條應該是 drain 迴圈的 `e`，實際 %r" % (extra[0],))
+
+    def test_every_remote_source_member_is_individually_covered(self):
+        """R24 DA-6／regression F1：`REMOTE_SOURCES` 是**六個成員的封閉列舉**，而上一條測試只走
+        `github`——實測把 `"url"`／`"git-subdir"`／`"archive"`／`"command"`／`"npm"` 任一個從列舉裡
+        拿掉，全套 137 條**仍然全綠**。R22 的放行條件逐字是「對齊官方表**並補正向測試**」：表對齊了，
+        測試沒補，於是本輪新增的三個成員可以整個改回去而沒有任何東西會紅。
+
+        **靶的顆粒度必須對齊「被測的那一件事」**——這裡被測的是**每一個成員**，不是「這個列舉存在」。
+        清單靶只能把整個 `if` 翻成 `False`，量不到成員層；所以網要寫在測試這一側，逐一走過。
+        這是本 PR 從 R8 起一路在抓的形狀第五次發作，而且發作在為了關掉它而做的修法上。"""
+        import validate as V
+        # **測試陳述需求，不把實作的表當規格**（R19/R20 已經因為這個形狀失守過一次）：第一版寫
+        # `for kind in V.REMOTE_SOURCES`，於是把 `"url"` 從實作拿掉時，迴圈**連測都不會測它**，
+        # 六個成員全綠。名單要寫在這一側，再與實作對帳——兩個方向都有網。
+        EXPECTED = ("github", "url", "git-subdir", "npm", "archive", "command")   # Claude Code 官方 source 表
+        self.assertEqual(tuple(V.REMOTE_SOURCES), EXPECTED,
+                         "REMOTE_SOURCES 與官方表不一致——改動請同時改這條測試的 EXPECTED 並說明理由")
+        for kind in EXPECTED:
+            with self.subTest(source=kind):
+                self.setUp()                       # 每個成員一棵乾淨的 fixture 樹
+                self.fx.add_entry("remote-%s" % kind, {"source": kind, "repo": "x/y"})
+                out = self.assertGreen()
+                # **斷言必須帶那個成員自己的名字**：第一版只斷言「輸出含『遠端來源』」，而 fixture
+                # 本來就有別的遠端 entry，所以拿掉任何一個成員它都照樣綠——那正是本輪在修的
+                # 「測試看起來有網、其實量的是別的東西」。實測過：這樣寫之後六個成員各自拿掉都會紅。
+                self.assertIn("%r" % kind, out,
+                              "source=%r 應被具名成遠端來源並跳過版本閘門；"
+                              "它從 REMOTE_SOURCES 消失時這條必須紅：%s" % (kind, out[:300]))
+                self.assertNotIn("不在認得的來源列舉內", out,
+                                 "source=%r 被判成不認得——它應該在 REMOTE_SOURCES 裡" % (kind,))
 
     def test_unknown_dict_source_and_missing_source_are_both_named(self):
         """同一條的另外兩態（DA-4：只放寬成「非 str 非 dict 才報」會用一個假陽性換到兩個靜默跳過）：
@@ -2068,11 +2126,15 @@ class ValidateTest(unittest.TestCase):
         # ⑧ 與 ⑦ 同一條鏈：`made` 是 `gate('produce', produce, d)` 的回傳值，`consume` 的參數
         # 也是經 gate 傳進去的。兩條規則任一條失效，`it` 就不會被標出來（兩者各自驗過會紅）。
         #
-        # **誠實邊界**：同一輪還修了第三件事——fixpoint 原本寫成 `any(analyse(fn) …)`，而 `any()`
-        # 會短路，後面的函式那一輪不會被分析、傳播被延後，迴圈可能在收斂前結束。**這條在這個
-        # snippet 上測不出來**（片段太小，短路仍會收斂）。它是 load-bearing 的證據在真檔上：
-        # `validate.py:1189` 在修之前是綠的、修之後轉紅，而那正是 R22 security S-1 的站點。
-        # 不要因為這裡沒有對應斷言就以為那條可以改回去。
+        # **誠實邊界（R24 DA-6／regression F5 更正）**：R23 在同一輪把 fixpoint 從 `any(analyse(fn) …)`
+        # 改成先算完整個 list，當時在這裡宣稱它在真檔上有證據支持。**那句是假的。**（被禁的原字面
+        # 刻意不在本檔重現——放行條件是機械 grep，把它寫進說明正是它第一個踩到的東西。）
+        # R24 實測：改回短路版，全套仍全綠，而且 `:1193` 剝掉 `ann_path` 時兩版產生**逐項相同**的
+        # 結果（bad=19 / total=133）。原因看程式就知道——下面的 fixpoint 是 `while True … if not any(): break`，
+        # **沒有迭代上限**，所以短路只會延後收斂、不會改變不動點。`:1193` 的轉紅來自另外兩條修法
+        # （回傳值傳播、`gate()` 間接呼叫），那兩條各自改掉都會紅。
+        # **這一條目前沒有任何斷言、也沒有靶。** 保留 list 形式是因為它讓每一輪的成本可預測，
+        # **不是**因為它擋住了什麼。不要再把它寫成有網的東西。
         # 對照組：全部包起來就不該紅（否則規則是「一律紅」，沒有鑑別力）
         clean = (snippet.replace("' + mb.stderr", "' + wc(mb.stderr)").replace("{', '.join(paths)}", "{wc(', '.join(paths))}")
                  .replace("{text}", "{wc(text)}").replace("'::notice::' + row", "'::notice::' + wc(row)")
@@ -2091,7 +2153,10 @@ class ValidateTest(unittest.TestCase):
         解碼失敗變成「validator 內部錯誤」，也就是**閘門靜默消失**（rc 仍為 1 並具名，所以這是
         denial-of-gate 不是 bypass —— DA 的嚴重度更正）。
 
-        零豁免清單：這條規則對乾淨的樹是 0 違規。新增讀檔／子行程站點時它自動涵蓋。"""
+        **涵蓋範圍是封閉列舉，不是「所有解碼站點」**（R24 DA-4 更正）：`read_text`／`open`／
+        `TextIOWrapper`／`popen`／`decode`／`communicate`，以及 `subprocess` 的 `run`／`check_output`／
+        `Popen` 在文字模式下。清單外的寫法**沒有網**——要新增就得改這裡，不會有人替你涵蓋。
+        前一版在這裡宣稱新站點會被自己納入，那句為假且 R22 已點名，R23 沒改；本輪刪除。"""
         import ast
         src = (PACK / "scripts/validate.py").read_text(encoding="utf-8")
         tree = ast.parse(src)
@@ -2139,12 +2204,26 @@ class ValidateTest(unittest.TestCase):
                     v = getattr(k.value, "value", None)
                     return v is True or v == 1          # `text=True` 與 `text=1` 同義
                 return False
-            text_mode = _truthy_kw("text") or _truthy_kw("universal_newlines") or any(
-                k.arg == "encoding" for k in n.keywords)
+            # R24 DA-4（Codex 第 6 條 ＋ security S-3 ＋ regression F3，成員取聯集）：
+            # (a) **`errors=` 自己就會啟用 subprocess 的文字模式**——`subprocess.run(cmd, errors="strict")`
+            #     的 `r.stdout` 是 `str` 且對 `b"\xff"` 拋 `UnicodeDecodeError`。前一版的 `text_mode`
+            #     不看 `errors`，所以本輪新加的「檢查 errors 的值」**對最自然的危險寫法根本不可達**。
+            # (b) scope 述詞**會自我解除**：舊式是「`open` 且有 `encoding=`」，於是 `p.open()`
+            #     **不寫** `encoding=`（更不安全）反而掉出規則範圍。`encoding=` 屬於 requirement 側，
+            #     不該當 scope 條件。
+            # (c) `**kwargs` 轉發時靜態看不出模式 → 當成在範圍內（fail-closed）。
+            text_mode = (_truthy_kw("text") or _truthy_kw("universal_newlines")
+                         or any(k.arg in ("encoding", "errors") for k in n.keywords)
+                         or any(k.arg is None for k in n.keywords))
             is_sub = isinstance(f, ast.Attribute) and getattr(f.value, "id", None) == "subprocess"
-            decodes = ((nm in ("read_text", "open") and any(k.arg == "encoding" for k in n.keywords))
-                       or (nm == "read_text")
-                       or (is_sub and nm in ("run", "check_output") and text_mode))
+            binary_mode = any(k.arg == "mode" and isinstance(getattr(k, "value", None), ast.Constant)
+                              and "b" in str(k.value.value) for k in n.keywords) or any(
+                              isinstance(a, ast.Constant) and isinstance(a.value, str) and "b" in a.value
+                              for a in n.args[:1])
+            # **封閉列舉，不得依性質相似類推**（本 repo 的 common-spec-prose-enumeration）：
+            DECODING_NAMES = ("read_text", "open", "TextIOWrapper", "popen", "decode", "communicate")
+            decodes = ((nm in DECODING_NAMES and not (nm == "open" and binary_mode))
+                       or (is_sub and nm in ("run", "check_output", "Popen") and text_mode))
             if decodes and not is_guarded(n.lineno):
                 # **檢查值，不只檢查存在**：封閉列舉——只有這些值能讓解碼不拋。
                 SAFE_ERRORS = {"replace", "backslashreplace", "ignore", "surrogateescape"}

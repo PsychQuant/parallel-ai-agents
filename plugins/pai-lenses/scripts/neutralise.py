@@ -12,6 +12,7 @@ R11/R12 兩輪在 Python 端修掉的洞，在 shell 端重生。所以「行」
 
 用法：<command> 2>&1 | python3 scripts/neutralise.py
 """
+import codecs
 import pathlib
 import sys
 
@@ -20,14 +21,32 @@ from validate import LineSanitiser  # noqa: E402
 
 
 def main():
-    data = sys.stdin.buffer.read().decode("utf-8", errors="replace")   # 非 UTF-8 不得讓過濾器炸
+    """**串流**，不是 all-or-nothing（#33 verify R24 DA-9／security S-4）。
+
+    前一版是 `sys.stdin.buffer.read()` —— 讀到 **EOF 才動**。實測：producer 每 0.5 s 印一行時，
+    t=0.8 s 經過濾器是 **0 bytes**、不經過濾器已有兩行；而把整個 process group SIGKILL（那正是
+    `timeout-minutes` 與 cancel 的實際行為）時，經過濾器 **0 bytes**、對照組 31 bytes。
+    也就是說：**任何被逾時或取消砍掉的 step，它的 log 會整段消失** —— fail-silent 出現在專門
+    為了防 fail-silent 而建的機制上。
+
+    `read1()` 而不是 `read()`：後者會等到收滿 n bytes 或 EOF 才回，對慢速 producer 一樣不串流。
+    增量解碼器而不是逐塊 `.decode()`：後者會把跨塊邊界的多位元組字元切成兩半、產生本來不存在的
+    替代字元。`LineSanitiser` 自己會緩衝未完成的一行，所以「一行永遠是一行」的保證不受影響。
+    """
     out = sys.stdout
     try:
         out.reconfigure(errors="replace")
     except AttributeError:                                          # 3.8 之前的 TextIOWrapper
         pass
     w = LineSanitiser(out)
-    w.write(data)
+    dec = codecs.getincrementaldecoder("utf-8")(errors="replace")   # 非 UTF-8 不得讓過濾器炸
+    while True:
+        chunk = sys.stdin.buffer.read1(65536)
+        if not chunk:
+            break
+        w.write(dec.decode(chunk))
+        out.flush()
+    w.write(dec.decode(b"", final=True))
     w.flush()
     return 0
 
