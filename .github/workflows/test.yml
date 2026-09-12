@@ -1,5 +1,8 @@
 name: test
 
+# 這份觸發清單與 plugins/pai-lenses/scripts/validate.py 的 `EVENTS`（argparse choices）是兩份規格：
+# 在這裡加新 trigger（merge_group、schedule…）而沒改那邊 → validate.py 以 usage error（rc=2）紅掉，
+# 訊息看不出根因。改一邊請一併改另一邊（#33 verify R11 / R12）。
 on:
   push:
     branches: [main]
@@ -18,20 +21,47 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # ── step log 的 PR 可控文字怎麼處理，由 test/lint-ci-log-filter.sh 對**每一個** run step 機械檢查（#33 verify R15）：
+      #    經 ../pai-lenses/scripts/neutralise.py（validate.py LineSanitiser 那一份實作），或 `# LOG-FILTER:` 明示不過濾與理由。
+      #    R14 把這件事寫成散文列舉，R15 四個 lens 各自找到列舉外的 step（shellcheck、lint-*、整個 macOS job）。
+      #    過濾器擋的是 `::`/`##[` 偽造 annotation 與跨 step 的 `::add-mask::`；真正的邊界是 `on: pull_request`
+      #    （非 pull_request_target）+ `contents: read` + 零 secrets——每個 job 本來就執行 PR 自己的程式碼。
       - name: Install bats
+        # LOG-FILTER: none — installs tooling only; prints no PR-controlled text
         run: sudo apt-get update && sudo apt-get install -y bats
         # shellcheck 已預裝在 ubuntu-latest runner
 
       - name: shellcheck
-        run: shellcheck bin/pai-build-diff bin/pai-parse-verdict bin/pai-iter-commit test/lint-bats.sh
+        # 寫死清單的形式本身是問題（下一個新增的 script 預設不會被檢查）—— 追蹤於 #30。
+        # 這份清單與 test/run.sh 的 shellcheck 行是**兩份**寫死規格；#33 verify R11 抓到兩邊互相
+        # 都不是對方的超集（這裡漏了兩支 lint、run.sh 漏了 pai-list-profiles）。改一邊請一併改另一邊。
+        shell: bash
+        run: |
+          set -o pipefail
+          shellcheck bin/pai-build-diff bin/pai-parse-verdict bin/pai-iter-commit bin/pai-list-profiles references/regen-builtin-lenses.sh test/run.sh test/assert-tap-complete.sh test/lint-bats.sh test/lint-changelog-counts.sh test/lint-contract-enumerations.sh test/lint-ci-log-filter.sh 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
 
       # Round 6 RC11 (#37): a bare `!` assertion is a no-op under bats' errexit — it recurred four
       # times as a prose rule, so it is a machine rule now, and the guard proves it can fail first.
       - name: lint-bats (bare ! assertions) — selftest, then the suite
-        run: bash test/lint-bats.sh --selftest && bash test/lint-bats.sh
+        shell: bash
+        run: |
+          set -o pipefail
+          { bash test/assert-tap-complete.sh --selftest && bash test/lint-bats.sh --selftest && bash test/lint-bats.sh; } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
 
+      # #33 verify R15: the step-level "which steps echo PR text" list is a lint, not prose (see top of job).
+      - name: lint-ci-log-filter — selftest, then this workflow
+        shell: bash
+        run: |
+          set -o pipefail
+          { bash test/lint-ci-log-filter.sh --selftest && bash test/lint-ci-log-filter.sh; } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
+
+      # 中和只有**一份**實作（validate.py 的 LineSanitiser，neutralise.py 只是把 stdin 接上去）——R13 用 sed 另寫一份，
+      # 第一天就與它分岔（`[[:space:]]` 比 .NET IsWhiteSpace 小、`^` 只認 \n；R14 L-4 / S2）。
       - name: py_compile
-        run: python3 -m py_compile bin/pai-parse-lens-csv bin/pai-collect-lens-layers
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 -m py_compile bin/pai-parse-lens-csv bin/pai-collect-lens-layers 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
 
       # builtin-lenses.csv is generated from the harness PROFILES. It drives nothing at runtime
       # (#29 keeps the built-in baseline inside the harness), so a stale catalog is a DOCS defect,
@@ -41,16 +71,45 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          bash references/regen-builtin-lenses.sh
-          git diff --exit-code -- references/builtin-lenses.csv || {
-            echo "::error::references/builtin-lenses.csv is stale — run 'bash references/regen-builtin-lenses.sh' and commit the result"
+          # #33 verify R14 (E-1): the regen script evaluates the harness with node — a SyntaxError code
+          # frame echoes fork-controlled source. Same filter as py_compile (single implementation).
+          bash references/regen-builtin-lenses.sh 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
+          # #33 verify R13 (R13-5): do NOT print the diff body — a lens `focus` is fork-controlled
+          # text and `##[…]` / `::` inside it would land in this step's log verbatim (the V1 parser
+          # is IndexOf-based). `--quiet` reports drift without echoing content.
+          git diff --quiet -- references/builtin-lenses.csv || {
+            echo "::error::references/builtin-lenses.csv is stale — run 'bash references/regen-builtin-lenses.sh' and commit the result (diff body intentionally not printed)"
             exit 1
           }
 
       - name: bats
+        # LOG-FILTER: none — runs PR-authored tests; their stdout is the PR's by construction
         run: bats test/
 
+      # #33 verify R13 row 11 / R14 F4: the pack integration anchor in pai-collect-lens-layers.bats
+      # self-skips when plugins/pai-lenses is missing. On this job that skip was invisible — the macOS
+      # job has a no-skip guard for codex-call, this job had none for the anchor that is Implementation
+      # Complete item 4's only standing guard. Same guard, one file.
+      # #33 verify R15 (regression F1): R14's copy of the guard could not fire — bats truncates the CJK
+      # skip reason mid-codepoint, grep sees a binary file and `-q` reports no match. `-a` reads it as
+      # text; and the TAP plan-vs-executed check from the macOS job comes along (it was a strict subset).
+      - name: bats (pack anchor) — fail on failure OR on skip
+        shell: bash
+        run: |
+          set -o pipefail
+          TAP="${RUNNER_TEMP:-/tmp}/pack-anchor.tap"
+          rc=0
+          bats --formatter tap test/pai-collect-lens-layers.bats 2>&1 | tee "$TAP" | python3 ../pai-lenses/scripts/neutralise.py || rc=$?
+          # #33 verify R16 DA-6: one implementation of the TAP guard, called from three places (was three hand-copies).
+          bash test/assert-tap-complete.sh "$TAP" "pai-collect-lens-layers.bats"
+          exit "$rc"
+
+      # 守備範圍（#33 verify R13 security S2 / DA-4）：validate.py 的輸出邊界只守它自己那個 **step** 的 log
+      # （`::stop-commands::` 是 step-scoped；跨 step 的只有 `::add-mask::`）；這裡的 node 測試（以及 bats）是 PR 自己的程式碼，stdout 原樣進 step log —— 那是
+      # `on: pull_request` 跑 PR 測試的固有面（`contents: read`、無 secrets、非 pull_request_target），
+      # 不是 validate.py 能守的。
       - name: node tests
+        # LOG-FILTER: none — runs PR-authored tests; their stdout is the PR's by construction
         run: for t in test/*.test.mjs; do echo "$t"; node "$t"; done
 
   # codex-call 是 `#!/usr/bin/swift` script（釘 Xcode CLT swift，見 plugin CLAUDE.md），
@@ -71,10 +130,13 @@ jobs:
       # names — every CJK-named case became `unknown test name` and the detach suite executed
       # ZERO cases for four consecutive PR heads while the PR body said "bats 全綠". The job
       # went red each time (the vacuous-green guards below did their job); nobody read it.
+      # ── step log 處理由 test/lint-ci-log-filter.sh 對每一個 run step 機械檢查（見第一個 job 的說明；#33 verify R15）。
       - name: Install bats + a bash that can run it
+        # LOG-FILTER: none — installs tooling only; prints no PR-controlled text
         run: brew install bats-core bash
 
       - name: Assert bats will run under bash ≥ 5 (the system bash 3.2 mangles CJK test names)
+        # LOG-FILTER: none — prints tool versions only
         shell: bash
         run: |
           echo "bats shebang: $(head -1 "$(command -v bats)")"
@@ -84,23 +146,30 @@ jobs:
 
       - name: lint-bats (bare ! assertions) — selftest, then the suite
         shell: bash
-        run: bash test/lint-bats.sh --selftest && bash test/lint-bats.sh
+        run: |
+          set -o pipefail
+          { bash test/assert-tap-complete.sh --selftest && bash test/lint-bats.sh --selftest && bash test/lint-bats.sh; } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
 
       # Round 10 (RC13, fifth recurrence): the CHANGELOG's "N 個 case（`grep -c "^@test" …`）"
       # claims are checked by running the very command they cite. Prose said "not typed by hand"
       # and was wrong twice; a number that a lint recomputes cannot drift.
       - name: lint-changelog-counts — selftest, then CHANGELOG.md
         shell: bash
-        run: bash test/lint-changelog-counts.sh --selftest && bash test/lint-changelog-counts.sh
+        run: |
+          set -o pipefail
+          { bash test/lint-changelog-counts.sh --selftest && bash test/lint-changelog-counts.sh; } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
 
       # Round 11 (R11-1): the contract's self-declared closed lists (stdout tokens per section,
       # exit-1 answers, abort-table row count, §6 cardinality, R10-B5s pattern uniqueness) are
       # checked against bin/codex-call. Round 10 drifted on four of them in one commit.
       - name: lint-contract-enumerations — selftest, then the real contract
         shell: bash
-        run: bash test/lint-contract-enumerations.sh --selftest && bash test/lint-contract-enumerations.sh
+        run: |
+          set -o pipefail
+          { bash test/lint-contract-enumerations.sh --selftest && bash test/lint-contract-enumerations.sh; } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
 
       - name: Assert swift toolchain is usable (the real gate — a present shim is not enough)
+        # LOG-FILTER: none — prints tool versions only
         run: swift --version
 
       # Glob rather than an explicit list, so a future macOS-only bats file is picked up
@@ -115,6 +184,7 @@ jobs:
         # since `grep -q '^ok'` alone is satisfied by any single passing sibling.
         shell: bash
         run: |
+          # LOG-FILTER: none — runs PR-authored tests; their stdout is the PR's by construction
           set -o pipefail
           TAP="${RUNNER_TEMP:-/tmp}/codex-call-bats.tap"
           # Capture bats' status instead of letting errexit abort here: with pipefail
@@ -123,22 +193,105 @@ jobs:
           # generic "Process completed with exit code 1" would surface.
           rc=0
           bats --formatter tap test/codex-call-*.bats | tee "$TAP" || rc=$?
-          if grep -q '^not ok' "$TAP"; then
-            echo "::error::a codex-call test failed"; exit 1
-          fi
-          # -i because the TAP directive's casing is bats' choice and bats is unpinned
-          # (`brew install bats-core`); a casing change must not silently reopen the
-          # vacuous-green hole this check exists to close.
-          if grep -qi '# skip' "$TAP"; then
-            echo "::error::tests skipped on the macOS job — the regression anchor is vacuous"; exit 1
-          fi
-          grep -q '^ok' "$TAP" || { echo "::error::no tests ran (empty glob or bats bail-out)"; exit 1; }
-          # Round 6 RC7: the plan line must match what actually ran. bats only WARNS
-          # ("Executed 13 instead of expected 76") when test names fail to decode.
-          plan="$(grep -m1 -oE '^1\.\.[0-9]+' "$TAP" | sed 's/^1\.\.//')"
-          ran="$(grep -cE '^(ok|not ok) ' "$TAP" || true)"
-          if [ -z "$plan" ] || [ "$ran" -ne "$plan" ]; then
-            echo "::error::TAP plan announces $plan tests but $ran executed — cases were skipped or unknown to bats"; exit 1
-          fi
-          echo "TAP plan $plan == executed $ran"
+          # #33 verify R16 DA-6: one implementation of the TAP guard (test/assert-tap-complete.sh), three call sites.
+          bash test/assert-tap-complete.sh "$TAP" "codex-call bats (macOS)"
           exit "$rc"
+
+  manifests-and-lens-pack:
+    # 名稱刻意不叫 `pai-lenses-validate`（#33 verify R6）：這支跑的
+    # `check_marketplace_sync` 檢查的是 **repo 內每一個 plugin** 的 manifest —— 包含主
+    # plugin —— 不只是 lens pack。掛在一個以 pack 命名的 job 底下會讓人以為主 plugin 的
+    # 版本閘門不存在。**指令碼本身仍住在 pack 裡**（`plugins/pai-lenses/scripts/validate.py`）
+    # —— 那是刻意的取捨：貢獻者要能在本機跑同一支。代價是主 plugin 的 manifest 閘門實作在
+    # 一個資料 pack 底下，這個位置耦合尚未解決，改名只是讓它在 CI 介面上不再誤導。
+    #
+    # 併回本 repo 前，這個檢查住在 PsychQuant/pai-lenses 自己的 validate.yml。併入後該檔
+    # 落在 plugins/pai-lenses/.github/ —— GitHub 只執行 repo root 的 .github/workflows/，
+    # 所以它形同失效。改掛成本 repo 的獨立 job。
+    # 隱含相依（#33 verify R11）：validate.py → bash bin/pai-list-profiles → `node` 求值主 plugin
+    # 的 PROFILES。ubuntu-latest 內建 node，所以沒有 setup-node；缺了會 fail-loud
+    # （「無法取得 PROFILES 清單」），不會靜默。換 runner image 時要記得這一條。
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugins/pai-lenses
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # fetch-depth: 0 是必要的 —— 預設 shallow clone 只有一個 commit，base SHA
+          # 不在本地歷史裡，bump 檢查就跑不了。（validate.py 現在對此**報錯**而非略過，
+          # 所以缺了不會安靜消失；但報錯也不等於檢查過 —— 還是要把歷史抓齊。）
+          fetch-depth: 0
+
+      # #33 verify R7：validate.py 有十餘道閘門卻零測試覆蓋 —— 所有錯誤分支只在
+      # CI 的 happy path 被執行（也就是都沒被執行）。六輪 verify 有超過二十個 finding
+      # 落在這一支，反覆出現的形狀是「閘門在某條件下安靜蒸發並印肯定式綠燈」，
+      # 那種缺陷用讀的抓不到。每條測試對應一個真實發生過的缺陷。
+      # 這套測試自己的鑑別力**用 scripts/mutation_check.py 量**，不靠宣稱（#33 verify R8：
+      # 初版的 20 個閘門 mutation 有 18 個存活，而當時三處文件都寫著「都做過 mutation」）。
+      # mutation_check.py 手動跑、不進 CI（一輪 = 靶數 × 全套測試，一輪 = 靶數 × 全套測試（本機最近一輪：112 靶 / 64.2 分 / 每靶 34.4 s，由 mutation_check.py 收尾自己印））——
+      # 這裡刻意不寫靶數，寫了就會過期，而過期的數字正是本 PR 一路在修的東西。
+      # #33 verify R9 M20：py_compile 的寫死清單只涵蓋主 plugin 的兩支，本 pack 新增的
+      # 三支 Python 只有 validate.py / test_validate.py 因為被執行而間接驗過語法，
+      # mutation_check.py **在任何地方都沒被語法檢查**。用 glob 而非清單。
+      # ── step log 處理由 test/lint-ci-log-filter.sh 對每一個 run step 機械檢查（#33 verify R15）：py_compile、
+      #   test_validate.py、mutation_check.py 經 scripts/neutralise.py；validate.py 自帶 LineSanitiser（in-process）。
+      # R13 DA-4 之後這裡曾用一行 sed 做中和——第二份實作，第一天就分岔（`[[:space:]]` 比 .NET IsWhiteSpace 小、
+      # `^` 只認 \n；R14 L-4 / S2 各自端到端穿過）。現在「行」與「行首空白」只有 validate.py 那一個定義。
+      # `set -o pipefail` 讓上游的非零仍然紅（R14 regression E-6 實測生效）。
+      - name: py_compile（pack 內所有 Python）
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 -m py_compile scripts/*.py 2>&1 | python3 scripts/neutralise.py
+
+      - name: validate.py 自身的回歸測試（stdlib unittest，無額外依賴）
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 scripts/test_validate.py 2>&1 | python3 scripts/neutralise.py
+
+      # 完整的 mutation 量測太慢（一輪 = 靶數 × 全套測試（本機最近一輪：112 靶 / 64.2 分 / 每靶 34.4 s，由 mutation_check.py 收尾自己印）），不進 CI。但**靶清單相對
+      # validate.py 的漂移**便宜就能擋：改動被 mutate 的那幾行、或搬走一道閘門，靶就對不上。
+      # 先前這只有在有人手動跑整輪時才會發現，而「忘了跑」是預設（#33 verify R9 M11/M24）。
+      - name: mutation 靶清單沒有漂移（秒級；完整量測仍是手動）
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 scripts/mutation_check.py --check-targets 2>&1 | python3 scripts/neutralise.py
+
+      # 檢查的內容不寫進 workflow 而放在 scripts/validate.py：`run: |` 區塊裡的
+      # heredoc 一旦把內容放在第 0 欄就會跳出 YAML block scalar，workflow 靜默停止解析。
+      - name: validate manifests + lens pack (每個 plugin 的版本／entry 雙向同步、改 lens 必 bump、profile 名稱、CSV 形狀與撞名)
+        # --base 讓 validate 能判斷「改了 lenses/*.csv 卻沒 bump 版本」——
+        # 只驗「兩處一致」守不住這個（#33 verify R2 H5/H10）。
+        # base SHA 走 env 而非直接內插進 run（workflow-injection 的標準防護形狀）。
+        # push 事件沒有 pull_request.base.sha —— 先前那條路會讓 validate 不帶 --base，
+        # 而「改了 lens 必須 bump」這道閘門在 push-to-main 上就結構性不存在（#33 verify R4）。
+        # push 改用 event.before；首次 push / force-push 後它可能是全零 SHA，那時傳空字串。
+        # --event 一併傳進去（#33 verify R5）：它決定兩件事 ——
+        #   (1) base 的比較語意：push 用 base 本身做兩點 exact-tree 比較（問「這次 push
+        #       讓 main 變成什麼」），其餘收斂成 merge-base（問「這個分支引入了什麼」）。
+        #       先前變更清單用三點、舊版本用 `git show base:`，是兩個不同基準。
+        #       **注意 force-push 不在守備範圍**（#33 verify R6）：舊 tip 不被任何 ref 指到，
+        #       actions/checkout 拿不到它，validate 會 fail-loud 說「沒有跑」而非假裝比較過。
+        #   (2) 沒有 base 時該報錯還是留紀錄：workflow_dispatch **結構上**兩個 base 都沒有，
+        #       R4 的無條件 fail-loud 讓它永遠紅 —— 一個不可能綠的檢查，下一個人會直接把
+        #       fail-loud 拿掉，連 PR/push 的守備一起賠掉。
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          # LOG-FILTER: in-process
+          BASE="$PR_BASE"
+          if [ -z "$BASE" ] && [ -n "$PUSH_BEFORE" ] \
+             && [ "$PUSH_BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            BASE="$PUSH_BEFORE"
+          fi
+          if [ -n "$BASE" ]; then
+            python3 scripts/validate.py --base "$BASE" --event "$EVENT_NAME"
+          else
+            echo "::warning::沒有可用的 base ref（事件 $EVENT_NAME）—— 交給 validate 判定"
+            python3 scripts/validate.py --event "$EVENT_NAME"
+          fi

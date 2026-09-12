@@ -20,6 +20,7 @@ ensemble-* 的程式表面看似都是「LLM 驅動的編排」，不可測。�
 | `pai-build-diff.bats` | `../bin/pai-build-diff`（ensemble-code-review 的 diff 模式建構器）|
 | `ensemble-workflow.test.mjs` | `../workflows/ensemble-workflow.js`（共用 harness，4 個 skill 的底層）|
 | `pai-parse-lens-csv.bats` | `../bin/pai-parse-lens-csv`（ensemble-compose 的 `--lens-file` CSV 解析器）|
+| `pai-list-profiles.bats` | `../bin/pai-list-profiles`（validate.py 的 profile 名稱真源：求值 harness PROFILES 印 key；`PAI_HARNESS` 只在測試裡指向 fixture，validate.py 呼叫時顯式傳入被 containment 過的路徑——#33 verify R14 E-2）|
 | `pai-parse-verdict.bats` | `../bin/pai-parse-verdict`（ensemble-academic-review `--auto-iterate` 的 verdict tag 解析器）|
 | `pai-iterate-decide.test.mjs` | `../bin/pai-iterate-decide`（`--auto-iterate` 主迴圈的純狀態機：halt / 套 fix / mode 交替 / focus-rotation）|
 | `pai-iter-commit.bats` | `../bin/pai-iter-commit`（`--auto-iterate` 的 per-round checkpoint commit + 空輪防護）|
@@ -28,7 +29,8 @@ ensemble-* 的程式表面看似都是「LLM 驅動的編排」，不可測。�
 | `codex-profile.bats` | repo root `.codex-pro/profile.yaml`（#48 專案層 codex-pro profile pin）—— 用 `references/codex-governance.md` 同組正規式鎖住解析後字面、重複 key、git 追蹤；fixture 三層優先序（不依賴 codex-pro cache）；形狀驗證拒絕注入。與 governance 文件是連動點（codex-pro#18 / #19）|
 | `codex-call-detach.bats` | `../bin/codex-call` 的背景模式（`--detach`／`--poll`／`--abort`／`--force-reap`；#37）—— **macOS-only**、95 case；全部走同一條 detach／lock／claim／poll 路徑，只用 `--_selftest-*` 旗標把 HTTP 換成 sleep＋寫檔（任何沒帶 selftest 旗標的 detach 都會真的發 HTTPS）。**不可與另一組 bats 在同一 checkout 並行**（`own_workers` 斷言是 checkout 級） |
 | `lint-bats.sh` | 護欄：bats 檔內不得有裸 `!` 斷言（errexit 不觸發，斷言變 no-op；round 6 RC11）。`--selftest` 對 `fixtures/lint-bats-bad.bats` 必須拒絕 |
-| `lint-changelog-counts.sh` | 護欄：CHANGELOG 每個「N 個 case（`grep -c "^@test" <file>`）」宣稱，N 必須等於那條命令此刻的輸出（RC13 第五度復發後機械化，#37 round 10）。`--selftest` 對 `fixtures/changelog-count-bad.md` 拒絕 |
+| `lint-changelog-counts.sh` | 護欄：CHANGELOG 每個「N 個 case（`grep -c "^@test" <file>`）」／「N 條（`grep -c …`）」／「N 個（`grep -c …`）」宣稱（三種形式，封閉列舉），N 必須等於那條命令此刻的輸出（RC13 第五度復發後機械化，#37 round 10；#33 verify R13/R14 加後兩種）。指向 sibling plugin 的 `../` 路徑在非 monorepo 佈局缺席時跳過並註明。`--selftest` 對 `fixtures/changelog-count-bad.md` 拒絕、對 `fixtures/changelog-count-sibling-absent.md` 接受、對 `changelog-count-sibling-file-missing.md`（sibling 目錄在、檔不在）拒絕（該斷言只在 monorepo 佈局跑）|
+| `lint-ci-log-filter.sh` | 護欄：`.github/workflows/*.yml`／`*.yaml`（全部 workflow）每一個 `run:` step 都必須經 `../pai-lenses/scripts/neutralise.py`（**`run:` 區塊之內的 pipeline 位置**）或帶 `# LOG-FILTER:` 註解明示不過濾與理由。**R18 起是白名單解析器**：只認明確列出的結構（plain key、block 清單、block scalar），其餘一律 fail-loud——三輪的黑名單特例都被新的合法 YAML 寫法穿過（去重後 7 個根因）。`--selftest` 對 `fixtures/ci-log-filter-bypass-*.yml` **逐一 glob**（不寫死數量），並斷言每個都是**規則**擋的、不是 `seen == 0` 的 vacuity 守衛擋的。 |
 | `lint-contract-enumerations.sh` | 護欄：`references/codex-call-contract.md` 自稱封閉的列舉（各命令的 stdout token、exit-1 答案、abort 表列數、§6 項數、`R10-B5s` pattern 唯一性）必須與 `bin/codex-call` 一致（#37 round 11——同型手打枚舉缺陷在一輪契約裡復發四次）。`--selftest` 對 `fixtures/contract-enum-bad/` 五個 fixture 各自拒絕 |
 
 `pai-parse-lens-csv.bats` 涵蓋：含逗號/引號/換行的 focus（csv 模組、不被切爛）、needsSrt 變體、空欄跳過、**BOM 不丟列（utf-8-sig regression）**、CRLF、缺檔/缺欄。
@@ -54,7 +56,7 @@ shellcheck bin/pai-build-diff
 bats test/
 ```
 
-CI（`.github/workflows/test.yml`）在每次 push / PR 自動跑同一組。
+CI（`.github/workflows/test.yml`）在每次 push / PR 自動跑：`shellcheck-bats` 與 `macos-swift-bats` 兩個 job 涵蓋上面這一組；另有 `manifests-and-lens-pack` job 跑 `plugins/pai-lenses/scripts/` 的 python 測試、靶清單檢查與 validator 本體 —— `run.sh` 末段也跑同一組，所以本機一鍵與 CI 對得上（完整 mutation 量測仍是手動：`python3 scripts/mutation_check.py`）。
 
 ## 加測試的原則
 

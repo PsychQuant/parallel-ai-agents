@@ -1,0 +1,9 @@
+# fixture（R17 logic L-1 B）：dash 後兩個空白
+# EXPECT: rule-red
+jobs:
+  j:
+    steps:
+      - name: filtered
+        run: echo x | python3 scripts/neutralise.py
+      -  name: unfiltered
+         run: shellcheck foo.sh

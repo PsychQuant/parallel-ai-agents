@@ -1,0 +1,12 @@
+name: t
+on: push
+# EXPECT: parse-red
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: run value on the next line
+        run:
+          echo "$PR_TITLE" | python3 scripts/neutralise.py
+      - name: compliant control
+        run: echo hi | python3 scripts/neutralise.py

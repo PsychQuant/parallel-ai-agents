@@ -1,0 +1,9 @@
+name: t
+on: push
+# EXPECT: pass
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: declaration right after a semicolon
+        run: echo "$PR_TITLE";# LOG-FILTER: none — fixture, deliberately unfiltered

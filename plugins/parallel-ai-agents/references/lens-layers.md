@@ -12,6 +12,50 @@
 
 層 ① 由 harness 供給，層 ②③ 由 skill 蒐集後經 `args.customLenses` 送進去。**陣列順序即優先序**。
 
+## 我想加一條 lens，該去哪？
+
+| 你的情況 | 去哪 | 怎麼做 |
+|---|---|---|
+| 只想自己用 | 層 ③ user | 編 `~/.claude/pai-lenses/<profile>.csv`，立即生效，不必發布 |
+| 想貢獻，且是**既有** profile 的 lens | 層 ② lens pack | 編 `plugins/pai-lenses/lenses/<profile>.csv` + bump **兩處** version（`plugin.json` 與 `marketplace.json` 對應 entry）|
+| 想貢獻，且需要**新 profile** | 層 ① built-in | 改 `workflows/ensemble-workflow.js` 的 `PROFILES` → 跑 `references/regen-builtin-lenses.sh` → bump 兩處 version |
+| 想貢獻，且要**取代**一條既有 lens（`override`）| 層 ② lens pack | 同上，但 CSV 的 `override` 欄填 `true`，**且在 PR 描述寫清楚原本那條為什麼不夠用**。預設不送 —— 見下方警告 |
+| 本機已經寫好，想一次送上去 | — | **自動回流工具尚未就緒**（見 [#39](https://github.com/PsychQuant/parallel-ai-agents/issues/39)）；目前照上面兩列手動做 |
+
+> ⚠️ **「profile 是否存在」要查真源，不要查 `builtin-lenses.csv`**：該投影由 lens 產生，
+> `lenses: []` 的 profile（如 `custom`）在裡面一列都沒有。用 `bin/pai-list-profiles`。
+
+> ⚠️ **`references/builtin-lenses.csv` 是 generated 的唯讀投影** —— 編它不改變任何行為。
+> 真源是 `PROFILES`。這個檔存在只為了讓人「看得到目前有哪些 lens」。
+
+> ⚠️ **lens 的 `focus`/`key` 是 prompt 指令文字，不是資料。** 它們逐字進 reviewer prompt
+> 的第一行且**不經 sentinel 包裹**（`reviewPrompt()`；同一支函式對 `contextBlock` 與
+> `priors` 都有包）。誰能寫 lens，誰就擁有 reviewer 的角色級指令權限，而 reviewer 有
+> Read/Bash。validator 只驗形狀，對 focus 的語意零判斷 —— **CI 綠燈不代表內容審過**。
+> 審 lens PR 請用審程式碼的標準。結構性修法（把 lens 文字也包進 sentinel）追蹤於 #36。
+>
+> **禁止的是封閉的四類**（改變存取範圍或回報範圍），不是「任何祈使句」——
+> 指示 reviewer 在**審閱標的內**用 Read/Grep 查證是允許且被推薦的。
+> 完整列舉見 [`plugins/pai-lenses/README.md`](../../pai-lenses/README.md) 的
+> 「界線：封閉列舉，不是總括判準」。先前這裡與 pack README 都寫成總括禁令，
+> 而本 repo 出貨的唯一一條 lens 就違反它（#33 verify R9）。
+
+> ⚠️ **層 ②③ 只在 Backend A（`Workflow` harness）生效。** 沒有 `Workflow` tool 的舊版
+> Claude Code 會 fallback 到 Backend B（legacy TeamCreate fan-out），那條路的 reviewer 是
+> 固定的一組 prompt，**collector 的結果不會進去，也不會有任何警告** —— 裝了 pack 與沒裝
+> 在輸出上一模一樣。報表的 provenance 行是唯一能分辨的地方。（#33 verify R6）
+
+> ⚠️ **`override` 預設不送，送就要舉證。** 它不是「我比較重要」，是「**把那一條刪掉、換成我的**」——
+> 一條調校過的 built-in lens 會從**所有人**的審閱裡消失，而報表只在 provenance 行留一筆
+> `overridden`。CI 現在會擋下「與 built-in 撞名但**沒**標 `override`」的貢獻（那種 lens 會被
+> harness 判為 `ignored`、一個 agent 都不會派，卻看起來像加了一條）；但**標了 `override`
+> 的貢獻機械上一律放行** —— 該不該取代是人的判斷，閘門只保證那個決定是顯式的。
+> Reviewer 請把它當成刪除既有 lens 的 PR 來審。
+
+> ⚠️ **新 profile 不能只靠 lens pack**：CSV 描述得了 lens，描述不了 profile 級的
+> `title` / `daFocus` / `codexDefault`。harness 的 `PROFILES` 沒有該 key 時，用它呼叫會回
+> `unknown ensemble profile` 且 **0 個 agent 被派出**，workflow 卻仍「成功」結束。
+
 ## Skill 該做的事
 
 ### 1. 蒐集（Phase 2，呼叫 Workflow 之前）
@@ -108,4 +152,6 @@ security,"（取代內建的 security lens）……",,true
 - `references/builtin-lenses.csv` — 層 ① 的唯讀 catalog（**編它不改變任何行為**；真源是 `PROFILES`）
 - `bin/pai-collect-lens-layers` — 層 ②③ 的蒐集器
 - `bin/pai-parse-lens-csv` — CSV 解析的單一真相源
-- 設計 spec：`docs/superpowers/specs/2026-07-29-lens-pack-externalization-design.md`（D1–D8）
+- 設計 spec（**歷史紀錄**）：`docs/superpowers/specs/2026-07-29-lens-pack-externalization-design.md`
+  —— **D1／D7（獨立 repo、平行 repo）與 D7 反駁欄的「不應吃真實 lens repo」已於 #33 推翻**，
+  該檔頂部有 superseded banner。D2–D6／D8 仍成立。**現行契約以本檔為準。**

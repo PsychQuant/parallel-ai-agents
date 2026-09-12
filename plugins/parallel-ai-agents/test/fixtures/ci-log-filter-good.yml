@@ -1,0 +1,20 @@
+# EXPECT: pass
+# fixture for test/lint-ci-log-filter.sh --selftest：每個 run step 都有交代
+jobs:
+  j:
+    steps:
+      - uses: actions/checkout@v4
+      - name: filtered
+        run: echo x | python3 scripts/neutralise.py
+      - name: marked
+        # LOG-FILTER: none — installs tooling only, prints no PR-controlled text
+        run: sudo apt-get install -y bats
+      - name: in-process
+        run: |
+          # LOG-FILTER: in-process
+          python3 scripts/validate.py
+  k:
+    steps:
+      - name: another job's step
+        # LOG-FILTER: none — runs PR-authored tests; stdout is the PR's by construction
+        run: bats test/

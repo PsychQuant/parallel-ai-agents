@@ -1,0 +1,14 @@
+# R22 regression R-1 / requirements F-1：`|2-` 的指示子順序 YAML 也合法（ff0f215 亦有此洞）
+# EXPECT: rule-red
+name: t
+on:
+  pull_request:
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: compliant
+        run: echo hi | python3 ../pai-lenses/scripts/neutralise.py
+      - name: |2-
+          # LOG-FILTER: none — this is a display name, not a comment
+        run: echo "$PR_TITLE"

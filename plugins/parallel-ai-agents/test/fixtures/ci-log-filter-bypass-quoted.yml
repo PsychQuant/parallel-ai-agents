@@ -1,0 +1,10 @@
+# fixture（R17 requirements F-1）：key 加引號的 `- "run":`／`'run':`——YAML 合法、與 `- run:` 同義
+# EXPECT: parse-red
+jobs:
+  j:
+    steps:
+      - name: filtered
+        run: echo x | python3 scripts/neutralise.py
+      - "run": shellcheck foo.sh
+      - name: quoted-key
+        'run': bats test/

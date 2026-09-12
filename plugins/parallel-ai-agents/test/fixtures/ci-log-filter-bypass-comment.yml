@@ -1,0 +1,9 @@
+# fixture（R16 security S-3 ②）：`neutralise.py` 只出現在註解裡
+# EXPECT: rule-red
+jobs:
+  j:
+    steps:
+      - name: fake
+        run: |
+          # piped through neutralise.py (not really)
+          shellcheck foo.sh

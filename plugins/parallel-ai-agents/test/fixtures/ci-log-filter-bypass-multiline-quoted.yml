@@ -1,0 +1,14 @@
+# R22 requirements F-1：跨行引號 scalar 的內容不是註解
+# EXPECT: rule-red
+name: t
+on:
+  pull_request:
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: compliant
+        run: echo hi | python3 ../pai-lenses/scripts/neutralise.py
+      - name: "first
+          # LOG-FILTER: none — inside a multi-line quoted scalar"
+        run: echo "$PR_TITLE"

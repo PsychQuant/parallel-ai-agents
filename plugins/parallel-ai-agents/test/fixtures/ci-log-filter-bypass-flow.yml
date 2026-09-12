@@ -1,0 +1,8 @@
+# fixture for test/lint-ci-log-filter.sh --selftest（R16 requirements F3：flow mapping 寫法的 step）
+# EXPECT: parse-red
+jobs:
+  j:
+    steps:
+      - name: filtered
+        run: echo x | python3 scripts/neutralise.py
+      - {name: inline, run: "bats test/"}
