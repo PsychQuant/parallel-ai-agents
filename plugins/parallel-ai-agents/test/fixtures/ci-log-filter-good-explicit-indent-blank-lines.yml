@@ -1,0 +1,14 @@
+name: t
+on: push
+# EXPECT: pass
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: explicit indent indicator with an empty line and a short whitespace-only line inside
+        run: |2
+          cat <<EOF
+
+    
+          EOF
+          echo "$PR_TITLE" | python3 scripts/neutralise.py

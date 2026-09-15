@@ -31,6 +31,9 @@ ensemble-* 的程式表面看似都是「LLM 驅動的編排」，不可測。�
 | `lint-bats.sh` | 護欄：bats 檔內不得有裸 `!` 斷言（errexit 不觸發，斷言變 no-op；round 6 RC11）。`--selftest` 對 `fixtures/lint-bats-bad.bats` 必須拒絕 |
 | `lint-changelog-counts.sh` | 護欄：CHANGELOG 每個「N 個 case（`grep -c "^@test" <file>`）」／「N 條（`grep -c …`）」／「N 個（`grep -c …`）」宣稱（三種形式，封閉列舉），N 必須等於那條命令此刻的輸出（RC13 第五度復發後機械化，#37 round 10；#33 verify R13/R14 加後兩種）。指向 sibling plugin 的 `../` 路徑在非 monorepo 佈局缺席時跳過並註明。`--selftest` 對 `fixtures/changelog-count-bad.md` 拒絕、對 `fixtures/changelog-count-sibling-absent.md` 接受、對 `changelog-count-sibling-file-missing.md`（sibling 目錄在、檔不在）拒絕（該斷言只在 monorepo 佈局跑）|
 | `lint-ci-log-filter.sh` | 護欄：`.github/workflows/*.yml`／`*.yaml`（全部 workflow）每一個 `run:` step 都必須經 `../pai-lenses/scripts/neutralise.py`（**`run:` 區塊之內的 pipeline 位置**）或帶 `# LOG-FILTER:` 註解明示不過濾與理由。**R18 起是白名單解析器**：只認明確列出的結構（plain key、block 清單、block scalar），其餘一律 fail-loud——三輪的黑名單特例都被新的合法 YAML 寫法穿過（去重後 7 個根因）。`--selftest` 對 `fixtures/ci-log-filter-bypass-*.yml` **逐一 glob**（不寫死數量），並斷言每個都是**規則**擋的、不是 `seen == 0` 的 vacuity 守衛擋的。 |
+| `oracle.py` | 神諭：對每個 fixture 的每個 `run:` step 用 bash（stub `python3` 記錄「被呼叫時 stdin 是不是管線」）真的跑一次，與 lint 的逐 step 判定對帳——lint pass 而 runner 沒 pipe（且無 `# LOG-FILTER:` 宣告）＝繞過；lint RULE-red 而 runner 有 pipe＝誤擋。selftest 只證「lint 判定 = 作者宣告」，這支把第三方（runner）拉進來（#33 verify R28 DA）。需 PyYAML；YAML 層是它的盲區（PyYAML ≠ GitHub 的解析器，見 docstring） |
+| `opsweep.py` | 作者無關的運算子突變掃描：對 lint 內嵌的 Python 以固定五種運算子（strip→id、±1、刪布林運算元、startswith→False、==↔!=）逐一突變，每個突變體跑一次 `--selftest`；`--since REF` 只掃自 REF 起被改動的區域。存活的要嘛補會翻色的 fixture，要嘛證明等價後列入 `EXPECTED_SURVIVE`（≤ 突變體數 10%）。手動跑（每個突變體 4–6 s）；不進 CI |
+| `corpus/` | 語料工具：`r25-workflow-corpus.txt`（真實 workflow 清單，hash＋repo 相對路徑）、`threeaxis.py`（base vs head 逐檔 RULE／PARSE／rc 三軸 diff，報 base-綠檔數當靈敏度分母）、`synth.py`（合成 base-綠語料，A/B/C 三變體）、`shapes.py`（每個新機制一個可計數的觸發形狀，報它在各清單的檔數——分母裡沒有那個形狀，GREEN→RED=0 就不是證據） |
 | `lint-contract-enumerations.sh` | 護欄：`references/codex-call-contract.md` 自稱封閉的列舉（各命令的 stdout token、exit-1 答案、abort 表列數、§6 項數、`R10-B5s` pattern 唯一性）必須與 `bin/codex-call` 一致（#37 round 11——同型手打枚舉缺陷在一輪契約裡復發四次）。`--selftest` 對 `fixtures/contract-enum-bad/` 五個 fixture 各自拒絕 |
 
 `pai-parse-lens-csv.bats` 涵蓋：含逗號/引號/換行的 focus（csv 模組、不被切爛）、needsSrt 變體、空欄跳過、**BOM 不丟列（utf-8-sig regression）**、CRLF、缺檔/缺欄。
@@ -48,7 +51,7 @@ ensemble-* 的程式表面看似都是「LLM 驅動的編排」，不可測。�
 # 前置（一次性）
 brew install bats-core shellcheck
 
-# 一鍵：shellcheck + py_compile + 三支 lint（各含 selftest）+ bats + node
+# 一鍵：shellcheck + py_compile + 四支 lint（各含 selftest）+ oracle + bats + node
 ./test/run.sh
 
 # 或分開

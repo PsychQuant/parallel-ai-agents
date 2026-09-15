@@ -558,7 +558,7 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
     `os.listdir`、`check_output`、`shutil.copy`、`os.scandir`）逐一驗過會紅；反向檢查的 `glob(` 補為第 19 處。
   - CI 的 step 級列舉改成 **lint**（logic L-2 / security S-3 / requirements F2 / regression F5）：新增
     `test/lint-ci-log-filter.sh`（＋ good／bad fixture selftest），test.yml **每一個** run step 都必須經
-    `neutralise.py` 或帶 `# LOG-FILTER:` 註解明示不過濾與理由（三個 job 全部 run step 交代（20 個（`grep -c "^        run:" ../../.github/workflows/test.yml`））；shellcheck／
+    `neutralise.py` 或帶 `# LOG-FILTER:` 註解明示不過濾與理由（三個 job 全部 run step 交代（當時 20 個；lint 形式的數字只留在最新一段）；shellcheck／
     lint-*／pack 錨點 bats 改經過濾器）；接進 run.sh 與 CI。
   - harness **stdout** 也是管道（security S-2）：profile 名清單進 annotation 經 `wc()`；READ_SITES 旁列出所有
     「子行程輸出 → annotation」站點（三處，皆經 wc()）。
@@ -614,10 +614,73 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
     讓 errexit 下守衛到得了），macOS job、ubuntu pack 錨點 step、run.sh 三處呼叫；進兩份 shellcheck 清單。
   - `lint-ci-log-filter.sh` 守備目標改成 `.github/workflows/*.yml` 全部（DA-4），read-site 判定式在測試裡只留一份
     （DA-5）。
-  - 數字：「三個 job、15 step」實為 20 個 run step（`grep -c "^        run:" ../../.github/workflows/test.yml`）
+  - 數字：「三個 job、15 step」實為當時 20 個 run step（R16 時以 lint 形式寫出；歷史數字，現況見最新一段）
     （security S-4 / regression F3，改成 lint 認的形式）；mutation 耗時再上修為 30–50 分（logic 實測 29 s × 96 ≈ 47 分）。
   測試 118 → 124 條；靶清單 96 → 98 個（3 個 EXPECTED_SURVIVE；lint 形式的宣稱只留在最新一段）。
   量測（R16 後）：全輪 98 靶 93 殺／2 存活（emit 自己的中和層，補單元測試後單靶轉殺）→ 95／0／3（複合值）。
+- **verify R28（4 lens + DA + Codex 跨模型 leg）— 掃描器五個 rc=0 回歸、兩個誤擋、方法層三條。
+  0 HIGH、12 MEDIUM blocking、2 LOW。** 先給 credit：繞過方向在野外分佈上第一次收斂（regression 抓 59 repo／
+  1002 檔 GitHub workflow，`GREEN→RED` 0），R27 的 11 個新靶 10 殺 1 預期存活成立。FAIL 來自 D1–D5（`shell_scan()`
+  重寫後的五個 rc=0：`$((` 雙重計數、終止字 `rstrip()` 太寬、內文行尾 `\` 併掉終止字、`<<'E\OF'` 反斜線被剝、
+  `run: |2` 顯式縮排指示子被忽略——**最後這條只有 Codex 看到**）、D6/D7（續行重掃漏 `pending` 快照、引號 run
+  ＋行尾註解不解碼）、D8（flow 規則擋 `matrix.include`，blocking 在量測與宣稱不在機制）、D9（harness 前置
+  只驗一個 suite）、**D10 網的顆粒度**（作者挑 RED 驗證的對象——DA 用固定運算子掃 R26 的新機制，62 個突變體
+  29 存活，其中四個是當輪剛修好的機制）、**D11 分母結構性為 0**（含 heredoc 的檔在 base 全紅，分母裡沒有那個
+  形狀）、D12 宣稱層。修法：
+  - **掃描器 D1–D6**：終止字要**完全**相等；未引號分隔字含反斜線視同引號化；未引號內文行尾 `\` 是續行、下一行
+    不可能是終止字；`((`／`))` 整個 token 消費（**`$((` 不另開分支**——`$` 沒有特殊意義，獨立分支關掉後 selftest
+    仍綠、依構造等價，所以刪掉而不是列預期存活）；`run: |N` 由呼叫端算 `explicit_pad` 交給 `dedent_block()`，
+    淺於指示子的內文行與 `|0`／`|10` 標頭都是 YAML 錯誤（PyYAML 各自 ParserError／ScannerError）→ `PARSE:` 不猜；
+    續行重掃前還原 `pending` 快照。D7：`run: "…" # note` 先用 YAML 規則切掉註解再解碼，註解半邊歸宣告來源 (3)；
+    D8b：`yaml_split_comment` 雙引號內 `\"` 是逃脫。**每個機制一個 mutation 靶、一個會翻色的 fixture**：13 個新
+    lint 靶單獨實測全殺；三個第一版 fixture 零鑑別力（D2 只寫了引號分隔字那半邊、`((` 從沒被裸用、`$((` 等價）
+    當場由 mutation 迴圈抓到——**這一次是機制抓的，不是人抓的**。
+  - **作者無關的網進 repo（D10，本輪最高槓桿）**：`test/opsweep.py`——對 lint 內嵌的 Python 用 AST 套五種固定運算子
+    （strip→id、±1、刪布林運算元、startswith→False、==↔!=），每個突變體跑一次 selftest；`--since REF` 只掃自 REF 起
+    被 diff 觸及的函式＋模組層新行。**基線（修法前）：區域 106 個突變體，30 存活。** 處置分三類、比例明寫：
+    12 個補會翻色的 fixture 殺掉（含 `<< EOF` 分隔字前有空白、`printf ""` 空引號後接管線、`$(a $(b)); cat <<EOF`
+    巢狀命令替換讓深度變負、續行後緊接的下一行、`|2` 區塊裡的空行）；14 個是**依構造等價**——不列預期存活，
+    改寫程式碼把等價的運算元拿掉（`j < n and line[j]` 改切片、`not quoted and body_continued` 的前半已含在後半、
+    引號字元不再留在 code 裡、`i == 0 or …` 改 `prev`、run 值在抽取處一次 strip）；4 個列 `EXPECTED_SURVIVE` 並各附
+    可檢查的理由（單字元引號是無效 YAML、純空白行剝成空行、`<<<` 落到 `<<` 後 delim 為空）——**4 / 30 = 13%
+    ≤ 1/3**（G-R29-5(c)），工具內另守 ≤ 突變體數 10%。修後：91 個突變體、0 非預期存活（見下方量測）。
+    第一輪整段 sweep 跑到一半時我又加了三個 fixture，之後每個突變體都因門檻對不上被判殺——整輪後半作廢；
+    `opsweep.py` 現在開跑時快照 fixtures，lint 與 fixture 在同一個時間點凍結。
+  - **bash 神諭進 repo（D10(b)）**：`test/oracle.py`——stub `python3` 記錄「被呼叫時 stdin 是不是管線」，對每個
+    fixture 的每個 `run:` step 真的用 bash 跑，與 lint 逐 step 對帳。selftest 只證「lint 判定 = 作者宣告」，這是第一次
+    把 runner 拉進來；CI 新增 step（先 `pip install pyyaml`，缺席 rc=2 fail-loud）。它當場抓到一件 selftest 三輪都綠
+    的事：`good-semicolon-logfilter` 前一版**根本不是合法 YAML**（plain scalar 裡有 `: `；GitHub 探針 run 34927068746
+    「workflow file issue」）——lint 放行了一個 runner 不會跑的檔。改成 `LOG-FILTER:none`（冒號後不接空白）。
+    盲區明寫：YAML 層 PyYAML ≠ GitHub（R28 探針 tab 分隔的引號 key PyYAML 拒、GitHub 執行），`YAML-FAIL` 那格
+    是它看不到的地方，不是安全區。
+  - **前置檢查對每個守備單位各跑（D9）**：`precheck_suites()`，同指令去重、任一紅整輪不跑並點名 suite；
+    `test_mutation_precheck_runs_every_suite_command` 用假 suite 釘「每條指令恰好一次、紅的被點名、main() 走同一條」。
+  - **GitHub 探針第三次（G-R29-8）**：整份縮排 2 格的 workflow **GitHub 接受並執行**（run 34927069456，
+    `Run echo INDENT-ROOT-PROBE`）；`steps: [run: …]`（34927069402）與 `steps: [{"\x72un": …}]`（34927069449）
+    **也都執行**——三者 lint 都是 `PARSE:` fail-closed，方向正確。indented root 被接受 ⇒ `top_key` 改成「文件
+    最小縮排的 plain key」（前一版寫死縮排 0，縮排根文件裡 jobs 子樹的 flow 規則整個不觸發；
+    `bypass-indented-root-flow-mapping` 修前 rc=0）。探針分支讀完即刪，run 保留為證據。
+  - **flow 規則的受影響面寫出來（D8，選 b1）**：野外 1565 檔被擋 58 檔／177 行——121 行單行 `{ name: …, os: … }`
+    （`matrix.include`），56 行跨行 flow 序列的開頭 `[`；量法與數字寫在規則旁邊，`bypass-matrix-include-flow-mapping`
+    釘住「刻意 fail-closed」；放行方向補 `branches: [main]`、引號內冒號、`\"`、`""` 空字串、`build#1` 字內 `#`、
+    jobs 外的 `{ branches: [ main ] }` 六個正向 fixture；不平衡的 `{`／`[`（含無續行的）各一個 parse-red。
+  - **分母形狀（D11）**：`test/corpus/shapes.py` 對每個新機制一個可計數的觸發形狀，報它在各清單的檔數；
+    `threeaxis.py`／`synth.py`（A/B/C 三變體）一併進 `test/corpus/`。量到的（見 PR body 表）：D1–D5、D7、D8b
+    的形狀在 1565 檔野外與 1222 檔合成 A 語料**都是 0**——所以**本段對這些機制不寫 `GREEN→RED = 0`**；它們的
+    網是 fixture＋神諭＋靶，不是語料。D6 野外 2 檔、D8 34 檔。
+  - **解碼不變式的 mode 位置（G-R29-9）**：`io.open`／`codecs.open` 與 builtin 同 signature，前一版把所有 Attribute
+    都當 `Path.open(mode)`，讀到的是路徑（R26 修過的同形缺陷換了兩個 callable）；Starred 引數 → 不推定 binary。
+    判定本體抽成模組層 `decoding_findings()`，四紅四綠的 probe 真的跑它。
+  - **宣稱層（D12）**：`shell_scan` docstring「四件」實列五件 → 改五件並補 R28 六件，`test_shell_scan_docstring_counts_match_bullets`
+    機械對齊（對 HEAD 版實測 FAILED `5 != 4`）；R27 寫「量測腳本 threeaxis.py」而它只在 verify 暫存目錄——現在
+    `test -f test/corpus/threeaxis.py`；`EXPECTED_SURVIVE` 檔頭 4 vs 內文 3 → 4；G-R27-9 兩處自揭句裡的被禁字面改寫；
+    README「三支 lint」→ 四支＋oracle；`def shell_scan` 前補空行。
+  測試 140 → 143 條（`grep -c "    def test_" ../pai-lenses/scripts/test_validate.py`）；
+  靶清單 125 → 139 個（`grep -c "^    (\"" ../pai-lenses/scripts/mutation_check.py`）（4 個 EXPECTED_SURVIVE）；
+  lint fixture 70 → 109 個（42 正向／41 規則紅／26 解析紅；selftest 三個門檻等於實測值，`ls test/fixtures/ci-log-filter-*.yml | wc -l`）；
+  CI run step 21 個（`grep -c "^        run:" ../../.github/workflows/test.yml`）。
+  神諭：109 fixture 共 167 個 step，一致 125、不一致 0、不可比 42（PARSE fail-closed 或 PyYAML 拒）。
+  區域 opsweep（修後）：84 個突變體、80 殺（其中 4 個是當掉）、0 非預期存活、4 預期存活（基線 106／30 → 91／11 → 84／4；每輪都是靠改寫或補 fixture 減，不是靠豁免）。全輪 mutation（139 靶）：commit 後於 `git archive` 副本上跑（約兩小時），結果回填 `scripts/test_validate.py` 檔頭、本段不重抄；此刻檔頭的數字仍是 R27 的（125 靶）。見 `scripts/test_validate.py` 檔頭。
 - **verify R26（4 lens + DA + Codex 跨模型 leg）— 繞過方向乾淨、誤擋方向有回歸、新機制沒有網。
   0 HIGH、9 MEDIUM blocking。**
   先給 credit：regression 用 636 檔語料逐檔比對，`RED→GREEN` 零、規則層新增零行，**R25 在繞過方向的宣稱
@@ -673,8 +736,7 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
   `<<-` 終止字縮排比 block scalar 淺——那在 YAML 裡根本不是區塊內容、單引號 fixture `.py` 後面沒空白讓
   尾錨兩種狀態都不命中）。**為了修「fixture 沒有網」而寫的 fixture，自己沒有網**——同一個形狀，
   發生在為了修它而做的事上，第八次。
-  測試 139 → 140 條（`grep -c "    def test_" ../pai-lenses/scripts/test_validate.py`）；
-  靶清單 114 → 125 個（`grep -c "^    (\"" ../pai-lenses/scripts/mutation_check.py`）（4 個 EXPECTED_SURVIVE）。
+  測試 139 → 140 條；靶清單 114 → 125 個（4 個 EXPECTED_SURVIVE）（R27 時的數字；lint 形式的宣稱只留在最新一段）。
   lint fixture 51 → 70 個（19 正向／32 規則紅／19 解析紅，selftest 三個門檻改成等於實測值）。
   全輪量測（125 靶，三個檔的守備範圍）：**121 殺 / 0 存活 / 4 預期存活 / 0 靶壞**，130.3 分鐘、
   每靶 62.6 s。見 `scripts/test_validate.py` 檔頭。

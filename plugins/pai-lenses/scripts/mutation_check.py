@@ -309,7 +309,7 @@ MUTATIONS += [
      "f\"（真源 PROFILES 有：{wc(', '.join(sorted(known_profiles)))}）。\"",
      "f\"（真源 PROFILES 有：{', '.join(sorted(known_profiles))}）。\""),
 ]
-# R26 regression R-3 抓到這裡曾寫「neutralise.py 的行為由兩條 CI 中和測試釘住」——**那是假的**：
+# R26 regression R-3 抓到這裡曾宣稱 neutralise.py 的行為已被 CI 裡的兩條中和測試接住——**那是假的**：
 # 把它的串流一行 revert 回 `read()`，139 條全綠、114 靶全中。它現在**在 mutation 範圍內**
 # （守備單位 `neutralise`，靶在下方 R26 M6 那一段），且由 `test_neutralise_streams_instead_of_buffering_until_eof`
 # 釘住；那個靶實測會被殺掉。
@@ -319,7 +319,7 @@ MUTATIONS += [
 # 也就是整段刪掉而 selftest 照樣全綠。靶進來之後，那些機制才第一次有「它有沒有在擋東西」的量測。
 MUTATIONS += [
     ("lint: heredoc 終止判定（R26 M2：吃 YAML 縮排時這分支不可達）",
-     "            if probe.rstrip() == delim:", "            if False:", "lint"),
+     "            if probe == delim and not body_continued:", "            if False:", "lint"),
     ("lint: heredoc 佇列接續（R26 M3：`pending[0]` 不是 FIFO）",
      "                heredoc = pending.pop(0) if pending else None",
      "                heredoc = None", "lint"),
@@ -334,22 +334,58 @@ MUTATIONS += [
      '            if line.startswith("<<", i) and not arith:',
      '            if line.startswith("<<", i):', "lint"),
     ("lint: `<<-` 剝 tab（R26 M3）",
-     '                if j < n and line[j] == "-":', "                if False:", "lint"),
+     '                if line[j:j + 1] == "-":            # 切片越界回空字串，不另寫 `j < n` 守衛', "                if False:", "lint"),
     ("lint: 單引號狀態分支（R26 logic MEDIUM-6：整段刪掉 selftest 仍綠）",
      '            if quote == "\'":', "            if False:", "lint"),
     ("lint: 續行摺疊（R26 M5：`cat <\\` ⏎ `<EOF`）",
      "                if li + spans < len(lines):", "                if False:", "lint"),
     ("lint: block scalar 共同縮排先剝除（R26 M2）",
-     "        run_code, shell_decls = shell_scan(dedent_block(run_lines))",
+     "        run_code, shell_decls = shell_scan(dedent_block(run_lines, explicit_pad))",
      "        run_code, shell_decls = shell_scan(run_lines)", "lint"),
     ("lint: YAML 引號純量先解碼（R26 M4：未實作的逃脫不得猜）",
-     "            decoded = yaml_decode_scalar(inline)", "            decoded = inline", "lint"),
+     "            decoded = yaml_decode_scalar(inline[:len(inline) - len(yaml_cmt)] if yaml_cmt else inline)",
+     "            decoded = inline[:len(inline) - len(yaml_cmt)] if yaml_cmt else inline", "lint"),
     ("lint: jobs 子樹的 flow 值 fail-closed（R26 M1(b)）",
      '                if (":" in code_val and top_key == "jobs") or not balanced:',
      "                if False:", "lint"),
     ("neutralise: 串流而不是讀到 EOF 才動（R26 M6／regression R-3）",
      "        chunk = sys.stdin.buffer.read1(65536)",
      "        chunk = sys.stdin.buffer.read()", "neutralise"),
+    # ── R28 D1–D8b（G-R29-2）：本輪每個新機制一個靶，靶與 fixture 同一個 commit 進來 ──
+    # 每一條都要能回答「關掉它，哪個 fixture 翻色」（答案寫在名稱括號裡）。
+    ("lint: heredoc 終止字要完全相等（R28 D1：`EOF ` 不終止 → bypass-heredoc-terminator-trailing-space）",
+     "            if probe == delim and not body_continued:",
+     "            if probe.rstrip() == delim and not body_continued:", "lint"),
+    ("lint: 未引號 heredoc 內文行尾反斜線續行（R28 D3 → bypass-heredoc-body-backslash-before-terminator）",
+     "            if probe == delim and not body_continued:",
+     "            if probe == delim:", "lint"),
+    ("lint: 未引號分隔字含反斜線視同引號（R28 D2：`<<E\\OF` → good-unquoted-delim-backslash）",
+     '                    if "\\\\" in delim:', "                    if False:", "lint"),
+    ("lint: `((` 進算術深度（R28 D4：`$((` 也走這裡 → good-arith-command-shift-then-pipe）",
+     '            if line.startswith("((", i):', "            if False:", "lint"),
+    ("lint: `))` 退算術深度（R28 D4：不退則後面的 heredoc 全被忽略 → good-arith-then-pipe-sameline）",
+     '            if line.startswith("))", i) and arith:', "            if False:", "lint"),
+    ("lint: 續行重掃前還原 heredoc 佇列快照（R28 D6 → good-heredoc-opener-continuation）",
+     "                    pending = list(pending0)", "                    pass", "lint"),
+    ("lint: 顯式縮排指示子決定剝多少（R28 D5：`|2` 下 `  EOF` 不終止 → bypass-explicit-indent-indicator）",
+     "                explicit_pad = len(KEY_RE.match(norm[r]).group(1)) + int(m_ind.group())",
+     "                explicit_pad = None", "lint"),
+    ("lint: 淺於指示子的內文行是 YAML 錯誤（R28 D5 → bypass-explicit-indent-shallow）",
+     "        if explicit_pad is not None and any(", "        if False and any(", "lint"),
+    ("lint: 指示子只接受 1-9（R28 D5：`|0` 是 YAML 錯誤 → bypass-explicit-indent-zero）",
+     'BLOCK_SCALAR_RE = re.compile(r"^[|>](?:[+-][1-9]?|[1-9][+-]?)?\\s*(#.*)?$")',
+     'BLOCK_SCALAR_RE = re.compile(r"^[|>](?:[+-]\\d*|\\d+[+-]?)?\\s*(#.*)?$")', "lint"),
+    ("lint: 不合法的 block scalar 標頭只印 PARSE 不印 RULE（R28 D5／R24 DA-8(b) → bypass-explicit-indent-zero）",
+     '        elif inline[:1] in ("|", ">"):', "        elif False:", "lint"),
+    ("lint: 引號純量後的 YAML 行尾註解先切掉再解碼（R28 D7 → good-quoted-run-trailing-comment-dq/sq）",
+     "            decoded = yaml_decode_scalar(inline[:len(inline) - len(yaml_cmt)] if yaml_cmt else inline)",
+     "            decoded = yaml_decode_scalar(inline)", "lint"),
+    ("lint: 引號純量後的 YAML 行尾註解算宣告來源 (3)（R28 D7 → good-quoted-run-logfilter-comment）",
+     "        decl_lines += shell_decls + yaml_trailing_cmts", "        decl_lines += shell_decls", "lint"),
+    ("lint: 頂層 key 是文件最小縮排的 key、不是縮排 0（R29 G-R29-8：GitHub 執行縮排根文件 → bypass-indented-root-flow-mapping）",
+     "            if len(mk.group(1)) == root_indent:", "            if len(mk.group(1)) == 0:", "lint"),
+    ("lint: yaml_split_comment 雙引號內 `\\\"` 是逃脫不是收尾（R28 D8b → good-flow-seq-escaped-quote）",
+     '            if quote == \'"\' and ch == "\\\\":', "            if False:", "lint"),
 ]
 
 EXPECTED_SURVIVE = {
@@ -393,6 +429,22 @@ def _apply(name, old, new, src):
     if n != 1:
         raise ValueError(f"靶在目標檔中出現 {n} 次（需恰好 1 次）")
     return src.replace(old, new)
+
+
+def precheck_suites(suites):
+    """對每個守備單位的驗證指令各跑一次（同指令＋同工作目錄去重），回傳紅的 `[(suite, rc, 輸出尾巴)]`。
+    R28 D9：綠底線是 mutation 量測的前提——基準紅時「殺掉」與「什麼都沒量到」分不開（R9 M15 的洞）。
+    測試網：`test_mutation_precheck_runs_every_suite_command`（用假 suite 釘「每條指令恰好跑一次、任一紅就點名」）。"""
+    seen, failures = {}, []
+    for name, (_f, cmd, cwd) in suites.items():
+        key = (tuple(cmd()), str(cwd))
+        if key not in seen:
+            r = subprocess.run(list(key[0]), cwd=cwd, capture_output=True, text=True)
+            seen[key] = (r.returncode, r.stdout[-2000:] + r.stderr[-2000:])
+        rc, tail = seen[key]
+        if rc != 0:
+            failures.append((name, rc, tail))
+    return failures
 
 
 def check_targets_only():
@@ -455,12 +507,16 @@ def main():
     # #33 verify R9 M15：先前沒有綠底線前置檢查。測試套件本身是紅的時候（例如有人正在
     # 改 validate.py 改到一半），**每一個 mutation 都會被判為「殺掉」** —— harness 回報
     # 漂亮的「0 存活」，而它其實什麼都沒量到。這是它自己版本的「肯定式綠燈」。
-    print("前置：確認未 mutate 的測試套件是綠的 …", flush=True)
+    # R28 D9（G-R29-4）：前置檢查先前只跑 `test_validate.py`。R27 把守備範圍擴到 lint 之後，lint 靶的
+    # 生死由 `--selftest` 判——而 selftest 紅的時候每個 lint 靶都被判「殺掉」，同一個洞換個 suite 又開了。
+    # 現在對 SUITES 裡每一條不同的驗證指令各跑一次，任一紅就整輪不跑、點名是哪個 suite。
+    print("前置：確認每個守備單位未 mutate 的驗證指令都是綠的 …", flush=True)
     t0 = time.monotonic()
-    pre = subprocess.run([sys.executable, str(TESTS)], cwd=PACK, capture_output=True, text=True)
-    if pre.returncode != 0:
-        print("✗ 基準測試就沒過 —— 先把測試修綠再量 mutation，"
-              "否則每個 mutation 都會被誤判為『殺掉』。\n" + pre.stdout[-2000:] + pre.stderr[-2000:])
+    failures = precheck_suites(SUITES)
+    for name, rc, tail in failures:
+        print(f"✗ 守備單位 `{name}` 的基準驗證就沒過（rc={rc}）—— 先修綠再量 mutation，"
+              "否則它的每個靶都會被誤判為『殺掉』。\n" + tail)
+    if failures:
         return 1
 
     originals = {k: f.read_text(encoding="utf-8") for k, (f, _c, _d) in SUITES.items()}

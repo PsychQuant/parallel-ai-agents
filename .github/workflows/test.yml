@@ -55,6 +55,15 @@ jobs:
           set -o pipefail
           { bash test/lint-ci-log-filter.sh --selftest && bash test/lint-ci-log-filter.sh; } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
 
+      # #33 verify R28 DA / R29：selftest 只證「lint 判定 = 作者宣告」。神諭把 runner（bash + stub python3）拉進來，
+      # 對每個 fixture 的每個 run step 問「管線到底有沒有建立」——lint 與 runner 對同一個 step 說不同的話就紅。
+      # PyYAML 缺席時 oracle.py 以 rc=2 fail-loud（不靜默跳過）；先 pip install 而不是賭 runner image 有帶。
+      - name: oracle — lint verdict vs what bash actually pipes
+        shell: bash
+        run: |
+          set -o pipefail
+          { python3 -m pip install --quiet pyyaml && python3 test/oracle.py; } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
+
       # 中和只有**一份**實作（validate.py 的 LineSanitiser，neutralise.py 只是把 stdin 接上去）——R13 用 sed 另寫一份，
       # 第一天就與它分岔（`[[:space:]]` 比 .NET IsWhiteSpace 小、`^` 只認 \n；R14 L-4 / S2）。
       - name: py_compile

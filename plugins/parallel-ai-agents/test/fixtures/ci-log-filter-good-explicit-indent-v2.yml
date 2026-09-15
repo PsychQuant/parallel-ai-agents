@@ -1,0 +1,13 @@
+name: t
+on: push
+# EXPECT: pass
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: explicit indentation indicator with matching heredoc terminator
+        run: |2
+            cat <<EOF
+            data
+          EOF
+            echo "$PR_TITLE" | python3 scripts/neutralise.py

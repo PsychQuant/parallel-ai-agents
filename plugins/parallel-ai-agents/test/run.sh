@@ -29,6 +29,10 @@ bash test/lint-ci-log-filter.sh --selftest
 # R16 logic L-2：非 monorepo 佈局沒有 .github/ —— 明說略過，不是 traceback。
 if [ -f ../../.github/workflows/test.yml ]; then bash test/lint-ci-log-filter.sh; else echo "（非 monorepo 佈局，略過 workflow 檢查）"; fi
 
+echo "── oracle：lint 判定 vs bash 真的有沒有把 neutralise.py 接在管線後（#33 verify R28 DA／R29）──"
+# selftest 只證「lint 判定 = 作者宣告」，神諭把 runner 拉進來對帳。PyYAML 缺席本機明說略過（CI 會 pip 裝再跑）。
+if python3 -c 'import yaml' 2>/dev/null; then python3 test/oracle.py; else echo "（缺 PyYAML：python3 -m pip install pyyaml；本機略過 oracle，CI 會跑）"; fi
+
 echo "── assert-tap-complete selftest（守門的東西自己要有網——R18 requirements F-7）──"
 bash test/assert-tap-complete.sh --selftest
 

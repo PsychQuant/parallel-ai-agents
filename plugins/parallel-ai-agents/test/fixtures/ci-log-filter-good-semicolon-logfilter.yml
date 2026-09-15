@@ -6,4 +6,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: declaration right after a semicolon
-        run: echo "$PR_TITLE";# LOG-FILTER: none — fixture, deliberately unfiltered
+# R29 oracle.py 抓到前一版這一行不是合法 YAML（plain scalar 裡的 `: ` 是 mapping 指示；PyYAML「mapping values
+# are not allowed here」）——runner 根本不會跑它，而 lint 放行了一個不存在的案例。改成 `LOG-FILTER:none`
+# （冒號後不接空白）才是合法 plain scalar；機制不變：`;#` 仍是 shell 註解起點、不是 YAML 註解。
+        run: echo "$PR_TITLE";# LOG-FILTER:none — fixture, deliberately unfiltered

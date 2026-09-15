@@ -15,7 +15,8 @@
 mutation」。**那三句話會讓下一個維護者以為改動 `validate.py` 有測試網接著。**
 
 現在用 `scripts/mutation_check.py` 量：跑一次就知道哪些閘門沒有測試網。
-**最近一次完整量測（R27 後）：125 個靶 → 121 殺 / 0 存活 / 0 靶壞**（另 4 個 `EXPECTED_SURVIVE`），
+**最近一次完整量測（R27 後）：125 個靶 → 121 殺 / 0 存活 / 0 靶壞**（另 4 個 `EXPECTED_SURVIVE`）——
+**R29 的 139 靶全輪在 R29 commit 之後於 `git archive` 副本上量，結果回填這裡；在那之前這一段的數字是 R27 的、不是 R29 的**（R29 的 14 個新 lint 靶已各自單獨實測：全殺），
 實測 **130.3 分鐘 / 125 靶 = 每靶 62.6 s**（比 R25 的每靶 29.4 s 慢一倍：lint 靶跑的是 selftest、
 neutralise 靶跑的是含串流測試的整套，兩者都比純 python 套件重；另一個原因是同機有別的負載）。
 **守備範圍從 R27 起是三個檔**（`validate.py`／`lint-ci-log-filter.sh`／`neutralise.py`）——
@@ -30,8 +31,9 @@ R25 之前的「0 存活」對 lint 與 neutralise **結構上沒說任何事**�
 R18 抽樣三個粗靶，三個都藏著細顆粒缺口；R19 拆了三處，R20 的 DA 又在 `errors="replace"` 找到第四處
 （11 個呼叫點 1 個靶）。R21 把它改成**機械不變式**而不是再手寫 9 個靶——見
 `test_every_decoding_call_site_survives_undecodable_bytes`。看到「0 存活」請先問：有沒有哪個靶蓋住了兩個實作？
-`EXPECTED_SURVIVE` 3 個：`_find_pack_at` git 分支的兩個守衛依構造不可達（R12 logic L3 / DA-6，保留為防禦）、
-「換回 splitlines()」（LineSanitiser 對每一段獨立判定，過度切段只會過度消毒）。規則明寫在 mutation_check.py：每一條
+`EXPECTED_SURVIVE` 4 個：`_find_pack_at` git 分支的兩個守衛依構造不可達（R12 logic L3 / DA-6，保留為防禦）、
+「換回 splitlines()」（LineSanitiser 對每一段獨立判定，過度切段只會過度消毒）、lint 的 `<<<` here-string 分支（關掉後落到 `<<`
+分支而 delim 為空——依構造等價，R27 進來時這裡寫成 3 個，R29 G-R29-7 抓到與檔頭的 4 不一致）。規則明寫在 mutation_check.py：每一條
 進來的靶都要能回答「關掉它，哪一行輸出會變」（R14 把「pack_name 讀取的 containment」放進去的理由是假的——
 dirty worktree 到得了那行 print——現在它有測試網）。
 R13 修法的 `main()` 逐閘門隔離曾讓一輪跑出 8 個假存活（守衛被刪掉後只剩一條「validator 內部錯誤」），修在
@@ -332,6 +334,117 @@ def taint_findings(src):
                     bad.append((node.lineno, x))
     return bad, total
 
+
+
+def decoding_findings(src):
+    """R28 G-R29-9：把「解碼站點不變式」的判定本體抽成模組層函式，讓它像 `taint_findings()` 一樣能對合成
+    snippet 跑——前一版整段內嵌在測試方法裡，規則只對 validate.py 跑過，`mode_pos` 對 `io.open`／`codecs.open`
+    算錯（Attribute → 0 → 讀到的是路徑）而三輪沒人能用一行 probe 證明。回傳 (bad, seen)。"""
+    import ast
+    tree = ast.parse(src)
+    tree = ast.parse(src)
+    # 每個 Try 節點的行範圍 → 它接不接得住 UnicodeDecodeError
+    guarded = []
+    for n in ast.walk(tree):
+        if not isinstance(n, ast.Try):
+            continue
+        catches = False
+        for h in n.handlers:
+            names = []
+            if isinstance(h.type, ast.Name):
+                names = [h.type.id]
+            elif isinstance(h.type, ast.Tuple):
+                names = [e.id for e in h.type.elts if isinstance(e, ast.Name)]
+            elif h.type is None:
+                names = ["BaseException"]
+            if "UnicodeDecodeError" in names or "BaseException" in names or "Exception" in names:
+                catches = True
+        if catches:
+            body_lines = [x for b in n.body for x in ast.walk(b) if hasattr(x, "lineno")]
+            if body_lines:
+                guarded.append((min(x.lineno for x in body_lines), max(x.lineno for x in body_lines)))
+    def is_guarded(lineno):
+        return any(lo <= lineno <= hi for lo, hi in guarded)
+
+    bad = []
+    for n in ast.walk(tree):
+        if not isinstance(n, ast.Call):
+            continue
+        f = n.func
+        nm = f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", None)
+        kw = {k.arg for k in n.keywords}
+        # R22 Codex #3（DA 評為本輪最銳利、並實測擴大）：前一版只認兩種形狀，而且只檢查
+        # `errors` **keyword 有沒有出現**、不檢查它的**值**——把 `errors="replace"` 改成
+        # `errors="strict"` 或 `errors=None` 照樣綠，但子行程吐 `\xff` 時仍然會拋，整道閘門
+        # 退化成 `gate()` 的「validator 內部錯誤」。站點集合也漏掉 `text=1`、
+        # `universal_newlines=True`、`check_output(text=True)`、`Path.open(encoding=…)`。
+        # 這是 R21 在同一個 commit 裡把「刪除 vs 替換」的教訓套到 `_LINE_BREAKS`、
+        # 卻在自己寫的這條不變式上違反它。
+        def _truthy_kw(key):
+            # R26 M9（Codex 第 8 條）：前一版只認 `True`／`1`，於是 `text=2` 與 `text=<變數>`
+            # 掉出 scope —— 而那兩種實測都會讓子行程進文字模式並對 `b"\xff"` 拋
+            # `UnicodeDecodeError`。判準改成「**除非能靜態證明為 false，否則算數**」，
+            # 與同一段對 `**kwargs` 的 fail-closed 一致。
+            for k in n.keywords:
+                if k.arg != key:
+                    continue
+                if not isinstance(k.value, ast.Constant):
+                    return True                     # 動態值：證不了它是 false
+                return bool(k.value.value)
+            return False
+        # R24 DA-4（Codex 第 6 條 ＋ security S-3 ＋ regression F3，成員取聯集）：
+        # (a) **`errors=` 自己就會啟用 subprocess 的文字模式**——`subprocess.run(cmd, errors="strict")`
+        #     的 `r.stdout` 是 `str` 且對 `b"\xff"` 拋 `UnicodeDecodeError`。前一版的 `text_mode`
+        #     不看 `errors`，所以本輪新加的「檢查 errors 的值」**對最自然的危險寫法根本不可達**。
+        # (b) scope 述詞**會自我解除**：舊式是「`open` 且有 `encoding=`」，於是 `p.open()`
+        #     **不寫** `encoding=`（更不安全）反而掉出規則範圍。`encoding=` 屬於 requirement 側，
+        #     不該當 scope 條件。
+        # (c) `**kwargs` 轉發時靜態看不出模式 → 當成在範圍內（fail-closed）。
+        text_mode = (_truthy_kw("text") or _truthy_kw("universal_newlines")
+                     or any(k.arg in ("encoding", "errors") for k in n.keywords)
+                     or any(k.arg is None for k in n.keywords))
+        is_sub = isinstance(f, ast.Attribute) and getattr(f.value, "id", None) == "subprocess"
+        # R26 M9（Codex 第 7 條）：前一版讀 `n.args[:1]` 找 `"b"` —— 那是 `open()` 的**路徑**引數，
+        # 不是 mode。於是**任何檔名含字母 `b` 的 `open()`** 都掉出解碼檢查：
+        # `open("blob.txt")` 綠、`open("notes.txt")` 紅，差別只有那個 `b`。
+        # 兩種 signature 的 mode 位置不同：builtin `open(file, mode)` vs `Path.open(mode)`。
+        # **無法靜態解析就不得推定 binary**（與 `**kwargs` 的 fail-closed 同一個方向）。
+        # R28 G-R29-9：`io.open`／`codecs.open` 與 builtin `open` 同 signature（file 在前、mode 在後），
+        # 前一版把所有 Attribute 都當 `Path.open(mode)`，於是這兩個的 mode_pos 讀到路徑。**封閉列舉**：
+        # 只有這兩個模組的 `open` 走位置 1；其餘 Attribute 仍是位置 0。有 Starred 引數時位置對不上 →
+        # 無法靜態解析 → 不推定 binary。
+        FILE_FIRST_MODULES = ("io", "codecs")
+        mode_pos = 1 if (isinstance(f, ast.Name)
+                         or (isinstance(f, ast.Attribute) and getattr(f.value, "id", None) in FILE_FIRST_MODULES)) else 0
+        mode_node = next((k.value for k in n.keywords if k.arg == "mode"), None)
+        if mode_node is None and len(n.args) > mode_pos and not any(isinstance(a, ast.Starred) for a in n.args):
+            mode_node = n.args[mode_pos]
+        binary_mode = (isinstance(mode_node, ast.Constant)
+                       and isinstance(mode_node.value, str) and "b" in mode_node.value)
+        # **封閉列舉，不得依性質相似類推**（本 repo 的 common-spec-prose-enumeration）：
+        DECODING_NAMES = ("read_text", "open", "TextIOWrapper", "popen", "decode", "communicate")
+        # R26 security S-8：`subprocess.getoutput`／`getstatusoutput` **一律**回 `str`
+        # （沒有 `text=` 可言），三者實測都會對 `b"\xff"` 拋 `UnicodeDecodeError`。
+        # 它們先前不在列舉內，而 docstring 已誠實揭露這個缺口——本輪把缺口補上。
+        ALWAYS_TEXT_SUBPROC = ("getoutput", "getstatusoutput")
+        decodes = ((nm in DECODING_NAMES and not (nm == "open" and binary_mode))
+                   or (is_sub and nm in ALWAYS_TEXT_SUBPROC)
+                   or (is_sub and nm in ("run", "check_output", "Popen") and text_mode))
+        if decodes and not is_guarded(n.lineno):
+            # **檢查值，不只檢查存在**：封閉列舉——只有這些值能讓解碼不拋。
+            SAFE_ERRORS = {"replace", "backslashreplace", "ignore", "surrogateescape"}
+            err_kw = [k for k in n.keywords if k.arg == "errors"]
+            if not err_kw:
+                bad.append((n.lineno, nm + "（無 errors=）"))
+            elif getattr(err_kw[0].value, "value", None) not in SAFE_ERRORS:
+                bad.append((n.lineno, nm + "（errors=%r 不在封閉列舉內）"
+                            % (getattr(err_kw[0].value, "value", "<非常數>"),)))
+    # 空轉防護：規則必須真的看到一批站點，否則「0 違規」是因為它什麼都沒掃到
+    seen = sum(1 for n in ast.walk(tree) if isinstance(n, ast.Call)
+               and ((getattr(n.func, "attr", None) == "read_text")
+                    or (getattr(n.func, "attr", None) == "run"
+                        and getattr(getattr(n.func, "value", None), "id", None) == "subprocess")))
+    return bad, seen
 
 
 class ValidateTest(unittest.TestCase):
@@ -2004,6 +2117,44 @@ class ValidateTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             M._on_term(signal.SIGTERM, None)
 
+    def test_mutation_precheck_runs_every_suite_command(self):
+        """R28 D9（G-R29-4）：前置綠底線檢查只跑 `test_validate.py`。lint 靶的生死由 `--selftest` 判，而
+        selftest 本身是紅的時候，每個 lint 靶都會被判「殺掉」——harness 回報漂亮的 0 存活、其實什麼都沒量到。
+        這是 R9 M15 修過的那個洞換一個 suite 又開了（R27 把守備範圍擴到 lint 時沒把前置檢查一起擴）。
+        pre-check 必須對 SUITES 裡**每一條不同的**驗證指令各跑一次（同指令＋同工作目錄去重），任一紅就
+        整輪不跑、並點名是哪個 suite。"""
+        import contextlib, io
+        sys.path.insert(0, str(HERE)); import mutation_check as M
+        with tempfile.TemporaryDirectory() as td:
+            td = pathlib.Path(td)
+            log = td / "calls.log"
+            ok = td / "ok.sh"; ok.write_text('#!/bin/sh\necho "$1" >> "%s"\nexit 0\n' % log); ok.chmod(0o755)
+            bad = td / "bad.sh"; bad.write_text('#!/bin/sh\necho "$1" >> "%s"\necho suite-is-red\nexit 3\n' % log); bad.chmod(0o755)
+            f1 = td / "a.py"; f1.write_text("a\n"); f2 = td / "b.sh"; f2.write_text("b\n")
+            suites = {
+                "validate":   (f1, lambda: [str(ok), "shared"], td),
+                "neutralise": (f1, lambda: [str(ok), "shared"], td),   # 與 validate 同一條指令 → 只跑一次
+                "lint":       (f2, lambda: [str(bad), "lint"], td),
+            }
+            failures = M.precheck_suites(suites)
+            self.assertEqual([n for n, _rc, _tail in failures], ["lint"], "紅的 suite 要被點名，綠的不點")
+            self.assertEqual(sorted(log.read_text().split()), ["lint", "shared"],
+                             "每條不同的指令恰好跑一次：同指令去重、不同指令都要跑")
+            # wiring：main() 真的用它，而且任一 suite 紅就整輪不跑（rc=1、輸出點名 suite 與它的尾巴）
+            log.write_text("")
+            keep = (M.SUITES, M.MUTATIONS, sys.argv)
+            buf = io.StringIO()
+            try:
+                M.SUITES, M.MUTATIONS, sys.argv = suites, [], ["mutation_check.py"]
+                with contextlib.redirect_stdout(buf):
+                    rc = M.main()
+            finally:
+                M.SUITES, M.MUTATIONS, sys.argv = keep
+            self.assertEqual(rc, 1)
+            self.assertIn("`lint`", buf.getvalue())
+            self.assertIn("suite-is-red", buf.getvalue(), "紅 suite 的輸出尾巴要印出來，不然人不知道紅在哪")
+            self.assertEqual(sorted(log.read_text().split()), ["lint", "shared"], "main() 走的是同一條 pre-check")
+
     def test_no_repo_report_names_every_gate_in_the_closed_list(self):
         """R15 DA-3：`NO_REPO_GATES` 是本 commit 新造的手寫封閉列舉，零測試零靶。訊息必須逐一點名清單裡的每道閘門，
         且數量由清單算出——刪掉一條就紅。"""
@@ -2111,7 +2262,10 @@ class ValidateTest(unittest.TestCase):
         calls = [n.lineno for n in ast.walk(main)
                  if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "install_restore_signals"]
         self.assertTrue(calls, "main() 沒有呼叫 install_restore_signals()")
-        loop = next(n.lineno for n in ast.walk(main) if isinstance(n, ast.For))
+        # R29：認**mutate 迴圈**（iter 是 `MUTATIONS`），不是「main 裡第一個 for」——D9 的前置檢查在它前面
+        # 多了一個印失敗 suite 的 for，第一版這樣寫就把那個當成 mutate 迴圈而誤紅。
+        loop = next(n.lineno for n in ast.walk(main)
+                    if isinstance(n, ast.For) and getattr(n.iter, "id", None) == "MUTATIONS")
         self.assertLess(calls[0], loop, "handler 必須在 mutate 迴圈開始前掛上")
 
     def test_external_strings_in_annotations_are_always_wrapped(self):
@@ -2200,107 +2354,53 @@ class ValidateTest(unittest.TestCase):
         `TextIOWrapper`／`popen`／`decode`／`communicate`、`subprocess.getoutput`／`getstatusoutput`，以及 `subprocess` 的 `run`／`check_output`／
         `Popen` 在文字模式下。清單外的寫法**沒有網**——要新增就得改這裡，不會有人替你涵蓋。
         前一版在這裡宣稱新站點會被自己納入，那句為假且 R22 已點名，R23 沒改；本輪刪除。"""
-        import ast
-        src = (PACK / "scripts/validate.py").read_text(encoding="utf-8")
-        tree = ast.parse(src)
-        # 每個 Try 節點的行範圍 → 它接不接得住 UnicodeDecodeError
-        guarded = []
-        for n in ast.walk(tree):
-            if not isinstance(n, ast.Try):
-                continue
-            catches = False
-            for h in n.handlers:
-                names = []
-                if isinstance(h.type, ast.Name):
-                    names = [h.type.id]
-                elif isinstance(h.type, ast.Tuple):
-                    names = [e.id for e in h.type.elts if isinstance(e, ast.Name)]
-                elif h.type is None:
-                    names = ["BaseException"]
-                if "UnicodeDecodeError" in names or "BaseException" in names or "Exception" in names:
-                    catches = True
-            if catches:
-                body_lines = [x for b in n.body for x in ast.walk(b) if hasattr(x, "lineno")]
-                if body_lines:
-                    guarded.append((min(x.lineno for x in body_lines), max(x.lineno for x in body_lines)))
-        def is_guarded(lineno):
-            return any(lo <= lineno <= hi for lo, hi in guarded)
-
-        bad = []
-        for n in ast.walk(tree):
-            if not isinstance(n, ast.Call):
-                continue
-            f = n.func
-            nm = f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", None)
-            kw = {k.arg for k in n.keywords}
-            # R22 Codex #3（DA 評為本輪最銳利、並實測擴大）：前一版只認兩種形狀，而且只檢查
-            # `errors` **keyword 有沒有出現**、不檢查它的**值**——把 `errors="replace"` 改成
-            # `errors="strict"` 或 `errors=None` 照樣綠，但子行程吐 `\xff` 時仍然會拋，整道閘門
-            # 退化成 `gate()` 的「validator 內部錯誤」。站點集合也漏掉 `text=1`、
-            # `universal_newlines=True`、`check_output(text=True)`、`Path.open(encoding=…)`。
-            # 這是 R21 在同一個 commit 裡把「刪除 vs 替換」的教訓套到 `_LINE_BREAKS`、
-            # 卻在自己寫的這條不變式上違反它。
-            def _truthy_kw(key):
-                # R26 M9（Codex 第 8 條）：前一版只認 `True`／`1`，於是 `text=2` 與 `text=<變數>`
-                # 掉出 scope —— 而那兩種實測都會讓子行程進文字模式並對 `b"\xff"` 拋
-                # `UnicodeDecodeError`。判準改成「**除非能靜態證明為 false，否則算數**」，
-                # 與同一段對 `**kwargs` 的 fail-closed 一致。
-                for k in n.keywords:
-                    if k.arg != key:
-                        continue
-                    if not isinstance(k.value, ast.Constant):
-                        return True                     # 動態值：證不了它是 false
-                    return bool(k.value.value)
-                return False
-            # R24 DA-4（Codex 第 6 條 ＋ security S-3 ＋ regression F3，成員取聯集）：
-            # (a) **`errors=` 自己就會啟用 subprocess 的文字模式**——`subprocess.run(cmd, errors="strict")`
-            #     的 `r.stdout` 是 `str` 且對 `b"\xff"` 拋 `UnicodeDecodeError`。前一版的 `text_mode`
-            #     不看 `errors`，所以本輪新加的「檢查 errors 的值」**對最自然的危險寫法根本不可達**。
-            # (b) scope 述詞**會自我解除**：舊式是「`open` 且有 `encoding=`」，於是 `p.open()`
-            #     **不寫** `encoding=`（更不安全）反而掉出規則範圍。`encoding=` 屬於 requirement 側，
-            #     不該當 scope 條件。
-            # (c) `**kwargs` 轉發時靜態看不出模式 → 當成在範圍內（fail-closed）。
-            text_mode = (_truthy_kw("text") or _truthy_kw("universal_newlines")
-                         or any(k.arg in ("encoding", "errors") for k in n.keywords)
-                         or any(k.arg is None for k in n.keywords))
-            is_sub = isinstance(f, ast.Attribute) and getattr(f.value, "id", None) == "subprocess"
-            # R26 M9（Codex 第 7 條）：前一版讀 `n.args[:1]` 找 `"b"` —— 那是 `open()` 的**路徑**引數，
-            # 不是 mode。於是**任何檔名含字母 `b` 的 `open()`** 都掉出解碼檢查：
-            # `open("blob.txt")` 綠、`open("notes.txt")` 紅，差別只有那個 `b`。
-            # 兩種 signature 的 mode 位置不同：builtin `open(file, mode)` vs `Path.open(mode)`。
-            # **無法靜態解析就不得推定 binary**（與 `**kwargs` 的 fail-closed 同一個方向）。
-            mode_pos = 1 if isinstance(f, ast.Name) else 0
-            mode_node = next((k.value for k in n.keywords if k.arg == "mode"), None)
-            if mode_node is None and len(n.args) > mode_pos:
-                mode_node = n.args[mode_pos]
-            binary_mode = (isinstance(mode_node, ast.Constant)
-                           and isinstance(mode_node.value, str) and "b" in mode_node.value)
-            # **封閉列舉，不得依性質相似類推**（本 repo 的 common-spec-prose-enumeration）：
-            DECODING_NAMES = ("read_text", "open", "TextIOWrapper", "popen", "decode", "communicate")
-            # R26 security S-8：`subprocess.getoutput`／`getstatusoutput` **一律**回 `str`
-            # （沒有 `text=` 可言），三者實測都會對 `b"\xff"` 拋 `UnicodeDecodeError`。
-            # 它們先前不在列舉內，而 docstring 已誠實揭露這個缺口——本輪把缺口補上。
-            ALWAYS_TEXT_SUBPROC = ("getoutput", "getstatusoutput")
-            decodes = ((nm in DECODING_NAMES and not (nm == "open" and binary_mode))
-                       or (is_sub and nm in ALWAYS_TEXT_SUBPROC)
-                       or (is_sub and nm in ("run", "check_output", "Popen") and text_mode))
-            if decodes and not is_guarded(n.lineno):
-                # **檢查值，不只檢查存在**：封閉列舉——只有這些值能讓解碼不拋。
-                SAFE_ERRORS = {"replace", "backslashreplace", "ignore", "surrogateescape"}
-                err_kw = [k for k in n.keywords if k.arg == "errors"]
-                if not err_kw:
-                    bad.append((n.lineno, nm + "（無 errors=）"))
-                elif getattr(err_kw[0].value, "value", None) not in SAFE_ERRORS:
-                    bad.append((n.lineno, nm + "（errors=%r 不在封閉列舉內）"
-                                % (getattr(err_kw[0].value, "value", "<非常數>"),)))
-        # 空轉防護：規則必須真的看到一批站點，否則「0 違規」是因為它什麼都沒掃到
-        seen = sum(1 for n in ast.walk(tree) if isinstance(n, ast.Call)
-                   and ((getattr(n.func, "attr", None) == "read_text")
-                        or (getattr(n.func, "attr", None) == "run"
-                            and getattr(getattr(n.func, "value", None), "id", None) == "subprocess")))
+        bad, seen = decoding_findings((PACK / "scripts/validate.py").read_text(encoding="utf-8"))
         self.assertGreaterEqual(seen, 12, f"解碼站點只掃到 {seen} 個——規則本身空轉了")
         self.assertFalse(bad, "這些站點解碼外部位元組，卻既沒帶 errors= 也沒有接住 "
                               "UnicodeDecodeError 的 try —— 一個壞位元組就讓該閘門變成「內部錯誤」：" + repr(bad))
+
+    def test_decoding_rule_resolves_mode_position_per_callable(self):
+        """R28 G-R29-9（Codex 第 7 條的餘波）：R27 修 `mode_pos` 時只認兩種 signature——`open(file, mode)` 是
+        `ast.Name`、其餘 Attribute 一律當 `Path.open(mode)`。於是 `io.open("blob.txt")`／`codecs.open("blob.txt", "r")`
+        的 mode_pos 算成 0，讀到的是**路徑**，檔名裡的 `b` 又讓它被當成 binary 而掉出檢查——與 R26 修掉的那個
+        缺陷同形，只是換了兩個 callable。`open(*args, "blob.txt")` 的 Starred 也讓位置對不上。
+        判準：無法靜態解析 mode 位置就不得推定 binary（fail-closed）。每一形各一行 probe，真的跑 `decoding_findings()`。"""
+        def flagged(line):
+            bad, _ = decoding_findings("import io, codecs, subprocess, pathlib\n" + line + "\n")
+            return bool(bad)
+        for line in ('io.open("blob.txt")',
+                     'codecs.open("blob.txt", "r")',
+                     'open(*[], "blob.txt")',
+                     'open("blob.txt")'):
+            self.assertTrue(flagged(line), "應該紅卻綠（mode 位置算錯或 Starred 讓 binary 誤判）：" + line)
+        for line in ('open("x", "rb")',
+                     'pathlib.Path("x").open("rb")',
+                     'io.open("x", "rb")',
+                     'codecs.open("x", "rb")'):
+            self.assertFalse(flagged(line), "真的是 binary 模式卻被標紅：" + line)
+
+    def test_shell_scan_docstring_counts_match_bullets(self):
+        """R28 G-R29-7：`shell_scan` 的 docstring 寫「R26 修掉的四件」而底下列了五個 `*`——散文裡的數字與它旁邊的
+        清單是兩份不會一起改的規格（本 repo 的 common-spec-prose-enumeration）。機械對齊：每個「X 修掉的 N 件」
+        標題後面的 `*` 條數必須等於 N。用 `LINT_SRC` 環境變數可指向別的版本（RED 驗證用）。"""
+        import ast as _ast
+        src_path = os.environ.get("LINT_SRC") or str(PACK.parent / "parallel-ai-agents" / "test" / "lint-ci-log-filter.sh")
+        src = pathlib.Path(src_path).read_text(encoding="utf-8")
+        py = src.split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+        fn = next(n for n in _ast.parse(py).body if isinstance(n, _ast.FunctionDef) and n.name == "shell_scan")
+        doc = _ast.get_docstring(fn, clean=False).split("\n")
+        num = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+        heads = [(i, m.group(1), num[m.group(2)]) for i, l in enumerate(doc)
+                 for m in [re.search(r"(R\d+) 修掉的([一二三四五六七八九])件", l)] if m]
+        self.assertGreaterEqual(len(heads), 1, "docstring 裡找不到「Rnn 修掉的 N 件」標題——測試空轉")
+        for i, tag, n in heads:
+            bullets = 0
+            for l in doc[i + 1:]:
+                if re.match(r"\s*\* ", l):
+                    bullets += 1
+                elif l.strip() and not l.startswith("        "):   # 非 bullet 續行 → 清單結束
+                    break
+            self.assertEqual(bullets, n, "%s：標題說 %d 件，底下列了 %d 個 `*`" % (tag, n, bullets))
 
     def test_events_match_workflow_triggers(self):
         """R17 logic L-8：`EVENTS`（argparse choices）與 test.yml 的 `on:` 是兩份規格——在這裡加 trigger 沒改那邊，
