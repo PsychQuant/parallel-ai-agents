@@ -1,0 +1,14 @@
+# R30 H-3／R31 自查：`${…}` 的巢狀**只由 `${` 開新層**，單獨的 `{` 不算（bash 5.3 實測）。
+# 這一則把真管線的文字包在外層 pattern 裡：內層 `${X:-a}` 收掉之後仍在外層裡面，
+# 所以 `| python3 …` 是**字串內容**——bash 實測印出 PR 文字、沒有呼叫 neutralise。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: nested expansion keeps the pipe text inside the pattern
+        run: echo ${PR_TITLE#${X:-a}| python3 scripts/neutralise.py }
+      - name: compliant control
+        run: echo hi | python3 scripts/neutralise.py

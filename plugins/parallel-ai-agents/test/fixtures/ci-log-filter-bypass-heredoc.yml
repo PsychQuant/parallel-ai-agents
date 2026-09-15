@@ -1,0 +1,16 @@
+name: t
+on: push
+# EXPECT: rule-red
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: heredoc body is data
+        run: |
+          cat <<'NOTE'
+          # LOG-FILTER: none — this line is heredoc data, not a declaration
+          also mentions | python3 scripts/neutralise.py
+          NOTE
+          echo "$PR_TITLE"
+      - name: compliant control
+        run: echo hi | python3 scripts/neutralise.py

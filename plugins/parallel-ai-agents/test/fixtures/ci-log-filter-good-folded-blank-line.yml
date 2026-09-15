@@ -1,0 +1,14 @@
+# R31：folded block scalar 的**空行不折**——空行前後各自是一條 shell 行，
+# 所以第一行行尾的 `#` 註解不會吃掉空行之後那條真管線。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: folded with a blank line keeps the later pipeline
+        run: >
+          echo "$PR_TITLE" # note
+
+          echo more | python3 scripts/neutralise.py

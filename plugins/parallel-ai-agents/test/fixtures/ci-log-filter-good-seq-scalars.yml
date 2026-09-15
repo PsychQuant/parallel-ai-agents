@@ -1,0 +1,14 @@
+# 正向 fixture：純量清單項（`branches`／`paths`／`tags`）—— Actions 最常見的寫法之一
+# EXPECT: pass
+name: t
+on:
+  push:
+    branches:
+      - main
+      - "release/*"
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: a
+        run: echo hi | python3 ../pai-lenses/scripts/neutralise.py

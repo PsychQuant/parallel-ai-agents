@@ -1,0 +1,11 @@
+# R30 MB-1：block scalar 標頭的行尾註解裡的數字不是縮排指示子
+# EXPECT: pass
+name: t
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: compliant with comment digit
+        run: | # format version 9
+          echo hi | python3 scripts/neutralise.py

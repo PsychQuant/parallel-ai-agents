@@ -1,0 +1,13 @@
+# R30 MB-11：引號分隔字可以是空白；純空白行也要剝區塊縮排
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: whitespace delimiter
+        run: |
+          cat <<' '
+           
+          echo "$PR_TITLE" | python3 scripts/neutralise.py

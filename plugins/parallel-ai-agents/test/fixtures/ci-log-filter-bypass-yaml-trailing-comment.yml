@@ -1,0 +1,13 @@
+# R22 requirements F-2 / Codex #1：YAML 行尾註解裡的管線不是管線
+# EXPECT: rule-red
+name: t
+on:
+  pull_request:
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: compliant
+        run: echo hi | python3 ../pai-lenses/scripts/neutralise.py
+      - name: yaml trailing comment
+        run: cat pr.txt   # 之後會接 | python3 ../pai-lenses/scripts/neutralise.py

@@ -1,0 +1,10 @@
+name: t
+on: push
+# EXPECT: parse-red
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: body shallower than the explicit indentation indicator is a YAML error
+        run: |2
+         echo hi | python3 scripts/neutralise.py

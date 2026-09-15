@@ -1,0 +1,17 @@
+name: t
+on: push
+# EXPECT: rule-red
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: second heredoc body is data too
+        run: |
+          cat <<A <<B
+          first body
+          A
+          echo "$PR_TITLE" | python3 scripts/neutralise.py
+          B
+          echo "$PR_TITLE"
+      - name: compliant control
+        run: echo hi | python3 scripts/neutralise.py

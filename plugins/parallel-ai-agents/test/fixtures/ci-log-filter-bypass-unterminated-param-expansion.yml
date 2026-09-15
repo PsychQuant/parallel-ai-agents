@@ -1,0 +1,13 @@
+# R31 opsweep：`${…}` 整段消費的邊界守衛（`j < n`）沒有網。bash 5.3 對未收尾的 `${`
+# 報「尋找符合的 `}` 時遇到了未預期的檔案結束符」＝語法錯誤。本 lint 吃到行尾、無管線 → 紅。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: unterminated parameter expansion
+        run: echo ${PR_TITLE
+      - name: compliant control
+        run: echo hi | python3 scripts/neutralise.py

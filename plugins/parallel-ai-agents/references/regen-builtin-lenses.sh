@@ -33,7 +33,7 @@ const esc = (s) => '"' + String(s).replace(/"/g, '""') + '"'
 // would run them as command substitution.
 const rows = [
   'profile,key,focus,needsSrt',
-  '# 唯讀 catalog — 編輯本檔不會改變任何行為。真源是 workflows/ensemble-workflow.js 的 PROFILES。' +
+  '# !!! GENERATED FILE — DO NOT EDIT !!! 唯讀 catalog — 編輯本檔不會改變任何行為。真源是 workflows/ensemble-workflow.js 的 PROFILES。' +
     '要新增/修改 lens 請走 lens pack 或 ~/.claude/pai-lenses/（見 references/lens-layers.md）。' +
     '本檔由 references/regen-builtin-lenses.sh 產生。',
 ]

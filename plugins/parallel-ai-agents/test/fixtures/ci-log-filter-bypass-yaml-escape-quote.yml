@@ -1,0 +1,11 @@
+name: t
+on: push
+# EXPECT: parse-red
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: x22 escape makes the pipe part of a string
+        run: "echo \x22$PR_TITLE | python3 scripts/neutralise.py \x22"
+      - name: compliant control
+        run: echo hi | python3 scripts/neutralise.py

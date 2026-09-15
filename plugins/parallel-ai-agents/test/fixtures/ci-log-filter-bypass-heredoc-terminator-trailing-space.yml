@@ -1,0 +1,16 @@
+name: t
+on: push
+# EXPECT: rule-red
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: terminator with trailing space is not a terminator
+        run: |
+          cat <<EOF
+          EOF 
+          x | python3 scripts/neutralise.py
+          EOF
+          echo "$PR_TITLE"
+      - name: compliant control
+        run: echo hi | python3 scripts/neutralise.py

@@ -1,0 +1,13 @@
+name: t
+on: push
+# EXPECT: rule-red
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: escaped space does not start a word
+        run: |
+          echo a\ # LOG-FILTER: none — not a comment in bash
+          echo "$PR_TITLE"
+      - name: compliant control
+        run: echo hi | python3 scripts/neutralise.py

@@ -1,0 +1,16 @@
+# R30 MB-2：heredoc 內文裡的假宣告不是宣告（神諭用差分判定）
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: leak with fake decl
+        run: |
+          cat <<'E'OF
+          E
+          x | python3 scripts/neutralise.py
+          literal LOG-FILTER: not a declaration
+          EOF
+          echo "$PR_TITLE"

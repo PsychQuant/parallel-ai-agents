@@ -1,0 +1,7 @@
+# R30 MB-7：跨行雙引號 scalar 的續行寫在第 0 欄，讓 root_indent 算錯
+# EXPECT: parse-red
+  name: "t
+x: y"
+  on: pull_request
+  jobs:
+    j: {runs-on: ubuntu-latest, steps: [{"\x72un": "echo PWN"}]}

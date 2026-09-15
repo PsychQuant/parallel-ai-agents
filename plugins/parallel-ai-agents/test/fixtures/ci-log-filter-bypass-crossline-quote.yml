@@ -1,0 +1,15 @@
+name: t
+on: push
+# EXPECT: rule-red
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: double quote spans lines
+        run: |
+          printf '%s\n' "hello
+          # LOG-FILTER: none — printed data, not a declaration
+          world"
+          echo "$PR_TITLE"
+      - name: compliant control
+        run: echo hi | python3 scripts/neutralise.py

@@ -1,0 +1,13 @@
+# R20 regression R-2：一個 U+2028 先前藏得住第二個 run step（PyYAML 與 libyaml 都看得到兩個）
+# EXPECT: parse-red
+name: t
+on:
+  pull_request:
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: compliant
+        run: echo hi | python3 ../pai-lenses/scripts/neutralise.py
+      - name: hidden
+        run: echo ok | python3 ../pai-lenses/scripts/neutralise.py         run: echo "$PR_TITLE"

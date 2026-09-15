@@ -1,0 +1,13 @@
+# R31：folded 的 **more-indented 行不與前一行折疊**——管線寫在 more-indented 行上時，
+# 前一行行尾的 `#` 註解吃不到它。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: pipeline on a more-indented folded line survives the comment above
+        run: >
+          echo "$PR_TITLE" # note
+            echo B | python3 scripts/neutralise.py

@@ -1,0 +1,12 @@
+# 正向 fixture：block scalar 的另一種指示子順序 `|2-`（合規的 run）
+# EXPECT: pass
+name: t
+on:
+  pull_request:
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: a
+        run: |2-
+          echo hi | python3 ../pai-lenses/scripts/neutralise.py

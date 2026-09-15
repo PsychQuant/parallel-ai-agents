@@ -1,0 +1,18 @@
+# R31：雙引號分隔字裡的行尾反斜線同樣是續行（bash 5.3：`cat <<"AB\` ⏎ `CD"` 的終止字是
+# `ABCD`；內文不展開是因為**有引號**，不是因為那個反斜線）。與單引號對照：`cat <<'AB\` ⏎ `CD'`
+# **不**續行——單引號裡反斜線與換行都是字面，delim 跨兩行、bash 直接警告 EOF。三條規則不同。
+# 內文刻意留空：終止字**緊接**在續行之後，這樣「續行吃掉幾個實體行」（`spans`）才驗得到——
+# 多吃一行就會把真管線當成 heredoc 內文吞掉。有內文的版本對 `spans` 的加法不敏感。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: line continuation inside a double-quoted delimiter word
+        run: |
+          cat <<"AB\
+          CD"
+          ABCD
+          echo hi | python3 scripts/neutralise.py

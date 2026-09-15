@@ -1,0 +1,16 @@
+# R31 opsweep：分隔字詞裡引號的收尾判定沒有網。bash 5.3 對 `cat <<"EOF` 未收尾的引號報
+# 「尋找符合的 `"` 時遇到了未預期的檔案結束符」＝語法錯誤，GitHub 不會跑這個 step。
+# 本 lint 表示不了含換行的分隔字 → fail-closed 印 `PARSE:`，且不再印 `RULE:`。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: unterminated quote inside the heredoc delimiter word
+        run: |
+          cat <<"EOF
+          echo "$PR_TITLE"
+      - name: compliant control
+        run: echo hi | python3 scripts/neutralise.py

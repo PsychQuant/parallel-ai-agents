@@ -1,0 +1,13 @@
+name: t
+on: push
+# EXPECT: pass
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: dash heredoc strips leading tabs from the terminator
+        run: |
+          cat <<-NOTE
+          just data
+          	NOTE
+          echo "$PR_TITLE" | python3 scripts/neutralise.py

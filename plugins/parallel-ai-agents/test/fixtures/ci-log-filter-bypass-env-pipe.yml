@@ -1,0 +1,16 @@
+# R17 DA-B ⑤ fixture：`neutralise.py` 寫在 `env:` 的 value 裡、形狀像管線，但不在 `run:` 區塊內。
+# EXPECT: rule-red
+# 期望：rc=1（sneaky 那個 step 沒有真的過濾）。同檔另放一個合規 step，避免 `seen==0` 的 vacuity 守衛假紅。
+name: t
+on:
+  pull_request:
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: compliant
+        run: echo hi | python3 ../pai-lenses/scripts/neutralise.py
+      - name: sneaky env
+        env:
+          NOTE: echo x | python3 ../pai-lenses/scripts/neutralise.py extra
+        run: echo "$PR_TITLE"

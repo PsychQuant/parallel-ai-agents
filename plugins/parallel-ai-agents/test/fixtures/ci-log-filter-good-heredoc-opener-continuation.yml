@@ -1,0 +1,14 @@
+name: t
+on: push
+# EXPECT: pass
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: heredoc opener continued onto the next line
+        run: |
+          cat <<EOF \
+            >/dev/null
+          data
+          EOF
+          echo "$PR_TITLE" | python3 scripts/neutralise.py
