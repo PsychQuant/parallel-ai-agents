@@ -1,0 +1,10 @@
+# R30 MB-12：引號字元要留在 code 裡（`python3 ""scripts/neutralise.py` 是真的過濾）
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: run value is an empty-quoted word next to neutralise
+        run: echo "$PR_TITLE" | python3 ""scripts/neutralise.py

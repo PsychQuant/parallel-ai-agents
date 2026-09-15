@@ -58,6 +58,16 @@ if [ "${1:-}" = "--selftest" ]; then
     fi
     echo "lint-changelog-counts selftest: ../pai-lenses 不在（非 monorepo 佈局），已改驗「跳過」那一側" >&2
   fi
+  # 第四種宣稱形式（G-R31-13）：數字錯必拒、數字對必收。**兩側都要驗**——只驗拒絕那一側的話，
+  # 一個「永遠拒絕」的實作也會綠（本 PR 第 13 類：fixture 零鑑別力）。
+  if bash test/lint-changelog-counts.sh test/fixtures/changelog-lenclaim-bad.md >/dev/null 2>&1; then
+    echo "lint-changelog-counts selftest FAILED: changelog-lenclaim-bad.md 的長度宣稱是錯的，必須拒絕" >&2
+    exit 1
+  fi
+  if ! bash test/lint-changelog-counts.sh test/fixtures/changelog-lenclaim-good.md >/dev/null 2>&1; then
+    echo "lint-changelog-counts selftest FAILED: changelog-lenclaim-good.md 的長度宣稱是對的，必須收" >&2
+    exit 1
+  fi
   echo "lint-changelog-counts selftest ok: fixture rejected"
   exit 0
 fi
@@ -74,9 +84,27 @@ import os, re, subprocess, sys
 #   N 條（`grep -c "<pattern>" <file>`）        ← pattern 逐字取自宣稱，lint 只是真的去跑它
 #   N 個（`grep -c "<pattern>" <file>`）        ← 靶數：MUTATIONS 的每個 tuple 恰以 `    ("` 起頭
 CLAIM = re.compile(r'(\d+)\s*(?:個\s*case|條|個)[^（(]*[（(]`grep -c "((?:[^"\\]|\\.)+)" ([^`]+)`[）)]')
+
+# **第四種宣稱形式**（#33 verify R30 MB-14 / G-R31-13）：「只解這 N 種」「列舉有 N 條」這一類
+# **「數字 = 某個資料結構的長度」**的宣稱。前三種都要求宣稱自己寫出 `grep -c`，所以這一類在結構上
+# 碰不到這支 lint —— R30 抓到兩個實例（CHANGELOG 說逃脫「六種」而 `len(DECODE)` 是 7；說 D8「34 檔」
+# 而 repo 自己的 `shapes.py` 算出 26），兩個都是 `--selftest` 與正式執行皆 rc=0 的情況下活著的。
+# 形式：`N 種（`python3 -c "<expr>"`）` —— expr 由 lint 逐字執行，輸出必須等於 N。
+# 與前三種同一個紀律：**命令逐字取自宣稱本身**，lint 只是真的去跑它。
+LEN_CLAIM = re.compile(r'(\d+)\s*(?:種|條|個)[^（(]*[（(]`python3 -c "((?:[^"\\]|\\.)+)"`[）)]')
 rc, seen = 0, 0
 for f in sys.argv[1:]:
     for n, line in enumerate(open(f, encoding='utf-8'), 1):
+        for m in LEN_CLAIM.finditer(line):
+            seen += 1
+            claimed, expr = int(m.group(1)), m.group(2)
+            out = subprocess.run([sys.executable, '-c', expr], capture_output=True, text=True,
+                                 cwd=os.path.dirname(os.path.abspath(f)) or '.')
+            actual = out.stdout.strip()
+            if not actual.isdigit() or int(actual) != claimed:
+                print(f"{f}:{n}: claims {claimed}; `python3 -c \"{expr}\"` says "
+                      f"{actual or (out.stderr.strip().splitlines() or ['(no output)'])[-1]}", file=sys.stderr)
+                rc = 1
         for m in CLAIM.finditer(line):
             seen += 1
             claimed, pattern, path = int(m.group(1)), m.group(2), m.group(3)

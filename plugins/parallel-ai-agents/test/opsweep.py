@@ -49,11 +49,43 @@ EXPECTED_SURVIVE = {   # id → 理由（依構造等價）。每一條都要能
     # 「workflow file issue」），runner 不會跑。拿掉守衛只改變 lint 對無效輸入的訊息，不改變任何合法輸入的判定。
     "drop-operand|yaml_decode_scalar|if len(v) >= 2 and v[0] == v[-1] == \"'\":|1": "單字元 `'` 是沒收尾的引號、非合法 YAML；守衛只防越界",
     "drop-operand|yaml_decode_scalar|if len(v) >= 2 and v[0] == v[-1] == '\"':|1": "單字元 `\"` 同上",
-    # 純空白行剝縮排後變成空行：兩者對 shell_scan 都是「沒有 token」，heredoc 內文比對也只看終止字。
-    "strip→id|dedent_block|return [lines[0]] + [(l[pad:] if l.strip() else l) for l in lines[1:]]|1": "純空白行剝成空行，shell 語意相同",
+    # R30 MB-11／Codex 第 4 條：這一條的「依構造等價」**是假的**——引號 heredoc 的分隔字可以是空白
+    # （`cat <<' '`），於是「剝不剝純空白行」會改變 heredoc 有沒有終止。R31 採納突變體的答案：
+    # `dedent_block` 現在對**每一行**剝（YAML 就是這樣），這一條從 EXPECTED_SURVIVE 移除，
+    # 並由 `good-whitespace-heredoc-delimiter` fixture 釘住。留這段註解當紀錄：
+    # **「依構造等價」若沒有一條會翻色的指令在守，它就只是一句散文**（R30 §六 擴寫後的第 8 類）。
     # `<<<` 分支關掉後落到 `<<` 分支，分隔字從第三個 `<` 起讀、而 `<` 在 SHELL_WORD_BREAK 裡 → delim 空 →
     # 不排 heredoc。依構造等價；分支保留是把「here-string 不是 heredoc」寫成程式碼（mutation_check 同一條理由）。
     "startswith→F|shell_scan|if line.startswith(\"<<<\", i):|1": "落到 `<<` 分支後 delim 為空，不排 heredoc",
+    # R31：`fold_block` 折疊條件裡與**空白行**有關的三個運算元。三條的共同理由：`dedent_block` 之後
+    # 空白行要嘛變成空字串（`l.strip()` 與 `l` 同時為假／為真的差別不影響結果，因為折進去的是空字串、
+    # 而佔位的空字串讓下一行的 `out[-1].strip()` 為假、鏈自然斷掉），要嘛還有殘餘縮排——那時 `more`／
+    # `prev_more` 已經擋住折疊。兩條路都走不到會改變輸出的地方。
+    # **這三條的等價論證由 `--verify-expected` 在 468 檔產生語料上逐檔跑**，不是散文（R30 擴寫後的第 8 類）。
+    "drop-operand|fold_block|if out and out[-1].strip() and l.strip() and not more and not prev_more:|3": "空白行折進去是空字串，且佔位的空字串讓下一行不再折",
+    "strip→id|fold_block|if out and out[-1].strip() and l.strip() and not more and not prev_more:|1": "`out[-1]` 是空白行時 `more`／`prev_more` 已擋住折疊",
+    "strip→id|fold_block|if out and out[-1].strip() and l.strip() and not more and not prev_more:|2": "`l` 是空白行時同上",
+    # R31：折進去的那一段要不要 `strip()`。折疊條件已經保證 `not more`，也就是 `l` **沒有前導空白**，
+    # 所以兩版只差 `l` 的**行尾**空白；而折疊是把它接到 `out[-1]` 的尾巴，下一次折疊再接在它後面，
+    # 於是那段空白只會變成**詞與詞之間**的空白。下游三個消費者都吃得下：`PIPED_RE`／`CONT_RE` 用
+    # `\\s*`、`shell_scan` 的詞界判定把連續空白當一個詞界、heredoc 的 `probe == delim` 比的是**沒有被
+    # 折走**的整行（被折走的那一行留下空字串佔位）。**誠實邊界**：`--verify-expected` 在 468 檔產生語料上
+    # 逐檔比對過，但那套語料沒有「內容行帶行尾空白」這個維度，所以機械證據弱於上面三條。
+    "strip→id|fold_block|out[-1] = out[-1] + \" \" + l.strip()|1": "折進去的只差行尾空白，折完變成詞間空白，三個消費者都以 `\\s*`／詞界處理",
+    # R31：`run` key 守恆式的計數增量。這個突變體**不關掉機制**，只把計數加得更多——而 `found` 唯一的
+    # 消費者是 `found > accounted`，`accounted ∈ {0, 1}`：
+    #   accounted = 0 → 原版 found ≥ 1 > 0，突變體 ≥ 2 > 0，兩邊都 reject；
+    #   accounted = 1 → 那個沒引號的 `run` key 本身會被 `PLAIN_RUN_KEY` 數到，所以進迴圈前 found ≥ 1，
+    #                   加完原版 ≥ 2 > 1、突變體 ≥ 3 > 1，兩邊也都 reject。
+    # 也就是說**只要這一行執行到，兩版的判定必定相同**；差別只在訊息裡印的那個數字，而 fixture 比的是
+    # pass／rule-red／parse-red，不是訊息文字。
+    "±1→±2|<module>|found += 1|1": "`found` 只用於 `found > accounted`，而這一行執行到時兩版都必然 reject",
+    # R31：邏輯行組裝前的正規化。`cs` 只餵給兩個地方：`PIPED_RE.search`（搜尋，不受前後空白影響）與
+    # `elif cs:`。差別只有「純空白的 code 行」——原版跳過，突變體推成一條邏輯行。而純空白的邏輯行
+    # 既不可能命中 `PIPED_RE`，也不可能命中 `CONT_RE`（它要求結尾是 `|`／`||`／`&&`），所以它當上
+    # `logical[-1]` 之後，下一行的續接判定**兩版都是否**；至於接進去時多出來的那段空白，同樣被
+    # `PIPED_RE` 的 `\\s*` 吸收。
+    "strip→id|<module>|cs = c.strip()|1": "純空白的邏輯行對 `PIPED_RE`／`CONT_RE` 都不成立，多出的空白被 `\\s*` 吸收",
 }
 
 
@@ -116,10 +148,14 @@ def mutants(py):
     # 依原始碼位置排序後再編序號：同一函式裡同一行原文（`i += 1; continue` 這種）出現多次時，序號是
     # 「第幾次出現」——與行號無關，所以插入一行註解不會讓 id 漂移。
     out, seen = [], {}
+    starts = [0]
+    for l in lines:
+        starts.append(starts[-1] + len(l) + 1)
     for start, end, op, fn, line, new in sorted(raw):
         key = (op, fn, line)
         seen[key] = seen.get(key, 0) + 1
-        out.append(("%s|%s|%s|%d" % (op, fn, line, seen[key]), start, end, new))
+        lineno = next(k for k in range(len(lines), 0, -1) if starts[k - 1] <= start)
+        out.append(("%s|%s|%s|%d|L%d" % (op, fn, line, seen[key], lineno), start, end, new))
     return out
 
 
@@ -129,19 +165,52 @@ def region_since(ref, py):
     base_src = subprocess.run(["git", "-C", str(PLUGIN), "show", "%s:%s" % (ref, LINT.relative_to(PLUGIN.parent.parent))],
                               capture_output=True, text=True, check=True).stdout
     base_py, _ = embedded_python(base_src)
-    def funcs(text):
-        tree = ast.parse(text); lines = text.split("\n")
-        return {n.name: "\n".join(l.strip() for l in lines[n.lineno - 1:n.end_lineno]) for n in tree.body if isinstance(n, ast.FunctionDef)}
-    bf, hf = funcs(base_py), funcs(py)
-    touched = {name for name, body in hf.items() if bf.get(name) != body}
-    base_lines = {l.strip() for l in base_py.split("\n")}
+    # **區域＝真正的變更行**（R30 MB-13／Codex 第 1 條）。前一版有兩個洞：
+    #   函式層用「去空白後的文字」比對——只改縮排（＝改控制流）而文字相同的函式判成沒動；
+    #   模組層用「文字集合」——新增一行與檔案別處相同的文字（`kind[i] = "BAD"; i += 1`）判成舊行。
+    # 兩者都不是「被 diff 觸及」的意思。改用 difflib 對**行**做真正的比對：變更行的集合是答案，
+    # 函式只要**有任何一行**落在變更行集合裡就整個進區域。
+    import difflib
+    base_lines, head_lines = base_py.split("\n"), py.split("\n")
+    changed = set()
+    sm = difflib.SequenceMatcher(None, base_lines, head_lines, autojunk=False)
+    for tag, _i1, _i2, j1, j2 in sm.get_opcodes():
+        if tag in ("replace", "insert"):
+            changed.update(range(j1 + 1, j2 + 1))          # 1-based，對齊 ast 的 lineno
+    tree = ast.parse(py)
+    spans = {n.name: (n.lineno, n.end_lineno) for n in tree.body if isinstance(n, ast.FunctionDef)}
+    touched = {name for name, (a, b) in spans.items() if any(a <= x <= b for x in changed)}
+    in_func = {x for name in touched for x in range(spans[name][0], spans[name][1] + 1)}
+    region_lines = changed | in_func
+
     def inside(mid):
-        op, fn, line, _n = mid.split("|", 3)
-        return fn in touched if fn != "<module>" else line not in base_lines
+        return int(mid.rsplit("|L", 1)[1]) in region_lines
     return inside, touched
 
 
-def run_mutant(src, py, py_off, m, work, fixtures):
+def sample_corpus(work):
+    """產生一份**形狀完整的小樣本**（每個構造維度值至少一個檔）給突變體當第二道判準。
+
+    R30 §六 第 14 類：`opsweep` 的殺不殺只看 `--selftest`，而 selftest 餵的是**作者寫的** fixture ——
+    網目對了，投餵還是作者挑的。這裡把 `shellgen.py` 的產物抽樣進來：突變體只要讓**任何一個**
+    產生檔的判定改變，就算被抓到。抽樣（不是全 468 檔）是為了讓一輪跑得完：每個維度值取前兩檔，
+    覆蓋所有維度值而不取完整笛卡兒積。
+    """
+    gen = pathlib.Path(work) / "sample"
+    r = subprocess.run([sys.executable, str(HERE / "corpus" / "shellgen.py"), "--out", str(gen)],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        return []
+    by_dim, out = {}, []
+    for f in sorted(gen.glob("*.yml")):
+        for token in f.stem.split("-")[1:]:
+            by_dim.setdefault(token, []).append(f)
+    for token, files in sorted(by_dim.items()):
+        out.extend(files[:2])
+    return sorted(set(out))
+
+
+def run_mutant(src, py, py_off, m, work, fixtures, sample):
     """把突變後的 lint 放進臨時 plugin 樹，跑 selftest。fixtures 是**開跑時的快照**（copy，不是 symlink）：
     R29 第一輪掃到一半時作者又加了三個 fixture，之後每個突變體都因「數量與門檻不符」被判殺——整輪後半段作廢。
     lint 原始碼與 fixture 都要在同一個時間點凍結。"""
@@ -159,9 +228,69 @@ def run_mutant(src, py, py_off, m, work, fixtures):
             return "BROKEN"                 # 運算子產出不合法的程式碼：是這支的缺陷，不是套件的功勞
         if r.returncode != 0 and "Traceback" in out:
             return "CRASHED"                # 突變體讓 lint 當掉：套件抓到了，但那是「當掉」不是「判錯」——分開報
-        return "KILLED" if r.returncode != 0 else "SURVIVED"
+        if r.returncode != 0:
+            return "KILLED"
+        # selftest 沒抓到 → 再問**不是作者挑的**那份語料（形狀完整的小樣本）。
+        for f in sample:
+            a = subprocess.run(["bash", str(LINT), str(f)], cwd=PLUGIN, capture_output=True, text=True)
+            b = subprocess.run(["bash", str(p), str(f)], cwd=d, capture_output=True, text=True)
+            if a.returncode != b.returncode:
+                return "KILLED-BY-CORPUS"
+        return "SURVIVED"
     finally:
         shutil.rmtree(d, ignore_errors=True)
+
+
+def base_id(mid):
+    """去掉 id 尾端的 `|L<行號>`——行號會漂，理由不會。"""
+    return mid.rsplit("|L", 1)[0]
+
+
+def verify_expected(src, py, py_off, ms):
+    """把每一條 `EXPECTED_SURVIVE` 的「依構造等價」**真的跑一次**（R30 MB-11／G-R31-8）。
+
+    為什麼：「依構造等價」四個字在 R29 是散文，沒有任何會翻色的指令在守它——而其中一條是**假的**
+    （`dedent_block` 的純空白行：引號 heredoc 的分隔字可以是空白）。散文擋不住這種事，差分可以。
+    做法：用 `shellgen.py` 產生一份**獨立於 fixture** 的語料（作者挑不動它的形狀），對每一條
+    EXPECTED_SURVIVE 逐檔比對「原碼」與「突變體」的 `(rc, stderr)`；任何一檔不同 ⟹ 不等價 ⟹ rc=1。
+    """
+    import shutil as _sh
+    gen = pathlib.Path(tempfile.mkdtemp(prefix="opsweep-exp-")) / "gen"
+    r = subprocess.run([sys.executable, str(HERE / "corpus" / "shellgen.py"), "--out", str(gen)],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        print("✗ 產生語料失敗：\n" + r.stdout + r.stderr); return 2
+    files = sorted(gen.glob("*.yml"))
+    print("對 %d 檔產生語料驗證 %d 條 EXPECTED_SURVIVE 的等價論證" % (len(files), len(EXPECTED_SURVIVE)), flush=True)
+    by_id = {base_id(m[0]): m for m in ms}
+    rc = 0
+    with tempfile.TemporaryDirectory(prefix="opsweep-exp-run-") as work:
+        fixtures = pathlib.Path(work) / "fixtures"
+        _sh.copytree(HERE / "fixtures", fixtures)
+        for mid, why in sorted(EXPECTED_SURVIVE.items()):
+            m = by_id.get(mid)
+            if m is None:
+                print("  ✗ %s —— 這個突變體不在本次掃描範圍內，無法驗證" % mid); rc = 1; continue
+            _i, a, b, new = m
+            mutated = src[:py_off] + py[:a] + new + py[b:] + src[py_off + len(py):]
+            d = pathlib.Path(tempfile.mkdtemp(dir=work)); (d / "test").mkdir()
+            mp = d / "test" / "lint-ci-log-filter.sh"; mp.write_text(mutated, encoding="utf-8")
+            os.symlink(fixtures, d / "test" / "fixtures")
+            diffs = []
+            for f in files:
+                o1 = subprocess.run(["bash", str(LINT), str(f)], cwd=PLUGIN, capture_output=True, text=True)
+                o2 = subprocess.run(["bash", str(mp), str(f)], cwd=d, capture_output=True, text=True)
+                if (o1.returncode, o1.stderr.replace(str(LINT), "L")) != (o2.returncode, o2.stderr.replace(str(mp), "L")):
+                    diffs.append(f.name)
+            _sh.rmtree(d, ignore_errors=True)
+            if diffs:
+                rc = 1
+                print("  ✗ %s\n     理由寫的是「%s」，但這 %d 檔上原碼與突變體給出不同答案（前三：%s）"
+                      % (mid, why, len(diffs), ", ".join(diffs[:3])))
+            else:
+                print("  ✓ %s（%d 檔全部相同）" % (mid, len(files)))
+    _sh.rmtree(gen.parent, ignore_errors=True)
+    return rc
 
 
 def main():
@@ -169,28 +298,38 @@ def main():
     ap.add_argument("--list", action="store_true", help="只列突變體，不跑")
     ap.add_argument("--json", metavar="FILE", help="結果寫成 JSON")
     ap.add_argument("--since", metavar="REF", help="只掃自 REF 起被改動的區域（見 docstring）")
+    ap.add_argument("--verify-expected", action="store_true",
+                    help="把每一條 EXPECTED_SURVIVE 的「依構造等價」真的跑一次（見 docstring）")
     args = ap.parse_args()
     src = LINT.read_text(encoding="utf-8")
     py, py_off = embedded_python(src)
     ms = mutants(py)
+    all_ids = [m[0] for m in ms]          # **陳舊性檢查對全集做**，不對區域做：
+                                          # 區域外的 EXPECTED_SURVIVE 本來就不會出現在區域清單裡，
+                                          # 拿區域清單去判「這個 key 還在不在」會對每一條區域外的條目誤報。
     scope = "整段內嵌 Python"
     if args.since:
         inside, touched = region_since(args.since, py)
         ms = [m for m in ms if inside(m[0])]
-        scope = "自 %s 起的區域（觸及的函式：%s；加模組層新行）" % (args.since, ", ".join(sorted(touched)) or "無")
-    ids = [m[0] for m in ms]
+        scope = "自 %s 起的區域（觸及的函式：%s；加模組層新行）——全集 %d 個中的 %d 個" % (
+            args.since, ", ".join(sorted(touched)) or "無", len(all_ids), len(ms))
+    ids = all_ids
     dup = {i for i in ids if ids.count(i) > 1}
     if dup:
         print("✗ 突變體 id 不唯一（同一行同一運算子要靠序號分開，這裡分不開）：", sorted(dup)[:5]); return 2
-    stale = sorted(set(EXPECTED_SURVIVE) - set(ids))
+    # `EXPECTED_SURVIVE` 的 key **不含行號**：行號會隨任何插入而漂，而理由不會。
+    # id 的行號尾巴只給區域判定用。
+    stale = sorted(set(EXPECTED_SURVIVE) - {base_id(i) for i in ids})
     if stale:
         print("✗ EXPECTED_SURVIVE 裡有不存在的突變體（那一行改了，理由要重判）：")
         for x in stale: print("  -", x)
         return 2
     print("%d 個突變體（五種運算子；%s）" % (len(ms), scope), flush=True)
     if args.list:
-        for i in ids: print("  ", i)
+        for m in ms: print("  ", m[0])
         return 0
+    if args.verify_expected:
+        return verify_expected(src, py, py_off, ms)
     t0 = time.monotonic()
     pre = subprocess.run(["bash", str(LINT), "--selftest"], cwd=PLUGIN, capture_output=True, text=True)
     if pre.returncode != 0:
@@ -199,22 +338,28 @@ def main():
     with tempfile.TemporaryDirectory(prefix="opsweep-") as work:
         fixtures = pathlib.Path(work) / "fixtures"
         shutil.copytree(HERE / "fixtures", fixtures)
+        sample = sample_corpus(work)
+        print("   第二道判準：%d 個產生檔（形狀完整樣本，非作者挑選）" % len(sample), flush=True)
         for m in ms:
-            st = run_mutant(src, py, py_off, m, work, fixtures)
+            st = run_mutant(src, py, py_off, m, work, fixtures, sample)
             results[m[0]] = st
-            tag = st if not (st == "SURVIVED" and m[0] in EXPECTED_SURVIVE) else "EXPECTED"
+            tag = st if not (st == "SURVIVED" and base_id(m[0]) in EXPECTED_SURVIVE) else "EXPECTED"
             print("  %-9s %s" % (tag, m[0]), flush=True)
     elapsed = time.monotonic() - t0
     survived = [i for i, st in results.items() if st == "SURVIVED"]
-    unexpected = [i for i in survived if i not in EXPECTED_SURVIVE]
-    expected = [i for i in survived if i in EXPECTED_SURVIVE]
-    killed_expected = [i for i in EXPECTED_SURVIVE if results.get(i) == "KILLED"]
+    unexpected = [i for i in survived if base_id(i) not in EXPECTED_SURVIVE]
+    expected = [i for i in survived if base_id(i) in EXPECTED_SURVIVE]
+    killed_expected = [i for i in EXPECTED_SURVIVE if any(base_id(k) == i and v == "KILLED" for k, v in results.items())]
     broken = [i for i, st in results.items() if st == "BROKEN"]
     print("\n耗時 %.1f 分 / %d 突變體 = 每個 %.1f s" % (elapsed / 60, len(ms), elapsed / max(1, len(ms))))
     crashed = [i for i, st in results.items() if st == "CRASHED"]
-    print("殺掉 %d（其中當掉 %d）/ 存活 %d（非預期 %d、預期 %d）/ 壞掉（語法）%d"
-          % (sum(1 for st in results.values() if st in ("KILLED", "CRASHED")), len(crashed),
-             len(survived), len(unexpected), len(expected), len(broken)))
+    by_corpus = [i for i, st in results.items() if st == "KILLED-BY-CORPUS"]
+    print("殺掉 %d（其中當掉 %d、**產生語料抓到而 selftest 沒抓到的 %d**）/ 存活 %d（非預期 %d、預期 %d）/ 壞掉（語法）%d"
+          % (sum(1 for st in results.values() if st in ("KILLED", "CRASHED", "KILLED-BY-CORPUS")), len(crashed),
+             len(by_corpus), len(survived), len(unexpected), len(expected), len(broken)))
+    if by_corpus:
+        print("\n這些突變體 **selftest 沒抓到、產生語料抓到了** —— 每一個都代表 fixture 集缺一個形狀：")
+        for i in by_corpus: print("  -", i)
     rc = 0
     if unexpected:
         rc = 1

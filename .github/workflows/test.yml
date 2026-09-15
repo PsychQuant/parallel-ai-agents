@@ -62,7 +62,18 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          { python3 -m pip install --quiet pyyaml && python3 test/oracle.py; } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
+          { python3 -c 'import yaml' || python3 -m pip install --quiet pyyaml; } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
+          python3 test/oracle.py 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
+
+      # #33 verify R30 §六「第 14 類：網的投餵」：上一個 step 餵給神諭的是**作者寫的** fixture，
+      # 而同一支神諭在別人產生的語料上會報出一堆。這個 step 把投餵也拿掉——`shellgen.py` 按封閉的
+      # 構造維度取笛卡兒積產生語料，神諭對它必須零不一致。R31 的量測：舊 lint 97 條不一致、新 lint 0。
+      - name: oracle — against generated corpus (not author-written fixtures)
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 test/corpus/shellgen.py --out "$RUNNER_TEMP/gen" 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
+          python3 test/oracle.py "$RUNNER_TEMP"/gen/*.yml 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
 
       # 中和只有**一份**實作（validate.py 的 LineSanitiser，neutralise.py 只是把 stdin 接上去）——R13 用 sed 另寫一份，
       # 第一天就與它分岔（`[[:space:]]` 比 .NET IsWhiteSpace 小、`^` 只認 \n；R14 L-4 / S2）。

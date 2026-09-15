@@ -1,0 +1,14 @@
+# R31：folded 的 more-indented 行**之後**那一行也不折——所以 more-indented 的註解行
+# 吃不到下一行的真管線。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: comment on a more-indented folded line does not eat the next line
+        run: >
+          echo "$PR_TITLE"
+            # note
+          echo B | python3 scripts/neutralise.py

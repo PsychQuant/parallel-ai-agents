@@ -1,0 +1,19 @@
+# R31（實測推翻 R30 的註解）：分隔字詞裡的**行尾**反斜線是續行、不是逃脫。
+# bash 5.3：`cat <<AB\` ⏎ `CD` 的終止字是 `ABCD`，而且內文**照樣展開**（`$X` → 值），
+# 也就是說這個反斜線**不**使 heredoc 變成 quoted。R30 的註解把「行尾 `\` 不續行」寫成全稱，
+# 那句是假的；前一版照那句做，delim 讀成 `AB\` → 永不終止 → 真管線被吞 → 誤擋。
+# 內文刻意留空：終止字**緊接**在續行之後，這樣「續行吃掉幾個實體行」（`spans`）才驗得到——
+# 多吃一行就會把真管線當成 heredoc 內文吞掉。有內文的版本對 `spans` 的加法不敏感。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: line continuation inside an unquoted delimiter word
+        run: |
+          cat <<AB\
+          CD
+          ABCD
+          echo hi | python3 scripts/neutralise.py

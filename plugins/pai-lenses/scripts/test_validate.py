@@ -15,8 +15,10 @@
 mutation」。**那三句話會讓下一個維護者以為改動 `validate.py` 有測試網接著。**
 
 現在用 `scripts/mutation_check.py` 量：跑一次就知道哪些閘門沒有測試網。
-**最近一次完整量測（R27 後）：125 個靶 → 121 殺 / 0 存活 / 0 靶壞**（另 4 個 `EXPECTED_SURVIVE`）——
-**R29 的 139 靶全輪在 R29 commit 之後於 `git archive` 副本上量，結果回填這裡；在那之前這一段的數字是 R27 的、不是 R29 的**（R29 的 14 個新 lint 靶已各自單獨實測：全殺），
+**最近一次完整量測（R29 後，於 `git archive d278e99` 副本上跑）：139 個靶 → 135 殺 / 0 存活 / 0 靶壞**
+（另 4 個 `EXPECTED_SURVIVE`），實測 **98.8 分鐘 / 139 靶 = 每靶 42.6 s**。
+**R31 的 155 靶全輪在 R31 commit 之後另外量，結果再回填這裡；在那之前這一段的數字是 R29 的**
+（R31 的 14 個新 lint 靶已各自單獨實測：37 個 lint 靶 36 殺 / 1 預期存活），
 實測 **130.3 分鐘 / 125 靶 = 每靶 62.6 s**（比 R25 的每靶 29.4 s 慢一倍：lint 靶跑的是 selftest、
 neutralise 靶跑的是含串流測試的整套，兩者都比純 python 套件重；另一個原因是同機有別的負載）。
 **守備範圍從 R27 起是三個檔**（`validate.py`／`lint-ci-log-filter.sh`／`neutralise.py`）——
@@ -33,7 +35,10 @@ R18 抽樣三個粗靶，三個都藏著細顆粒缺口；R19 拆了三處，R20
 `test_every_decoding_call_site_survives_undecodable_bytes`。看到「0 存活」請先問：有沒有哪個靶蓋住了兩個實作？
 `EXPECTED_SURVIVE` 4 個：`_find_pack_at` git 分支的兩個守衛依構造不可達（R12 logic L3 / DA-6，保留為防禦）、
 「換回 splitlines()」（LineSanitiser 對每一段獨立判定，過度切段只會過度消毒）、lint 的 `<<<` here-string 分支（關掉後落到 `<<`
-分支而 delim 為空——依構造等價，R27 進來時這裡寫成 3 個，R29 G-R29-7 抓到與檔頭的 4 不一致）。規則明寫在 mutation_check.py：每一條
+分支而 delim 為空——依構造等價，R27 進來時這裡寫成 3 個，R29 G-R29-7 抓到與檔頭的 4 不一致）。
+**注意這四個是 `mutation_check.py` 的具名靶集合**；`test/opsweep.py`（作者無關的運算子掃描）另有自己的
+`EXPECTED_SURVIVE`（R31：6 條），兩者是不同的集合、不同的判準，不要混著數。R31 起 opsweep 那一組的
+「依構造等價」由 `--verify-expected` 在 468 檔產生語料上逐檔跑出來，不是散文。規則明寫在 mutation_check.py：每一條
 進來的靶都要能回答「關掉它，哪一行輸出會變」（R14 把「pack_name 讀取的 containment」放進去的理由是假的——
 dirty worktree 到得了那行 print——現在它有測試網）。
 R13 修法的 `main()` 逐閘門隔離曾讓一輪跑出 8 個假存活（守衛被刪掉後只剩一條「validator 內部錯誤」），修在
@@ -413,7 +418,10 @@ def decoding_findings(src):
         # 前一版把所有 Attribute 都當 `Path.open(mode)`，於是這兩個的 mode_pos 讀到路徑。**封閉列舉**：
         # 只有這兩個模組的 `open` 走位置 1；其餘 Attribute 仍是位置 0。有 Starred 引數時位置對不上 →
         # 無法靜態解析 → 不推定 binary。
-        FILE_FIRST_MODULES = ("io", "codecs")
+        # R30 L-19：`gzip`／`bz2`／`lzma` 的 `open(filename, mode)` 與 builtin 同 signature，漏掉它們
+        # 就重演 R26 M9 的不對稱（`gzip.open("blob.txt")` 掉出規則、`gzip.open("notes.txt")` 被抓，
+        # 差別只有檔名裡的字母 `b`）。這是一份**封閉列舉**：新增別的模組要改這裡，不會有人替你涵蓋。
+        FILE_FIRST_MODULES = ("io", "codecs", "gzip", "bz2", "lzma")
         mode_pos = 1 if (isinstance(f, ast.Name)
                          or (isinstance(f, ast.Attribute) and getattr(f.value, "id", None) in FILE_FIRST_MODULES)) else 0
         mode_node = next((k.value for k in n.keywords if k.arg == "mode"), None)
@@ -2366,15 +2374,19 @@ class ValidateTest(unittest.TestCase):
         缺陷同形，只是換了兩個 callable。`open(*args, "blob.txt")` 的 Starred 也讓位置對不上。
         判準：無法靜態解析 mode 位置就不得推定 binary（fail-closed）。每一形各一行 probe，真的跑 `decoding_findings()`。"""
         def flagged(line):
-            bad, _ = decoding_findings("import io, codecs, subprocess, pathlib\n" + line + "\n")
+            bad, _ = decoding_findings("import io, codecs, gzip, bz2, lzma, subprocess, pathlib\n" + line + "\n")
             return bool(bad)
         for line in ('io.open("blob.txt")',
                      'codecs.open("blob.txt", "r")',
+                     'gzip.open("blob.txt")',
+                     'bz2.open("blob.txt", "rt")',
+                     'lzma.open("blob.txt")',
                      'open(*[], "blob.txt")',
                      'open("blob.txt")'):
             self.assertTrue(flagged(line), "應該紅卻綠（mode 位置算錯或 Starred 讓 binary 誤判）：" + line)
         for line in ('open("x", "rb")',
                      'pathlib.Path("x").open("rb")',
+                     'gzip.open("x", "rb")',
                      'io.open("x", "rb")',
                      'codecs.open("x", "rb")'):
             self.assertFalse(flagged(line), "真的是 binary 模式卻被標紅：" + line)
@@ -2401,6 +2413,52 @@ class ValidateTest(unittest.TestCase):
                 elif l.strip() and not l.startswith("        "):   # 非 bullet 續行 → 清單結束
                     break
             self.assertEqual(bullets, n, "%s：標題說 %d 件，底下列了 %d 個 `*`" % (tag, n, bullets))
+
+    def test_parse_messages_claiming_pyyaml_failure_are_true(self):
+        """R30 MB-1（假診斷第三次）：lint 的 `PARSE:` 訊息裡若斷言「PyYAML 會拒絕」，那句話必須是真的。
+        R29 的 `explicit_pad` 訊息寫「YAML 錯誤（PyYAML ParserError）」，而 PyYAML 對那些輸入解析得好好的
+        ——**訊息本身就是一個沒有被任何東西驗過的宣稱**。這裡把它機械化：掃 lint 裡每一個含「PyYAML」
+        的 reject 訊息，每一個都必須有一個 fixture，且 `yaml.safe_load` 對那個 fixture **真的**丟例外。
+
+        判準是「訊息 → fixture → PyYAML 真的失敗」這條鏈，不是訊息的措辭；新增這類訊息而沒有 fixture
+        會在這裡紅。"""
+        import ast as _ast
+        yaml_mod = __import__("yaml")
+        src = (PACK.parent / "parallel-ai-agents" / "test" / "lint-ci-log-filter.sh").read_text(encoding="utf-8")
+        py = src.split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+        claims = []
+        for n in _ast.walk(_ast.parse(py)):
+            if isinstance(n, _ast.Call) and getattr(n.func, "id", None) == "reject":
+                txt = " ".join(x.value for x in _ast.walk(n) if isinstance(x, _ast.Constant) and isinstance(x.value, str))
+                if "PyYAML" in txt:
+                    claims.append(txt)
+        # 走整條鏈：**訊息 → 真的印出那則訊息的 fixture → PyYAML 對那個 fixture 真的丟例外**。
+        # 只查「有沒有某個 fixture 被 PyYAML 拒絕」是不夠的——那與這則訊息無關。
+        lint = PACK.parent / "parallel-ai-agents" / "test" / "lint-ci-log-filter.sh"
+        fixtures = sorted((lint.parent / "fixtures").glob("ci-log-filter-*.yml"))
+        seen = {}                      # 訊息片段 → 印出它且被 PyYAML 拒絕的 fixture
+        for f in fixtures:
+            out = subprocess.run(["bash", str(lint), str(f)], capture_output=True, text=True).stderr
+            if "PyYAML" not in out:
+                continue
+            try:
+                yaml_mod.safe_load(f.read_text(encoding="utf-8"))
+                ok = False
+            except yaml_mod.YAMLError:
+                ok = True
+            for line in out.splitlines():
+                if "PyYAML" in line:
+                    seen.setdefault(line.split("PARSE: ")[-1][:30], []).append((f.name, ok))
+        self.assertTrue(claims, "lint 裡沒有任何含 PyYAML 的 reject 訊息——規則空轉（若真的都拿掉了，刪掉本測試）")
+        for txt in claims:
+            key = next((k for k in seen if k[:12] in txt or txt[:12] in k), None)
+            self.assertIsNotNone(key, "訊息斷言 PyYAML 會拒絕，卻沒有任何 fixture 印得出它：%s…" % txt[:40])
+            # **每一個**印出這則訊息的 fixture 都必須真的被 PyYAML 拒絕。用 `any` 是不夠的：
+            # 只要有一個真的壞掉的 fixture 在，假診斷就被它蓋過去——R29 的 `explicit_pad` 正是這樣
+            # 在 `bypass-explicit-indent-shallow`（真的壞）旁邊活了一整輪。
+            liars = [n for n, ok in seen[key] if not ok]
+            self.assertFalse(liars, "訊息說 PyYAML 會拒絕，但這些 fixture PyYAML 解析得好好的（假診斷）：%s"
+                                    % liars)
 
     def test_events_match_workflow_triggers(self):
         """R17 logic L-8：`EVENTS`（argparse choices）與 test.yml 的 `on:` 是兩份規格——在這裡加 trigger 沒改那邊，

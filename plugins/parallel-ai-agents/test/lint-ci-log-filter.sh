@@ -65,17 +65,17 @@ if [ "${1:-}" = "--selftest" ]; then
   done
   # R24 regression F9：門檻寫成 `>=` 而實際值更高時，那個差額**沒有網**——刪掉一個 fixture 仍然綠。
   # 三個門檻一律改成**等於實測值**：要加 fixture 就同步改這裡，讓「少了一個」立刻紅。
-  if [ "${n_pass}" -ne 42 ]; then
-    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 42（改動 fixture 請同步改這個數字）" >&2
+  if [ "${n_pass}" -ne 61 ]; then
+    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 61（改動 fixture 請同步改這個數字）" >&2
     fail=1
   fi
-  if [ "${n_rule}" -ne 41 ]; then
-    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 41" >&2
+  if [ "${n_rule}" -ne 60 ]; then
+    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 60" >&2
     fail=1
   fi
   if [ "${fail}" -ne 0 ]; then exit 1; fi
-  if [ "${n_parse}" -ne 26 ]; then
-    echo "lint-ci-log-filter selftest FAILED: parse-red 是 ${n_parse} 個，預期恰好 26（先前這一類完全沒有下限）" >&2
+  if [ "${n_parse}" -ne 35 ]; then
+    echo "lint-ci-log-filter selftest FAILED: parse-red 是 ${n_parse} 個，預期恰好 35（先前這一類完全沒有下限）" >&2
     exit 1
   fi
   echo "lint-ci-log-filter selftest ok: ${n_pass} 正向通過、${n_rule} 條規則紅、${n_parse} 條解析紅（來源逐一比對相符）"
@@ -134,11 +134,18 @@ SEQ_RE = re.compile(r"^(\s*)-(?:\s(.*))?$")
 # （`|2-` 與 `|-2` 都合法）。前一版只認 chomping 在前，於是 `name: |2-` 讓那段 scalar 不被視為
 # 不透明內容、裡面的 `# LOG-FILTER:` 就放行了整個 step。`ff0f215` 也有這個洞——它是這一族未關閉
 # 的成員，不是 R21 的回歸。
-BLOCK_SCALAR_RE = re.compile(r"^[|>](?:[+-][1-9]?|[1-9][+-]?)?\s*(#.*)?$")   # 指示子 1-9；`|0`／`|10` 是 YAML 錯誤
+# 指示子 1-9；`|0`／`|10` 是 YAML 錯誤。**兩個 group 就是縮排指示子**（`|2-` 與 `|-2` 兩種順序都合法），
+# 呼叫端用它們取值——**不得對整個標頭搜數字**：`BLOCK_SCALAR_RE` 自己允許行尾註解，而註解裡的數字
+# （`run: | # see issue 9`）會被搜成指示子，於是一個合法又合規的 workflow 由綠翻紅、
+# 訊息還捏造一個不存在的 PyYAML ParserError（R30 MB-1，四條 leg 各自獨立提出）。
+BLOCK_SCALAR_RE = re.compile(r"^[|>](?:([1-9])[+-]?|[+-]([1-9])?)?\s*(#.*)?$")
 # R24 DA-3 R3：`||` 是**邏輯或**不是管線——`echo x || python3 …neutralise.py` 在 `echo` 成功時
 # 後者**從未執行**，而前一版把它算成「已過濾」。反向，`|&`（bash 的 stderr 管線）是**真的**
 # 管線卻被誤擋。兩個方向各一個 fixture（`bypass-or-operator` / `good-pipe-stderr`）。
-PIPED_RE = re.compile(r"(?<!\|)\|(?!\|)&?\s*python3\s+\S*neutralise\.py(\s|$)")
+# R30 H-6：管線的左邊**必須有東西**。邏輯行開頭的 `|` 在 bash 是語法錯誤（前一個命令已經印出去了、
+# 這一行根本沒跑），而前一版的 `(?<!\|)\|` 在字串開頭同樣成立 → 把一個會洩漏的 step 算成「已過濾」。
+# `[^|\s]` 同時擋掉 `||`（左邊是 `|`）與行首（左邊沒有字元）。
+PIPED_RE = re.compile(r"[^|\s]\s*\|(?!\|)&?\s*python3\s+\S*neutralise\.py(\s|$)")
 LOGFILTER_RE = re.compile(r"^\s*#\s*LOG-FILTER:\s*(in-process|none — .+)")
 
 
@@ -183,7 +190,11 @@ def yaml_split_comment(line):
     return "".join(code), comment
 
 
-SHELL_WORD_BREAK = " \t;&|()<>"      # `#` 只在**詞首**起註解：行首、或前一個字元是空白／shell metacharacter
+# `#` 只在**詞首**起註解：行首、或前一個字元是空白／shell metacharacter。
+# R30 H-4：反引號**開啟一個新的命令上下文**，所以它後面是詞首——bash 對 `` `#…` `` 起註解而前一版不起，
+# 於是註解裡的 `| python3 …neutralise.py` 被當成真管線放行。反引號不是 POSIX metacharacter，
+# 但在「下一個字元是不是詞首」這個問題上它的作用與 `(` 相同，所以列進來。
+SHELL_WORD_BREAK = " \t;&|()<>`"
 
 
 def yaml_decode_scalar(v):
@@ -232,7 +243,43 @@ def dedent_block(lines, explicit_pad=None):
     if not body:
         return list(lines)
     pad = explicit_pad if explicit_pad is not None else min(len(l) - len(l.lstrip()) for l in body)
-    return [lines[0]] + [(l[pad:] if l.strip() else l) for l in lines[1:]]
+    # **純空白行也要剝**（R30 MB-11／Codex 第 4 條）。前一版原封保留它們，理由寫的是「依構造等價：
+    # 純空白行沒有 token」——那是假的：引號 heredoc 的分隔字**可以是空白**（`cat <<' '`），於是一行
+    # 十一個空白在 runner 眼中是「十個縮排 ＋ 一個空白」＝終止字，在前一版眼中是十一個空白＝不終止，
+    # heredoc 吞掉後面的真管線 → 合法檔被打紅。YAML 對每一行剝同樣的縮排，不分空白行。
+    return [lines[0]] + [l[pad:] for l in lines[1:]]
+
+
+CONT_RE = re.compile(r"(\|\|?|&&)\s*$")     # 邏輯行的續行運算子：`|`／`||`／`&&`
+
+
+def fold_block(lines, folded):
+    r"""folded block scalar（`run: >`）的換行在 runner 眼中是**空白**——先折起來再交給 shell 掃描。
+
+    R30 H-1(族B)：前一版把 `|` 與 `>` 一視同仁、逐**實體行**掃，而 YAML 把 folded 的相鄰內容行接成
+    **一條** shell 行。於是 `echo "$PR_TITLE" # note` ⏎ `| python3 …neutralise.py` 在 lint 眼中是
+    「一行註解 ＋ 一行管線」＝放行，在 runner 眼中是「一行：註解從 `#` 吃到底」＝**真的洩漏**，
+    而 lint、CI、job 三個訊號全綠。`shell_scan()` 收不到「我在掃 `|` 還是 `>`」是結構性的缺口，
+    所以資訊由呼叫端給，折疊在進掃描器**之前**做。
+
+    折疊規則（YAML 1.2 §8.1.3 的子集，本 lint 只需要這三條）：相鄰的兩個**內容行**（剝掉區塊縮排後
+    不再有前導空白）之間的換行折成一個空白；**more-indented**（剝完仍有前導空白）的行前後不折；
+    空行不折。行數保持不變（折走的那一行留一個空字串佔位）。
+    """
+    if not folded:
+        return list(lines)
+    out, prev_more = [], False
+    for l in lines:
+        more = l[:1] in (" ", "\t")
+        # `out` 為空（第一行）時短路，所以不需要另外一個「這是不是第一行」的守衛——
+        # R31 opsweep 對那兩個運算元各報存活，實測也證明它們依構造多餘，所以刪掉而不是列豁免。
+        if out and out[-1].strip() and l.strip() and not more and not prev_more:
+            out[-1] = out[-1] + " " + l.strip()
+            out.append("")                      # 佔位：行數不變
+        else:
+            out.append(l)
+        prev_more = more
+    return out
 
 
 def shell_scan(lines):
@@ -264,6 +311,15 @@ def shell_scan(lines):
     要關掉這一類必須真的求值 shell，不在本 lint 的範圍內。
     """
     code_lines, decls = [], []
+    # **分隔字裡的引號在同一行沒收尾 → 這個 run 區塊本 lint 不解析**（R31 opsweep：那個守衛沒有網，
+    # 而唯一寫得出來的「會翻色」fixture 會把一個**錯的**判定釘住——前一版假裝引號在行尾收掉、
+    # 算出一個終止字，然後對整個 step 回**綠**）。bash 5.3 實測**兩種引號各不相同、但都不是綠**：
+    #   `cat <<"AB`（引號到檔尾都沒收）→ 「尋找符合的 `"` 時遇到了未預期的檔案結束符」＝語法錯誤；
+    #   `cat <<"XY` ⏎ `data"`（收在下一行）→ 分隔字是**含換行的** `XY⏎data`，heredoc 永不終止，
+    #   bash 只警告並把後面全部當內文（實測 `echo` 沒有執行）；單引號同此。
+    # 兩種本 lint 都表示不了（它的分隔字是單行字串），所以 fail-closed：交給呼叫端印 `PARSE:`，
+    # 且**不再印 `RULE:`**（R24 DA-8(b)：沒被解析出來的區塊沒有適用對象）。
+    unterminated = False
     quote = None            # None / "'" / '"'
     heredoc = None          # (delimiter, strip_tabs, quoted)
     body_continued = False  # 未引號 heredoc 內文的前一行以奇數個反斜線結尾（R28 D3）
@@ -295,14 +351,16 @@ def shell_scan(lines):
         while i < n:
             ch = line[i]
             if quote == "'":
-                code.append(" ")                    # 引號內容**含引號本身**一律挖空：沒有述詞讀引號字元
+                # 引號**字元本身**要留著：`PIPED_RE` 的 `\S*` 讀得到它（`python3 ""scripts/neutralise.py`
+                # 在 bash 眼中就是那個路徑）。R29 把它一起挖空並宣稱「依構造等價」，R30 MB-12 證偽。
+                code.append("'" if ch == "'" else " ")
                 if ch == "'":
                     quote = None
                 i += 1; prev_sig = ch; continue
             if quote == '"':
                 if ch == "\\":
                     code.append("  "); i += 2; prev_sig = "x"; continue   # 行尾 `\` 越界只是結束迴圈
-                code.append(" ")
+                code.append('"' if ch == '"' else " ")
                 if ch == '"':
                     quote = None
                 i += 1; prev_sig = ch; continue
@@ -324,6 +382,31 @@ def shell_scan(lines):
                     pending = list(pending0)
                     continue
                 break                       # 最後一行的行尾反斜線：沒有下一行可接
+            # R30 H-2：`$'…'` 是 ANSI-C 引號，裡面的 `\'` 是**逃脫**不是收尾；前一版把它當成普通單引號，
+            # 於是引號提早收掉、字串裡的 `| python3 …` 變成 code。
+            # **`$"…"` 沒有自己的分支**：它的引號規則與雙引號完全相同，所以 `$` 走通用字元路徑、
+            # 下一格的 `"` 走一般引號分支，結果一模一樣。R30 為它寫了一個分支，R31 的 opsweep 對那個
+            # `startswith` 報存活——寫不出會翻色的 fixture，因為它本來就不改變任何輸出。**刪掉，
+            # 不列預期存活**（同 `fold_block` 那兩個運算元的處置：多餘的程式碼沒有網是因為它沒有行為）。
+            if line.startswith("$'", i):
+                j = i + 2
+                while j < n and line[j] != "'":
+                    j += 2 if line[j] == "\\" else 1
+                code.append(" " * (min(j + 1, n) - i)); i = j + 1; prev_sig = "x"; continue
+            # R30 H-3：`${VAR#pattern}` 裡的 `#` 不起註解、`|` 不是管線——整個 `${…}` 是**一個詞的一部分**。
+            # 前一版逐字元掃，於是 `echo ${PR_TITLE#| python3 …neutralise.py }` 一行就放行。
+            # 與 `((` 一樣**整段消費**：找到配對的 `}`（計深度），中間一律不解讀。
+            if line.startswith("${", i):
+                # **只有巢狀的 `${` 會加一層**——單獨的 `{` 不會。bash 實測（5.3）：
+                # `${PR_TITLE#a{b}c}` 在**第一個** `}` 就結束，剩下的 `c}` 是字面文字；
+                # 而 `${PR_TITLE#${X:-a}…}` 的內層 `${` 確實要配對。R31 自查：第一版對每個 `{` 都加一層，
+                # 於是 `echo ${PR_TITLE#a{b}c}| python3 …neutralise.py` 這條**真管線**被整段吃掉＝誤擋。
+                j, depth = i + 2, 1
+                while j < n and depth:
+                    if line.startswith("${", j): depth += 1; j += 2; continue
+                    if line[j] == "}": depth -= 1
+                    j += 1
+                code.append(" " * (j - i)); i = j; prev_sig = "x"; continue
             if ch in ("'", '"'):
                 quote = ch; code.append(ch); i += 1; prev_sig = ch; continue
             if ch == "#" and (prev_sig is None or prev_sig in SHELL_WORD_BREAK):
@@ -347,22 +430,51 @@ def shell_scan(lines):
                     strip_tabs = True; j += 1
                 while line[j:j + 1] in (" ", "\t"):
                     j += 1
-                quoted = False
-                if line[j:j + 1] in ("'", '"'):
-                    q = line[j]; j += 1; st = j
-                    while line[j:j + 1] not in ("", q):
-                        j += 1
-                    delim = line[st:j]; j += 1; quoted = True
-                else:
-                    st = j
-                    while j < n and line[j] not in SHELL_WORD_BREAK:
-                        j += 1
-                    delim = line[st:j]
-                    # R28 D4（requirements F-2(J)）：`<<\\EOF` 的反斜線只是把分隔字引號化——**只在未引號的
-                    # 分隔字裡剝**。前一版對引號分隔字也剝，`<<'E\\OF'` 被當成 `<<'EOF'`，內文一行 `EOF` 就讓
-                    # lint 提早終止。引號分隔字裡的反斜線是字面。
-                    if "\\" in delim:
-                        delim = delim.replace("\\", ""); quoted = True
+                # R30 H-1：**bash 讀的是一個「詞」，然後對整個詞做 quote removal**——引號可以出現在詞的
+                # 任何位置、出現幾次都行。前一版只認「詞的開頭是引號」，引號之後的字元整段丟掉，於是
+                # `<<"EO"F`（delim 該是 `EOF`）被讀成 `EO`、`<<""EOF` 被讀成**空字串**（空的不登記 heredoc，
+                # 整段內文直接變 code）、`<<'EOF'x` 被讀成 `EOF`。四個形狀一個根因：**沒有做 quote removal**。
+                # 這裡照 bash 的性質做：讀到詞界為止，引號內的字元原樣進 delim；
+                # **詞裡出現引號、或出現當成逃脫用的反斜線，整個 heredoc 就是 quoted**（內文不展開）。
+                # 「行尾反斜線」是**例外**：那是續行、不是逃脫，不使 heredoc 變成 quoted——
+                # R30 的註解把這一條寫成全稱（「行尾 `\` 不續行」），bash 5.3 實測證偽：
+                #   `cat <<AB\` ⏎ `CD` 的終止字是 `ABCD`，而且內文**照樣展開**（`$X` → 值）；
+                #   `cat <<"AB\` ⏎ `CD"` 的終止字也是 `ABCD`，內文不展開（因為有引號，不是因為反斜線）；
+                #   `cat <<'AB\` ⏎ `CD'` **不**續行——單引號裡反斜線與換行都是字面，delim 跨兩行、
+                #   bash 直接警告 EOF。三條規則不同，所以下面分三處寫。
+                # R31：前一版這裡完全沒有續行，於是 `<<AB\` 的 delim 被讀成 `AB\` 並且被判成 quoted——
+                # 終止字永遠對不上 → heredoc 吃到檔尾 → 真管線被吞掉＝**誤擋**，方向與 R30 的繞過相反
+                # 但同樣是「lint 與 bash 對同一段文字的詞法不一致」。opsweep 對這兩個 `j + 1 < n`
+                # 各報存活，指的就是這裡沒有網。
+                delim, quoted = "", False
+                while j < n and line[j] not in SHELL_WORD_BREAK:
+                    c = line[j]
+                    if c in ("'", '"'):
+                        quoted = True; q = c; j += 1
+                        while j < n and line[j] != q:
+                            # **雙引號裡的反斜線只在特定後繼字元前才是逃脫**（bash：`$`、`` ` ``、`"`、`\`、換行）。
+                            # 其餘位置它是**字面**：`<<"E\OF"` 的終止字是 `E\OF`，不是 `EOF`（實測 bash 5.3）。
+                            # R31 自查：第一版無條件吃掉反斜線，於是 lint 的 delim 比 bash 短——
+                            # 一行 `EOF` 在 lint 眼中終止 heredoc、在 bash 眼中還是資料，
+                            # 後面的假管線因此變成 code 而放行，真正的 `echo "$PR_TITLE"` 照樣執行＝繞過。
+                            if (q == '"' and line[j] == "\\" and j + 1 == n
+                                    and li + spans < len(lines)):
+                                line = line[:j] + lines[li + spans]   # 續行：`\` 與換行一起消失
+                                n = len(line); spans += 1; continue
+                            if (q == '"' and line[j] == "\\" and j + 1 < n
+                                    and line[j + 1] in ('$', '`', '"', '\\')):
+                                delim += line[j + 1]; j += 2; continue
+                            delim += line[j]; j += 1
+                        if j >= n:                   # 迴圈是因為讀到行尾才停的：收尾引號不存在
+                            unterminated = True
+                        j += 1                       # 收尾引號
+                        continue
+                    if c == "\\" and j + 1 == n and li + spans < len(lines):
+                        line = line[:j] + lines[li + spans]           # 續行：**不**設 quoted（實測會展開）
+                        n = len(line); spans += 1; continue
+                    if c == "\\" and j + 1 < n:
+                        quoted = True; delim += line[j + 1]; j += 2; continue
+                    delim += c; j += 1
                 if delim:
                     pending.append((delim, strip_tabs, quoted))
                 code.append("<<"); i = j; prev_sig = "<"; continue
@@ -378,7 +490,7 @@ def shell_scan(lines):
         if pending:                     # 走到這裡 heredoc 必為 None：內文行在迴圈頂端就被消化掉、不會掃到這
             heredoc = pending.pop(0)
         li += spans
-    return code_lines, decls
+    return code_lines, decls, unterminated
 
 
 REQUIRE_RUN_STEPS = "--require-run-steps" in sys.argv
@@ -416,13 +528,13 @@ for path in [a for a in sys.argv[1:] if a != "--require-run-steps"]:
             rest = (m.group(2) or "")
             norm[i] = " " * (len(m.group(1)) + 2) + rest if rest else ln
 
-    top_key = None
-    # R29 G-R29-8：GitHub **接受並執行**整份縮排 2 格的 workflow（探針 run 34927069456，`Run echo INDENT-ROOT-PROBE`）。
-    # 前一版把「頂層 key」定義成縮排 0，於是縮排根文件裡 `jobs:` 永遠不是 top_key、jobs 子樹的 flow 規則
-    # 整個不觸發（`bypass-indented-root-flow-mapping` 在修前 rc=0）。頂層 = **文件最小縮排的 plain key**。
-    # KEY_RE 自己就排除了註解行（首字元須為字母）與空行；清單項在 norm 裡已換成縮排（必比根深）。
-    # 第一版多寫了三個守衛，R29 opsweep 對三者各報存活——都是依構造多餘的，刪掉。
-    root_indent = min((len(m.group(1)) for i in range(len(raw)) for m in [KEY_RE.match(norm[i])] if m), default=0)
+    # R30 MB-7：`root_indent` 不能對**全檔每一行**取 min——一行與結構無關的文字（跨行雙引號 scalar 的
+    # 續行寫在第 0 欄）就讓整族 flow 規則不觸發，觸發條件與它取代掉的黑名單同形。
+    # 改成由**解析器實際分類成 KEY 的行**決定：那個集合依構造排除了 scalar 續行、註解與清單項。
+    # 因此 flow 規則不能在分類的同一個迴圈裡判（那時 root_indent 還不知道），改成**收集候選、分類完
+    # 之後再判**——這樣「哪一棵子樹」的答案與解析器自己的答案永遠一致。
+    flow_candidates = []          # (行號, 值, key 縮排)
+    key_lines = []                # (行號, key 縮排, key 名)
     kind = [None] * len(raw)
     owner = [None] * len(raw)
     i = 0
@@ -456,29 +568,14 @@ for path in [a for a in sys.argv[1:] if a != "--require-run-steps"]:
             # 所以改成結構判定：本 lint 不解析 flow mapping，**不解析就不放行**。
             # 反向（誤擋）由「不含 mapping 的單行 flow 序列照常放行」守住：`branches: [main]`、
             # `os: [ubuntu-latest, macos-14]` 這些 Actions 最常見的寫法都不含冒號，不受影響。
-            if len(mk.group(1)) == root_indent:
-                top_key = mk.group(2)                      # 最近一個頂層 key，決定我們在哪棵子樹裡
+            key_lines.append((i, len(mk.group(1)), mk.group(2)))
             if val[:1] in ("{", "["):
-                code_val, _ = yaml_split_comment(val)      # 引號內容挖空，避免資料裡的冒號誤判
-                balanced = (code_val.count("{") == code_val.count("}")
-                            and code_val.count("[") == code_val.count("]"))
-                # **只在 `jobs:` 子樹裡 fail-closed**。第一版對整份文件套用，於是
-                # `on: pull_request: { branches: [ main ] }` 這種完全合法、而且**結構上不可能藏
-                # run step** 的寫法被打紅——563 檔語料上當場兩個第三方檔從綠翻紅。
-                # 誤擋與繞過是兩個方向，這條規則只該作用在真的可能藏東西的那棵子樹。
-                # 括號不平衡（看不到整個值）則不分子樹一律拒絕：那時連「它在哪棵樹」都不確定。
-                # **受影響面，量到的（R29；R28 DA D8 要求寫出來）**：野外 1565 檔（1002 份 GitHub 熱門 repo
-                # ＋ 563 份本機語料，清單見 test/corpus/）被本規則擋 58 檔／177 行——121 行是單行
-                # `{ name: …, os: … }`（`matrix.include` 類；npm/cli、llama.cpp 佔大宗），56 行是跨行 flow
-                # 序列的開頭 `[`（同樣是 `include:`）。這是**刻意** fail-closed：單行 flow mapping 可以藏
-                # `run`，本 lint 不解析它就不放行；`bypass-matrix-include-flow-mapping` fixture 釘住這個選擇。
-                # 量法：對清單每檔跑本 lint，數 stderr 含「flow 形式的值含 mapping 或跨行」的行與檔。
-                if (":" in code_val and top_key == "jobs") or not balanced:
-                    reject(i, "flow 形式的值含 mapping 或跨行——本 lint 不解析它，而不解析就不放行："
-                              "`%s`" % val[:40])
-                    kind[i] = "BAD"; i += 1; continue
-            if val.startswith(("&", "*", "<<")):
-                reject(i, "欄位用 anchor／alias／merge key 帶入——本 lint 不解析：`%s`" % val[:30])
+                flow_candidates.append((i, val, len(mk.group(1))))
+            # R30 MB-8：tag（`jobs: !!map {…}`）讓值的第一個字元是 `!`，於是 flow 規則、`steps:` flow
+            # 檢查、anchor／alias 檢查**三條全部跳過**，整個 job 隱形。觸發條件是字元類就會有下一個字元。
+            # 本 lint 不解析 tag —— 不解析就不放行。
+            if val.startswith(("&", "*", "<<", "!")):
+                reject(i, "欄位用 anchor／alias／merge key／tag 帶入——本 lint 不解析：`%s`" % val[:30])
             if mk.group(2) == "steps" and val.startswith(("[", "{")):
                 reject(i, "`steps:` 用 flow 寫法（`[…]`／`{…}`）——本 lint 不解析，請改用 block 清單")
             # 跨行的引號 scalar：值裡的引號沒收掉，續行就是這個 scalar 的內容，**不是註解**。
@@ -541,6 +638,37 @@ for path in [a for a in sys.argv[1:] if a != "--require-run-steps"]:
             reject(i, "本 lint 不解析這一行（不是 plain key、不是清單項、不是 block scalar 內容）：`%s`" % st[:40])
         kind[i] = "BAD"; i += 1
 
+    # ── flow 值的 fail-closed（分類完成之後才判，見上方 `flow_candidates` 的理由）──
+    # 頂層 = **解析器分類成 KEY 的行裡縮排最小的那一層**。GitHub 接受並執行整份縮排的 workflow
+    # （R29 探針 run 34927069456），所以頂層不是「縮排 0」；而取 min 的母體必須是解析器自己認的 key 行，
+    # 不是全檔每一行（R30 MB-7）。
+    root_indent = min((ind for _i, ind, _k in key_lines), default=0)
+    for i, val, kind_ind in flow_candidates:
+        top_key = None
+        for li_, ind_, name_ in key_lines:          # 這一行之前最近的一個頂層 key
+            if li_ > i:
+                break
+            if ind_ == root_indent:
+                top_key = name_
+        code_val, _ = yaml_split_comment(val)       # 引號內容挖空，避免資料裡的冒號誤判
+        balanced = (code_val.count("{") == code_val.count("}")
+                    and code_val.count("[") == code_val.count("]"))
+        # **只在 `jobs:` 子樹裡 fail-closed**。第一版對整份文件套用，於是
+        # `on: pull_request: { branches: [ main ] }` 這種完全合法、而且**結構上不可能藏 run step**
+        # 的寫法被打紅——563 檔語料上當場兩個第三方檔從綠翻紅。誤擋與繞過是兩個方向，這條規則
+        # 只該作用在真的可能藏東西的那棵子樹。括號不平衡（看不到整個值）則不分子樹一律拒絕：
+        # 那時連「它在哪棵樹」都不確定。
+        # **受影響面，量到的（R29；R28 DA D8 要求寫出來）**：野外 1565 檔被本規則擋 58 檔／177 行
+        # ——121 行是單行 `{ name: …, os: … }`（`matrix.include` 類），56 行是跨行 flow 序列的開頭 `[`。
+        # 這是**刻意** fail-closed：單行 flow mapping 可以藏 `run`，本 lint 不解析它就不放行；
+        # `bypass-matrix-include-flow-mapping` fixture 釘住這個選擇。1002 份 GitHub 語料的清單見
+        # `test/corpus/gh-workflow-corpus.txt`，量法：對清單每檔跑本 lint，數 stderr 含
+        # 「flow 形式的值含 mapping 或跨行」的行與檔。
+        if (":" in code_val and top_key == "jobs") or not balanced:
+            reject(i, "flow 形式的值含 mapping 或跨行——本 lint 不解析它，而不解析就不放行："
+                      "`%s`" % val[:40])
+            kind[i] = "BAD"
+
     # ── 守恆不變式：**文字裡的每一個 `run` key，解析器都必須帳上有數** ──
     # R24 DA-1／DA-2。前一版是兩個各自的特例（清單項判準只認 `": "`、flow 值不管），於是
     #   `- 'run':<TAB>echo …`   引號 key 讓 KEY_RE 失配 ∧ tab 讓「rest 含 `": "`」失配 → 整項被當純量丟掉
@@ -562,6 +690,8 @@ for path in [a for a in sys.argv[1:] if a != "--require-run-steps"]:
     # 也就是說在這兩份語料上**本守恆式沒有量到任何誤擋**。這句話的效力止於這兩份語料；
     # 語料清單：`test/corpus/r25-workflow-corpus.txt`（內容 hash ＋ repo 相對路徑）；量測腳本：
     # `test/corpus/threeaxis.py`（R29 進 repo；R27 時它只在 verify 的暫存目錄，這行當時寫的位置是假的）。
+    # 1002 份 GitHub 語料的清單在 `test/corpus/gh-workflow-corpus.txt`（R31 補；R29 寫「清單見 test/corpus/」
+    # 時那 1002 檔只在維護者本機的快取裡——位置陳述為假比沒有陳述更糟，它讓讀者以為自己可以查證）。
     # 要宣稱更多，先跑更大的語料。
     # R26 M1：`[-{,]` 有兩個錯。① 漏了 `[` —— YAML flow 序列允許**無括號的單對 mapping**
     # （`[k: v]` ≡ `[{k: v}]`），於是 `steps: [run: …]` 整個看不見。② `-` 直接放在字元類裡會
@@ -569,12 +699,24 @@ for path in [a for a in sys.argv[1:] if a != "--require-run-steps"]:
     # 兩個輸入）被判成藏起來的 run key —— 我在 R25 引進的真誤擋，第三方語料當場 6 處。
     # 清單項的 dash 後面**必然有空白**，而識別字內的連字號不會，所以用 `-\s+` 加左邊界。
     PLAIN_RUN_KEY = re.compile(r"(?:^\s*|(?<![\w.-])-\s+|[{,\[]\s*)run\s*:")
-    QUOTED_RUN_KEY = re.compile(r"(?:^\s*|(?<![\w.-])-\s+|[{,\[]\s*)(['\"])run\1\s*:")
+    # R30 MB-9（R31 探針 run 34938201988 證實 GitHub **接受並執行**）：
+    # `- "\x72un":<TAB>echo …` —— 引號 key 用 YAML 的 hex 逃脫寫成 `run`，分隔用 tab。
+    # 前一版的 QUOTED_RUN_KEY 要求引號**逐字**包住 `run`，於是逃脫寫法完全看不見；
+    # 而清單項的 mapping 判準只認 `": "`（空白），tab 也看不見——**兩個各自的字面比對同時失手**。
+    # 修法對準性質：引號 key 先用 YAML 的規則**解碼**再比對，比的是「解出來是不是 `run`」。
+    QUOTED_KEY = re.compile(r"(?:^\s*|(?<![\w.-])-\s+|[{,\[]\s*)((['\"]).*?\2)\s*:")
     for i, ln in enumerate(raw):
         if kind[i] in ("COMMENT", "SCALAR"):
             continue                      # 註解與 block scalar 內容不是結構
         hollow, _ = yaml_split_comment(ln)
-        found = len(PLAIN_RUN_KEY.findall(hollow)) + len(QUOTED_RUN_KEY.findall(ln))
+        found = len(PLAIN_RUN_KEY.findall(hollow))
+        for m in QUOTED_KEY.finditer(ln):
+            dec = yaml_decode_scalar(m.group(1))
+            # `None` ＝ 這支未實作的逃脫（`\x72`、`\u0072`…）。**解不出來就當它可能是 `run`**：
+            # 本 lint 的一貫立場是「不解析就不放行」，而這裡正是那個立場的入口——探針證明
+            # GitHub 會把 `"\x72un"` 當成 `run` 執行（run 34938201988）。
+            if dec == "run" or dec is None:
+                found += 1
         accounted = 1 if (kind[i] == "KEY" and KEY_RE.match(norm[i]).group(2) == "run") else 0
         if found > accounted:
             reject(i, "這一行有 %d 個看得出是 `run` 的 key，但解析器只認到 %d 個——"
@@ -660,14 +802,16 @@ for path in [a for a in sys.argv[1:] if a != "--require-run-steps"]:
         # 第一段文字丟進 run_joined，於是 `run: |` + 下一行的 `python3 …neutralise.py` 被接成
         # `| python3 …neutralise.py` ——**憑空造出一條管線**（R22 logic / Codex #1 的那個 fixture
         # 就是這樣過的）。這是 R21 為修折疊管線誤擋而加的合併帶進來的，第二次。
-        explicit_pad = None
+        explicit_pad, block_folded = None, False
         if BLOCK_SCALAR_RE.match(inline):
             # R28 D5（Codex 第 4 條）：`|2` 的數字是**顯式縮排指示子**——內文縮排 = 父節點縮排 + N，
             # 比它深的空白是內容、runner 會保留（PyYAML：`run: |2` 下 12 格的 `EOF` 讀成 `  EOF`）。
             # 這裡算好交給 dedent_block；淺於 N 的內文行是 YAML 錯誤，下面拒絕、不猜。
-            m_ind = re.search(r"[1-9]", inline)
-            if m_ind:
-                explicit_pad = len(KEY_RE.match(norm[r]).group(1)) + int(m_ind.group())
+            block_folded = inline.startswith(">")
+            m_hdr = BLOCK_SCALAR_RE.match(inline)
+            ind = m_hdr.group(1) or m_hdr.group(2)      # 只取標頭本身的指示子，不碰行尾註解
+            if ind:
+                explicit_pad = len(KEY_RE.match(norm[r]).group(1)) + int(ind)
             inline = ""
         elif inline[:1] in ("|", ">"):
             # 標頭以 `|`／`>` 開頭卻不合 BLOCK_SCALAR_RE（`|0`、`|10`）：YAML 錯誤。規則對一個沒被
@@ -723,10 +867,24 @@ for path in [a for a in sys.argv[1:] if a != "--require-run-steps"]:
         # 兩種寫法下行尾的 `|` 本來就代表管線延續，所以把 run 區塊接成一串再比對是語意正確的。
         # 管線判定只看**會被執行的部分**（引號內容已挖空、註解已剝掉）。跨行管線（折疊 scalar，
         # 或行尾留 `|` 續行）仍要接成一串才判得到——但接的是 code 半邊，不再是原始文字。
-        run_code, shell_decls = shell_scan(dedent_block(run_lines, explicit_pad))
+        run_code, shell_decls, run_unparsed = shell_scan(fold_block(dedent_block(run_lines, explicit_pad), block_folded))
+        if run_unparsed:
+            reject(r, "heredoc 分隔字裡的引號在同一行沒有收尾——分隔字會含換行，本 lint 不解析它")
+            continue
         decl_lines += shell_decls + yaml_trailing_cmts
-        run_joined = " ".join(c.strip() for c in run_code)
-        ok = (any(PIPED_RE.search(c) for c in run_code) or PIPED_RE.search(run_joined)
+        # **邏輯行**：只有前一行以 `|`／`||`／`&&` 結尾時才接續下一行——那才是 bash 會把兩行當成同一條
+        # 命令的情形。前一版把整個區塊用空白接成一串再比對（`run_joined`），於是 literal 區塊裡
+        # `echo "$PR_TITLE"` ⏎ `| python3 …neutralise.py` 被接成一條假管線而放行，
+        # 而 bash 對行首的 `|` 報的是**語法錯誤**（R30 H-6：兩條路各自獨立足以放行，
+        # 所以只收緊 `PIPED_RE` 修不好——要改的是「什麼叫一條命令」）。
+        logical = []
+        for c in run_code:
+            cs = c.strip()
+            if logical and CONT_RE.search(logical[-1]):
+                logical[-1] = logical[-1] + " " + cs
+            elif cs:
+                logical.append(cs)
+        ok = (any(PIPED_RE.search(l) for l in logical)
               or any(LOGFILTER_RE.match(l) for l in decl_lines))
         if not ok:
             print("%s:%d: RULE: step '%s' 的 run 區塊既沒有經 neutralise.py，也沒有 `# LOG-FILTER:` 註解說明為何不過濾"

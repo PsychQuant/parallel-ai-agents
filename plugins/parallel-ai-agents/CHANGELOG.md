@@ -618,6 +618,93 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
     （security S-4 / regression F3，改成 lint 認的形式）；mutation 耗時再上修為 30–50 分（logic 實測 29 s × 96 ≈ 47 分）。
   測試 118 → 124 條；靶清單 96 → 98 個（3 個 EXPECTED_SURVIVE；lint 形式的宣稱只留在最新一段）。
   量測（R16 後）：全輪 98 靶 93 殺／2 存活（emit 自己的中和層，補單元測試後單靶轉殺）→ 95／0／3（複合值）。
+- **verify R30（4 lens + DA + Codex 跨模型 leg）— 6 HIGH、14 MEDIUM blocking、4 MEDIUM、7 LOW。
+  件數跳升不是因為改壞了，是因為驗證的武器變了。**
+  先給 credit（DA 自己重跑出來的）：把 R29 交進 repo 的 `oracle.py` 指向 **base 的 lint ＋ head 的 fixture**，
+  一條指令、167 step、**10 個不一致**，逐一對上 R28 的 D1–D7；指向 head 的 lint 則是 **0**。
+  **R28 在機制層點名的每一條都真的關上了，而且「關上了」現在可以用一條指令證明。** 六條 HIGH 在 base 上
+  同樣 rc=0（既有缺陷、非 R29 回歸）；R29 自己引進的只有兩條誤擋（MB-1、MB-12），兩條都 fail-closed。
+  **方法層新增第 14 類「網的投餵」**：判準已經與作者無關（固定運算子、bash 神諭），但**餵給它們的輸入集合
+  仍然是作者挑的**——同一支 `oracle.py` 在作者的 109 個 fixture 上不一致 0，在 DA 與 regression 各自產生的
+  語料上分別報出 10 與 72 條。另**擴寫第 8 類**涵蓋相反方向：凡是「等價／不涵蓋／不可能」，
+  沒有一條會翻色的指令就是未量測的宣稱（本輪兩次為假：`EXPECTED_SURVIVE` 的 `dedent_block` 條目、
+  14 個「依構造等價」改寫之一）。R31 的修法：
+  - **`shell_scan()` 改照 bash 的性質做，不再逐個形狀補**（六條 HIGH 兩族）：heredoc 分隔字**整詞
+    quote removal**（`<<"EO"F`／`<<'EOF'x`／`<<""EOF`／`<<'E'OF` 四個實例一個根因——前一版只認「詞的開頭是
+    引號」，`<<""EOF` 被讀成空字串、整段內文變 code）；`$'…'` 的 `\'` 是逃脫；`${…}` 整段消費（`${VAR#pat}`
+    裡的 `#` 不是註解、`|` 不是管線）；反引號是詞界（bash 在 `` `#… `` 起註解）；**折疊 `>` 先折再掃**
+    （YAML 把相鄰內容行接成一條 shell 行，`#` 之後整條都是註解——前一版逐實體行掃，lint／CI／job
+    三個訊號全綠而 runner 真的洩漏）；**管線的左邊必須有東西**（行首的 `|` 在 bash 是語法錯誤），
+    且「一條命令」改由**邏輯行**定義（只在 `|`／`||`／`&&` 之後接續），不再把整個區塊接成一串。
+  - **YAML 層三條規則的觸發條件從字元類改成結構**：`root_indent` 由**解析器實際分類成 KEY 的行**決定
+    （一行寫在第 0 欄的跨行 scalar 續行就能關掉整族 flow 規則）；flow 規則移到分類完成之後判，
+    順序問題結構性消失；tag（`!!map`）與 anchor／alias 同列 fail-closed；**引號 key 先解碼再比對，
+    解不出來就當它可能是 `run`**——R31 探針證實 GitHub **接受並執行** `- "\x72un":<TAB>echo …`
+    （run 34938201988，log 逐字 `Run echo HEXKEY-TAB-PROBE`），而 PyYAML 拒絕它。
+  - **`explicit_pad` 只從標頭本身取指示子**（MB-1，四條 leg 各自獨立提出）：`BLOCK_SCALAR_RE` 自己允許
+    行尾註解，而前一版對整個標頭搜數字，於是 `run: | # see issue 9` 這種合法又合規的寫法由綠翻紅，
+    訊息還捏造一個不存在的 PyYAML ParserError。**假診斷第三次 → 機械化**：新增
+    `test_parse_messages_claiming_pyyaml_failure_are_true`，走「訊息 → 印得出它的 fixture → PyYAML
+    對那個 fixture 真的丟例外」整條鏈，**每一個**印出該訊息的 fixture 都必須真的被拒絕（用 `any` 會被
+    旁邊一個真的壞掉的 fixture 蓋過去——R29 的假診斷正是這樣活了一輪）。
+  - **`test/corpus/shellgen.py`（本輪最高槓桿）**：按**封閉的構造維度**取笛卡兒積產生 workflow，
+    **不列舉已知形狀**——分隔字引號擺法 12、引號種類 4、`#` 位置 6、block scalar 形式 8、管線位置 3、
+    內文縮排 2，分三組取積共 **468 檔**。神諭對它：**舊 lint 97 個不一致、新 lint 0**。
+    這份語料進 CI（`oracle.py` 跑兩次：作者的 fixture 一次、產生語料一次），並成為 `opsweep` 的
+    **第二道判準**——突變體只要讓任何一個產生檔的判定改變就算被抓到，於是「selftest 沒抓到」與
+    「沒有任何網抓得到」第一次被分開報。
+  - **神諭改用 bash 自己的剖析器判管線**：DEBUG trap ＋ `${#PIPESTATUS[@]}`（長度 ≥2 才是 pipeline）。
+    前一版問 `[ -p /dev/stdin ]`，而 bash 5.x 的 heredoc 也用 pipe → 對 lint 發出**假指控**。
+    宣告改用**差分**（把候選文字從 `#` 切到行尾再跑一次，可觀察結果相同才算註解）——前一版的裸子字串
+    把 heredoc **內文**裡的假宣告當成真宣告，**認證了一個真繞過**。逐 step 歸屬改用**行號**
+    （`name: |` 的名字在 lint 與 PyYAML 眼中不同，名稱比對必然失配）。判定表補第三格
+    **「量不到」**（逾時、或這一次執行沒有把 PR 文字印出去）——**繞過的判準現在是三件事同時成立**：
+    lint 放行 ∧ runner 沒接管線 ∧ PR 文字真的外流。
+  - **`EXPECTED_SURVIVE` 的「依構造等價」現在跑得出來**：`opsweep.py --verify-expected` 對每一條在
+    468 檔產生語料上逐檔比對原碼與突變體；`dedent_block` 那一條**當場被證偽**（引號 heredoc 的分隔字
+    可以是空白），R31 採納突變體的答案（純空白行也剝區塊縮排）並補正向 fixture。
+    `--since` 的區域改用 difflib 的**真正變更行**（前一版函式層比「去空白後的文字」、模組層比文字集合）。
+  - **語料工具 fail-loud**：`threeaxis.py`／`shapes.py` 對解不開的清單一律 rc=2 具名報告——前一版對
+    repo 內**唯一** tracked 的那份清單印出一張合格的 0 表 rc=0（它記的是可攜格式，在任何機器上都解不開）；
+    非 UTF-8 的檔另計一欄。`shapes.py` 的述詞改**對準機制的實際觸發條件**（D5 含行尾註解裡的數字、
+    D7 含 plain 純量、flow key 用 `root_indent`），並補上本輪真正改動的分支各自的形狀。
+  - **1002 檔 GitHub 語料清單進 repo**（`test/corpus/gh-workflow-corpus.txt`，hash ＋ repo 相對路徑）：
+    R29 在註解裡寫「清單見 test/corpus/」而那 1002 檔只活在維護者本機的快取裡——位置陳述為假比沒有
+    陳述更糟，它讓讀者以為自己可以查證。
+  - **CHANGELOG 的第四種宣稱形式**：「N 種（`python3 -c "…"`）」這類「數字 = 資料結構長度」的宣稱
+    現在由 `lint-changelog-counts.sh` 逐字執行並比對（前三種都要求宣稱自己寫出 `grep -c`，所以這一類
+    在結構上碰不到那支 lint——R30 抓到兩個實例）。正反兩個 fixture 各一。
+  - **本輪自己的三個缺陷是新工具抓到的，不是我抓到的**（這是 R30 第 14 類要的那個證據）：
+    (a) 雙引號分隔字裡的反斜線——第一版無條件吃掉，而 bash 只在 `$`／`` ` ``／`"`／`\` 之前才當逃脫
+    （`<<"E\OF"` 的終止字是 `E\OF`，實測 bash 5.3）。lint 的 delim 比 bash 短 ⟹ 一行 `EOF` 在 lint 眼中
+    終止 heredoc、在 bash 眼中還是資料 ⟹ **我自己在這一輪引進了一個真的繞過**，由 opsweep 的存活指出那一行
+    沒有網、再由產生語料的神諭確認。(b) `${…}` 的巢狀——第一版對每個 `{` 都加一層，而 bash 只在 `${` 開新層
+    （`${PR_TITLE#a{b}c}` 在第一個 `}` 就結束），於是 `echo ${PR_TITLE#a{b}c}| python3 …neutralise.py`
+    這條**真管線**被整段吃掉＝誤擋，由神諭在產生語料上報「不一致：誤擋」抓到。(c) **分隔字詞裡的行尾反斜線**——
+    R30 的註解把「行尾 `\` 不續行」寫成**全稱**，而 bash 5.3 實測三條規則各不相同：`cat <<AB\` ⏎ `CD` 的終止字是
+    `ABCD` 且內文**照樣展開**（所以那個反斜線**不**使 heredoc 變成 quoted）、`cat <<"AB\` ⏎ `CD"` 的終止字也是
+    `ABCD`（不展開是因為有引號）、而 `cat <<'AB\` ⏎ `CD'` **不**續行（單引號裡反斜線與換行都是字面，bash 直接
+    警告 EOF）。前一版照那句全稱做，delim 讀成 `AB\` 且被判成 quoted ⟹ 終止字永遠對不上 ⟹ heredoc 吃到檔尾 ⟹
+    真管線被吞掉＝**誤擋**。opsweep 對那兩個 `j + 1 < n` 各報存活，指的就是這裡沒有網。三條各補會翻色的 fixture。
+  - **分隔字裡的引號沒在同一行收尾 → 改成 fail-closed 的 `PARSE:`**（opsweep 的最後一個存活逼出來的）。
+    前一版假裝引號在行尾收掉、算出一個終止字，然後對整個 step 回**綠**；bash 5.3 實測兩種情形都不是綠
+    （引號到檔尾沒收＝語法錯誤；收在下一行＝分隔字含換行、heredoc 永不終止、後面全部當內文）。
+    本 lint 的分隔字是單行字串、表示不了含換行的那個，所以不解析它——且**不再印 `RULE:`**
+    （R24 DA-8(b)：沒被解析出來的區塊沒有適用對象）。**這一條的價值在於它是唯一分得出「不解析」與
+    「解析成別的東西」的形狀**：在它之前，那個運算元的兩版對所有輸入判定都相同，寫得出來的 fixture
+    只能把一個**錯的**綠釘住。四個 fixture 因此從 rule-red 改判 parse-red。
+  - **一個分支因為「沒有網」而被刪掉，不是被豁免**：opsweep 對 `$"…"` 那個 `startswith` 報存活，而寫不出
+    會翻色的 fixture——因為 `$"` 的引號規則與雙引號**完全相同**，`$` 走通用字元路徑、下一格的 `"` 走一般引號
+    分支，結果一模一樣。R30 為它寫了一個分支，它從來沒有行為。**多餘的程式碼沒有網，是因為它沒有行為**；
+    處置是刪掉（同 `fold_block` 折疊條件那兩個運算元），不是寫進 `EXPECTED_SURVIVE`。
+  三軸（base `d278e99`，野外 1565 檔／分母 369）：`GREEN→RED` **0**、`RED→GREEN` 0、`RULE:` 逐行相同
+  （`PARSE:` 有 26 行是訊息文字改了：anchor／alias／merge key **／tag**）。
+  測試 143 → 144 條（`grep -c "    def test_" ../pai-lenses/scripts/test_validate.py`）；
+  靶清單 139 → 155 個（`grep -c "^    (\"" ../pai-lenses/scripts/mutation_check.py`）（9 個 EXPECTED_SURVIVE）；
+  lint fixture 109 → 156 個（61 正向／60 規則紅／35 解析紅；`ls test/fixtures/ci-log-filter-*.yml | wc -l`）；
+  CI run step 22 個（`grep -c "^        run:" ../../.github/workflows/test.yml`）；
+  神諭的判定表現在有 6 格（`python3 -c "print(len(['一致','繞過','誤擋','誤擋（PARSE）','不可比','量不到']))"`）。
+
 - **verify R28（4 lens + DA + Codex 跨模型 leg）— 掃描器五個 rc=0 回歸、兩個誤擋、方法層三條。
   0 HIGH、12 MEDIUM blocking、2 LOW。** 先給 credit：繞過方向在野外分佈上第一次收斂（regression 抓 59 repo／
   1002 檔 GitHub workflow，`GREEN→RED` 0），R27 的 11 個新靶 10 殺 1 預期存活成立。FAIL 來自 D1–D5（`shell_scan()`
@@ -675,12 +762,12 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
     機械對齊（對 HEAD 版實測 FAILED `5 != 4`）；R27 寫「量測腳本 threeaxis.py」而它只在 verify 暫存目錄——現在
     `test -f test/corpus/threeaxis.py`；`EXPECTED_SURVIVE` 檔頭 4 vs 內文 3 → 4；G-R27-9 兩處自揭句裡的被禁字面改寫；
     README「三支 lint」→ 四支＋oracle；`def shell_scan` 前補空行。
-  測試 140 → 143 條（`grep -c "    def test_" ../pai-lenses/scripts/test_validate.py`）；
-  靶清單 125 → 139 個（`grep -c "^    (\"" ../pai-lenses/scripts/mutation_check.py`）（4 個 EXPECTED_SURVIVE）；
+  測試 140 → 143 條（R29 當時的數字；lint 形式的宣稱只留在最新一段）；
+  靶清單 125 → 139 個（4 個 EXPECTED_SURVIVE）（R29 當時的數字）；
   lint fixture 70 → 109 個（42 正向／41 規則紅／26 解析紅；selftest 三個門檻等於實測值，`ls test/fixtures/ci-log-filter-*.yml | wc -l`）；
-  CI run step 21 個（`grep -c "^        run:" ../../.github/workflows/test.yml`）。
+  CI run step 當時 21 個。
   神諭：109 fixture 共 167 個 step，一致 125、不一致 0、不可比 42（PARSE fail-closed 或 PyYAML 拒）。
-  區域 opsweep（修後）：84 個突變體、80 殺（其中 4 個是當掉）、0 非預期存活、4 預期存活（基線 106／30 → 91／11 → 84／4；每輪都是靠改寫或補 fixture 減，不是靠豁免）。全輪 mutation（139 靶）：commit 後於 `git archive` 副本上跑（約兩小時），結果回填 `scripts/test_validate.py` 檔頭、本段不重抄；此刻檔頭的數字仍是 R27 的（125 靶）。見 `scripts/test_validate.py` 檔頭。
+  區域 opsweep（修後）：84 個突變體、80 殺（其中 4 個是當掉）、0 非預期存活、4 預期存活（基線 106／30 → 91／11 → 84／4；每輪都是靠改寫或補 fixture 減，不是靠豁免）。全輪 mutation（139 靶，於 `git archive d278e99` 副本上跑）：**135 殺 / 0 存活 / 4 預期存活 / 0 靶壞**，98.8 分鐘、每靶 42.6 s。見 `scripts/test_validate.py` 檔頭。
 - **verify R26（4 lens + DA + Codex 跨模型 leg）— 繞過方向乾淨、誤擋方向有回歸、新機制沒有網。
   0 HIGH、9 MEDIUM blocking。**
   先給 credit：regression 用 636 檔語料逐檔比對，`RED→GREEN` 零、規則層新增零行，**R25 在繞過方向的宣稱

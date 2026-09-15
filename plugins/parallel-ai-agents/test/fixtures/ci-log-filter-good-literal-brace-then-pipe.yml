@@ -1,0 +1,12 @@
+# R31 自查（神諭抓到的誤擋）：`${PR_TITLE#a{b}c}` 在**第一個** `}` 就結束，`c}` 是字面文字，
+# 後面的 `| python3 …neutralise.py` 是**真的管線**（bash 5.3 實測：stub 被呼叫）。
+# 對每個 `{` 都加一層的版本會把這條真管線整段吃掉 → 誤擋。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: literal braces in the pattern then a real pipeline
+        run: echo ${PR_TITLE#a{b}c}| python3 scripts/neutralise.py

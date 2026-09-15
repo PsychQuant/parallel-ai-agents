@@ -121,21 +121,51 @@ def raw(regex):                     # YAML 層：結構行逐行（不含 block 
     return lambda text, runs: any(r.search(l) for l in structural_lines(text))
 
 
+# **形狀必須對準機制的實際觸發條件，不是它的典型長相**（R30 MB-10）：R29 的 D5 述詞要求數字**緊接**
+# `|`，於是 R30 MB-1 那一族（數字在標頭的行尾註解裡）整批不被計數——而那正是當輪唯一從綠翻紅的機制。
+# 「量測設計得比改動窄」出現在**專門為了修那個病而寫的工具**上。下面每一條旁邊註明它對應的是哪一段
+# 程式碼的條件。
 SHAPES = [
     ("D1  heredoc 終止行帶尾端空白/tab（lint 前一版 rstrip 後相等）",
      sh(lambda run, hd: hd[4] is not None and run.split("\n")[hd[4]] != run.split("\n")[hd[4]].rstrip())),
     ("D2  未引號分隔字含反斜線（`<<E\\OF`）",
      sh(lambda run, hd: "\\" in hd[1] and not hd[2])),
+    # R31：本輪真正改動的是**分隔字的 quote removal**——引號出現在詞的任何位置。
+    # R30 MB-10 點名 D2 量的是「沒改動的那一半」，所以這一條獨立列出。
+    ("D2b 分隔字的引號不在詞首（`<<\"EO\"F`／`<<'EOF'x`／`<<\"\"EOF`）",
+     sh(lambda run, hd: bool(re.search(r"<<-?\s*[^\s;&|()<>]*[\"']", run)) and hd[2] and not str(run).lstrip().startswith("<<"))),
+    # R31：折疊 block scalar（`>`）——換行是空白，`#` 之後整條邏輯行都是註解。
+    ("D-fold `run: >` 折疊 block scalar",
+     raw(r"^\s*(?:- )?run:\s*>")),
+    # R31：行首的 `|`（bash 語法錯誤，不是管線續行）。
+    ("D-leadpipe 內文行首是 `|`",
+     lambda text, runs: any(l.lstrip().startswith("|") for run in runs for l in run.split("\n")[1:])),
     ("D3  未引號 heredoc 內文最後一行以反斜線結尾",
      sh(lambda run, hd: (not hd[2]) and "\\" not in hd[1] and bool(hd[5]) and hd[5][-1].endswith("\\"))),
     ("D4  同一實體行先 `((`/`$((` 再 `<<`",
      lambda text, runs: any(re.search(r"\(\(.*<<", hollow(l)) for run in runs for l in run.split("\n"))),
-    ("D5  `run: |N`／`>N` 顯式縮排指示子",
-     raw(r"^\s*(?:- )?run:\s*[|>][+-]?\d")),
+    ("D4b 任何 `((`／`$((`（算術深度的入口）",
+     lambda text, runs: any("((" in hollow(l) for run in runs for l in run.split("\n"))),
+    ("D-paramexp `${…#…}`（`#` 在參數展開裡）",
+     lambda text, runs: any(re.search(r"\$\{[^}]*#", l) for run in runs for l in run.split("\n"))),
+    ("D-backtick 反引號命令替換",
+     lambda text, runs: any("`" in hollow(l) for run in runs for l in run.split("\n"))),
+    ("D-ansic `$'…'`（ANSI-C 引號）",
+     lambda text, runs: any("$'" in l for run in runs for l in run.split("\n"))),
+    # `BLOCK_SCALAR_RE` 命中 ∧ 標頭裡任何位置有 1-9（**含行尾註解**）——這是 `explicit_pad` 真正的入口。
+    ("D5  block scalar 標頭裡出現 1-9（含行尾註解 —— explicit_pad 的實際觸發條件）",
+     lambda text, runs: any(re.search(r"[1-9]", m.group(1))
+                            for l in structural_lines(text)
+                            for m in [re.match(r"^\s*(?:- )?run:\s*([|>].*)$", l)] if m)),
+    ("D5a `run: |N`／`>N` 真的有縮排指示子",
+     raw(r"^\s*(?:- )?run:\s*[|>](?:[1-9][+-]?|[+-][1-9])")),
+    ("D5b block scalar 標頭帶行尾註解（不論有沒有數字）",
+     raw(r"^\s*(?:- )?run:\s*[|>][+-]?[1-9]?[+-]?\s+#")),
     ("D6  heredoc 開頭行以反斜線續行（`<<EOF \\`）",
      lambda text, runs: any(re.search(r"<<\S*.*\\$", hollow(l)) for run in runs for l in run.split("\n"))),
-    ("D7  引號 run 值後接 YAML 行尾註解",
-     raw(r"""^\s*(?:- )?run:\s*(?:"[^"]*"|'[^']*')\s+#""")),
+    # 這條路徑對 **plain 純量**也成立（`run: echo hi # note`），不得只認引號純量。
+    ("D7  run 值後接 YAML 行尾註解（引號或 plain 純量皆算）",
+     raw(r"""^\s*(?:- )?run:\s*(?:"[^"]*"|'[^']*'|[^|>#][^#]*)\s+#""")),
     ("D8b flow 序列裡有 `\\\"`",
      raw(r"""^\s*[\w-]+:\s*\[.*\\".*\]""")),
     ("D8  jobs 子樹的 flow 值含 `:`（fail-closed 的那一類）",
@@ -160,12 +190,20 @@ def _flow_colon_in_jobs(text):
 
 
 def read_list(p):
-    out = []
+    """讀語料清單；**解不開的路徑一律 fail-loud**（R30 MB-6，與 `threeaxis.py` 同一個理由）。
+    前一版對解不開的清單印出一整欄 0 並 rc=0——那與「這些形狀在語料裡出現 0 次」長得一模一樣。"""
+    out, missing = [], []
     for l in open(p, encoding="utf-8"):
         l = l.strip()
         if l and not l.startswith("#"):
-            parts = l.split(" ", 1)
-            out.append(parts[1].strip() if len(parts) == 2 else parts[0])
+            parts = l.split(None, 1)
+            path = parts[1].strip() if len(parts) == 2 else parts[0]
+            (out if pathlib.Path(path).is_file() else missing).append(path)
+    if missing:
+        print("✗ 語料清單有 %d／%d 個路徑解不開（前三個：%s）——形狀表不會印出來，"
+              "因為一整欄 0 與「這些形狀真的是 0」分不出來。"
+              % (len(missing), len(missing) + len(out), ", ".join(missing[:3])), file=sys.stderr)
+        sys.exit(2)
     return out
 
 
@@ -175,12 +213,14 @@ def main(argv):
     cols = []
     for lst in argv:
         files = read_list(lst)
-        counts = [0] * len(SHAPES); yaml_fail = 0
+        counts = [0] * len(SHAPES); yaml_fail = 0; non_utf8 = 0
         for f in files:
             try:
                 text = pathlib.Path(f).read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                non_utf8 += 1; continue        # 另計一欄，不是 traceback、也不是靜默 0
             except OSError:
-                continue
+                non_utf8 += 1; continue
             try:
                 runs = runs_of(text)
             except yaml.YAMLError:
@@ -191,11 +231,12 @@ def main(argv):
                         counts[k] += 1
                 except Exception:
                     pass
-        cols.append((pathlib.Path(lst).name, len(files), yaml_fail, counts))
+        cols.append((pathlib.Path(lst).name, len(files), yaml_fail, counts, non_utf8))
     w = max(len(n) for n, _p in SHAPES)
-    print("%-*s" % (w, "形狀 \\ 清單（檔數／PyYAML 拒）") + "".join("  %18s" % ("%s(%d/%d)" % (n[:10], t, yf)) for n, t, yf, _ in cols))
+    print("%-*s" % (w, "形狀 \\ 清單（檔數／PyYAML 拒／非 UTF-8）")
+          + "".join("  %20s" % ("%s(%d/%d/%d)" % (n[:10], t, yf, nu)) for n, t, yf, _, nu in cols))
     for k, (name, _p) in enumerate(SHAPES):
-        print("%-*s" % (w, name) + "".join("  %18d" % c[k] for _n, _t, _yf, c in cols))
+        print("%-*s" % (w, name) + "".join("  %20d" % c[k] for _n, _t, _yf, c, _nu in cols))
     return 0
 
 

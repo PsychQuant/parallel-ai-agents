@@ -1,0 +1,11 @@
+# R30 MB-8：tag 讓 flow／steps-flow／anchor 三條檢查全部跳過 —— tag 也要 fail-closed
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    strategy: !!map {matrix: {os: [ubuntu-latest]}}
+    steps:
+      - name: compliant control
+        run: echo hi | python3 scripts/neutralise.py

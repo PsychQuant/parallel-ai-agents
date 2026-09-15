@@ -1,0 +1,13 @@
+# R30 H-4：反引號開啟新的命令上下文，`#` 在它後面起註解
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: leak
+        run: |
+          echo A `#| python3 ../pai-lenses/scripts/neutralise.py x
+          `
+          echo "$PR_TITLE"

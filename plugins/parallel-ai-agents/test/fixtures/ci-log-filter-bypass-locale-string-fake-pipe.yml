@@ -1,0 +1,14 @@
+# R30 H-2（另一半）：`$"…"` 是在地化字串，引號規則同雙引號——內容不是管線。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: locale string hides a fake pipeline
+        run: |
+          echo $"not a pipe | python3 scripts/neutralise.py"
+          echo "$PR_TITLE"
+      - name: compliant control
+        run: echo hi | python3 scripts/neutralise.py

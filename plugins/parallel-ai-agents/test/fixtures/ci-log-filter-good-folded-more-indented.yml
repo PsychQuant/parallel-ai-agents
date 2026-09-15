@@ -1,0 +1,14 @@
+# R31：folded block scalar 的 **more-indented 行前後不折**——它自己是一條 shell 行，
+# 它之後的行也另起一條，所以前面那個 `#` 註解吃不到後面的真管線。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: folded with a more-indented line keeps the later pipeline
+        run: >
+          echo "$PR_TITLE" # note
+            more indented
+          echo more | python3 scripts/neutralise.py

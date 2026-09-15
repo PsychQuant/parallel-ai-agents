@@ -1,0 +1,16 @@
+# R31 opsweep：`line[j] == "\\"` 這個判定沒有網（產生語料的神諭先抓到）。分隔字不做展開——
+# bash 5.3 實測 `cat <<"A$B"` 的終止字就是 `A$B`。把「這一格是不是反斜線」拿掉（或反向）之後，
+# 任何後面跟著 `$`／`` ` ``／`"`／`\` 的字元都會被當成逃脫來源而吃掉 → delim 變形 → 誤擋。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: dollar inside a double-quoted delimiter is literal
+        run: |
+          cat <<"A$B"
+          data
+          A$B
+          echo hi | python3 scripts/neutralise.py

@@ -1,0 +1,15 @@
+# R30 H-5：折疊 scalar 的換行是空白 —— `#` 之後整條**邏輯行**都是註解，包括下一個實體行的管線。
+# 管線刻意不寫在行首（那是另一個機制 H-6 守的），這個 fixture 只釘折疊本身。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: folded comment swallows the next line pipeline
+        run: >
+          echo "$PR_TITLE" # note
+          and more | python3 scripts/neutralise.py
+      - name: compliant control
+        run: echo hi | python3 scripts/neutralise.py
