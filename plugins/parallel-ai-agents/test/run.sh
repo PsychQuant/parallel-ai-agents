@@ -32,6 +32,14 @@ if [ -f ../../.github/workflows/test.yml ]; then bash test/lint-ci-log-filter.sh
 echo "── oracle：lint 判定 vs bash 真的有沒有把 neutralise.py 接在管線後（#33 verify R28 DA／R29）──"
 # selftest 只證「lint 判定 = 作者宣告」，神諭把 runner 拉進來對帳。PyYAML 缺席本機明說略過（CI 會 pip 裝再跑）。
 if python3 -c 'import yaml' 2>/dev/null; then python3 test/oracle.py; else echo "（缺 PyYAML：python3 -m pip install pyyaml；本機略過 oracle，CI 會跑）"; fi
+echo "── 形狀普查：本輪每個新機制在產生語料裡都要有 > 0 檔（#33 verify R32 DA-9 / G-R32-DA-5）──"
+# 散文規則（shapes.py 檔頭 6-7 行）R31 遵守、R32 破壞——一輪就失守，所以改成會紅的閘門。
+if python3 -c 'import yaml' 2>/dev/null; then
+  GEN=$(mktemp -d); python3 test/corpus/shellgen.py --out "$GEN" >/dev/null
+  find "$GEN" -name '*.yml' -print | sort | sed 's/^/x /' > "$GEN/list.txt"   # 不用 ls（SC2012）
+  python3 test/corpus/shapes.py --require-nonzero R3 "$GEN/list.txt" | tail -1
+  rm -rf "$GEN"
+else echo "（缺 PyYAML：本機略過形狀普查，CI 會跑）"; fi
 
 echo "── assert-tap-complete selftest（守門的東西自己要有網——R18 requirements F-7）──"
 bash test/assert-tap-complete.sh --selftest

@@ -1,0 +1,17 @@
+# R33（bash 5.3 實測）：`$(…)` 在分隔字裡會被 bash **重新序列化**——`cat <<EOF$(a;b)` 的 EOF 警告寫
+# 「需要 EOF$(a; b)」（多一個空格）。詞法上抄不出 bash 的序列化，所以本 lint 不解析它：fail-closed 走 PARSE。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: command substitution in the delimiter word is not parsed
+        run: |
+          cat <<EOF$(a;b)
+          plain data
+          EOF$(a; b)
+          echo hi | python3 scripts/neutralise.py
+      - name: compliant control
+        run: echo hi | python3 scripts/neutralise.py

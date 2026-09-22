@@ -91,12 +91,17 @@ CLAIM = re.compile(r'(\d+)\s*(?:個\s*case|條|個)[^（(]*[（(]`grep -c "((?:[
 # 而 repo 自己的 `shapes.py` 算出 26），兩個都是 `--selftest` 與正式執行皆 rc=0 的情況下活著的。
 # 形式：`N 種（`python3 -c "<expr>"`）` —— expr 由 lint 逐字執行，輸出必須等於 N。
 # 與前三種同一個紀律：**命令逐字取自宣稱本身**，lint 只是真的去跑它。
-LEN_CLAIM = re.compile(r'(\d+)\s*(?:種|條|個)[^（(]*[（(]`python3 -c "((?:[^"\\]|\\.)+)"`[）)]')
+# **量詞是封閉列舉，而第一版的列舉少了實際用到的那一個**（#33 verify R32：regression MEDIUM-2／
+# requirements F5／DA-10）。R31 在 CHANGELOG 寫的那一句用的量詞是「格」（「判定表現在有 6 格」），
+# 而它不在 `(種|條|個)` 裡——於是這條**為了守那一句而寫的規則**，對那一句零命中：把 6 改成 99 仍 rc=0，
+# 改成「種」才紅。新閘門空轉一整輪。放寬量詞，並在下面加 vacuity 守衛（`CLAIM` 那條早就有一個）。
+LEN_CLAIM = re.compile(r'(\d+)\s*(?:種|條|個|格|項|處|件|支|張|個數)[^（(]*[（(]`python3 -c "((?:[^"\\]|\\.)+)"`[）)]')
+len_seen = 0
 rc, seen = 0, 0
 for f in sys.argv[1:]:
     for n, line in enumerate(open(f, encoding='utf-8'), 1):
         for m in LEN_CLAIM.finditer(line):
-            seen += 1
+            seen += 1; len_seen += 1
             claimed, expr = int(m.group(1)), m.group(2)
             out = subprocess.run([sys.executable, '-c', expr], capture_output=True, text=True,
                                  cwd=os.path.dirname(os.path.abspath(f)) or '.')
@@ -142,6 +147,13 @@ for f in sys.argv[1:]:
                 rc = 1
 if seen == 0:
     print(f"no case-count claims found in {' '.join(sys.argv[1:])} — the lint would be vacuous", file=sys.stderr)
+    sys.exit(1)
+# **每一種宣稱形式各自要有 vacuity 守衛**（#33 verify R32 DA-10）。前一版只有總數的守衛，
+# 於是 R31 新增的第四種形式在真實 CHANGELOG 上零命中、而總數靠前三種撐著非零 ⇒ rc=0。
+# 「這條規則有沒有真的守到東西」與「這支 lint 有沒有守到東西」是兩個問題。
+if len_seen == 0:
+    print(f"no `N 量詞（python3 -c \"...\"）` claims matched in {' '.join(sys.argv[1:])} — "
+          f"that rule is vacuous (it was added to guard a line it did not match)", file=sys.stderr)
     sys.exit(1)
 sys.exit(rc)
 PY

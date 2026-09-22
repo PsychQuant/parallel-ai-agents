@@ -1,0 +1,15 @@
+# R33 opsweep（`k == i and drop_first` 的 `k == i`）：連續兩個空行，第一個是分隔符、第二個是真的空行
+# （PyYAML：`['a','','','b']` → `'a\n\nb'`）。把兩個都當分隔符的版本會讓空分隔字的 heredoc 永不終止。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: second of two blank lines is a real empty line
+        run: >
+          cat <<'' plain
+          
+          
+          echo hi | python3 scripts/neutralise.py

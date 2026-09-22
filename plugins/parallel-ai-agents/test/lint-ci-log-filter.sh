@@ -65,17 +65,17 @@ if [ "${1:-}" = "--selftest" ]; then
   done
   # R24 regression F9：門檻寫成 `>=` 而實際值更高時，那個差額**沒有網**——刪掉一個 fixture 仍然綠。
   # 三個門檻一律改成**等於實測值**：要加 fixture 就同步改這裡，讓「少了一個」立刻紅。
-  if [ "${n_pass}" -ne 61 ]; then
-    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 61（改動 fixture 請同步改這個數字）" >&2
+  if [ "${n_pass}" -ne 70 ]; then
+    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 70（改動 fixture 請同步改這個數字）" >&2
     fail=1
   fi
-  if [ "${n_rule}" -ne 60 ]; then
-    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 60" >&2
+  if [ "${n_rule}" -ne 67 ]; then
+    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 67" >&2
     fail=1
   fi
   if [ "${fail}" -ne 0 ]; then exit 1; fi
-  if [ "${n_parse}" -ne 35 ]; then
-    echo "lint-ci-log-filter selftest FAILED: parse-red 是 ${n_parse} 個，預期恰好 35（先前這一類完全沒有下限）" >&2
+  if [ "${n_parse}" -ne 36 ]; then
+    echo "lint-ci-log-filter selftest FAILED: parse-red 是 ${n_parse} 個，預期恰好 36（先前這一類完全沒有下限）" >&2
     exit 1
   fi
   echo "lint-ci-log-filter selftest ok: ${n_pass} 正向通過、${n_rule} 條規則紅、${n_parse} 條解析紅（來源逐一比對相符）"
@@ -195,6 +195,15 @@ def yaml_split_comment(line):
 # 於是註解裡的 `| python3 …neutralise.py` 被當成真管線放行。反引號不是 POSIX metacharacter，
 # 但在「下一個字元是不是詞首」這個問題上它的作用與 `(` 相同，所以列進來。
 SHELL_WORD_BREAK = " \t;&|()<>`"
+# **分隔字詞的詞尾判定不能用上面那個集合**（#33 verify R32：logic L-1／DA-3）。
+# `SHELL_WORD_BREAK` 是為了回答「`#` 在不在詞首」而定義的，R30 還刻意為那個問題把反引號加進去；
+# 拿它來切 heredoc 的分隔字詞就錯了——bash 在 `` ` `` 與 `$(`／`)` 上**不**斷詞，那些是詞的一部分。
+# 用 bash 自己的 EOF 警告讀出它要的終止字（實測 bash 5.3）：
+#   `cat <<EOF`x``     → 需要「EOF`x`」      （前一版讀成 `EOF`）
+#   `cat <<EOF$(x)`    → 需要「EOF$(x)」     （前一版讀成 `EOF$`）
+#   `cat <<`x`EOF`     → 需要「`x`EOF」      （前一版 delim 為空 ⇒ 根本不登記 heredoc）
+# 終止字比 bash 短 ⇒ heredoc 提早結束 ⇒ 資料變 code ⇒ 假管線放行＝繞過。
+DELIM_WORD_BREAK = " \t;&|<>"
 
 
 def yaml_decode_scalar(v):
@@ -268,18 +277,59 @@ def fold_block(lines, folded):
     """
     if not folded:
         return list(lines)
-    out, prev_more = [], False
-    for l in lines:
-        more = l[:1] in (" ", "\t")
-        # `out` 為空（第一行）時短路，所以不需要另外一個「這是不是第一行」的守衛——
-        # R31 opsweep 對那兩個運算元各報存活，實測也證明它們依構造多餘，所以刪掉而不是列豁免。
-        if out and out[-1].strip() and l.strip() and not more and not prev_more:
-            out[-1] = out[-1] + " " + l.strip()
-            out.append("")                      # 佔位：行數不變
-        else:
-            out.append(l)
-        prev_more = more
+    # **折疊是遞移的，不是兩兩一組**（R32 DA-2／logic L-0／Codex 第 1 條）。
+    # 前一版折完把佔位的空字串留在 `out[-1]`，下一輪的 `out[-1].strip()` 守衛看到它就把鏈斷掉：
+    #   ['a','b','c','d'] → ['a b','','c d','']，而 PyYAML 給的是 'a b c d'。
+    # 於是 R30 H-1(族B) 的繞過用**三行**內容就復發——runner 把三行看成一行、`#` 註解吃到底、
+    # PR 文字裸印，而 lint 把第三行當成獨立的一行、看到那條管線就放行（實測 rc=0）。
+    # **釘那個缺陷的 fixture 用的是兩行**，正好是兩兩折唯一正確的情形——網守住的是它守得住的那一點。
+    # 修法：用 `acc` 記住「目前正在累積的那一行在 out 裡的位置」，不要從 `out[-1]` 推——
+    # `out[-1]` 在折疊之後必然是佔位空字串，用它當狀態就等於每折一次就重設一次。
+    # 逐段處理：**內容行**照折疊規則接，**空行段**另外判。前瞻是必要的——空行只有在它**兩邊都是
+    # flush 內容行**時才是「分隔符」；下一行若是 more-indented，那個空行就是真的空行（PyYAML 實測）。
+    out, acc, prev_more, i, n = [], None, False, 0, len(lines)
+    while i < n:
+        l = lines[i]
+        # **「空行」是剝掉區塊縮排後的空字串，不是 `strip()` 後為空**（R33 opsweep：`if l:` 那個突變體存活，
+        # 而它才是對的）。PyYAML 對 `['a','   ','b']` 給 `'a\n   \nb'`——只含空白、比縮排深的行是 **more-indented
+        # 的一行**，原樣保留，前後都不折；它也**不是**空分隔字 heredoc 的終止行（bash 要的是空字串）。
+        # 前一版把它當空行 ⇒ 當成分隔符丟掉 ⇒ 空分隔字的 heredoc 被一個 runner 沒有的終止提早收掉 ⇒ 假放行。
+        if l:
+            more = l[:1] in (" ", "\t")
+            # `acc` 非 None ⇒ 它指向一個非空內容行（見下：只在 `l.strip()` 為真時設定、空行段後歸 None），
+            # 所以「`out[acc]` 非 None 且非空」是恆真的——R33 opsweep 對那兩個運算元各報存活，實測依構造多餘，刪掉。
+            if acc is not None and not more and not prev_more:
+                out[acc] = out[acc] + " " + l.strip()
+                out.append(None)                # 佔位：行數不變，但 runner 眼中沒有這一行
+            else:
+                out.append(l); acc = len(out) - 1
+            prev_more = more
+            i += 1
+            continue
+        # ── 空行段 ──
+        j = i
+        while j < n:                            # 同上：空行＝空字串；寫成 break 不留布林運算元（opsweep 報存活）
+            if lines[j]:
+                break
+            j += 1
+        nxt_more = lines[j][:1] in (" ", "\t") if j < n else False   # 條件式，不留死的布林運算元
+        prev_flush_content = acc is not None and not prev_more     # 同上：acc 非 None ⇒ 非空內容行
+        # 段尾的空行被 clip chomping 吃掉（`['a','b','']` 的值是 `'a b\n'`）——全部是佔位。
+        # 否則第一個空行換來那個換行、自己不留下；第二個以後才是真的空行
+        #（`['a','','b']` → `'a\nb'`；`['a','','','b']` → `'a\n\nb'`）。
+        # `j < n` 在這裡是死的：j ≥ n 時下面一律填 None，drop_first 的值不會被讀到（opsweep 報存活，刪掉）
+        drop_first = prev_flush_content and not nxt_more
+        for k in range(i, j):
+            out.append(None if (j >= n or (k == i and drop_first)) else lines[k])
+        acc, prev_more, i = None, False, j
     return out
+
+
+def _next_phys(lines, k):
+    """續行要接的是**下一個實體行**；折疊的佔位（`None`）不是行，跳過它。"""
+    while k < len(lines) and lines[k] is None:
+        k += 1
+    return lines[k] if k < len(lines) else ""
 
 
 def shell_scan(lines):
@@ -303,7 +353,17 @@ def shell_scan(lines):
       * `((`／`))` 整個 token 消費：前一版 `$((` 在兩個位置各命中一次而 `))` 只減一次，深度卡住。
       * `run: |N` 的顯式縮排指示子由呼叫端算成 `explicit_pad` 交給 `dedent_block()`（見該函式）。
       * 續行重掃前還原 `pending` 快照：前一版只還原 quote／prev_sig，同一個 heredoc 被排兩次。
-    **已知不涵蓋（這描述的是一個性質，不是一份封閉列舉）**：本掃描器是**詞法**的，
+    **已知不涵蓋，第二組（這一組是封閉列舉，只有三條，不得依性質相似類推第四條；R32 抓到它們不在檔內）**：
+      1. **stderr**：`PIPED_RE` 只要求管線存在，不要求 `2>&1`／`|&`——PR 文字從 stderr 走就繞過只接 stdout 的
+         管線（security S-2）。repo 自己的 17 條管線全部已帶 `2>&1`／`|&`；規則與它的網（149 個 fixture、
+         `shellgen.NEUT`）留 R34。神諭從 R33 起看得見這條（`ci-log-filter-known-stderr-leak-piped-stdout`）。
+      2. **顆粒度**：一個 run 區塊裡**任一條**邏輯行接了管線，整個區塊就算已過濾（Codex 第 4 條）。
+         `echo "$PR_TITLE"` ⏎ `echo safe | python3 …` 因此放行。這是宣告過的語意，不是漏洞的偽裝；
+         但它從來沒寫在這份清單裡，現在寫了。要關它得改「什麼算已過濾」，那是另一次 change。
+      3. **多行分隔字**：`cat <<"A` ⏎ `B" | python3 …` 在 bash 是引號跨行、heredoc 永不終止但**管線照建**；
+         本 lint 的分隔字是單行字串、表示不了它，一律 `PARSE:`（Codex 第 7 條，誤擋方向；產生語料的
+         `d-delimword-unterm-*` 四檔由神諭歸「不可比（fail-closed）」）。
+    **已知不涵蓋，第一組（這描述的是一個性質，不是一份封閉列舉）**：本掃描器是**詞法**的，
     **不判定可達性**。`false && …`、`if`／`case` 沒走到的分支、`exit 0` 之後的死碼、`eval` 的字串、
     `$(...)` 內的巢狀命令替換——詞法上看得到的管線，執行上不一定跑得到。
     R26 指出前一版把它寫成「五種」的封閉列舉而實際列了六項、且還有第七種（`exit 0` 之後），
@@ -328,6 +388,8 @@ def shell_scan(lines):
     li = 0
     while li < len(lines):
         line = lines[li]
+        if line is None:                        # 折疊的佔位：runner 眼中沒有這一行
+            code_lines.append(""); li += 1; continue
         spans = 1           # 這個**邏輯行**吃掉幾個實體行（續行摺疊）
         if heredoc is not None:
             delim, strip_tabs, quoted = heredoc
@@ -375,7 +437,7 @@ def shell_scan(lines):
                 if li + spans < len(lines):
                     # 摺完之後**從邏輯行開頭重掃**：續行的接縫可能落在一個 token 中間
                     # （`cat <\` ⏎ `<EOF` 的 `<<` 就跨在接縫上），從斷點續掃會看不到它。
-                    line = line[:i] + lines[li + spans]
+                    line = line[:i] + _next_phys(lines, li + spans)
                     n = len(line); spans += 1
                     code, i, arith = [], 0, 0
                     quote, prev_sig = quote0, prev0
@@ -401,10 +463,29 @@ def shell_scan(lines):
                 # `${PR_TITLE#a{b}c}` 在**第一個** `}` 就結束，剩下的 `c}` 是字面文字；
                 # 而 `${PR_TITLE#${X:-a}…}` 的內層 `${` 確實要配對。R31 自查：第一版對每個 `{` 都加一層，
                 # 於是 `echo ${PR_TITLE#a{b}c}| python3 …neutralise.py` 這條**真管線**被整段吃掉＝誤擋。
-                j, depth = i + 2, 1
+                # **只有未引號、未逃脫的 `}` 才結束展開**（#33 verify R32：security S-1／Codex 第 2 條／
+                # DA-1）。bash 5.3 實測（X=abc，三者都印 `[abc]`＝展開一路吃到最後一個 `}`）：
+                #   `${X#a\}b}`   `${X#"}"}`   `${X#'}'}`
+                # 前一版只數 `${` 與 `}`，於是 `echo ${PR_TITLE#a\}| python3 …neutralise.py }` 這一行
+                # 在 lint 眼中「展開在第一個 `}` 結束、後面是一條真管線」而放行，在 bash 眼中整條都是
+                # pattern、`echo "$PR_TITLE"` 照樣裸印＝**繞過**（本機重現：PR 文字印兩次、零管線）。
+                # 這是 R31 自查缺陷 (b) 的**反面**：那一輪修的是「每個 `{` 都加一層」（誤擋方向），
+                # 同一個消費器在逃脫／引號這個方向上仍然沒有網。
+                j, depth, q = i + 2, 1, None
                 while j < n and depth:
+                    c = line[j]
+                    if q:                                    # 引號內：只有收尾引號有意義
+                        if c == "\\" and q == '"':          # 越界由 `while j < n` 收：j += 2 超出只是結束迴圈
+                            j += 2; continue
+                        if c == q:
+                            q = None
+                        j += 1; continue
+                    if c == "\\":                          # 逃脫：連下一格一起吃掉；越界由 `while j < n` 收
+                        j += 2; continue
+                    if c in ("'", '"'):
+                        q = c; j += 1; continue
                     if line.startswith("${", j): depth += 1; j += 2; continue
-                    if line[j] == "}": depth -= 1
+                    if c == "}": depth -= 1
                     j += 1
                 code.append(" " * (j - i)); i = j; prev_sig = "x"; continue
             if ch in ("'", '"'):
@@ -446,10 +527,29 @@ def shell_scan(lines):
                 # 終止字永遠對不上 → heredoc 吃到檔尾 → 真管線被吞掉＝**誤擋**，方向與 R30 的繞過相反
                 # 但同樣是「lint 與 bash 對同一段文字的詞法不一致」。opsweep 對這兩個 `j + 1 < n`
                 # 各報存活，指的就是這裡沒有網。
-                delim, quoted = "", False
-                while j < n and line[j] not in SHELL_WORD_BREAK:
+                # `saw_word`：**有沒有讀到分隔字詞**，與「詞 quote removal 之後是不是空字串」分開。
+                # bash 實測：`cat <<''` 的終止字是**空字串**，一行空行就終止它（警告訊息寫「需要「」」）。
+                # 前一版用 `if delim:` 把兩者混為一談 ⇒ 不登記 heredoc ⇒ 下一行的假管線被當成 code
+                # ＝繞過（R32 Codex 第 3 條靜態預測、DA-5 執行確認）。
+                delim, quoted, saw_word = "", False, False
+                while j < n and line[j] not in DELIM_WORD_BREAK:
                     c = line[j]
+                    # `$(…)` 與 `` `…` `` 在分隔字詞裡是**詞的一部分**，原樣進 delim（bash 不在此展開，
+                    # 也不在此斷詞）。整段消費，中間不解讀。
+                    if line.startswith("$(", j):
+                        # bash 對分隔字裡的 `$(…)` **重新序列化**再當終止字：`cat <<EOF$(a;b)` 的 EOF 警告寫
+                        # 「需要 EOF$(a; b)」（多了一個空格）。詞法上抄不出 bash 的序列化，所以本 lint 不解析它
+                        # ——fail-closed 走 PARSE，與「引號沒收尾」同一條出口（R33，opsweep 對前一版整段消費的
+                        # 十個運算元報存活，而它們守的東西根本追不到 bash）。
+                        unterminated = True; j = n; saw_word = True; break
+                    if c == "`":
+                        # 反引號在分隔字裡**逐字保留**（實測 `cat <<EOF`a;b`` 需要「EOF`a;b`」，不重排）：
+                        # 讀到配對的反引號為止，中間的 `;`／空白都不是詞界。
+                        k = line.find("`", j + 1)
+                        k = n if k < 0 else k + 1
+                        delim += line[j:k]; j = k; saw_word = True; continue
                     if c in ("'", '"'):
+                        saw_word = True
                         quoted = True; q = c; j += 1
                         while j < n and line[j] != q:
                             # **雙引號裡的反斜線只在特定後繼字元前才是逃脫**（bash：`$`、`` ` ``、`"`、`\`、換行）。
@@ -457,11 +557,11 @@ def shell_scan(lines):
                             # R31 自查：第一版無條件吃掉反斜線，於是 lint 的 delim 比 bash 短——
                             # 一行 `EOF` 在 lint 眼中終止 heredoc、在 bash 眼中還是資料，
                             # 後面的假管線因此變成 code 而放行，真正的 `echo "$PR_TITLE"` 照樣執行＝繞過。
-                            if (q == '"' and line[j] == "\\" and j + 1 == n
-                                    and li + spans < len(lines)):
-                                line = line[:j] + lines[li + spans]   # 續行：`\` 與換行一起消失
+                            if q == '"' and line[j] == "\\" and j + 1 == n:   # 越界由 _next_phys 回 "" 處理
+                                line = line[:j] + _next_phys(lines, li + spans)   # 續行：`\` 與換行一起消失
                                 n = len(line); spans += 1; continue
-                            if (q == '"' and line[j] == "\\" and j + 1 < n
+                            # `j + 1 < n` 在這裡是死的：`\` 在行尾的情形已被上面的續行分支接走（opsweep 報存活，刪掉）
+                            if (q == '"' and line[j] == "\\"
                                     and line[j + 1] in ('$', '`', '"', '\\')):
                                 delim += line[j + 1]; j += 2; continue
                             delim += line[j]; j += 1
@@ -469,13 +569,13 @@ def shell_scan(lines):
                             unterminated = True
                         j += 1                       # 收尾引號
                         continue
-                    if c == "\\" and j + 1 == n and li + spans < len(lines):
-                        line = line[:j] + lines[li + spans]           # 續行：**不**設 quoted（實測會展開）
+                    if c == "\\" and j + 1 == n:                          # 越界由 _next_phys 回 "" 處理
+                        line = line[:j] + _next_phys(lines, li + spans)           # 續行：**不**設 quoted（實測會展開）
                         n = len(line); spans += 1; continue
-                    if c == "\\" and j + 1 < n:
+                    if c == "\\":                                     # 行尾的 `\` 已被上面的續行分支接走
                         quoted = True; delim += line[j + 1]; j += 2; continue
-                    delim += c; j += 1
-                if delim:
+                    delim += c; j += 1; saw_word = True
+                if saw_word:
                     pending.append((delim, strip_tabs, quoted))
                 code.append("<<"); i = j; prev_sig = "<"; continue
             code.append(ch); i += 1

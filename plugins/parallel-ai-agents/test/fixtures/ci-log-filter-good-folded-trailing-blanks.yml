@@ -1,0 +1,13 @@
+# R33 opsweep（空行段迴圈與 `nxt_more` 的 `j < n` 守衛）：區塊尾端的空行被 clip chomping 吃掉；守衛拿掉會越界當掉。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: trailing blank lines in a folded scalar
+        run: >
+          echo hi | python3 scripts/neutralise.py
+          
+          

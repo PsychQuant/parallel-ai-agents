@@ -17,7 +17,7 @@ mutation」。**那三句話會讓下一個維護者以為改動 `validate.py` �
 現在用 `scripts/mutation_check.py` 量：跑一次就知道哪些閘門沒有測試網。
 **最近一次完整量測（R29 後，於 `git archive d278e99` 副本上跑）：139 個靶 → 135 殺 / 0 存活 / 0 靶壞**
 （另 4 個 `EXPECTED_SURVIVE`），實測 **98.8 分鐘 / 139 靶 = 每靶 42.6 s**。
-**R31 的 155 靶全輪在 R31 commit 之後另外量，結果再回填這裡；在那之前這一段的數字是 R29 的**
+**R33 的 161 靶全輪在 R31 commit 之後另外量，結果再回填這裡；在那之前這一段的數字是 R29 的**
 （R31 的 14 個新 lint 靶已各自單獨實測：37 個 lint 靶 36 殺 / 1 預期存活），
 實測 **130.3 分鐘 / 125 靶 = 每靶 62.6 s**（比 R25 的每靶 29.4 s 慢一倍：lint 靶跑的是 selftest、
 neutralise 靶跑的是含串流測試的整套，兩者都比純 python 套件重；另一個原因是同機有別的負載）。
@@ -37,7 +37,7 @@ R18 抽樣三個粗靶，三個都藏著細顆粒缺口；R19 拆了三處，R20
 「換回 splitlines()」（LineSanitiser 對每一段獨立判定，過度切段只會過度消毒）、lint 的 `<<<` here-string 分支（關掉後落到 `<<`
 分支而 delim 為空——依構造等價，R27 進來時這裡寫成 3 個，R29 G-R29-7 抓到與檔頭的 4 不一致）。
 **注意這四個是 `mutation_check.py` 的具名靶集合**；`test/opsweep.py`（作者無關的運算子掃描）另有自己的
-`EXPECTED_SURVIVE`（R31：6 條），兩者是不同的集合、不同的判準，不要混著數。R31 起 opsweep 那一組的
+`EXPECTED_SURVIVE`（R33：7 條——R32 DA-2 把 `fold_block` 的四條全部撤掉，理由本身就是那個 bug），兩者是不同的集合、不同的判準，不要混著數。R31 起 opsweep 那一組的
 「依構造等價」由 `--verify-expected` 在 468 檔產生語料上逐檔跑出來，不是散文。規則明寫在 mutation_check.py：每一條
 進來的靶都要能回答「關掉它，哪一行輸出會變」（R14 把「pack_name 讀取的 containment」放進去的理由是假的——
 dirty worktree 到得了那行 print——現在它有測試網）。

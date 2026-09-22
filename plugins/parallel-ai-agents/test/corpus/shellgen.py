@@ -64,6 +64,18 @@ DELIMS = [
     ("bs-mid",     "E\\OF",    "EOF"),
     ("bs-in-sq",   "'E\\OF'",  "E\\OF"),
     ("space",      "' '",      " "),
+    # ── R33 新增（#33 verify R32：Codex 第 3 條／logic L-1／DA-3／DA-5）。終止字**不是推的**，
+    #    是用 bash 自己的 EOF 警告問出來的（`cat <<X` ⏎ `body` → 警告訊息寫「需要「…」」）：
+    #      `<<''`        → 需要「」      （空字串；一行空行就終止——實測 `echo AFTER` 有跑）
+    #      `<<""`        → 需要「」
+    #      `<<EOF`x``    → 需要「EOF`x`」 （反引號**不是**詞界，是詞的一部分）
+    #      `<<EOF$(x)`   → 需要「EOF$(x)」（`$(`／`)` 同上）
+    ("nul-sq",     "''",       ""),
+    ("nul-dq",     '""',       ""),
+    ("backtick",   "EOF`x`",   "EOF`x`"),
+    # `$(…)` 在分隔字裡本 lint fail-closed 走 PARSE（bash 會重新序列化它；見 lint 內的說明）。這一組檔**自己
+    # 宣告** parse-red——與 fixture 的 `# EXPECT:` 同一個機制，神諭因此歸「不可比（fail-closed）」而不是誤擋。
+    ("cmdsubst",   "EOF$(x)",  "EOF$(x)", "parse-red"),
 ]
 # ── 維度 4：block scalar 形式（值 → 標頭字面, 內文相對 key 的縮排）──
 STYLES = [
@@ -97,15 +109,16 @@ def wrap(name, body_lines, style_hdr, key_indent=8):
 
 def group_a():
     """分隔字 × block 形式 × 內文縮排 × 方向。"""
-    for (dn, dlit, dterm), (sn, shdr, _), (inm, extra), direction in itertools.product(
+    for dspec, (sn, shdr, _), (inm, extra), direction in itertools.product(
             DELIMS, STYLES, INDENTS, ("data", "real")):
+        dn, dlit, dterm = dspec[:3]; expect = dspec[3] if len(dspec) > 3 else None
         ind = " " * extra
         if direction == "data":
             body = [ind + "cat <<" + dlit, ind + "x | " + NEUT, ind + dterm, ind + 'echo "$PR_TITLE"']
         else:
             body = [ind + "cat <<" + dlit, ind + "plain data", ind + dterm,
                     ind + 'echo "$PR_TITLE" | ' + NEUT]
-        yield "a-%s-%s-%s-%s" % (dn, sn, inm, direction), body, shdr
+        yield "a-%s-%s-%s-%s" % (dn, sn, inm, direction), body, (shdr, expect)
 
 
 def group_b():
@@ -128,7 +141,9 @@ def group_b():
 
 def group_c():
     """`#` 的六個位置 × block 形式（折疊會把 `#` 之後的東西吃掉——這一組專打那個交互作用）。"""
-    for hn, (sn, shdr, _) in itertools.product(HASHPOS, STYLES[:4]):
+    # **`STYLES[:4]` 是與 docstring 分岔的那一刀**（R32 Codex 第 5 條／requirements F2）：
+    # 文件說 C 組 48 檔，程式只跑 24。分岔的兩邊都是宣稱，改成一致——取完整 STYLES。
+    for hn, (sn, shdr, _) in itertools.product(HASHPOS, STYLES):
         frag = {"line-start": "# " ,
                 "after-space": 'echo "$PR_TITLE" # ',
                 "after-letter": 'echo "$PR_TITLE" a#',
@@ -140,12 +155,68 @@ def group_c():
         yield "c-%s-%s" % (hn, sn), body, shdr
 
 
+# ── D 組的維度（R33 新增；每一條對應 R31／R32 的一個機制，且 `shapes.py` 各有一列）──
+# 維度 7：參數展開的內部構造（5）——決定「展開在哪裡結束」，是 `${…}` 消費器的實際觸發條件
+PARAMEXP_CORES = [
+    ("plain",        "a"),
+    ("literal-brace", "a{b}c"),
+    ("nested",       "${SEP}"),
+    ("escaped-brace", "a\\}b"),
+    ("quoted-brace", '"}"'),
+]
+# 維度 8：分隔字詞的跨行構造（4）——不是 (名, 字面, 終止字) 三元組表示得了的，所以另立
+DELIM_WORDS = [
+    ("cont-unq",  ["cat <<AB\\", "CD"],  "ABCD"),
+    ("cont-dq",   ['cat <<"AB\\', 'CD"'], "ABCD"),
+    ("unterm-dq", ['cat <<"EOF'],         None),
+    ("unterm-sq", ["cat <<'EOF"],         None),
+]
+# 維度 9：YAML 層的四個形狀（tag、`${{ }}` 三種擺法）
+YAML_SHAPES = ["tag-bang", "ghexpr-plain", "ghexpr-brace-in-quote", "ghexpr-folded"]
+
+
+def group_d():
+    """R31／R32 機制的構造維度。
+
+    為什麼要這一組（#33 verify R32 DA-9）：`shapes.py` 對 R31 的每一個機制都報 0 檔——語料**沒有**
+    那些形狀，而 CHANGELOG 仍然拿那份語料當「不一致 0」的證據。**分母裡沒有的形狀，量到的 0 不是證據。**
+    """
+    for (cn, core), place in itertools.product(PARAMEXP_CORES, ("in", "out")):
+        if place == "in":      # 管線文字在展開**裡面** ⇒ 提早結束展開的 lint 會看到假管線
+            body = ['echo "$PR_TITLE"', "echo ${PR_TITLE#%s| %s }" % (core, NEUT)]
+        else:                  # 展開正確收尾後接**真**管線 ⇒ 過度消費的 lint 會把它吞掉
+            body = ["echo ${PR_TITLE#%s}| %s" % (core, NEUT)]
+        yield "d-paramexp-%s-%s" % (cn, place), body, "|"
+
+    for (wn, opener, term), direction in itertools.product(DELIM_WORDS, ("data", "real")):
+        tail = (["x | " + NEUT] + ([term] if term else []) + ['echo "$PR_TITLE"']
+                if direction == "data"
+                else ["plain data"] + ([term] if term else []) + ['echo "$PR_TITLE" | ' + NEUT])
+        yield "d-delimword-%s-%s" % (wn, direction), list(opener) + tail, "|"
+
+    for yn in YAML_SHAPES:
+        if yn == "tag-bang":
+            yield "d-yaml-tag-bang", None, None          # 特例：整份 workflow 自己組
+        elif yn == "ghexpr-plain":
+            yield "d-yaml-ghexpr-plain", ['echo "${{ github.event.pull_request.title }}" | ' + NEUT], "|"
+        elif yn == "ghexpr-brace-in-quote":
+            yield ("d-yaml-ghexpr-brace-in-quote",
+                   ['echo "${{ format(\'{0}\', github.event.pull_request.title) }}" | ' + NEUT], "|")
+        else:
+            yield ("d-yaml-ghexpr-folded",
+                   ['echo "${{ format(\'{0}\', github.event.pull_request.title) }}"', "| " + NEUT], ">")
+
+
+TAG_BANG_DOC = (HEAD + '      - name: tag-bang\n        run: !!str "echo hi | '
+                + NEUT + '"\n')
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     ap.add_argument("--out", metavar="DIR")
     ap.add_argument("--count", action="store_true", help="只印檔數，不寫檔")
     a = ap.parse_args()
-    cases = list(group_a()) + list(group_b()) + list(group_c())
+    cases = list(group_a()) + list(group_b()) + list(group_c()) + list(group_d())
     if a.count:
         print(len(cases)); return 0
     if not a.out:
@@ -153,7 +224,14 @@ def main():
     out = pathlib.Path(a.out); out.mkdir(parents=True, exist_ok=True)
     written, invalid = 0, []
     for name, body, hdr in cases:
-        text = wrap(name, body, hdr)
+        # `body is None` 的那一個是 YAML 層的 tag 形狀：它的 `run:` 值帶 `!!str`，
+        # 不是 block scalar，`wrap()` 表示不了，所以整份 workflow 自己組。
+        expect = None
+        if isinstance(hdr, tuple):
+            hdr, expect = hdr
+        text = TAG_BANG_DOC if body is None else wrap(name, body, hdr)
+        if expect:
+            text = "# EXPECT: %s\n" % expect + text
         try:
             yaml.safe_load(text)
         except yaml.YAMLError as e:

@@ -1,0 +1,19 @@
+# R33 opsweep（`if l.strip():` 的 strip→id 突變體存活，而它是對的）：折疊 scalar 裡只含空白、比縮排深的行
+# 是 more-indented 的一行，PyYAML 原樣保留（`'a\n   \nb'`）；它**不是**空字串，所以不終止 `cat <<''` 的 heredoc。
+# 前一版把它當空行丟掉 ⇒ 在 runner 沒有的地方終止 heredoc ⇒ 後面的管線被當 code 而放行；bash 則整段吞掉。
+# 正確判定：heredoc 永不終止 → 無管線 → 紅。第 4 行是「縮排 + 3 個空白」，不是空行。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: whitespace-only line does not terminate an empty-delimiter heredoc
+        run: >
+          cat <<''
+          plain data
+             
+          echo hi | python3 scripts/neutralise.py
+      - name: compliant control
+        run: echo hi | python3 scripts/neutralise.py

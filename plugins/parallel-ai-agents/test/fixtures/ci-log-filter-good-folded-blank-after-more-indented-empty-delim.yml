@@ -1,0 +1,16 @@
+# R33 opsweep（fold_block `drop_first` 的 `prev_flush_content` 運算元）：空行只有在**前一行是 flush 內容行**時才是
+# 分隔符；前一行是 more-indented 時，空行是真的空行（PyYAML：`['a','  b','','c']` → `'a\n  b\n\nc'`）。
+# 空分隔字的 heredoc 靠那個空行終止；把它當分隔符的版本會把後面的真管線吞掉 → 誤擋。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: blank after a more-indented line stays a line
+        run: >
+          cat <<''
+            more
+          
+          echo hi | python3 scripts/neutralise.py

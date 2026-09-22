@@ -1,0 +1,17 @@
+# R32 security S-1／Codex 第 2 條／DA-1：`${…}` 的結束判定只認**未引號、未逃脫**的 `}`。
+# bash 5.3 實測（X=abc）：`${X#a\}b}`、`${X#"}"}`、`${X#'}'}` 三者都印 `[abc]`＝展開吃到最後一個 `}`。
+# 前一版只數 `${` 與 `}`，於是這一行在 lint 眼中「展開在第一個 `}` 結束、後面是真管線」而放行，
+# 在 bash 眼中整條都是 pattern、`echo "$PR_TITLE"` 照樣裸印＝**繞過**（本機重現：PR 文字印兩次）。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: escaped brace inside a parameter expansion
+        run: |
+          echo "$PR_TITLE"
+          echo ${PR_TITLE#a\}| python3 scripts/neutralise.py }
+      - name: compliant control
+        run: echo hi | python3 scripts/neutralise.py

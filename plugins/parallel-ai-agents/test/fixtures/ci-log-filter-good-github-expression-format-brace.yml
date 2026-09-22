@@ -1,0 +1,13 @@
+# R32 regression HIGH-1：`${{ … }}` 是 GitHub Actions 運算式，`format()` 的 `{0}` 佔位符住在**引號字串裡**。
+# 前一版的 `${…}` 消費器不認引號，第一個 `}` 就把展開提早收掉，落單的 `'` 開了一個永不收的引號，
+# **run 區塊後半整段被挖空**——合規的 `| python3 …neutralise.py` 因此看不見。野外 1565 檔中 11 檔帶此形狀。
+# 這一條與上面那個繞過是**同一個根因**：只有未引號、未逃脫的 `}` 才結束展開。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build
+        run: swift build${{ matrix.traits != '' && format(' --traits {0}', matrix.traits) || '' }} | python3 scripts/neutralise.py

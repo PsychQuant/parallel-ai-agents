@@ -1,5 +1,7 @@
 # R31：folded 的 more-indented 行**之後**那一行也不折——所以 more-indented 的註解行
 # 吃不到下一行的真管線。
+# R33（Codex 第 4 條）：第一行原本是 `echo "$PR_TITLE"`——與這個 fixture 要釘的折疊語意無關，
+# 卻讓它把一個會外流的 workflow 釘成 pass（神諭誠實化後報「有管線，但 PR 文字仍外流」）。改成不外流的第一行。
 # EXPECT: pass
 name: t
 on: pull_request
@@ -9,6 +11,6 @@ jobs:
     steps:
       - name: comment on a more-indented folded line does not eat the next line
         run: >
-          echo "$PR_TITLE"
+          echo hello
             # note
           echo B | python3 scripts/neutralise.py

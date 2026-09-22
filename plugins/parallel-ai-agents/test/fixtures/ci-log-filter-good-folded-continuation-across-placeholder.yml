@@ -1,0 +1,15 @@
+# R33 opsweep（`_next_phys` 兩個運算子）：折疊後的佔位（None）不是一行——行尾反斜線的續行要接的是**下一個實體行**，
+# 中間的佔位要跳過。PyYAML：`true`／`echo hi \`／`  | python3 …` → `'true echo hi \\\n  | python3 …'`；bash 續行後
+# 管線成立。不跳過佔位的版本會把 None 接進字串而當掉；步長錯的版本接到空字串 → 沒有管線 → 紅。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: line continuation must skip the fold placeholder
+        run: >
+          true
+          echo hi \
+            | python3 scripts/neutralise.py

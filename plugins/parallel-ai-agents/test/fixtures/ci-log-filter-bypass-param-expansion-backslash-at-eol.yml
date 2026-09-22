@@ -1,0 +1,17 @@
+# R33 opsweep（`${…}` 內兩處 `j + 1 < n` 邊界守衛）：反斜線是行的最後一個字元時沒有下一格可吃——
+# bash 對未收尾的 `${` 報語法錯誤；本 lint 吃到行尾、無管線 → 紅。守衛拿掉會越界當掉。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: backslash at end of line inside double quotes within an expansion
+        run: |
+          echo ${PR_TITLE#"a\
+      - name: backslash at end of line unquoted within an expansion
+        run: |
+          echo ${PR_TITLE#a\
+      - name: compliant control
+        run: echo hi | python3 scripts/neutralise.py

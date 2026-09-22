@@ -57,21 +57,21 @@ EXPECTED_SURVIVE = {   # id → 理由（依構造等價）。每一條都要能
     # `<<<` 分支關掉後落到 `<<` 分支，分隔字從第三個 `<` 起讀、而 `<` 在 SHELL_WORD_BREAK 裡 → delim 空 →
     # 不排 heredoc。依構造等價；分支保留是把「here-string 不是 heredoc」寫成程式碼（mutation_check 同一條理由）。
     "startswith→F|shell_scan|if line.startswith(\"<<<\", i):|1": "落到 `<<` 分支後 delim 為空，不排 heredoc",
-    # R31：`fold_block` 折疊條件裡與**空白行**有關的三個運算元。三條的共同理由：`dedent_block` 之後
-    # 空白行要嘛變成空字串（`l.strip()` 與 `l` 同時為假／為真的差別不影響結果，因為折進去的是空字串、
-    # 而佔位的空字串讓下一行的 `out[-1].strip()` 為假、鏈自然斷掉），要嘛還有殘餘縮排——那時 `more`／
-    # `prev_more` 已經擋住折疊。兩條路都走不到會改變輸出的地方。
-    # **這三條的等價論證由 `--verify-expected` 在 468 檔產生語料上逐檔跑**，不是散文（R30 擴寫後的第 8 類）。
-    "drop-operand|fold_block|if out and out[-1].strip() and l.strip() and not more and not prev_more:|3": "空白行折進去是空字串，且佔位的空字串讓下一行不再折",
-    "strip→id|fold_block|if out and out[-1].strip() and l.strip() and not more and not prev_more:|1": "`out[-1]` 是空白行時 `more`／`prev_more` 已擋住折疊",
-    "strip→id|fold_block|if out and out[-1].strip() and l.strip() and not more and not prev_more:|2": "`l` 是空白行時同上",
-    # R31：折進去的那一段要不要 `strip()`。折疊條件已經保證 `not more`，也就是 `l` **沒有前導空白**，
-    # 所以兩版只差 `l` 的**行尾**空白；而折疊是把它接到 `out[-1]` 的尾巴，下一次折疊再接在它後面，
-    # 於是那段空白只會變成**詞與詞之間**的空白。下游三個消費者都吃得下：`PIPED_RE`／`CONT_RE` 用
-    # `\\s*`、`shell_scan` 的詞界判定把連續空白當一個詞界、heredoc 的 `probe == delim` 比的是**沒有被
-    # 折走**的整行（被折走的那一行留下空字串佔位）。**誠實邊界**：`--verify-expected` 在 468 檔產生語料上
-    # 逐檔比對過，但那套語料沒有「內容行帶行尾空白」這個維度，所以機械證據弱於上面三條。
-    "strip→id|fold_block|out[-1] = out[-1] + \" \" + l.strip()|1": "折進去的只差行尾空白，折完變成詞間空白，三個消費者都以 `\\s*`／詞界處理",
+    # **R32 DA-2 之後，`fold_block` 在這裡一條都沒有。** R31 列了四條，理由全部建立在「佔位的空字串讓
+    # 下一行不再折」——那句話描述的就是那個缺陷本身（兩兩折而非遞移折）。等價論證的根據是 bug，
+    # 論證就隨 bug 一起作廢，**不得改寫後沿用**。R33 重寫了 `fold_block`（遞移、對 PyYAML 逐行相符），
+    # 它的突變體由 `--since` 掃描重新判讀：殺不掉的先補 fixture，真的依構造等價才回到這裡、且理由要能
+    # 用 `--verify-expected` 在產生語料上跑出來。
+    # R33：折進去的那一段要不要 `strip()`（前一版就有這條，理由不變、行文本變了）。折疊條件保證 `not more`，
+    # 也就是 `l` 沒有前導空白；差別只在**行尾**空白，折完變成詞間空白，下游三個消費者都吃得下（`PIPED_RE`／`CONT_RE`
+    # 用 `\\s*`、詞界判定把連續空白當一個詞界、heredoc 的 `probe == delim` 比的是沒被折走的整行）。
+    # 機械證據：`--verify-expected` 在 642 檔上逐檔相同；誠實邊界同前——語料沒有「內容行帶行尾空白」這個維度。
+    "strip→id|fold_block|out[acc] = out[acc] + \" \" + l.strip()|1": "折進去的只差行尾空白，折完變成詞間空白，三個消費者都以 `\\s*`／詞界處理",
+    # R33：`prev_flush_content` 裡的 `acc is not None`。`acc` 為 None 只有兩種時刻：區塊開頭、或剛結束一個空行段——
+    # 而空行段會把**連續的**空行一次吃完，所以下一次進到空行段時 `acc` 必然已被一個內容行設定。唯一到得了的
+    # 情形是**區塊開頭的前導空行**：拿掉運算元會把它折成佔位，而一個前導空行在 shell 裡什麼都不是（空的
+    # code 行），判定不變。`--verify-expected` 在 642 檔上逐檔相同。
+    "drop-operand|fold_block|prev_flush_content = acc is not None and not prev_more     # 同上：acc 非 None ⇒ 非空內容行|1": "只在區塊開頭的前導空行到得了；前導空行在 shell 裡沒有效果",
     # R31：`run` key 守恆式的計數增量。這個突變體**不關掉機制**，只把計數加得更多——而 `found` 唯一的
     # 消費者是 `found > accounted`，`accounted ∈ {0, 1}`：
     #   accounted = 0 → 原版 found ≥ 1 > 0，突變體 ≥ 2 > 0，兩邊都 reject；
@@ -200,7 +200,11 @@ def sample_corpus(work):
     r = subprocess.run([sys.executable, str(HERE / "corpus" / "shellgen.py"), "--out", str(gen)],
                        capture_output=True, text=True)
     if r.returncode != 0:
-        return []
+        # **fail-loud，不是回空清單**（#33 verify R32：Codex 第 8 條／DA-12）。前一版失敗就 `return []`，
+        # 於是第二道判準整個消失、掃描照常跑完並回綠——「網不見了」與「網什麼都沒抓到」在輸出上
+        # 長得一模一樣。這一支存在的理由就是不要有那種東西。
+        raise SystemExit("✗ 第二道判準無法建立：shellgen.py rc=%d\n%s"
+                         % (r.returncode, (r.stdout + r.stderr)[-1500:]))
     by_dim, out = {}, []
     for f in sorted(gen.glob("*.yml")):
         for token in f.stem.split("-")[1:]:
@@ -208,6 +212,14 @@ def sample_corpus(work):
     for token, files in sorted(by_dim.items()):
         out.extend(files[:2])
     return sorted(set(out))
+
+
+def _tags(stderr):
+    """從 lint 的 stderr 抽出**紅的來源標記序列**（`RULE:`／`PARSE:`），忽略訊息文字與行號。
+
+    只比文字會讓「訊息改寫」也算殺掉（那不是行為差異）；只比 rc 會讓 `RULE:`⇄`PARSE:` 不算
+    （那是行為差異）。抽出標記序列剛好落在兩者之間。"""
+    return tuple(t for line in stderr.split("\n") for t in ("RULE", "PARSE") if (": %s: " % t) in line)
 
 
 def run_mutant(src, py, py_off, m, work, fixtures, sample):
@@ -234,7 +246,10 @@ def run_mutant(src, py, py_off, m, work, fixtures, sample):
         for f in sample:
             a = subprocess.run(["bash", str(LINT), str(f)], cwd=PLUGIN, capture_output=True, text=True)
             b = subprocess.run(["bash", str(p), str(f)], cwd=d, capture_output=True, text=True)
-            if a.returncode != b.returncode:
+            # **比 (rc, 紅的來源標記)，不只比 rc**（#33 verify R32：Codex 第 8 條）。
+            # 本輪特別在意的 `RULE:` ⇄ `PARSE:` 轉換兩邊 rc 都是 1，只比 rc 的網對它完全不靈敏——
+            # 而那正是「fail-closed 改判」這一類修法唯一會動到的東西。
+            if (a.returncode, _tags(a.stderr)) != (b.returncode, _tags(b.stderr)):
                 return "KILLED-BY-CORPUS"
         return "SURVIVED"
     finally:
@@ -339,6 +354,9 @@ def main():
         fixtures = pathlib.Path(work) / "fixtures"
         shutil.copytree(HERE / "fixtures", fixtures)
         sample = sample_corpus(work)
+        if not sample:
+            # 取樣為空 = 沒有第二道判準。前一版只印數字，而 0 印出來與 40 印出來一樣不引人注意。
+            raise SystemExit("✗ 第二道判準的樣本是空的——掃描會退化成只問 selftest，拒絕繼續")
         print("   第二道判準：%d 個產生檔（形狀完整樣本，非作者挑選）" % len(sample), flush=True)
         for m in ms:
             st = run_mutant(src, py, py_off, m, work, fixtures, sample)

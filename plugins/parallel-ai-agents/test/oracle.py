@@ -65,6 +65,21 @@ except ImportError:                       # 依賴缺席不是「沒有不一致
 
 # (fixture 檔名, step 名) → 理由。每一條都要能說出「runner 與 lint 為什麼依設計會不同」；說不出來的就是缺陷。
 KNOWN_DISAGREE = {
+    # **YAML tag 一律 fail-closed，而 `!!str` 的值 bash 照跑** ⇒ 誤擋。這是**刻意保留**的，
+    # 理由與代價都寫在這裡（R33，由 642 檔產生語料的 `R31-5 tag 值` 那一列量出來）：
+    #   · 那道守衛是 R30 MB-8 加的，堵的是 `jobs: !!map {…}` 讓 flow 規則、`steps:` flow 檢查、
+    #     anchor／alias 檢查**三條全部跳過**、整個 job 隱形的洞。
+    #   · 只放行 `!!str` 需要動 YAML 分類路徑本身；那條路徑守著一個真的洞，而 `!!str` 的
+    #     野外出現率是 **0/1565**（`shapes.py` 的 `R31-5` 列，本機語料實測）。
+    #   · 所以本輪**不動它**，改成記在這裡：數字誠實地印成「不一致 1（已知 1）」，
+    #     而不是讓它在「量不到」或某個寬鬆的述詞後面消失。
+    # 這一條若哪天變成「一致」（有人放行了 tag），神諭會 rc=1 要求重判——理由不再成立就要拿掉。
+    # **stderr 沒有規則**（R32 security S-2）**不在這裡逐檔列**：它按類別處理（`run_script` 把 stdout／stderr
+    # 的外流分開記，`pass ∧ piped ∧ 僅 stderr` 的判定自帶「已知類別 S-2」並計入「已知」）。逐檔列會讓
+    # 產生語料上的幾十條各佔一行、沒人讀；類別讓 R34 加上 stderr 規則的那一天，整類一起翻成一致並被逼重判。
+    ("gen-d-yaml-tag-bang.yml", "tag-bang"):
+        "YAML tag 一律 fail-closed（R30 MB-8 堵 `jobs: !!map` 隱形 job）；`!!str` 因此被連帶擋下。"
+        "野外 0/1565，不值得為它動那條守著真洞的路徑。",
 }
 
 # lint 自己的宣告正規式（與 `lint-ci-log-filter.sh` 的 `LOGFILTER_RE` 同形）。這裡只用它判**文字長相**；
@@ -83,10 +98,19 @@ cat >/dev/null 2>&1; exit 0
 '''
 
 # DEBUG trap：`PIPESTATUS` 在**下一個**命令之前才反映剛結束的 pipeline，所以記錄的是「上一個命令」。
-# 腳本尾端補一個 `:` 讓最後一個 pipeline 也會被記到。
+# 最後一個 pipeline 需要「之後還有一個命令」才記得到——那個收尾命令用 **EXIT trap**，不是在腳本
+# 尾端補一行文字。
+#
+# **R32 DA-6：這件事是本輪整份報告的前提，而前一版把它做成了文字。** 前一版在 run 區塊後面接
+# `"\n:\n"`，於是**未終止的 heredoc 會把那個 `:` 一起吞掉**——最後一個 pipeline 因此沒有下一個
+# 命令、PIPESTATUS 沒被讀到、神諭回報「量不到」。而「量不到」不改變 rc，所以 CI 全綠。
+# 實測差別（468 檔產生語料）：文字哨兵 `一致 408、不一致 0、量不到 60`；EXIT trap
+# `一致 413、不一致 55、量不到 0`。**那個被宣傳成「不一致 0」的數字，量到的是儀器答不出來。**
+# EXIT trap 不是腳本正文的一部分，heredoc 的資料區吞不掉它——這是「非文字哨兵」的意思。
 PRELUDE = '''set -T
 __orc_prev=""
 trap '[ ${#PIPESTATUS[@]} -ge 2 ] && case "$__orc_prev" in *neutralise.py*) echo "piped" >> "$ORACLE_MARK";; esac; __orc_prev=$BASH_COMMAND' DEBUG
+trap ':' EXIT
 '''
 
 
@@ -106,7 +130,9 @@ def run_script(run, bash, stub_bin):
         open(mark, "w").close()
         script = os.path.join(d, "s.sh")
         with open(script, "w") as fh:
-            fh.write(PRELUDE); fh.write(run); fh.write("\n:\n")
+            # 收尾命令由 PRELUDE 的 `trap ':' EXIT` 提供——**不要**在這裡再補文字，
+            # 那正是 R32 DA-6 抓到的缺陷（heredoc 會吞掉它）。
+            fh.write(PRELUDE); fh.write(run); fh.write("\n")
         env = {"PATH": stub_bin + ":/usr/bin:/bin", "ORACLE_MARK": mark,
                "PR_TITLE": PR_MARKER, "HOME": d}
         try:
@@ -118,7 +144,10 @@ def run_script(run, bash, stub_bin):
         except subprocess.TimeoutExpired:
             return "timeout", None, False
         got = open(mark).read().split("\n")
-        leaked = PR_MARKER.encode() in (r.stdout + r.stderr)
+        # 分開記 stdout 與 stderr：**stderr-only 的外流是 R32 S-2 那個已知缺口**（`PIPED_RE` 不要求 `2>&1`），
+        # 按**類別**記為已知而不是逐檔列 KNOWN_DISAGREE——否則產生語料上幾十條會把數字淹掉、也沒人會逐條讀。
+        # stdout 有 marker 一律是繞過，不分類別。
+        leaked = (PR_MARKER.encode() in r.stdout, PR_MARKER.encode() in r.stderr)
         obs = (r.returncode, r.stdout, r.stderr, sorted(got))
         if "piped" in got:
             return "piped", obs, leaked
@@ -232,6 +261,7 @@ def main(argv):
     ver = subprocess.run([bash, "-c", 'echo "$BASH_VERSION"'], capture_output=True, text=True).stdout.strip()
     print("bash: %s (%s)  管線判定：DEBUG trap + PIPESTATUS（bash 自己的剖析）" % (bash, ver))
     rows, disagree, stale, unmeasured = [], [], [], []
+    known_cat = []      # 已知**類別**（R32 S-2：stderr-only 外流），按類別不按檔——見 run_script 的註解
     with tempfile.TemporaryDirectory(prefix="oracle-") as d:
         stub_bin = os.path.join(d, "bin"); os.mkdir(stub_bin)
         p = os.path.join(stub_bin, "python3"); open(p, "w").write(STUB); os.chmod(p, 0o755)
@@ -262,25 +292,48 @@ def main(argv):
                 # step 範圍外的 PARSE 是**結構性**的（整檔不可信）→ 所有 step 都不可比；
                 # 範圍內的 PARSE 只影響那一個 step。前一版對整檔一視同仁，於是
                 # `bypass-duplicate-key` 的合規對照 step 被算成「PARSE ∧ piped」＝誤擋（R31 自查）。
-                lint = ("RULE-red" if in_step(red_lines)
-                        else ("PARSE" if (in_step(parse_lines) or struct_parse) else "pass"))
+                # **lint 自己 fail-loud（rc=2：檔案不存在／用法錯誤）不是 pass**（R32 DA-8）。
+                # 前一版只看 stderr 裡的 RULE/PARSE 標記，rc=2 時兩者都沒有 ⇒ 落到 `pass` ⇒ 一個
+                # 刻意的 fail-loud 被神諭讀成「lint 放行」。命名為 ERROR、歸不可比，不進一致也不進不一致。
+                if r.returncode == 2:
+                    lint = "ERROR"
+                else:
+                    lint = ("RULE-red" if in_step(red_lines)
+                            else ("PARSE" if (in_step(parse_lines) or struct_parse) else "pass"))
                 key = (f.name, name)
                 if o == "timeout":
                     verdict = "量不到（逾時 %ds）" % TIMEOUT_S
                     unmeasured.append(key)
+                elif lint == "ERROR":
+                    verdict = "不可比（lint rc=2：fail-loud，不是判定）"
                 elif lint == "PARSE":
                     if o == "piped" and expect != "parse-red":
                         verdict = "不一致：誤擋（PARSE）"
                     else:
                         verdict = "不可比（fail-closed%s）" % ("，檔案自己宣告 parse-red" if expect == "parse-red" else "")
                 elif lint == "pass" and o == "piped":
-                    verdict = "一致"
+                    # **「某處有管線」≠「沒有洩漏」**（R32 Codex 第 4 條／security S-3／requirements F4）。
+                    # 前一版在這一支直接判「一致」，即使 `leaked` 已經是 True——於是 `echo "$PR_TITLE"` 接一條
+                    # 不相干的管線、或 PR 文字從 **stderr** 繞過只接 stdout 的管線，都被認證成一致。
+                    # 判準與另一支相同：洩漏就是繞過，不管旁邊有沒有一條管線。
+                    if leaked[0]:
+                        # o == piped ⇒ 這個區塊裡**真的有**一條接 neutralise 的管線；PR 文字卻從 stdout 出去，
+                        # 只能是**另一條命令**印的——這正是 lint 明寫的限制第 2 條「一條管線＝整個區塊已過濾」
+                        # （Codex 第 4 條）。與詞法繞過不同（那種 bash 不會建管線，o ≠ piped，走下面那一支）。
+                        # 按類別記已知，與 S-2 同理：整類在「什麼算已過濾」改掉的那一天一起翻。
+                        verdict = "不一致：繞過（已知類別 G：一條管線＝整個區塊已過濾——顆粒度，限制第 2 條）"
+                        known_cat.append(key)
+                    elif leaked[1]:
+                        verdict = "不一致：繞過（已知類別 S-2：僅 stderr——`PIPED_RE` 不要求 `2>&1`，規則留 R34）"
+                        known_cat.append(key)
+                    else:
+                        verdict = "一致"
                 elif lint == "pass":
                     decl = (yaml_declaration(text, a, b, bodies)
                             or real_declaration(run, bash, stub_bin, obs))
                     if decl:
                         verdict = "一致"
-                    elif leaked:
+                    elif leaked[0] or leaked[1]:
                         verdict = "不一致：繞過"
                     else:
                         # lint 放行、runner 沒過濾，但這一次執行**沒有把 PR 文字印出去**——
@@ -291,7 +344,9 @@ def main(argv):
                     verdict = "一致"
                 else:
                     verdict = "不一致：誤擋"
-                if verdict.startswith("不一致"):
+                if verdict.startswith("不一致") and key in known_cat:
+                    pass                                   # 已知**類別**（S-2 stderr-only）：印出、計入「已知」、不改 rc
+                elif verdict.startswith("不一致"):
                     if key in KNOWN_DISAGREE:
                         verdict += "（已知：%s）" % KNOWN_DISAGREE[key]
                     else:
@@ -317,7 +372,9 @@ def main(argv):
         print("\n✗ KNOWN_DISAGREE 裡的項目現在一致了（理由不再成立，移除它）：")
         for fn, name in stale: print("  - %s :: %s" % (fn, name))
     if unmeasured:
-        print("\n⚠ 量不到（腳本逾時；不是繞過也不是一致——這一格存在本身就是揭露）：")
+        # R32 requirements F1：前一版這一行的標題斷言「腳本逾時」，而列在下面的大多數是另一個原因
+        # （「這一次執行沒有把 PR 文字印出去」）。標題不得斷言它沒量到的原因——兩個都寫，逐列自帶。
+        print("\n⚠ 量不到（逾時、或這一次執行沒有把 PR 文字印出去——各列自帶原因；不是繞過也不是一致，這一格存在本身就是揭露）：")
         for fn, name in unmeasured: print("  - %s :: %s" % (fn, name))
     return rc
 

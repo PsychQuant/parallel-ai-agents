@@ -172,9 +172,67 @@ SHAPES = [
      lambda text, runs: _flow_colon_in_jobs(text)),
     ("D5' 指示子為 0 或 ≥10（YAML 錯誤）",
      raw(r"^\s*(?:- )?run:\s*[|>][+-]?(?:0|\d\d)")),
+    # ── R31 與 R32 的機制各自一列（#33 verify R32 DA-9）──
+    # **上一輪把機制加進 lint，卻沒有把對應的列加進來**，於是 `shapes.py` 對 R31 的每一個機制都是 0 列，
+    # 而 CHANGELOG 仍然照著寫 `GREEN→RED 0`——這支工具的檔頭第 6-7 行明文禁止那件事，作者在 R29 的
+    # CHANGELOG 段遵守過，一輪之後就破壞了。**一條沒有閘門的散文規則，一輪就失去遵守**，所以本輪
+    # 除了補列，還把 `shapes.py` 接進 CI 與 `run.sh`（見 G-R32-DA-5）。
+    ("R31-1 `${…}` 內含**巢狀** `${`（depth 只在 `${` 加一層的入口）",
+     lambda text, runs: any(re.search(r"\$\{[^{}]*\$\{", l) for run in runs for l in run.split("\n"))),
+    ("R31-2 `${…}` 內含**字面** `{`（不是 `${`——自查缺陷 (b) 的觸發條件）",
+     lambda text, runs: any(re.search(r"\$\{[^{}]*(?<!\$)\{", l) for run in runs for l in run.split("\n"))),
+    ("R31-3 分隔字詞以反斜線結尾（續行；`<<AB\\`）",
+     lambda text, runs: any(re.search(r"<<-?\s*['\"]?[^\s;&|<>()]*\\$", l) for run in runs for l in run.split("\n"))),
+    ("R31-4 分隔字的引號未在同一行收尾（fail-closed `PARSE:` 的入口）",
+     lambda text, runs: any(re.search(r"<<-?\s*(['\"])[^'\"]*$", l) for run in runs for l in run.split("\n"))),
+    ("R31-5 tag 值（`!`——fail-closed 的那一類）",
+     raw(r"^\s*(?:- )?[\w-]+:\s*!")),
+    ("R32-1 run 區塊內出現 `${{ }}`（GitHub Actions 運算式）",
+     lambda text, runs: any("${{" in l for run in runs for l in run.split("\n"))),
+    ("R32-2 `${{ }}` 內有引號字串包著大括號（誤擋的實際觸發條件）",
+     lambda text, runs: any(re.search(r"\$\{\{[^}]*['\"][^'\"]*\{", l) for run in runs for l in run.split("\n"))),
+    ("R32-3 分隔字詞含反引號或 `$(`（bash 在此不斷詞）",
+     lambda text, runs: any(re.search(r"<<-?\s*[^\s;&|<>()]*(?:`|\$\()", l) for run in runs for l in run.split("\n"))),
+    ("R32-4 空分隔字（`<<''`／`<<\"\"`）",
+     # `(?![^\s;&|<>()])` 是必要的：沒有它，`<<""EOF` 也會被算成空分隔字（第一版如此，在產生語料上
+     # 報 32 檔而真正的空分隔字是 0 檔——**一個太鬆的述詞會讓普查報出它其實沒有涵蓋的東西**，
+     # 那正是這支工具存在的理由的反面）。
+     lambda text, runs: any(re.search(r"<<-?\s*(?:''|\"\")(?![^\s;&|<>()])", l) for run in runs for l in run.split("\n"))),
+    ("R32-5 `${…}` 內含逃脫的 `\\}`",
+     lambda text, runs: any(re.search(r"\$\{[^}]*\\\}", l) for run in runs for l in run.split("\n"))),
+    ("R32-6 折疊 block scalar 有 **≥3 行**連續內容（遞移折疊的觸發條件）",
+     lambda text, runs: _folded_run_three_plus(text)),
     ("any heredoc（分母參考）", sh(lambda run, hd: True)),
     ("any `<<-`（分母參考）", sh(lambda run, hd: hd[3])),
 ]
+
+
+def _folded_run_three_plus(text):
+    """`run: >` 底下有沒有**三行以上**連續的內容行（剝掉區塊縮排後不再有前導空白、且非空行）。
+
+    為什麼是 3 不是 2（R32 DA-2）：前一版的 `fold_block` 兩兩折，兩行的情形**恰好正確**，
+    所以「有折疊 block scalar」這個形狀（D-fold）計得到、卻對那個缺陷完全不靈敏。
+    觸發條件是**折疊鏈長度 ≥ 3**，形狀就要照那個條件寫。"""
+    lines = text.split("\n")
+    for i, l in enumerate(lines):
+        m = re.match(r"^(\s*)(?:- )?[\w-]+:\s*>[+-]?\d?[+-]?\s*(?:#.*)?$", l)
+        if not m:
+            continue
+        base = len(m.group(1)) + (2 if l.lstrip().startswith("- ") else 0)
+        body, j = [], i + 1
+        while j < len(lines) and (not lines[j].strip() or len(lines[j]) - len(lines[j].lstrip()) > base):
+            body.append(lines[j]); j += 1
+        if not body:
+            continue
+        pad = min((len(b) - len(b.lstrip()) for b in body if b.strip()), default=0)
+        run_len = 0
+        for b in body:
+            stripped = b[pad:]
+            flush = bool(stripped.strip()) and stripped[:1] not in (" ", "\t")
+            run_len = run_len + 1 if flush else 0
+            if run_len >= 3:
+                return True
+    return False
 
 
 def _flow_colon_in_jobs(text):
@@ -208,6 +266,12 @@ def read_list(p):
 
 
 def main(argv):
+    # `--require-nonzero PREFIX`：以 PREFIX 開頭的每一列在**第一份清單**上都必須 > 0，否則 rc=1。
+    # 這是 G-R32-DA-5 的閘門：「一個沒有普查列（或列是 0）的機制不得出貨」。散文規則一輪就失守
+    # （R31 遵守、R32 破壞），所以改成 CI 會紅的東西。
+    require = None
+    if "--require-nonzero" in argv:
+        k = argv.index("--require-nonzero"); require = argv[k + 1]; argv = argv[:k] + argv[k + 2:]
     if not argv:
         print(__doc__); return 2
     cols = []
@@ -237,6 +301,15 @@ def main(argv):
           + "".join("  %20s" % ("%s(%d/%d/%d)" % (n[:10], t, yf, nu)) for n, t, yf, _, nu in cols))
     for k, (name, _p) in enumerate(SHAPES):
         print("%-*s" % (w, name) + "".join("  %20d" % c[k] for _n, _t, _yf, c, _nu in cols))
+    first_col = [(name, cols[0][3][k]) for k, (name, _p) in enumerate(SHAPES)]
+    if require is not None:
+        zero = [name for name, cnt in first_col if name.startswith(require) and cnt == 0]
+        if zero:
+            print("\n✗ 以下機制在第一份語料上是 0 檔——分母裡沒有這個形狀，它的 GREEN→RED 數字不是證據（G-R32-DA-5）：",
+                  file=sys.stderr)
+            for name in zero: print("  -", name, file=sys.stderr)
+            return 1
+        print("\n✓ %s* 的每一列在第一份語料上都 > 0" % require)
     return 0
 
 

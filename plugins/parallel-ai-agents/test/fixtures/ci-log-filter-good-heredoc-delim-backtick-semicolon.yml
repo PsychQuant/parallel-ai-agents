@@ -1,0 +1,15 @@
+# R33（bash 5.3 實測）：反引號在分隔字裡**逐字保留**——`cat <<EOF`a;b`` 的 EOF 警告寫「需要 EOF`a;b`」，
+# 中間的 `;` 不是詞界。讀到 `;` 就停的版本會讓終止字對不上 → 真管線被吞 → 誤擋。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: semicolon inside backticks in the delimiter word is part of the word
+        run: |
+          cat <<EOF`a;b`
+          plain data
+          EOF`a;b`
+          echo hi | python3 scripts/neutralise.py

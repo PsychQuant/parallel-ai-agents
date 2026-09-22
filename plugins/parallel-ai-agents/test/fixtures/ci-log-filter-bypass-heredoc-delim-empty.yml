@@ -1,0 +1,19 @@
+# R32 Codex 第 3 條（靜態預測）／DA-5（執行確認）：整詞 quote removal 之後 delim 是空字串，
+# 而前一版用 `if delim:` 把「有分隔字詞」與「詞 quote removal 後為空」混為一談 ⇒ 不登記 heredoc ⇒
+# 下一行的假管線被當成 code。bash 5.3 實測：`cat <<''` 的終止字**就是空字串**（警告訊息寫「需要「」」），
+# 一行空行就終止它。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: empty heredoc delimiter
+        run: |
+          cat <<''
+          y | python3 scripts/neutralise.py
+
+          echo "$PR_TITLE"
+      - name: compliant control
+        run: echo hi | python3 scripts/neutralise.py
