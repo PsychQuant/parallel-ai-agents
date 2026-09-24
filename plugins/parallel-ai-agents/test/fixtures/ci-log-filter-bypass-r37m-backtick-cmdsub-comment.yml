@@ -1,0 +1,14 @@
+# #33 verify R37 合併時協調者發現（上面修法的邊界）：反引號裡**又開了 `$(`**，最內層是命令替換，`#` 一路吃到行尾、吞掉 `)`——bash -n 實測是語法錯誤。只有最內層是反引號時註解才止於收尾反引號；這個 fixture 釘住那個條件。380e4a4 判 RULE（仍是擋，但理由不對）。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$PR_TITLE" `echo $(# x`) 2>&1 | python3 scripts/neutralise.py

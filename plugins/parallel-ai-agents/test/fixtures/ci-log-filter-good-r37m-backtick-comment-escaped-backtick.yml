@@ -1,0 +1,14 @@
+# #33 verify R37 合併時協調者發現：同上，註解裡的 `\`` 是逃脫的反引號、不收尾（bash 實測 `echo [a `# x \` y` b]` 印 `[a b]`）。380e4a4 判 RULE、合併後判 PARSE，都是誤擋。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$PR_TITLE" `# a \` b` 2>&1 | python3 scripts/neutralise.py

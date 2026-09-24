@@ -1,0 +1,14 @@
+# #33 verify R37 合併時協調者發現（生成語料 gen-c-backtick-* 由「一致」變 PARSE）：反引號裡的 `#` 註解止於收尾反引號——bash 先照字面找收尾反引號、再把中間當指令剖析（實測 `echo a `# x` b` 印 `a b`）。管線在反引號外，必須放行。380e4a4 把註解吃到行尾、看不到管線而判 RULE；合併後 `bt` 留在 True，判 PARSE。兩者都是誤擋。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$PR_TITLE" `# note` 2>&1 | python3 scripts/neutralise.py

@@ -1,0 +1,14 @@
+# #33 verify R37 合併時協調者發現：反引號裡的 `#` 註解止於收尾反引號，後面的 `"$PR_TITLE"` 是會執行的程式碼（bash 實測輸出 PR_TITLE，沒有過濾）。380e4a4 判 RULE（註解吃到行尾，但 step 沒有 neutralise 管線，照樣擋）；合併後 `bt` 留在 True，判 PARSE——對一段合法的 bash 說「語法錯誤或表示不了」是錯的判定。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo `# x` "$PR_TITLE"

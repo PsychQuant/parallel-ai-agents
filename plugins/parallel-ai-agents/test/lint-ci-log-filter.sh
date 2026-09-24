@@ -76,17 +76,17 @@ if [ "${1:-}" = "--selftest" ]; then
   done
   # R24 regression F9：門檻寫成 `>=` 而實際值更高時，那個差額**沒有網**——刪掉一個 fixture 仍然綠。
   # 三個門檻一律改成**等於實測值**：要加 fixture 就同步改這裡，讓「少了一個」立刻紅。
-  if [ "${n_pass}" -ne 137 ]; then
-    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 137（改動 fixture 請同步改這個數字）" >&2
+  if [ "${n_pass}" -ne 139 ]; then
+    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 139（改動 fixture 請同步改這個數字）" >&2
     fail=1
   fi
-  if [ "${n_rule}" -ne 175 ]; then
-    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 175" >&2
+  if [ "${n_rule}" -ne 177 ]; then
+    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 177" >&2
     fail=1
   fi
   if [ "${fail}" -ne 0 ]; then exit 1; fi
-  if [ "${n_parse}" -ne 110 ]; then
-    echo "lint-ci-log-filter selftest FAILED: parse-red 是 ${n_parse} 個，預期恰好 110（先前這一類完全沒有下限）" >&2
+  if [ "${n_parse}" -ne 111 ]; then
+    echo "lint-ci-log-filter selftest FAILED: parse-red 是 ${n_parse} 個，預期恰好 111（先前這一類完全沒有下限）" >&2
     exit 1
   fi
   echo "lint-ci-log-filter selftest ok: ${n_pass} 正向通過、${n_rule} 條規則紅、${n_parse} 條解析紅（來源逐一比對相符）"
@@ -851,6 +851,9 @@ def shell_scan(lines):
     # 前一版的算術深度每一行歸零，於是跨行的 `$((1` ⏎ `<<2 ))` 第二行的左移被當成 heredoc。
     arith = arith_par = brk = csub = cpar = 0
     cond = bt = False
+    # `bt_at`：反引號開啟那一刻、**反引號以外**所有巢狀狀態的淨值（`nest()`）。註解分支拿它判斷最內層是不是反引號
+    # （#33 verify R37 合併時協調者發現，見註解分支）。
+    bt_at = None
     # `dq_ret`：從雙引號進入、同一行收不掉的命令替換（堆疊）。元素是進入後的 `csub + cpar`（`$(…)`：括號總深度
     # 跌破它＝這個命令替換收尾）或 0（反引號：`bt` 回到 False＝收尾）；收尾時回到雙引號（R37，R36 第 6 列）。
     dq_ret = []
@@ -869,6 +872,11 @@ def shell_scan(lines):
     body_continued = False  # 未引號 heredoc 內文的前一行以奇數個反斜線結尾（R28 D3）
     pending = []            # 這一行結束後依序要讀的 heredoc（FIFO）
     prev_sig = None         # 前一個「有意義」字元（跨行保留，供 `#` 詞首判定）
+
+    def nest():
+        # 反引號以外的巢狀狀態（淨值）。反引號開啟時記在 `bt_at`，註解時比對：相同＝反引號開啟之後沒有淨開任何構造。
+        return (arith, arith_par, brk, csub, cpar, cond, bare_par, len(cases), len(dq_ret))
+
     li = 0
     while li < len(lines):
         line = lines[li]
@@ -904,7 +912,7 @@ def shell_scan(lines):
         # 不看這個旗標（那些分支在到得了 `[[`／`((` 判定之前就 `continue` 掉了）。
         cmd_pos = True
         quote0, prev0 = quote, prev_sig      # 邏輯行起點的狀態：摺疊後要從頭重掃
-        lex0 = (arith, arith_par, brk, csub, cpar, cond, bt, tuple(dq_ret), tuple(map(tuple, cases)))
+        lex0 = (arith, arith_par, brk, csub, cpar, cond, bt, tuple(dq_ret), tuple(map(tuple, cases)), bt_at)
         bare_par0 = bare_par                 # 裸括號深度也要快照——續行重掃前這一行已經記的深度要還原
         pending0 = list(pending)             # R28 D6（Codex #2）：快照漏了 pending，重掃會把同一個 heredoc 排兩次
         while i < n:
@@ -953,7 +961,7 @@ def shell_scan(lines):
                         unparsed = "反引號裡的雙引號又開了一個跨行的反引號——巢狀反引號本 lint 不解析"
                         break
                     if ch == "`":
-                        bt = True; dq_ret.append(0)
+                        bt = True; dq_ret.append(0); bt_at = nest()
                     else:
                         csub += 1; dq_ret.append(csub + cpar)
                     w = 1 if ch == "`" else 2
@@ -983,6 +991,7 @@ def shell_scan(lines):
                     quote, prev_sig = quote0, prev0
                     arith, arith_par, brk, csub, cpar, cond, bt = lex0[:7]
                     dq_ret, cases = list(lex0[7]), [list(c) for c in lex0[8]]
+                    bt_at = lex0[9]
                     bare_par = bare_par0
                     cmd_pos = True           # 邏輯行起點永遠是命令位置，重掃回到起點也一樣
                     pending = list(pending0)
@@ -1121,12 +1130,24 @@ def shell_scan(lines):
             elif ch == "`":
                 cmd_pos = not bt    # 開啟（bt False→True）：裡面第一個詞是新命令；關閉：回到外層的引數位置
                 bt = not bt
+                if bt:
+                    bt_at = nest()
             if dq_ret and ((ch == "`" and not bt) if dq_ret[-1] == 0 else (ch == ")" and csub + cpar < dq_ret[-1])):
                 # 從雙引號進來的命令替換在這裡收尾（見雙引號分支）：回到雙引號。
                 dq_ret.pop(); quote = '"'
                 cmd_pos = False          # 回到雙引號＝回到同一個詞的中間，不是命令位置（合併 r37c×r37d）
                 code.append(ch); i += 1; prev_sig = ch; continue
             if ch == "#" and (prev_sig is None or prev_sig in SHELL_WORD_BREAK):
+                # **反引號裡的註解止於收尾反引號**（#33 verify R37 合併時協調者發現）：bash 先照字面找收尾反引號
+                # （反斜線逃脫下一個字元）、再把中間當指令剖析，所以 `echo a `# x` b` 印 `a b`。前一版一律吃到行尾：
+                # 收尾反引號之後的程式碼跟著消失、`bt` 留在 True——d 包的區塊結尾檢查因此把合法的 bash 判 PARSE
+                # （生成語料 gen-c-backtick-* 八個檔）。只在**最內層就是反引號**時成立：反引號裡又開了 `$(`／`(`，
+                # 註解吞掉的是那一層的收尾（bash 報語法錯誤），照舊吃到行尾、由區塊結尾的檢查 fail-closed。
+                # 同一行沒有收尾反引號＝跨行的反引號，註解止於行尾，也照舊。
+                if bt and nest() == bt_at:
+                    e = _backtick_end(line, i)
+                    if e is not None:
+                        decls.append(line[i:e - 1]); code.append(" " * (e - 1 - i)); i = e - 1; prev_sig = " "; continue
                 decls.append(line[i:]); break
             # R28 D1（logic／requirements／Codex 第 3 條）：前一版 `$((` 在 `$` 處與第一個 `(` 處各命中一次、
             # `))` 只減一次，每個 `$(( … ))` 之後 arith 卡在 1，同一行後面的真 heredoc 過不了守衛。

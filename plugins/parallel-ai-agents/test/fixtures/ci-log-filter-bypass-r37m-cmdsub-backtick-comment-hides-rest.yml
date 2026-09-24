@@ -1,0 +1,14 @@
+# #33 verify R37 合併時協調者發現：同上，反引號在 `$(…)` 裡——最內層仍是反引號，註解止於收尾反引號，`)` 收掉命令替換，後面的 `"$PR_TITLE"` 是會執行的程式碼。380e4a4 判 RULE、合併後判 PARSE。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo $(echo `# x`) "$PR_TITLE"
