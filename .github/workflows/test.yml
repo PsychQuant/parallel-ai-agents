@@ -23,10 +23,16 @@ jobs:
 
       # ── step log 的 PR 可控文字怎麼處理，由 test/lint-ci-log-filter.sh --strict 對**每一個** run step 機械檢查（#33 verify R15）：
       #    經 ../pai-lenses/scripts/neutralise.py（validate.py LineSanitiser 那一份實作），或 `# LOG-FILTER:` 明示不過濾與理由。
-      #    --strict 另外要求：接 neutralise 的管線帶 `2>&1`／`|&`、有管線的 step 跑在 pipefail 之下；且 shell 只能是 bash、
-      #    靠管線過濾的 step 不得轉向 stderr 或開 xtrace（#33 verify R34 → R35）。
-      #    **已知例外（顆粒度）**：一個 run 區塊裡任一條邏輯行接了管線，整個區塊就算已過濾——同一區塊裡另一條命令
+      #    --strict 另外要求（#33 verify R34 → R37）：接 neutralise 的每一條管線、每一段都把 stderr 併進管線（`2>&1`、`|&`，
+      #    或整段包成 `{ …; } 2>&1 |`）；有管線的 step 跑在 pipefail 之下（只有關鍵字 `bash`、或樣板自帶 `-o pipefail`，
+      #    或 run 裡頂層的 `set -o pipefail`）；shell 只能是 bash。兩種模式都要求：靠管線過濾的 step 不得把輸出帶離管線
+      #    （fd 複製到 2 或另存的 fd、寫到 /dev 或 /proc、開 xtrace／verbose），env 也不得帶 SHELLOPTS／BASHOPTS／BASH_ENV／
+      #    ENV／BASH_XTRACEFD。
+      #    **已知例外一（顆粒度）**：一個 run 區塊裡任一條邏輯行接了管線，整個區塊就算已過濾——同一區塊裡另一條命令
       #    印出的 PR 文字不經過濾（lint 是詞法的，不判哪一行印了什麼）。追蹤：#59。
+      #    **已知例外二（S-2 的殘留）**：逐段 `2>&1` 只涵蓋命令執行時寫出的 stderr；在該段 `2>&1` 生效之前寫出的——展開期
+      #    錯誤（`${!X}`、`$(( X ))`）、寫在 `2>&1` 左邊的重導向本身出錯——兩種模式都看不到。群組寫法 `{ …; } 2>&1 |`
+      #    涵蓋它。追蹤：#S2ISSUE。
       #    R14 把這件事寫成散文列舉，R15 四個 lens 各自找到列舉外的 step（shellcheck、lint-*、整個 macOS job）。
       #    過濾器擋的是 `::`/`##[` 偽造 annotation 與跨 step 的 `::add-mask::`；真正的邊界是 `on: pull_request`
       #    （非 pull_request_target）+ `contents: read` + 零 secrets——每個 job 本來就執行 PR 自己的程式碼。
