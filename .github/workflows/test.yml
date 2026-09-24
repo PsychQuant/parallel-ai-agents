@@ -32,7 +32,7 @@ jobs:
       #    印出的 PR 文字不經過濾（lint 是詞法的，不判哪一行印了什麼）。追蹤：#59。
       #    **已知例外二（S-2 的殘留）**：逐段 `2>&1` 只涵蓋命令執行時寫出的 stderr；在該段 `2>&1` 生效之前寫出的——展開期
       #    錯誤（`${!X}`、`$(( X ))`）、寫在 `2>&1` 左邊的重導向本身出錯——兩種模式都看不到。群組寫法 `{ …; } 2>&1 |`
-      #    涵蓋它。追蹤：#S2ISSUE。
+      #    涵蓋它。追蹤：#60。
       #    R14 把這件事寫成散文列舉，R15 四個 lens 各自找到列舉外的 step（shellcheck、lint-*、整個 macOS job）。
       #    過濾器擋的是 `::`/`##[` 偽造 annotation 與跨 step 的 `::add-mask::`；真正的邊界是 `on: pull_request`
       #    （非 pull_request_target）+ `contents: read` + 零 secrets——每個 job 本來就執行 PR 自己的程式碼。
