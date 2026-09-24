@@ -51,6 +51,7 @@
 import argparse
 import itertools
 import pathlib
+import re
 import sys
 
 try:
@@ -297,11 +298,203 @@ TAG_BANG_DOC = (HEAD + '      - name: tag-bang\n        run: !!str "echo hi | '
                 + NEUT + '"\n')
 
 
+# ══ `--strict` 組（R37，#33 verify R36 放行條件第 6 條 / master 第 19 列）══════════════════════════════
+# 為什麼：R36 第 19 列點名——CI 對真 workflow 用的 `--strict` 沒有任何作者無關的網。這一支沒有 `LINT-ARGS`、
+# `shell:`、`defaults:`、`env:` 維度，624 檔全是預設模式。這一組補上這四個維度，每個檔頭帶 `# LINT-ARGS: --strict`
+# 讓 `oracle.py` 用 strict 模式對帳（機制見 oracle.py R35 段：`# LINT-ARGS:` 已經是既有機制，這裡只是餵它）。
+#
+# 六個封閉列舉的維度（**只有這六個，不得在別處「順便」擴充**——改動這份清單是另一次 change）：
+#   1. shell 值（SHELL_TEMPLATES，18）：`--strict` 只接受字面 `bash`（含引號）；樣板（`bash -e {0}`…）與非 bash
+#      shell（`sh`／`pwsh`／`python {0}`）過去被 pipefail／shell 值兩條規則的字面清單漏掉（R36 第 4 列）。
+#   2. env 鍵（ENV_KEYS）：**只有 `SHELLOPTS`**，值 `xtrace`／`verbose`，三層（workflow／job／step）各一檔。
+#      lint 的 `ENV_TRACE_KEYS` 封閉列舉其實有五個（另加 `BASHOPTS`／`BASH_ENV`／`ENV`／`BASH_XTRACEFD`），但
+#      **這裡刻意只放 `SHELLOPTS`**：本機 bash 5.3 實測（`/opt/homebrew/bin/bash`）——`BASHOPTS=xtrace` 不是合法
+#      shopt 名稱、沒有任何可觀察效果；`BASH_XTRACEFD=1` 單獨存在（沒有真的開 xtrace）也沒有可觀察效果；
+#      `BASH_ENV`／`ENV` 指向的檔案在神諭的臨時 HOME 裡必然不存在（`oracle.py` 自己的檔頭盲區）。放這四個鍵會讓
+#      神諭判「RULE-red ∧ piped ∧ 無外流」＝**不一致：誤擋**——那是神諭沙箱的真實盲區，不是 lint 的缺陷，不該
+#      灌進「不一致」欄位假裝是證據。`SHELLOPTS=xtrace／verbose` 是唯一在這個沙箱裡有真實、可觀察效果的鍵。
+#   3. fd 轉向拼法（FD_SPELLINGS，6）：`>&2`／`>&02`／`>&"2"`／`>/dev/stderr`／`>"/dev/stderr"`／`>/dev/fd/2`。
+#      **不含 `/proc/self/fd/2`**：`oracle.py` 檔頭明寫這是它自己的盲區（macOS 沒有 `/proc`），本機實測
+#      `bash: /proc/self/fd/2: No such file or directory`——生成這個會製造假的「量不到」／「誤擋」雜訊，
+#      不是真的證據，交給 Linux runner 上的 CI 驗。
+#   4. xtrace 拼法（XTRACE_SPELLINGS，5）：`set -x`／`set -o xtrace`／`set -eo xtrace`／`shopt -s -o xtrace`／
+#      `shopt -so xtrace`——全部本機 bash 5.3 實測過（直接呼叫 `oracle.run_script()`，不是憑記憶）會把
+#      **展開後**的命令印到 stderr（`+ cat ORACLE-PR-TITLE-MARKER`），在該命令自己的 `2>&1` 生效之前發生，
+#      除非整段被收進「群組收尾 `2>&1 |`」（維度 6）。
+#      **不含 `set -v`／`set -o verbose`**：這兩個印的是**原始碼行**（未展開），而 `$PR_TITLE` 在 run 區塊的
+#      原始文字裡永遠是變數參照、不是字面值——`set -v` 的迴響裡只會看到 `cat "$PR_TITLE" 2>&1 | …`，
+#      不會看到展開後的 marker。本機直接呼叫 `oracle.run_script()` 對這個構造實測 `leaked == (False, False)`，
+#      與先前只用**字面字串**（非變數）做的土法測試矛盾——那次測試量到的是「verbose 會迴響」，不是「verbose 會
+#      迴響出變數的值」，兩者是不同的宣稱。加進 verbose 只會製造「RULE-red ∧ piped ∧ 無外流」的假『誤擋』，
+#      這正是既有 fixture `ci-log-filter-bypass-r37b-xtrace-verbose-set-o.yml` 刻意選一個非字面 `bash` 樣板
+#      （讓神諭判不可比、只驗 lint 規則本身）的原因；這裡改用更精確的理由記下同一個結論。
+#   5. 多段管線（SEGMENT_COUNTS × GAP，見 `_pipeline_line`）：2、3 段的管線，缺 `2>&1` 的那一段固定放
+#      `cat "$PR_TITLE"`（它讀不到那個檔名會把 PR 文字印到 stderr）、其餘段落用不碰 `$PR_TITLE`、恆定
+#      無害的 `grep -v zzz`——只有「缺 2>&1 的那一段」才可能外流，其餘段落缺不缺 2>&1 對神諭都不可觀察，
+#      混進去只會製造誤擋雜訊。
+#   6. 子殼層包管線（WRAP_STYLES × WRAP_CONTENTS × 有沒有包）：`{ …; }`／`( … )` 收尾後緊接 `2>&1 |` 進
+#      neutralise，各自包三種本來會外流的構造（fd 轉向、xtrace、另存的 fd `exec 3>&1`），與同樣構造在
+#      **沒有**群組包裹時的對照——六個「有包」＋六個「沒包」＝ 12 檔，全部本機 bash 5.3 實測過。
+SHELL_TEMPLATES = [
+    ("bash", "bash"), ("bash-dq", '"bash"'), ("bash-sq", "'bash'"),
+    ("bash-brace", "bash {0}"), ("bash-e", "bash -e {0}"), ("bash-l", "bash -l {0}"),
+    ("bash-el", "bash -el {0}"), ("bash-eo-pipefail", "bash -eo pipefail {0}"),
+    ("bash-euo-pipefail", "bash -euo pipefail {0}"), ("bash-o-pipefail-e", "bash -o pipefail -e {0}"),
+    ("bash-noprofile-e", "bash --noprofile --norc -e {0}"),
+    ("bash-noprofile-eo-pipefail", "bash --noprofile --norc -eo pipefail {0}"),
+    ("bash-x", "bash -x {0}"), ("bash-xeuo-pipefail", "bash -xeuo pipefail {0}"),
+    ("bash-v", "bash -v {0}"), ("sh", "sh"), ("pwsh", "pwsh"), ("python", "python {0}"),
+]
+ENV_KEYS = ["SHELLOPTS"]                     # 見上方檔頭說明：其餘四個鍵在本機沙箱裡沒有可觀察效果
+ENV_VALUES = ["xtrace"]                      # 不含 "verbose"：理由同 XTRACE_SPELLINGS 的說明（迴響未展開）
+ENV_LAYERS = ["workflow", "job", "step"]
+# (slug, 字面)——slug 要能互相區分（`>&2` 與 `>&"2"` 挖掉標點後都只剩 "2"，必須手動命名，不能自動 slug 化）
+FD_SPELLINGS = [
+    ("bare-2", ">&2"), ("leading-zero", ">&02"), ("quoted-2", '>&"2"'),
+    ("dev-stderr", ">/dev/stderr"), ("dev-stderr-quoted", '>"/dev/stderr"'), ("dev-fd-2", ">/dev/fd/2"),
+]
+XTRACE_SPELLINGS = ["set -x", "set -o xtrace", "set -eo xtrace", "shopt -s -o xtrace", "shopt -so xtrace"]
+SEGMENT_COUNTS = [2, 3]
+WRAP_STYLES = [("brace", "{ %s; }"), ("subshell", "( %s )")]
+WRAP_CONTENTS = [
+    ("fd-redirect", ['printf \'%s\\n\' "$PR_TITLE" >&2']),
+    ("xtrace", ["set -x", 'printf \'%s\\n\' "$PR_TITLE"']),
+    ("saved-fd", ["exec 3>&1", 'printf \'%s\\n\' "$PR_TITLE" >&3']),
+]
+
+
+def _strict_doc(step_name, run_body, step_shell=None, step_env=None, job_env=None, wf_env=None,
+                 wf_defaults_flow=False):
+    """組一份單一 job、單一 step 的 workflow，專供 `--strict` 組用（不與 A-E 組共用 `wrap()`，
+    避免任何一邊的改動意外牽動另一邊的輸出）。"""
+    lines = ["name: t", "on: pull_request"]
+    if wf_env:
+        lines.append("env:")
+        for k, v in wf_env.items():
+            lines.append("  %s: %s" % (k, v))
+    if wf_defaults_flow:
+        lines.append("defaults: {run: {shell: sh}}")
+    lines += ["jobs:", "  j:", "    runs-on: ubuntu-latest"]
+    if job_env:
+        lines.append("    env:")
+        for k, v in job_env.items():
+            lines.append("      %s: %s" % (k, v))
+    lines += ["    steps:", "      - name: %s" % step_name]
+    if step_shell:
+        lines.append("        shell: %s" % step_shell)
+    if step_env:
+        lines.append("        env:")
+        for k, v in step_env.items():
+            lines.append("          %s: %s" % (k, v))
+    lines.append("        run: |")
+    for l in run_body:
+        lines.append(("          " + l) if l.strip() else l)
+    return "\n".join(lines) + "\n"
+
+
+def _pipeline_line(count, gap):
+    """`count` 個 pre-neutralise 分段的管線；`gap==0` 表示每段都帶 `2>&1`（基準），
+    `gap` 為 1..count 表示**那一段**缺 `2>&1`——缺的那一段固定是 `cat "$PR_TITLE"`（唯一可能外流的段），
+    其餘段落固定是不碰 `$PR_TITLE` 的 `grep -v zzz`（缺不缺 `2>&1` 對神諭都不可觀察）。"""
+    segs = []
+    for i in range(1, count + 1):
+        is_cat = (i == 1) if gap == 0 else (i == gap)
+        has_2to1 = True if gap == 0 else (i != gap)
+        cmd = 'cat "$PR_TITLE"' if is_cat else "grep -v zzz"
+        segs.append(cmd + (" 2>&1" if has_2to1 else ""))
+    return " | ".join(segs) + " | " + NEUT
+
+
+def group_strict():
+    """`--strict` 組：六個封閉列舉維度各自的構造（見上方檔頭）。每個檔頭都帶 `# LINT-ARGS: --strict`。
+    回傳 (name, full_text) —— 與 A-E 組的 (name, body, hdr) 不同形狀，因為這裡不重用 `wrap()`。"""
+    LA = "# LINT-ARGS: --strict\n"
+
+    # 維度 1：shell 值 —— 每個模板一檔（乾淨、帶 2>&1 的管線）；三個字面 bash 拼法額外配一個「缺 2>&1」的對照
+    for sn, tmpl in SHELL_TEMPLATES:
+        body = ['cat "$PR_TITLE" 2>&1 | ' + NEUT]
+        yield "f-shell-%s" % sn, LA + _strict_doc("shell value %s" % sn, body, step_shell=tmpl)
+        if sn in ("bash", "bash-dq", "bash-sq"):
+            leak_body = ['cat "$PR_TITLE" | ' + NEUT]
+            yield ("f-shell-%s-missing-2to1" % sn,
+                   LA + _strict_doc("shell value %s, missing 2>&1" % sn, leak_body, step_shell=tmpl))
+
+    # 維度 2：env 鍵（SHELLOPTS）× 值 × 層
+    for val in ENV_VALUES:
+        for layer in ENV_LAYERS:
+            body = ['cat "$PR_TITLE" 2>&1 | ' + NEUT]
+            kw = {"step_env": {"SHELLOPTS": val}} if layer == "step" else \
+                 {"job_env": {"SHELLOPTS": val}} if layer == "job" else \
+                 {"wf_env": {"SHELLOPTS": val}}
+            yield "f-env-SHELLOPTS-%s-%s" % (val, layer), LA + _strict_doc(
+                "env SHELLOPTS=%s at %s" % (val, layer), body, **kw)
+
+    # 維度 3：fd 轉向拼法 —— 每種拼法都在同一條命令上，緊接 `2>&1`（構造本身仍然外流，見檔頭）。固定
+    # `shell: bash`：理由同維度 5／6——不寫 shell 時，缺 pipefail 讓某些拼法（`>&2`／`>&02`／`>&"2"`）
+    # 落到「不可比 RULE-pipefail」的早退分支，連 fd 規則本身有沒有抓到都驗不到（對 mutation 負對照下實測到：
+    # 拿掉「dup 規則」後這三個拼法從「一致」直接消失變成「不可比」，而不是正確地翻成「不一致：繞過」）。
+    for slug, spelling in FD_SPELLINGS:
+        body = ['printf \'%%s\\n\' "$PR_TITLE" %s 2>&1 | %s' % (spelling, NEUT)]
+        yield "f-fd-%s" % slug, LA + _strict_doc("fd spelling %s" % slug, body, step_shell="bash")
+
+    # 維度 4：xtrace 拼法 —— 頂層開啟，之後接一條乾淨、帶 2>&1 的管線（開關本身已經先把來源行印到 stderr）
+    for stmt in XTRACE_SPELLINGS:
+        slug = re.sub(r"[^a-z0-9]+", "-", stmt.lower()).strip("-")
+        body = [stmt, 'cat "$PR_TITLE" 2>&1 | ' + NEUT]
+        yield "f-xtrace-%s" % slug, LA + _strict_doc("xtrace spelling %s" % slug, body)
+
+    # 維度 5：多段管線 —— 2、3 段 × 缺 2>&1 的位置（0=無缺，1..count=第幾段缺）。**固定 `shell: bash`**：
+    # 不寫 shell 時 `gap==0`（全部段落都帶 `2>&1`）這個「該放行」的基準情境，會先被 `--strict` 的 pipefail 規則
+    # 單獨攔下（`RULE-pipefail`，神諭判「不可比」，見上方 `check_file` 的早退分支），驗不到「逐段 2>&1 規則本身
+    # 判 pass」這件事；`shell: bash` 是關鍵字，滿足 pipefail，讓 pipefail 從這個維度的觀察裡被消掉。
+    for count in SEGMENT_COUNTS:
+        for gap in range(0, count + 1):
+            body = [_pipeline_line(count, gap)]
+            yield ("f-pipeseg-%d-gap%d" % (count, gap),
+                   LA + _strict_doc("pipeline of %d segments, gap=%d" % (count, gap), body, step_shell="bash"))
+
+    # 維度 6：子殼層包管線 —— WRAP_STYLES × WRAP_CONTENTS ×｛有包／沒包｝。同上，固定 `shell: bash`：
+    # 「有包」的情境本來就該讓 lint pass（豁免適用），不寫 shell 會被 pipefail 規則單獨攔下、驗不到豁免本身。
+    for wn, wfmt in WRAP_STYLES:
+        for cn, clines in WRAP_CONTENTS:
+            wrapped = [wfmt % ("; ".join(clines)) + " 2>&1 | " + NEUT]
+            yield ("f-wrap-%s-%s-wrapped" % (wn, cn),
+                   LA + _strict_doc("%s wrapped %s" % (wn, cn), wrapped, step_shell="bash"))
+            bare = list(clines[:-1]) + [clines[-1] + " 2>&1 | " + NEUT]
+            yield ("f-wrap-%s-%s-bare" % (wn, cn),
+                   LA + _strict_doc("%s bare %s" % (wn, cn), bare, step_shell="bash"))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     ap.add_argument("--out", metavar="DIR")
     ap.add_argument("--count", action="store_true", help="只印檔數，不寫檔")
+    ap.add_argument("--strict", action="store_true",
+                     help="產生 `--strict` 組（shell 值／env 鍵／fd 轉向拼法／xtrace 拼法／多段管線／子殼層包管線）"
+                          "，取代預設的 A-E 組——不與預設模式混寫同一次呼叫，保證預設模式的輸出不受這個分支影響")
     a = ap.parse_args()
+    # **`--strict` 是完全獨立的分支**：預設模式（下面）的程式碼一個字元都不因為這個分支的存在而改變，
+    # 保證 `shellgen.py --out DIR` 的輸出對任何版本的這份檔案都逐位元組不變（見 R37 放行條件第 6 條第 1 款）。
+    if a.strict:
+        cases = list(group_strict())
+        if a.count:
+            print(len(cases)); return 0
+        if not a.out:
+            ap.error("--out 或 --count 擇一")
+        out = pathlib.Path(a.out); out.mkdir(parents=True, exist_ok=True)
+        written, invalid = 0, []
+        for name, text in cases:
+            try:
+                yaml.safe_load(text)
+            except yaml.YAMLError as e:
+                invalid.append((name, str(e).splitlines()[0])); continue
+            (out / ("gen-%s.yml" % name)).write_text(text, encoding="utf-8")
+            written += 1
+        print("[--strict] %d 個構造 → 寫出 %d 檔（PyYAML 拒絕 %d 檔，逐一列出如下）"
+              % (len(cases), written, len(invalid)))
+        for name, why in invalid:
+            print("  拒絕 %s | %s" % (name, why))
+        return 0
     cases = list(group_a()) + list(group_b()) + list(group_c()) + list(group_d()) + list(group_e())
     if a.count:
         print(len(cases)); return 0

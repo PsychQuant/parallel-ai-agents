@@ -143,7 +143,7 @@ for _msg in (PIPEFAIL_RULE_MSG, STRICT_2TO1_RULE_MSG):
 # 寫成 `>=` 而實際更高時，那個差額沒有網——刪掉一張 G 範例 fixture 仍然綠）。must-fail 探針不算在內。
 FIXTURE_CLASS_TOTALS = {"G": 5, "S-2": 2}
 # must-fail 探針的確切張數（同理：刪掉一張探針＝少一條負對照，必須立刻紅）。
-FIXTURE_MUSTFAIL_TOTAL = 5
+FIXTURE_MUSTFAIL_TOTAL = 6
 KNOWN_CLASS_RE = re.compile(r"^# KNOWN-CLASS: (\S+)", re.M)
 MUSTFAIL_RE = re.compile(r"^# ORACLE-MUST-FAIL: (.+?)\s*$", re.M)
 # 差分用的中性命令：單獨一行是合法的空操作（rc=0），接在懸空的 `|`／`|&` 後面則是**語法錯誤**——`!` 只能出現在

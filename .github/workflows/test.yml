@@ -68,16 +68,24 @@ jobs:
           set -o pipefail
           { python3 -c 'import yaml' || python3 -m pip install --quiet pyyaml; } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
           python3 test/oracle.py 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
+          # 反向探針（R37）：must-fail 的理由比對、oracle↔lint 的 RULE 字面耦合——只有神諭失敗時才成立的兩項檢查，
+          # fixture 集裡放不進去（未突變的神諭會本來就紅），寫成「期待失敗」的斷言另外跑。
+          python3 test/oracle_selfcheck.py 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
 
       # #33 verify R30 §六「第 14 類：網的投餵」：上一個 step 餵給神諭的是**作者寫的** fixture，
       # 而同一支神諭在別人產生的語料上會報出一堆。這個 step 把投餵也拿掉——`shellgen.py` 按封閉的
       # 構造維度取笛卡兒積產生語料，神諭對它必須零不一致。R31 寫在這裡的「新 lint 0」是**儀器失能**（哨兵被
       # heredoc 吞掉，同一份語料報「量不到 60」）；R33 修哨兵後同一份是「不一致 55」、再修 fold_block 後才是 0（見 CHANGELOG R32 段）。
+      # `--strict` 組寫進**同一個** `$RUNNER_TEMP/gen` 目錄（檔名互不相碰：預設組 `gen-a-*.yml`…`gen-e-*.yml`，
+      # `--strict` 組 `gen-f-*.yml`）——下一行 `oracle.py "$RUNNER_TEMP"/gen/*.yml` 因此一次對帳兩組；
+      # 已有的 `# LINT-ARGS: --strict` 機制（R35）讓神諭對這些檔自動改用 `--strict` 跑 lint，不必另開一個 oracle
+      # 呼叫。下面的 shape census step 讀的也是同一個目錄，R37-* 列因此自動涵蓋（#33 verify R36 放行條件第 6 條）。
       - name: oracle — against generated corpus (not author-written fixtures)
         shell: bash
         run: |
           set -o pipefail
           python3 test/corpus/shellgen.py --out "$RUNNER_TEMP/gen" 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
+          python3 test/corpus/shellgen.py --strict --out "$RUNNER_TEMP/gen" 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
           python3 test/oracle.py "$RUNNER_TEMP"/gen/*.yml 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
       # 形狀普查閘門（#33 verify R32 DA-9）：R31 的每個機制在 shapes.py 都是零列而 CHANGELOG 照寫 GREEN→RED 0。
       # 「分母裡沒有的形狀，量到的 0 不是證據」寫在 shapes.py 檔頭，作者 R29 遵守、R31 破壞——散文規則一輪

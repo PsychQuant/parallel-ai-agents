@@ -58,6 +58,7 @@ TESTS = PACK / "scripts" / "test_validate.py"
 NEUTRALISE = PACK / "scripts" / "neutralise.py"
 PAI = PACK.parent / "parallel-ai-agents"
 LINT = PAI / "test" / "lint-ci-log-filter.sh"
+ORACLE = PAI / "test" / "oracle.py"
 
 # ── 守備範圍（#33 verify R26 M6 / G-R27-6）───────────────────────────────────────────
 # 「新機制沒有 RED 驗證」在這個 PR **發作了七次**，而 R26 的 DA 把它診斷到方法層：
@@ -71,6 +72,17 @@ SUITES = {
     "validate":   (VALIDATE,   lambda: [sys.executable, str(TESTS)],          PACK),
     "lint":       (LINT,       lambda: ["bash", str(LINT), "--selftest"],     PAI),
     "neutralise": (NEUTRALISE, lambda: [sys.executable, str(TESTS)],          PACK),
+    # R37（#33 verify R36 條件 7）：神諭（`test/oracle.py`）進入突變範圍。**不帶參數**執行——只有
+    # 不帶參數，`test/oracle.py` 才會掃 `test/fixtures/ci-log-filter-*.yml` 全集並檢查
+    # `FIXTURE_CLASS_TOTALS`／`FIXTURE_MUSTFAIL_TOTAL`／must-fail 探針；帶檔案參數會跳過這些釘死的
+    # 總數檢查（見 `oracle.py` 的 `if not argv:`），量到的網會變窄。`oracle.py` 自己從 `__file__`
+    # 解析 `lint-ci-log-filter.sh` 與 `fixtures/`（`HERE = pathlib.Path(__file__).resolve().parent`），
+    # 跟 mutation_check 執行時的 cwd 無關，所以不需要像 `scratch-copy/mutcheck.py` 那樣另外 symlink。
+    "oracle":     (ORACLE,     lambda: [sys.executable, "test/oracle.py"],    PAI),
+    # 神諭的**反向探針**：只有未突變的神諭**失敗**時才成立的兩項檢查（must-fail 探針的理由比對、oracle↔lint 的
+    # RULE 字面耦合），寫成「期待失敗」的斷言放在 `test/oracle_selfcheck.py`——未突變時它 rc=0，滿足
+    # `precheck_suites` 的「未突變＝綠」前提；拿掉任一道檢查它就紅。被突變的檔仍是 `test/oracle.py`。
+    "oracle-inverted": (ORACLE, lambda: [sys.executable, "test/oracle_selfcheck.py"], PAI),
 }
 
 # (名稱, 要替換的字串, 替換成什麼)。每個 old 必須在 validate.py 中**恰好出現一次**。
@@ -517,6 +529,66 @@ MUTATIONS += [
      '        run_lines = inline.split("\\n") + [raw[k] for k in range(r + 1, s["end"] + 1)', '        run_lines = [inline] + [raw[k] for k in range(r + 1, s["end"] + 1)', "lint"),
     ("lint: 切出來的行不 dedent（R35 → bypass-quoted-scalar-indented-lines-no-dedent）",
      '            if "\\n" in inline:\n                explicit_pad = 0', '            if False:\n                explicit_pad = 0', "lint"),
+]
+
+# ── R37（#33 verify R36 條件 7）：神諭本身進入突變範圍 ──────────────────────────────
+# R36 條件 7 點名的靶（「STDERR_ROUTE_RE 分支改成 elif False:」）已經不存在——r37a 把那整條
+# 正規式判定換成差分判定 `classify_piped_leak`。條件 7 真正要的是「有外流就收進已知 G」那個方向的
+# 閘門要有網；對應的是 `oracle:g-diff-never-G`（下面第二條）：把 `classify_piped_leak` 判定 G 的
+# 那個 `if` 關掉，任何原本該歸 G 的 step 都會改判「不一致：繞過」，被
+# `known-granularity-*`／`known-r37a-g-continued-pipeline` 逮到。下面每一條都在合併後的樹上實跑驗殺過，
+# 不是照抄 r37a 對合併前 commit 量的結果。
+MUTATIONS += [
+    ("oracle: G 差分永遠判定為 G（R37，R36 第 1 列 → known-r37a-g-plus-s2-same-step、"
+     "known-stderr-cmd-error-missing-2to1、known-r37a-mustfail-s2-strict-not-blocking）",
+     '    if not contrib:\n        return "G", None',
+     '    if True:\n        return "G", None', "oracle"),
+    # R36 條件 7 的對應靶：這是「有外流就收進已知 G」那個方向的閘門本身。
+    ("oracle: G 差分永遠不判定為 G——R36 條件 7 對應閘門（R37，R36 第 1 列 → "
+     "known-granularity-one-pipe-whole-block、known-granularity-stderr-other-command、"
+     "known-r37a-g-continued-pipeline）",
+     '    if not contrib:\n        return "G", None',
+     '    if False:\n        return "G", None', "oracle"),
+    ("oracle: G 差分忽略『部分外流跟著消失』（R37，R36 第 1 列 → known-r37a-g-plus-s2-same-step、"
+     "known-stderr-cmd-error-missing-2to1）",
+     'if base_mlines[k] - ml[k]]', 'if not (ml[0] or ml[1])]', "oracle"),
+    ("oracle: G 差分關掉語法完整性守衛（R37，R36 第 1 列 → known-r37a-mustfail-g-diff-syntax-break）",
+     '    if pn[0] != 0 and pn != _bash_n(run, bash):', '    if False:', "oracle"),
+    ("oracle: G 差分關掉『出現原本沒有的外流行』守衛（R37，R36 第 1 列 → "
+     "known-r37a-mustfail-g-diff-heredoc-feeds-pipe）",
+     '    if any(ml[k] - base_mlines[k] for k in (0, 1)):', '    if False:', "oracle"),
+    ("oracle: S-2 的 --strict 查核恆真（R37，R36 第 1 列 → known-r37a-mustfail-s2-strict-not-blocking）",
+     'elif any(in_step(ln) and STRICT_2TO1_RULE_MSG in m for ln, m in strict_rules()):',
+     'elif True:', "oracle"),
+    ("oracle: S-2 的 --strict 查核恆假（R37，R36 第 1 列 → known-stderr-cmd-error-missing-2to1、"
+     "known-r37a-g-plus-s2-same-step）",
+     'elif any(in_step(ln) and STRICT_2TO1_RULE_MSG in m for ln, m in strict_rules()):',
+     'elif False:', "oracle"),
+    ("oracle: 類別閘門『歸了類卻沒宣告』方向關掉（R37，R36 第 2 列 → known-r37a-mustfail-undeclared-g）",
+     '        elif s_ > d_:', '        elif False:', "oracle"),
+    ("oracle: 類別閘門『KNOWN-CLASS 過期』方向關掉（R37，R36 第 2 列 → "
+     "known-r37a-mustfail-g-diff-syntax-break、known-r37a-mustfail-g-diff-heredoc-feeds-pipe）",
+     '        if d_ > s_:', '        if False:', "oracle"),
+    ("oracle: pipefail 排除條件改成『任一條 RULE 是 pipefail 就不可比』（R37，R36 第 18 列 → "
+     "bypass-r37a-mustfail-strict-pipefail-hides-2to1）",
+     'if step_rules and all(PIPEFAIL_RULE_MSG in m for m in step_rules):',
+     'if any(PIPEFAIL_RULE_MSG in m for m in step_rules):', "oracle"),
+    ("oracle: YAML env 三層覆蓋不帶進腳本（R37，R36 第 8 列 → good-r37a-oracle-env-three-layers）",
+     '        env = dict(yaml_env or {})', '        env = {}', "oracle"),
+    ("oracle: 續行判定關掉 bash 剖析那一支（R37 → known-r37a-g-continued-pipeline 的註解續行 step）",
+     '    return _bash_n(line, bash)[0] != 0 and _bash_n(line + "\\n:", bash)[0] == 0',
+     '    return False', "oracle"),
+    ("oracle: 續行判定關掉行尾反斜線那一支（R37 → known-r37a-g-continued-pipeline 的反斜線續行 step）",
+     '    if re.search(r"(?<!\\\\)(?:\\\\\\\\)*\\\\$", line):\n        return True',
+     '    if False:\n        return True', "oracle"),
+    ("oracle: G 差分的 pipeline 分支不判定 stdout 外流（R37，R36 第 1 列 → known-r37t8-mustfail-stdout-contribution）",
+     '                    if "stdout" in streams:', '                    if False:', "oracle"),
+    ("oracle: must-fail 探針只看有沒有失敗、不比對宣告的理由（R37 → test/oracle_selfcheck.py 第 1 項）",
+     'ok = bool(res["failures"]) and any(mf.group(1) in x for x in res["failures"] + [r[4] for r in res["rows"]])',
+     'ok = bool(res["failures"])', "oracle-inverted"),
+    ("oracle: 關掉 oracle↔lint 的 RULE 字面耦合檢查（R37 合併 r37a／r37b 時加 → test/oracle_selfcheck.py 第 2 項）",
+     'for _msg in (PIPEFAIL_RULE_MSG, STRICT_2TO1_RULE_MSG):\n    if _msg not in _LINT_SRC:',
+     'for _msg in (PIPEFAIL_RULE_MSG, STRICT_2TO1_RULE_MSG):\n    if False:', "oracle-inverted"),
 ]
 
 EXPECTED_SURVIVE = {
