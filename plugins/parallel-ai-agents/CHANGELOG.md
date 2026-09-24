@@ -726,7 +726,10 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
     讀成 `ERROR`／不可比而非 `pass`（DA-8）；`pass ∧ piped ∧ leaked` 不再判「一致」（Codex 第 4 條），且洩漏分
     stdout／stderr：**stderr-only 按類別記為已知 S-2**（不逐檔列）。修前後（468 檔）：`量不到 60` → **0**；
     只修哨兵是「不一致 55」，哨兵＋`fold_block` 是「一致 468、不一致 0」——**中間那一行就是 negative control**。
-  - **`fold_block` 遞移折疊**，並對 PyYAML **逐行**相符（含空行不折、more-indented 前後不折、**內容行後的第一個
+  - **`fold_block` 遞移折疊**，並對 PyYAML **逐行**相符（R37 更正：這句在 R33 當時沒有範圍、也不成立——首行含 tab
+    的 block，`dedent_block` 把它當空行算縮排，R36 第 10 列量到不符；R37 修掉之後以 `test/corpus/foldcheck.py` 的構造量到
+    `run: |`／`run: >` 各 136,660 組（4 行）整字串全部相等；同一支對 380e4a4 的 lint 在 3 行就量到 literal 462 組、folded
+    588 組內容承載行不符；構造與範圍外見該檔檔頭）（含空行不折、more-indented 前後不折、**內容行後的第一個
     空行是分隔符而非一行**——最後這條是 642 檔語料抓到的 R33 自查：空分隔字的 heredoc 被一個 runner 沒有的
     佔位空行終止）。先前那個「7 個案例全相符」的驗證**濾掉了空行**，所以看不見它；重寫成不濾任何東西、
     外加行數契約的比對，15 個案例全過。佔位改用 `None`（runner 眼中沒有那一行）。
