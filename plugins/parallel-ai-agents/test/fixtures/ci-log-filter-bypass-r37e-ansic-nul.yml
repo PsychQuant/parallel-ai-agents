@@ -1,0 +1,22 @@
+# #33 verify R37（R36 logic HIGH-3 附帶 LOW：「$'E\0F'：bash 在 NUL 截斷，lint 永不終止，結果是誤擋」）：
+# `\0`（八進位逃脫，值 0）解出 NUL。bash 在 `$'…'` 讀到 NUL 就截斷字串——`cat <<$'E\0F'` 的終止字
+# 實際上只有 `E`，下一行的 `E` 就讓 heredoc 收尾，之後 `echo "$PR_TITLE" 2>&1 | python3 …` 是真的
+# code、真的被過濾（bash 5.3 對帳：PR_TITLE 確實被 neutralise 印成 `NEUTRALISED:…`，rc=0，是安全檔）。
+# 前一版 `_ansic_decode` 解出的卻是含 `\x00` 的完整字串 `E\x00F`——這個終止字在檔案裡不會出現，
+# heredoc（從 lint 的角度）永遠不終止，後面那行真的 neutralise 呼叫被當成 heredoc 資料吞掉，
+# lint 因此看不到任何 neutralise.py 呼叫、把安全檔判成 RULE：紅得沒有道理（誤擋）。
+# 現在任何解出 0 的值一律回 None，變成明確、可歸因的 PARSE（「這個逃脫本 lint 不解碼」），
+# 不是意外借用另一條規則的訊息。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: ansic-nul-misblock
+        shell: bash
+        run: |
+          cat <<$'E\0F'
+          E
+          echo "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py

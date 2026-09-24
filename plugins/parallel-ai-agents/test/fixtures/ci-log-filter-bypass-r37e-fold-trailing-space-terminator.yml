@@ -1,0 +1,28 @@
+# #33 verify R37（R36 logic 第 11 列）：`fold_block` 接行時的 `out[acc] = out[acc] + " " + l.strip()`
+# 把被接上的那行行尾空白剥掉。YAML 的折疊只在兩個內容行之間插入一個空白，**不動任一行本身的內容**
+# （PyYAML 对帳：`['a ', 'a ']` 折成 `'a  a '`——行尾空白原樣保留，不是折疊新插入的那個空白）。
+# heredoc 分隔字比對用的正是沒被折走的整行，`.strip()` 悉悉把行尾空白吃掉，讓 lint 算出的分隔字比
+# bash（＝PyYAML）短一個字元——分隔字恰好是空白時（`cat <<' '` 這一族）差一個字元就是有沒有終止的差別。
+# 前一版因此誤判 heredoc 已正確收尾、真正的過澾管線被吞。bash 5.3 對帳：第一個 heredoc（`<<'a a '`）
+# 真的在折疊後的 `a a ` 那行終止（零行內容），下一行 `echo "$PR_TITLE"; cat <<'Z'` 未經這層 heredoc 保護、
+# 直接執行並洩漏 PR_TITLE，而第二個 heredoc（`<<'Z'`）吳到檔尾、把真正的 neutralise 管線當成資料。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: folded-trailing-space-terminator
+        shell: bash
+        run: >
+          cat <<'a a '
+
+          a
+          a 
+
+          echo "$PR_TITLE"; cat <<'Z'
+
+          a a 
+
+          echo x 2>&1 | python3 scripts/neutralise.py

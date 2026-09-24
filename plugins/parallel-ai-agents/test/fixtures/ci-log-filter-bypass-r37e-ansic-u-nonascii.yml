@@ -1,0 +1,22 @@
+# #33 verify R37 相鄰輸入（作者／reviewer都沒點名，見 wp-e 紀律第 2 條）：`\u00e9`（4 位十六進位碼位
+# 逃脫）解出的碼位與 `\xe9`（R36 logic HIGH-3 的 `s-delim-hex-e9` 探針）**完全相同**（都是 chr(0xE9)=`é`），
+# 但 `\u`／`\U` 語意上本來就是「碼位」而非「位元組」，容易被誤判成不受「≯0x80 一律 fail-closed」這條
+# 規則影響。這一檔專門證明 `\u` 這條路徑也被同一道門櫃擋下，不是漏網之魚：`cat <<$'\u00e9'` 的終止字
+# 若解成 Unicode 碼位 `é`，lint 眼中會跟檔案裡字面的 `é` 那一行「巧合相符」而誤判 heredoc 已正確收尾
+# （於是後面真正的 neutralise 管線被當成合法 code、整步判 pass）；bash 產生的其實是原始位元組 0xE9，
+# 在 UTF-8 檔案裡不會單獨出現，heredoc 真正吃到檔尾——後面的真管線被吞、前面未過濾的
+# `echo "$PR_TITLE"` 直接洩漏。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: ansic-u-nonascii
+        shell: bash
+        run: |
+          echo "$PR_TITLE"
+          cat <<$'\u00e9'
+          é
+          echo hi 2>&1 | python3 scripts/neutralise.py

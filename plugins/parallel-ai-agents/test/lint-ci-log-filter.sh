@@ -67,17 +67,17 @@ if [ "${1:-}" = "--selftest" ]; then
   done
   # R24 regression F9：門檻寫成 `>=` 而實際值更高時，那個差額**沒有網**——刪掉一個 fixture 仍然綠。
   # 三個門檻一律改成**等於實測值**：要加 fixture 就同步改這裡，讓「少了一個」立刻紅。
-  if [ "${n_pass}" -ne 108 ]; then
-    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 108（改動 fixture 請同步改這個數字）" >&2
+  if [ "${n_pass}" -ne 109 ]; then
+    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 109（改動 fixture 請同步改這個數字）" >&2
     fail=1
   fi
-  if [ "${n_rule}" -ne 98 ]; then
-    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 98" >&2
+  if [ "${n_rule}" -ne 101 ]; then
+    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 101" >&2
     fail=1
   fi
   if [ "${fail}" -ne 0 ]; then exit 1; fi
-  if [ "${n_parse}" -ne 62 ]; then
-    echo "lint-ci-log-filter selftest FAILED: parse-red 是 ${n_parse} 個，預期恰好 62（先前這一類完全沒有下限）" >&2
+  if [ "${n_parse}" -ne 68 ]; then
+    echo "lint-ci-log-filter selftest FAILED: parse-red 是 ${n_parse} 個，預期恰好 68（先前這一類完全沒有下限）" >&2
     exit 1
   fi
   echo "lint-ci-log-filter selftest ok: ${n_pass} 正向通過、${n_rule} 條規則紅、${n_parse} 條解析紅（來源逐一比對相符）"
@@ -268,7 +268,17 @@ def dedent_block(lines, explicit_pad=None):
     DA 用合成的 base-綠語料量到：含 heredoc 的合規檔 17 個裡 **16 個被打紅**。
     順帶修好 `#` 詞首判定裡 `i == 0` 的語意——縮排剝掉後，行首才真的是行首。
     """
-    body = [l for l in lines[1:] if l.strip()]
+    # **「空行」的判準只算空白，tab 是內容**（#33 verify R37／R36 logic 第 10 列）。前一版用不帶參數的
+    # `.strip()` 篩「非空行」——Python 的 `.strip()` 連 tab 一起當空白，於是一行「9 個空格 + 1 個 tab」
+    # 被誤判成空行、排出 `body`，min() 就少算了它。YAML 的規則是**第一個非空行**（空行＝只含空白，而
+    # 這裡的「空白」只算 SPACE）決定整段的縮排；那一行雖然總字元數比其他內容行少，只要它是**第一個**
+    # 排進 body 的非空行，min() 自然會取到它（後面的內容行縮排不可能比它更淺，否則 YAML 解析器會把
+    # 那一行讀成區塊外——已成立的 YAML 保證這件事）。PyYAML 對帳：`run: |` ⏎ `<9sp><tab>` ⏎
+    # `<10sp>echo "$PR_TITLE"; cat <<EOF` ⏎ `<10sp>EOF` 剝出的縮排是 9（不是 10），第一行變成單一個
+    # `\t`，其餘行留一個 leading space——前一版把那個 tab 行排出去，min 改算其餘行的 10，把 `\t` 也
+    # 剝空成整行消失，heredoc 分隔字 `EOF` 因此少算一次縮排、被 lint 誤判成已經 flush（終止字提早
+    # 出現一行），真正的過濾管線被吞。
+    body = [l for l in lines[1:] if l.strip(" ")]
     if not body:
         return list(lines)
     # **YAML 的縮排只算空白，tab 是內容**（#33 verify R34 logic F4）。前一版用 `lstrip()` 連 tab 一起剝：
@@ -328,10 +338,21 @@ def fold_block(lines, folded):
         # 前一版把它當空行 ⇒ 當成分隔符丟掉 ⇒ 空分隔字的 heredoc 被一個 runner 沒有的終止提早收掉 ⇒ 假放行。
         if not _fold_blank(l):
             more = l[:1] in (" ", "\t")
-            # `acc` 非 None ⇒ 它指向一個非空內容行（見下：只在 `l.strip()` 為真時設定、空行段後歸 None），
+            # `acc` 非 None ⇒ 它指向一個非空內容行（見下：只在 `not more` 為真時設定、空行段後歸 None），
             # 所以「`out[acc]` 非 None 且非空」是恆真的——R33 opsweep 對那兩個運算元各報存活，實測依構造多餘，刪掉。
             if acc is not None and not more and not prev_more:
-                out[acc] = out[acc] + " " + l.strip()
+                # **接上去的 `l` 不 strip**（#33 verify R37／R36 logic 第 11 列）。折疊只在兩個內容行之間插入
+                # 一個空白，不動任一行本身的內容——`l` 在這個分支已保證沒有前導空白（`not more`），差別只在
+                # **行尾**空白，而那正是 heredoc 終止字比對（`probe.rstrip() == delim` 之外，分隔字本身若含
+                # 行尾空白）與詞界判定要看到的東西。PyYAML 實測：`['a','   ','b']` 這種 more-indented 不會走
+                # 到這支（上面已排除），但 `['a a ', 'a a ']`（兩個內容行、第二行帶行尾空白）folded 成
+                # `'a a  a a '`——**第二行的行尾空白原樣保留**，不是折疊時新插入的那個空白。前一版的
+                # `EXPECTED_SURVIVE`（`strip→id|fold_block|…`）論證「折進去的只差行尾空白，下游消費者都吃得
+                # 下」是假的：heredoc 分隔字比對用的正是**沒被折走的整行**，`l.strip()` 悄悄把該行的行尾空白
+                # 吃掉，讓 lint 算出的分隔字比 bash（＝PyYAML）短一個字元——分隔字恰好是空白時（`cat <<' '`
+                # 這一族）差一個字元就是有沒有終止的差別。R37 DA 用突變體（把這裡的 `.strip()` 拿掉）證明：
+                # 拿掉之後 selftest 數字不變、且會讓原本放行的探針正確翻紅，`.strip()` 才是那個 bug。
+                out[acc] = out[acc] + " " + l
                 out.append(None)                # 佔位：行數不變，但 runner 眼中沒有這一行
             else:
                 out.append(l); acc = len(out) - 1
@@ -382,6 +403,17 @@ def _ansic_decode(s):
     bash 5.3 實測（heredoc 終止字，讀 EOF 警告）：`E\x41`→`EA`、`E\'F`→`E'F`、`\101B`→`AB`、`E\\F`→`E\F`、
     `E\"F`→`E"F`、`E\qF`→`E\qF`（認不得的逃脫保留反斜線）、`E\x4`→`E\x04`。`E\cAF` 得到 `E\x01\x01F`——
     `\x01`（與 `\x7f`）是 bash 內部的引號跳脫字元，會被重複；`\c` 與解出這兩個字元的一律不猜。
+
+    #33 verify R36（logic HIGH-3／R35 回歸）：`\x`、八進位、`\u`、`\U` 解出的**任何 ≥0x80 的值**一律 fail-closed。
+    bash 對 `\x`／八進位產生的是單一**原始位元組**，不做任何 Unicode 解碼；Python 的 `chr(0xe9)` 卻是碼位
+    U+00E9（一個字元），兩者在 UTF-8 檔案裡永遠不是同一行——`\377`、`\xe9`、兩個 `\x` 湊出的 `\xc3\xa9`
+    都曾讓 heredoc 提早（或延後）收尾、真管線被吞。`\u`／`\U` 雖然語意上是碼位不是位元組，這裡不區分、
+    一律用同一條門檻擋下：解不出確定的 ASCII 值就不猜。同一條門檻也**先擋掉 NUL**（bash 在 NUL 截斷
+    字串，本 lint 解出的卻是含 `\x00` 的完整字串——兩邊的終止字不同，前一版因此讓 heredoc 永不終止、
+    後面的行全被當成資料誤擋；fail-closed 把它變成明確的 PARSE，不是意外的吞併）；**並且先於 `chr()`
+    判斷範圍**——`\U7fffffff` 這種超出 Unicode 範圍（>0x10FFFF）的值本來會讓 `chr()` 丟 `ValueError`、
+    lint 直接 traceback（rc=1 但不是走 fail-closed 那條路，後面的檔案也不再檢查），現在在呼叫 `chr()`
+    之前就已經因為 ≥0x80 回了 `None`。
     """
     out, i, n = [], 0, len(s)
     while i < n:
@@ -393,11 +425,17 @@ def _ansic_decode(s):
             out.append(ANSIC[d]); i += 2; continue
         if d in "01234567":
             m = re.match(r"[0-7]{1,3}", s[i + 1:]).group()
-            out.append(chr(int(m, 8) & 0xFF)); i += 1 + len(m); continue
+            v = int(m, 8) & 0xFF
+            if v == 0 or v >= 0x80:
+                return None
+            out.append(chr(v)); i += 1 + len(m); continue
         if d in "xuU":
             m = re.match(r"[0-9A-Fa-f]{1,%d}" % {"x": 2, "u": 4, "U": 8}[d], s[i + 2:])
             if m:
-                out.append(chr(int(m.group(), 16))); i += 2 + len(m.group()); continue
+                v = int(m.group(), 16)
+                if v == 0 or v >= 0x80:
+                    return None
+                out.append(chr(v)); i += 2 + len(m.group()); continue
         if d == "c":
             return None
         out.append("\\" + d); i += 2

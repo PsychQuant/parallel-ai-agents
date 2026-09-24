@@ -273,8 +273,10 @@ def _folded_run_three_plus(text):
     觸發條件是**折疊鏈長度 ≥ 3**，形狀就要照那個條件寫。"""
     lines = text.split("\n")
     for i, l in enumerate(lines):
-        # **key 限定 `run`**（#33 verify R34 regression M-1）：前一版收任何 key 的 `>`，野外綠分母那 13 檔全部是
-        # `stale-issue-message: >` 之類——折疊的 run 區塊是 0 檔，而 CHANGELOG 據此說「野外 0/0 對 R32-6 是證據」。
+        # **key 限定 `run`**（#33 verify R34 regression M-1；文字更正見 #33 verify R37 第 24 列）：前一版收
+        # 任何 key 的 `>`，野外綠分母那 13 檔裡**最多的是 `if:`（6 檔）**，`stale-issue-message:` 只有 2 檔——
+        # 折疊的 run 區塊是 0 檔，而 CHANGELOG 據此說「野外 0/0 對 R32-6 是證據」（這句本身不受影響，只是
+        # 前一句「全部是 stale-issue-message: > 之類」的舉例不準，兩輪對外宣稱查核都只看過散文、沒看這裡）。
         m = re.match(r"^(\s*)(?:- )?run:\s*>[+-]?\d?[+-]?\s*(?:#.*)?$", l)
         if not m:
             continue
