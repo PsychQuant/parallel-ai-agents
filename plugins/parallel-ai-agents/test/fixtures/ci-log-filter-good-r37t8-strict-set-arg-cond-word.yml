@@ -1,0 +1,16 @@
+# #33 verify R37 完整性審查（缺陷 e，誤擋）：引數位置的 `[[ -n x ]]` 是 `set` 的位置參數（bash 5.3 實測 `set -o pipefail [[ -n x ]]` 設了 pipefail、$1 是 `[[`），不是條件式；規則層前一版一看到 `[[` 開頭就當成不透明詞，於是判「set 的參數不是字面」。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash {0}
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail [[ -n x ]]
+          echo "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py

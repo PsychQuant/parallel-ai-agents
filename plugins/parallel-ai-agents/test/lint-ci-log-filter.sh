@@ -76,17 +76,17 @@ if [ "${1:-}" = "--selftest" ]; then
   done
   # R24 regression F9：門檻寫成 `>=` 而實際值更高時，那個差額**沒有網**——刪掉一個 fixture 仍然綠。
   # 三個門檻一律改成**等於實測值**：要加 fixture 就同步改這裡，讓「少了一個」立刻紅。
-  if [ "${n_pass}" -ne 157 ]; then
-    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 157（改動 fixture 請同步改這個數字）" >&2
+  if [ "${n_pass}" -ne 160 ]; then
+    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 160（改動 fixture 請同步改這個數字）" >&2
     fail=1
   fi
-  if [ "${n_rule}" -ne 213 ]; then
-    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 213" >&2
+  if [ "${n_rule}" -ne 218 ]; then
+    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 218" >&2
     fail=1
   fi
   if [ "${fail}" -ne 0 ]; then exit 1; fi
-  if [ "${n_parse}" -ne 119 ]; then
-    echo "lint-ci-log-filter selftest FAILED: parse-red 是 ${n_parse} 個，預期恰好 119（先前這一類完全沒有下限）" >&2
+  if [ "${n_parse}" -ne 121 ]; then
+    echo "lint-ci-log-filter selftest FAILED: parse-red 是 ${n_parse} 個，預期恰好 121（先前這一類完全沒有下限）" >&2
     exit 1
   fi
   echo "lint-ci-log-filter selftest ok: ${n_pass} 正向通過、${n_rule} 條規則紅、${n_parse} 條解析紅（來源逐一比對相符）"
@@ -814,8 +814,8 @@ def shell_scan(lines):
       3. **多行分隔字**：`cat <<"A` ⏎ `B" | python3 …` 在 bash 是引號跨行、heredoc 永不終止但**管線照建**；
          本 lint 的分隔字是單行字串、表示不了它，一律 `PARSE:`（Codex 第 7 條，誤擋方向；產生語料的
          `d-delimword-unterm-*` 四檔由神諭歸「不可比（fail-closed）」）。
-    **已知不涵蓋，第三組——預設模式的假設（封閉列舉，只有四條，不得依性質相似類推第五條；R35 新增前三條，
-    R37 新增第 4 條）**：
+    **已知不涵蓋，第三組——預設模式的假設（封閉列舉，只有五條，不得依性質相似類推第六條；R35 新增前三條，
+    R37 新增第 4、5 條）**：
       1. **shell 是 bash**：預設模式不讀 `shell:`／`defaults.run.shell`／container／runs-on，照 bash 的詞法判。
          `--strict`（CI 與 run.sh 對真 workflow 用的模式）驗這個假設：shell 必須是 bash（可帶選項、不得開 xtrace），
          container 或 Windows／運算式 runs-on 的 job 必須明寫 bash。R35 第一版在預設模式也套用，三軸量到合成 A
@@ -831,6 +831,11 @@ def shell_scan(lines):
          模式括號，追蹤表示不了的形狀 fail-closed（見主迴圈 `cases` 的註解）。
       4. **`shopt -s extglob`／`-O extglob`**：extglob 開啟後 `@(`、`!(`、`+(`… 是合法語法，本掃描器不模擬這套
          詞法，偵測到就整個 run 區塊 fail-closed `PARSE:`（見 `EXTGLOB_RE`；R36 第 17 列）。
+      5. **頂層 `case` 的模式文字當成 code**（R37 完整性審查，缺陷 d）：`case x in a|python3\ scripts/neutralise.py ) ;; esac`
+         的 `|` 是「或」、不建管線，預設模式的 `PIPED_RE` 卻算它接了 neutralise——放行（`known-r37t8-default-case-pattern-pipe`，
+         神諭列為 `KNOWN_DISAGREE`）。`--strict` 由「看得到管線、規則層剖析不出它」那條擋下
+         （`bypass-r37t8-strict-case-pattern-looks-piped`），CI 對真 workflow 用的是 `--strict`。修它要把第 3 條的 case 追蹤延伸到頂層、
+         並把模式文字挖空；頂層 case 在 workflow 裡很常見，而那套追蹤對表示不了的形狀一律 fail-closed——延伸過去的誤擋代價沒量過，本輪不做。
 
     **命令位置（R37 新增，#33 verify R36 第 5(a) 列，R35 回歸的更正）**：`[[` 只在**命令位置**（邏輯行首，或
     `;`、`&`、`|`、`(`、`!`、`{`、`&&`、`||` 與 `then`／`do`／`else`／`elif`／`if`／`while`／`until` 之後）才當條件式
@@ -882,6 +887,11 @@ def shell_scan(lines):
     # 命令；`$((` 算術展開不看這個旗標（直接看 `prev_sig == "$"`）。新的邏輯行開頭（換行本身就是分隔字元）、
     # `$(`／反引號剛開啟時，都視為命令位置。
     cmd_pos = True
+    # **複合命令收尾之後**（#33 verify R37 完整性審查，缺陷 b）：`]]` 或算術**命令** `))` 收尾之後、下一個非空白字元之前是 True。
+    # 那個位置的保留字（`if [[ … ]] then`，不寫分號）bash 接不接受取決於外層的 if／while——`if` 裡合法、單獨一行是語法錯誤——
+    # 而本 lint 不追蹤複合命令的巢狀，所以遇到就 fail-closed（見主迴圈）。`arith_cmd`：目前這個 `((` 是算術命令、不是 `$((` 展開。
+    after_compound = False
+    arith_cmd = False
     quote = None            # None / "'" / '"'
     heredoc = None          # (delimiter, strip_tabs, quoted, 開在命令替換裡)
     body_continued = False  # 未引號 heredoc 內文的前一行以奇數個反斜線結尾（R28 D3）
@@ -926,8 +936,9 @@ def shell_scan(lines):
         # 一律正確。仍在 heredoc 內文（上面 `continue` 掉）或仍在 `arith`／`brk`／`cond`／`csub` 裡的字元
         # 不看這個旗標（那些分支在到得了 `[[`／`((` 判定之前就 `continue` 掉了）。
         cmd_pos = True
+        after_compound = False               # 換行本身就是分隔字元：之後的保留字照一般命令位置處理
         quote0, prev0 = quote, prev_sig      # 邏輯行起點的狀態：摺疊後要從頭重掃
-        lex0 = (arith, arith_par, brk, csub, cpar, cond, bt, tuple(dq_ret), tuple(map(tuple, cases)), bt_at)
+        lex0 = (arith, arith_par, brk, csub, cpar, cond, bt, tuple(dq_ret), tuple(map(tuple, cases)), bt_at, arith_cmd)
         bare_par0 = bare_par                 # 裸括號深度也要快照——續行重掃前這一行已經記的深度要還原
         pending0 = list(pending)             # R28 D6（Codex #2）：快照漏了 pending，重掃會把同一個 heredoc 排兩次
         while i < n:
@@ -1006,9 +1017,10 @@ def shell_scan(lines):
                     quote, prev_sig = quote0, prev0
                     arith, arith_par, brk, csub, cpar, cond, bt = lex0[:7]
                     dq_ret, cases = list(lex0[7]), [list(c) for c in lex0[8]]
-                    bt_at = lex0[9]
+                    bt_at, arith_cmd = lex0[9], lex0[10]
                     bare_par = bare_par0
                     cmd_pos = True           # 邏輯行起點永遠是命令位置，重掃回到起點也一樣
+                    after_compound = False
                     pending = list(pending0)
                     continue
                 break                       # 最後一行的行尾反斜線：沒有下一行可接
@@ -1053,7 +1065,8 @@ def shell_scan(lines):
                     elif ch == ")" and arith_par:
                         arith_par -= 1
                     elif line.startswith("))", i):
-                        arith -= 1; code.append("))"); i += 2; prev_sig = ")"; cmd_pos = False; continue
+                        arith -= 1; code.append("))"); i += 2; prev_sig = ")"; cmd_pos = False
+                        after_compound = arith_cmd and not arith; continue
                     elif ch == ")":
                         # **未配對的單獨 `)`**（R37，#33 verify R36 第 5(a) 列）：`((cmd) )` 不是算術——bash 把它讀成
                         # 巢狀 subshell（外層 `(` 加內層 `(cmd)`），`((` 進入算術模式的判定本來就是啟發式的猜測，
@@ -1071,8 +1084,17 @@ def shell_scan(lines):
                     elif ch == "]":
                         brk -= 1
                 elif line.startswith("]]", i) and line[i - 1:i] in (" ", "\t"):
-                    cond = False; code.append("]]"); i += 2; prev_sig = "]"; cmd_pos = False; continue
+                    cond = False; code.append("]]"); i += 2; prev_sig = "]"; cmd_pos = False; after_compound = True; continue
                 code.append(" "); i += 1; prev_sig = "x"; continue
+            if after_compound and not ch.isspace():
+                after_compound = False
+                m = re.match(r"[A-Za-z]+", line[i:])
+                w = m.group() if m else ""
+                if w in ("then", "do", "else", "elif", "if", "while", "until") \
+                        and line[i + len(w):i + len(w) + 1] in (" ", "\t", ";", ""):
+                    unparsed = ("`]]`／算術命令 `))` 之後直接接保留字 `%s`（沒有分號或換行）——bash 接不接受取決於外層的 "
+                                "if／while，本 lint 不追蹤複合命令的巢狀，不解析" % w)
+                    break
             if ch in ("'", '"'):
                 quote = ch; code.append(ch); i += 1; prev_sig = ch; cmd_pos = False; continue  # 吃掉的是一個詞（的一部分），不是運算子：之後不在命令位置（R37 合併時發現，見 bypass-r37m-*）
             # **保留字**（R37，#33 verify R36 第 5(a) 列）：`then`／`do`／`else`／`elif`／`if`／`while`／`until`
@@ -1104,6 +1126,7 @@ def shell_scan(lines):
             # 落到下面逐字元處理，兩個 `(` 各自當成裸括號（見 `paren_claimed`／`bare_par`）。
             paren_claimed = False
             if line.startswith("((", i) and (prev_sig == "$" or cmd_pos):
+                arith_cmd = prev_sig != "$"          # `$((` 是算術展開：後面的詞是引數，不是保留字的位置
                 arith += 1; code.append("(("); i += 2; prev_sig = "("; paren_claimed = True; continue
             # **`$(…)` 裡的 `case`**（#33 verify R36 第 7 列，logic HIGH-4 p12）：模式括號是單邊 `)`，只數括號的 `csub` 會提早
             # 歸零，之後開的 heredoc 被當成不在命令替換裡——R35 的「命令替換裡的 heredoc 以前綴收尾 ⇒ fail-closed」因此被繞過
@@ -1288,6 +1311,9 @@ def shell_scan(lines):
                 cmd_pos = cmd_pos and line[i:i + 1] in ("", " ", "\t")
             elif ch in CMD_POS_CHARS:
                 cmd_pos = True
+            elif ch == "`":
+                pass    # 反引號分支已經設好（開啟 True：裡面第一個詞是新命令；關閉 False）。前一版在這裡覆寫成 False，
+                        # 反引號裡的 `[[` 因此不被當條件式、正規式的 `(a| python3 …)` 被讀成管線（#33 verify R37 完整性審查，缺陷 a）
             elif not ch.isspace():
                 cmd_pos = False
             if not ch.isspace():
@@ -1570,6 +1596,52 @@ def _hidden_subs(S, lo, hi, dq):
     return out
 
 
+def _interior_subs(S, lo, hi):
+    """算術 `((…))`／`$((…))`／`$[…]` 與條件式 `[[…]]` 的內部 [lo, hi)——掃描器把它挖空（那裡的 `|` 是位元 OR／正規式的「或」、
+    `<<` 是左移），但裡面的命令替換照樣執行，`$(cmd >&2)` 的重導向與 xtrace 同樣會外流。前一版規則層把這幾種整段當成沒有
+    命令替換的不透明詞，fd 流向規則在兩種模式都看不到它們（#33 verify R37 完整性審查，缺陷 c）。
+    照 bash 的引號規則走一遍原文：單引號段跳過；雙引號段交給 `_hidden_subs(dq=True)`（引號裡的單引號是字面——
+    `_hidden_subs(dq=False)` 只認單引號，`"it's $(…)"` 會被它誤跳過）；引號外的 `$(`／反引號各自剖析；巢狀的 `$((` 只是
+    同一段算術的一部分，往下走。對不到收尾回 None（呼叫端設 `bad_sub`、fail-closed）。"""
+    out, k = [], lo
+    while k < hi:
+        c = S[k]
+        if c == "\\":
+            k += 2
+            continue
+        if c == "'":
+            e = S.find("'", k + 1)
+            if e < 0:
+                return None
+            k = e + 1
+            continue
+        if c == '"':
+            e = _dq_end(S, k)
+            if e is None:
+                return None
+            hs = _hidden_subs(S, k + 1, e - 1, dq=True)
+            if hs is None:
+                return None
+            out.extend(hs)
+            k = e
+            continue
+        if S.startswith("$((", k):
+            k += 3
+            continue
+        if S.startswith("$(", k) or c == "`":
+            e = _cmdsub_end(S, k) if c == "$" else _backtick_end(S, k)
+            if e is None:
+                return None
+            sub = _sub_tokens(S[k + (2 if c == "$" else 1):e - 1])
+            if sub is None:
+                return None
+            out.append(sub)
+            k = e
+            continue
+        k += 1
+    return out
+
+
 def _word(C, S, p, stop):
     r"""從 p 讀一個詞 → {code, lit, skel, glob, subs, bad_sub, s, e}。lit＝去引號後的字面（含展開、或看不到原文，就是 None）；
     skel＝字面部分＋把展開換成 `\0` 的骨架（看不到原文是 None）；subs＝詞裡的命令替換，各自一串詞元——包括雙引號與
@@ -1591,6 +1663,11 @@ def _word(C, S, p, stop):
             continue
         if C.startswith("$((", p):
             e = C.find("))", p + 3)
+            hs = None if e < 0 else _interior_subs(S, p + 3, e)       # 算術展開裡的命令替換（缺陷 c）
+            if hs is None:
+                bad_sub = True
+            else:
+                subs.extend(hs)
             p, literal = (n if e < 0 else e + 2), False
             skel.append("\0")
             continue
@@ -1668,6 +1745,11 @@ def _word(C, S, p, stop):
                 while e < n and d:
                     d += (S[e] == "[") - (S[e] == "]")
                     e += 1
+                hs = _interior_subs(S, p + 2, e - 1) if not d else None   # 舊式算術裡的命令替換（缺陷 c 的相鄰形狀）
+                if hs is None:
+                    bad_sub = True
+                else:
+                    subs.extend(hs)
             literal = False
             skel.append("\0")
             p = _clamp(C, p, e)
@@ -1680,8 +1762,9 @@ def _word(C, S, p, stop):
             "skel": "".join(skel) if known else None, "glob": glob, "subs": subs, "bad_sub": bad_sub, "s": st, "e": p}
 
 
-def _opaque(C, p, e, subs=()):
-    return {"k": "W", "code": C[p:e], "lit": None, "skel": None, "glob": False, "subs": list(subs), "s": p, "e": e}
+def _opaque(C, p, e, subs=(), bad_sub=False):
+    return {"k": "W", "code": C[p:e], "lit": None, "skel": None, "glob": False, "subs": list(subs), "bad_sub": bad_sub,
+            "s": p, "e": e}
 
 
 def _lex(C, S, p=0, stop=None):
@@ -1701,12 +1784,18 @@ def _lex(C, S, p=0, stop=None):
             toks.append({"k": "NL"})
             p += 1
             continue
-        if C.startswith("((", p) or C.startswith("[[", p):   # 算術命令／條件式：掃描器已把內容挖空——整段是一個不透明的詞
+        if C.startswith("((", p) or C.startswith("[[", p):
+            # 算術命令／條件式：**掃描器真的把它當成這個構造時，內容已被挖成空白**——只有那樣才是一個不透明的詞
+            # （#33 verify R37 完整性審查，缺陷 e）。前一版一看到 `[[`／`((` 開頭就當成不透明詞：引數位置的
+            # `set -o pipefail [[ -n x ]]` 因此被判「set 的參數不是字面」；找不到收尾（`[[x` 是命令名）時把整行剩下的
+            # 部分吞成一個詞，碰巧沒事。內容沒被挖空＝掃描器沒把它當成那個構造：照一般的詞讀。
+            # 「挖空」包括引號字元本身：掃描器在構造裡遇到引號時，收尾的 `"`／`'` 仍留在 code 裡（見主迴圈的引號分支）。
             e = C.find("))" if c == "(" else "]]", p + 2)
-            e = n if e < 0 else e + 2
-            toks.append(_opaque(C, p, e))
-            p = e
-            continue
+            if e >= 0 and not C[p + 2:e].strip(" \t\n'\""):
+                hs = _interior_subs(S, p + 2, e)                    # 但裡面的命令替換照樣執行（缺陷 c）
+                toks.append(_opaque(C, p, e + 2, hs or (), bad_sub=hs is None))
+                p = e + 2
+                continue
         if C.startswith("<(", p) or C.startswith(">(", p):   # process substitution：一個詞，裡面是一串命令
             sub, e = _lex(C, S, p + 2, ")")
             toks.append(_opaque(C, p, e, [sub]))

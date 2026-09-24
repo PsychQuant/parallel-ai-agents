@@ -1,0 +1,15 @@
+# #33 verify R37 完整性審查（缺陷 b）：`if [[ … ]] then`（不寫分號）bash 接受，`then` 之後是命令位置；lint 在 `]]` 後把 cmd_pos 收回 False、不認 `then`，第二個 `[[` 的正規式 `(a| python3 …)` 被讀成管線而放行（bash 實測第一行裸印）。`]]`／算術命令 `))` 之後直接接保留字時 bash 接不接受取決於外層的 if／while，本 lint 不追蹤複合命令的巢狀——fail-closed。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$PR_TITLE"
+          if [[ -n x ]] then [[ "$PR_TITLE" =~ (a| python3 scripts/neutralise.py ) ]]; fi

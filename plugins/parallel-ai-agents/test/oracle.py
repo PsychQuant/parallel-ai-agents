@@ -111,6 +111,10 @@ KNOWN_DISAGREE = {
     # `${{` 的值（runner 才知道），所以量不到那個外流、判誤擋。這是兩邊資訊量不同造成的設計差異，不是 lint 的缺陷。
     ("ci-log-filter-bypass-r37t8-step-env-inline-expression.yml", "s"):
         "`env:` 整張來自 `${{ … }}`，lint 看不到鍵名而 fail-closed；神諭不設 runner 運算式的值，量不到它可能帶進的 SHELLOPTS。",
+    # **頂層 `case` 的模式 `|` 被預設模式讀成管線** ⇒ 繞過（R37 完整性審查缺陷 d，刻意保留的已知限制）：`--strict` 擋下它；
+    # 預設模式要修得把 case 追蹤延伸到頂層，代價與理由見 lint 已知不涵蓋第三組第 5 條。修好之後這一列變一致，神諭 rc=1 逼人拿掉。
+    ("ci-log-filter-known-r37t8-default-case-pattern-pipe.yml", "s"):
+        "頂層 case 模式的 `|` 是「或」，預設模式的 `PIPED_RE` 算它接了 neutralise；`--strict` 由規則層的 n_neut 擋下。",
 }
 
 # lint 自己的宣告正規式（與 `lint-ci-log-filter.sh` 的 `LOGFILTER_RE` 同形）。這裡只用它判**文字長相**；

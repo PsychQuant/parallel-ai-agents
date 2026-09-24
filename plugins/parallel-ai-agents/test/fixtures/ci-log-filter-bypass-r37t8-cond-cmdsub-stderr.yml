@@ -1,0 +1,15 @@
+# #33 verify R37 完整性審查（缺陷 c）：同上，條件式 `[[…]]` 裡的命令替換。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          [[ -n $(echo "$PR_TITLE" >&2) ]] || true
+          echo safe 2>&1 | python3 scripts/neutralise.py

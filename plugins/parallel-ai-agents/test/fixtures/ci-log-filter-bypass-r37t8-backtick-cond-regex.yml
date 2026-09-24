@@ -1,0 +1,11 @@
+# #33 verify R37 完整性審查（缺陷 a）：反引號開啟時設的 cmd_pos=True 沒有 continue，落到迴圈底部被「非空白字元 → False」覆寫——反引號裡的 `[[` 不被當條件式，正規式的 `(a| python3 …)` 被讀成管線而放行。bash 5.3 實測第一個詞 `echo "$PR_TITLE"` 裸印。
+# EXPECT: rule-red
+name: t
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: bt-cond
+        run: |
+          echo "$PR_TITLE" `[[ "$PR_TITLE" =~ (a| python3 scripts/neutralise.py ) ]]`
