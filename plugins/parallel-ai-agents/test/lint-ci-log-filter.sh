@@ -76,12 +76,12 @@ if [ "${1:-}" = "--selftest" ]; then
   done
   # R24 regression F9：門檻寫成 `>=` 而實際值更高時，那個差額**沒有網**——刪掉一個 fixture 仍然綠。
   # 三個門檻一律改成**等於實測值**：要加 fixture 就同步改這裡，讓「少了一個」立刻紅。
-  if [ "${n_pass}" -ne 139 ]; then
-    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 139（改動 fixture 請同步改這個數字）" >&2
+  if [ "${n_pass}" -ne 141 ]; then
+    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 141（改動 fixture 請同步改這個數字）" >&2
     fail=1
   fi
-  if [ "${n_rule}" -ne 177 ]; then
-    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 177" >&2
+  if [ "${n_rule}" -ne 181 ]; then
+    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 181" >&2
     fail=1
   fi
   if [ "${fail}" -ne 0 ]; then exit 1; fi
@@ -161,7 +161,16 @@ BLOCK_SCALAR_RE = re.compile(r"^[|>](?:([1-9])[+-]?|[+-]([1-9])?)?\s*(#.*)?$")
 # （`&&` 續行後直接接管線）在 bash 都是語法錯誤——管線左邊是空的，根本沒有命令可以接。前一版仍判「已過濾」
 # 是誤判：`;`／`&`／`(` 本身也滿足 `[^|\s]`。收窄成 `[^|\s;&(]`：合法的管線左邊（命令名、引號收尾、
 # `)`／`}` 收尾一個 subshell／group 的輸出、數字、`2>&1` 的 `1`……）都不在這個排除集合裡，不受影響。
-PIPED_RE = re.compile(r"[^|\s;&(]\s*\|(?!\|)&?\s*python3\s+\S*neutralise\.py(\s|$)")
+# **右半邊照 bash 的「一個詞」**（#33 verify R37 合併時協調者發現）：前一版路徑寫 `\S*`、結尾寫 `(\s|$)`，兩端都不是
+# bash 的詞界。(1) `\S*` 跨過命令分隔字元：`| python3 -mquopri;scripts/neutralise.py` 在 bash 是「管線接到
+# `python3 -m quopri`，再另跑一個命令」，quopri 把 PR 文字幾乎原樣印出——前一版判「已過濾」（繞過，
+# `bypass-r37m-neutralise-path-spans-*` 三張，一個分隔字元一張）。(2) 結尾只認空白：`neutralise.py;`、`&&`、`||`、`)`、
+# `|`、`>`、反引號、`&` 緊接在後都是 bash 的詞尾，前一版判「沒有經 neutralise.py」（誤擋，`good-r37m-neutralise-glued-follower`
+# 與 `-unobservable` 兩張；後者是神諭量不到的四種寫法）。
+# 兩端現在都用 bash 的 metacharacter 當詞界；`(` 不算詞尾（`neutralise.py(` 是語法錯誤，`bypass-r37m-neutralise-glued-paren`），
+# 一般字元也不算（`neutralise.pyc` 是另一個檔）。後者沒有 fixture：神諭的環境裡那個檔不存在、python3 什麼都不印，
+# 神諭會把 lint 的 RULE 判成誤擋——這一格神諭在原理上量不了。`(` 那張已經殺得到「拿掉詞尾判定」的突變。
+PIPED_RE = re.compile(r"[^|\s;&(]\s*\|(?!\|)&?\s*python3\s+[^\s;&|()<>`]*neutralise\.py(?=[\s;&|)<>`]|$)")
 LOGFILTER_RE = re.compile(r"^\s*#\s*LOG-FILTER:\s*(in-process|none — .+)")
 # **fd 流向、`--strict` 的 `2>&1`、pipefail、shell 樣板**這四條規則不在這裡用正規式寫——它們讀的是 run 區塊的**結構**
 # （詞、重導向、管線的每一段、群組、`case`），見 `shell_scan()` 之後的「規則層的詞法」一節（#33 verify R36 第 3、4、8、9、22 列）。

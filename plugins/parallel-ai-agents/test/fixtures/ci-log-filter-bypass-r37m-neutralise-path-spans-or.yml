@@ -1,0 +1,14 @@
+# #33 verify R37 合併時協調者發現：`PIPED_RE` 的路徑部分 `\S*` 跨過 bash 的命令分隔字元 `||`——`| python3 -mquopri||scripts/neutralise.py` 在 bash 是「管線接到 python3 -m quopri，再另跑一個命令」，quopri 把 PR 文字幾乎原樣印出（bash 5.3 實測 `::warning::MARK` 未經過濾）。380e4a4 兩種模式 rc=0；合併後預設模式 rc=0、`--strict` rc=1。預設模式必須擋。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$PR_TITLE" 2>&1 | python3 -mquopri||scripts/neutralise.py

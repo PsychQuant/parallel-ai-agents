@@ -1,0 +1,32 @@
+# #33 verify R37 合併時協調者發現（r37a 報告第 200 行交來）：`PIPED_RE` 要求 `neutralise.py` 後面是空白或行尾，於是 `neutralise.py;`、`&&`、`||`、`>` 緊接在後都被判「沒有經 neutralise.py」。bash 5.3 以標記值實測：都建了管線、PR 文字經過濾。必須放行。同一個缺陷在子殼層收尾、再接管線、反引號、背景 `&` 的寫法見 `good-r37m-neutralise-glued-follower-unobservable`（神諭量不到的那四種，分開放）。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: semicolon
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py; echo done
+      - name: and
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py&& echo done
+      - name: or
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py|| true
+      - name: redirect
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py> out.txt
