@@ -1,0 +1,13 @@
+# #33 verify R36 第 4 列 → R37：GitHub 只對**關鍵字** `shell: bash` 加 `-o pipefail`；自訂樣板照字面跑。前一版把「是 bash」當成「有 pipefail」。
+# `set -o pipefail` 寫在同一行、但在管線**之後**（Codex R36 第 5b 條；前一版看整行）（相鄰輸入，R36 沒點名）
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: pipe without pipefail
+        run: |
+          false 2>&1 | python3 scripts/neutralise.py || exit 1; set -o pipefail

@@ -1,0 +1,13 @@
+# #33 verify R36 第 13 列 → R37：workflow 根層級 flow 形式的 `defaults`（`--strict`）與 `env`（兩種模式）讀不到內容 ⇒ fail-closed PARSE。
+# 相鄰輸入（R36 沒點名）：根層級 `env: {SHELLOPTS: xtrace}`——鍵名讀不到，兩種模式都 PARSE。
+# EXPECT: parse-red
+name: t
+on: pull_request
+env: {SHELLOPTS: xtrace}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: step under a flow root env
+        run: |
+          printf '%s\n' "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py

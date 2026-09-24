@@ -130,8 +130,15 @@ VERDICT_KINDS = ("一致", "不一致：繞過", "不一致：誤擋", "不可�
 # pipefail 那條會被當成一般 RULE 對帳（→ 誤擋、rc=1），S-2 的「`--strict` 擋下了」查核會失敗（→ 繞過＋KNOWN-CLASS 過期、
 # rc=1）——兩個方向都是 fail-closed，不會靜默放行。
 PIPEFAIL_RULE_MSG = "卻沒有跑在 pipefail 之下"
-STRICT_2TO1_RULE_MSG = "接 neutralise.py 的管線沒有帶 `2>&1`"
+STRICT_2TO1_RULE_MSG = "沒有把 stderr 併進管線"
 RULE_LINE_RE = re.compile(r":(\d+): RULE: ([^\n]*)")
+# **耦合檢查**（R37 合併時加）：上面兩個字面必須真的出現在 lint 裡。R37 合併 r37a 與 r37b 時，r37b 把 `2>&1` 那條的訊息
+# 改寫了、這裡沒跟上——上一段說那是 fail-closed，但它只會讓某張 fixture 碰巧變紅、不會說出原因。直接查字面，對不上就
+# 具名失敗。
+_LINT_SRC = LINT.read_text(encoding="utf-8", errors="replace") if LINT.is_file() else ""
+for _msg in (PIPEFAIL_RULE_MSG, STRICT_2TO1_RULE_MSG):
+    if _msg not in _LINT_SRC:
+        sys.exit("✗ oracle.py 用來認 RULE 的字面「%s」不在 %s 裡——lint 改了訊息，這裡要同步改" % (_msg, LINT))
 # 已知類別在 repo 自己的 fixture 集（不給檔案參數）上的**確切**條數（R37，R36 第 2 列；同 selftest 門檻 R24 F9 的理由：
 # 寫成 `>=` 而實際更高時，那個差額沒有網——刪掉一張 G 範例 fixture 仍然綠）。must-fail 探針不算在內。
 FIXTURE_CLASS_TOTALS = {"G": 5, "S-2": 2}

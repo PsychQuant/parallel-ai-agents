@@ -1,5 +1,9 @@
+
 # #33 verify R35（`--strict` shell 規則的誤擋守衛）：帶選項的 bash 樣板都是 bash——`bash -euo pipefail {0}`、
 # `bash --noprofile --norc -eo pipefail {0}`、`bash -l {0}`。R35 第一版只接受字面 `bash`，三軸量到大量常見寫法被拒。
+# R37 更正（#33 verify R36 第 4 列）：R35 這裡把 `bash -l {0}` 加管線釘成 pass——而 login shell 樣板**沒有** pipefail
+# （GitHub 只對關鍵字 `bash` 加 `-o pipefail`），那正是 R34 第 1 條的形狀。login shell 那一步因此在 run 開頭補
+# `set -o pipefail`；不補的版本見 `bypass-r37b-strict-pipefail-template-login`。
 # LINT-ARGS: --strict
 # EXPECT: pass
 name: t
@@ -16,4 +20,6 @@ jobs:
         run: echo hi 2>&1 | python3 scripts/neutralise.py
       - name: login shell
         shell: bash -l {0}
-        run: echo hi 2>&1 | python3 scripts/neutralise.py
+        run: |
+          set -o pipefail
+          echo hi 2>&1 | python3 scripts/neutralise.py

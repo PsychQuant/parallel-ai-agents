@@ -1,0 +1,12 @@
+# #33 verify R36 第 8 列 → R37：fd 流向規則按流向判——重導向目標看去引號後的字、任何 fd 複製（`2>&1`／no-op `>&1` 除外）、xtrace 的各種拼法。
+# 目標是 ANSI-C 引號 `> $'/dev/stderr'`：整個目標被掃描器挖空、詞從挖空處開始（R37 第一版的詞法把開頭的挖空當空白跳過）（相鄰輸入，R36 沒點名）
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: stdout diverted around the pipe
+        run: |
+          printf '%s\n' "$PR_TITLE" > $'/dev/stderr' 2>&1 | python3 scripts/neutralise.py

@@ -1,0 +1,62 @@
+# #33 verify R36 第 8、9 列 → R37：群組 `{ …; }`／`( … )` 收尾後緊接 `2>&1 |`（或 `|&`）進 neutralise，群組裡的 fd 2 就是管線——不算外流。
+# 負對照（兩種模式都該放行）：R36 點名的 `{ printf … >&2; } 2>&1 | …`；跨行群組、子殼層裡另存 fd、群組裡開 xtrace、`|&`；
+# 不會把 stdout 帶離管線的重導向（`>/dev/null 2>&1`、`2>/dev/null`、`&>/dev/null`、`>&1`、`2>&-`、寫檔、heredoc 接寫檔、`exec 2>&1`）；
+# `set -euo pipefail`／`set +x`／`set -- -x`（位置參數）；以及名字相近、但不是那五個的 env 鍵。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: group redirect (R36 named)
+        run: |
+          { printf '%s\n' "$PR_TITLE" >&2; } 2>&1 | python3 scripts/neutralise.py
+      - name: multi-line group
+        run: |
+          {
+            printf '%s\n' "$PR_TITLE" >&2
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: saved fd inside a subshell group
+        run: |
+          ( exec 3>&1; printf '%s\n' "$PR_TITLE" >&3 ) 2>&1 | python3 scripts/neutralise.py
+      - name: xtrace inside a piped group
+        run: |
+          { set -x; printf '%s\n' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: group with pipe-amp
+        run: |
+          { printf '%s\n' "$PR_TITLE" >/dev/stderr; } |& python3 scripts/neutralise.py
+      - name: redirects that keep stdout
+        run: |
+          printf 'ok\n' >/dev/null 2>&1
+          printf 'ok\n' 2>/dev/null
+          printf 'ok\n' &>/dev/null
+          printf 'ok\n' >&1
+          printf 'ok\n' 2>&-
+          printf 'x=1\n' >> "$HOME/out.txt"
+          cat <<EOF > "$HOME/notes.txt"
+          notes
+          EOF
+          printf '%s\n' "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py
+      - name: continued line with a quoted target
+        run: |
+          printf 'x\n' \
+            > "$HOME/out.txt"
+          printf '%s\n' "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py
+      - name: exec 2>&1 at top level
+        run: |
+          exec 2>&1
+          printf '%s\n' "$PR_TITLE" | python3 scripts/neutralise.py
+      - name: set forms that do not trace
+        run: |
+          set -euo pipefail
+          set +x
+          set -- -x
+          printf '%s\n' "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py
+      - name: look-alike env keys
+        env:
+          SHELLOPTS_NOTE: x
+          ENVIRONMENT: prod
+          MY_BASH_ENV: x
+        run: |
+          printf '%s\n' "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py

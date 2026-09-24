@@ -15,8 +15,17 @@
 # （沒有 job、`shell:` 必填），硬套同一套白名單會產生假紅；真的開始用 composite action 時，該做的是為
 # 它寫一份自己的規則，不是把這一支的守備範圍偷偷放大。
 #
-# 用法：test/lint-ci-log-filter.sh [workflow.yml…]   預設 ../../.github/workflows/*.yml *.yaml（全部 workflow）
+# 用法：test/lint-ci-log-filter.sh --strict [workflow.yml…]   **檢查真的 workflow 用這個**（CI 與 run.sh 都是）；
+#                                                             預設 ../../.github/workflows/*.yml *.yaml（全部 workflow）
+#       test/lint-ci-log-filter.sh [workflow.yml…]            預設模式：fixture 與產生語料用，量的是 lint 與 bash 的詞法對帳，
+#                                                             **假設 shell 是 bash**、不要求 pipefail 與逐段 `2>&1`
 #       test/lint-ci-log-filter.sh --selftest
+#       檔名請給絕對路徑或相對於 plugin 目錄的路徑：本 lint 先 `cd` 到 plugin 目錄，找不到檔案回 rc=2（不是 pass）。
+# **兩種模式的取捨（#33 verify R34 放行條件第 5 條的偏離，R36 第 25 列要求寫在這裡）**：非 bash 的 shell（`sh`、`pwsh`、
+# 帶白名單外選項的樣板）、container job、Windows／運算式 runs-on 只在 `--strict` fail-closed。R35 第一版在預設模式也套用，
+# 合成 A 語料 959 個 base-綠檔翻紅一大批（R35 寫 290；R36 requirements 按規則重量：shell 值那條 75 檔、container／Windows
+# 沒寫 shell 那條 223 檔，聯集 268——多數來自第 5 條沒要求的後者）。預設模式服務的是詞法量測、不是 CI 的寫法規範，
+# 所以 shell 規則只放在 `--strict`；而 CI 與 run.sh 對真 workflow 一律用 `--strict`，第 5 條要的保護在那裡。
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -67,17 +76,17 @@ if [ "${1:-}" = "--selftest" ]; then
   done
   # R24 regression F9：門檻寫成 `>=` 而實際值更高時，那個差額**沒有網**——刪掉一個 fixture 仍然綠。
   # 三個門檻一律改成**等於實測值**：要加 fixture 就同步改這裡，讓「少了一個」立刻紅。
-  if [ "${n_pass}" -ne 131 ]; then
-    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 131（改動 fixture 請同步改這個數字）" >&2
+  if [ "${n_pass}" -ne 137 ]; then
+    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 137（改動 fixture 請同步改這個數字）" >&2
     fail=1
   fi
-  if [ "${n_rule}" -ne 122 ]; then
-    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 122" >&2
+  if [ "${n_rule}" -ne 175 ]; then
+    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 175" >&2
     fail=1
   fi
   if [ "${fail}" -ne 0 ]; then exit 1; fi
-  if [ "${n_parse}" -ne 102 ]; then
-    echo "lint-ci-log-filter selftest FAILED: parse-red 是 ${n_parse} 個，預期恰好 102（先前這一類完全沒有下限）" >&2
+  if [ "${n_parse}" -ne 110 ]; then
+    echo "lint-ci-log-filter selftest FAILED: parse-red 是 ${n_parse} 個，預期恰好 110（先前這一類完全沒有下限）" >&2
     exit 1
   fi
   echo "lint-ci-log-filter selftest ok: ${n_pass} 正向通過、${n_rule} 條規則紅、${n_parse} 條解析紅（來源逐一比對相符）"
@@ -154,18 +163,10 @@ BLOCK_SCALAR_RE = re.compile(r"^[|>](?:([1-9])[+-]?|[+-]([1-9])?)?\s*(#.*)?$")
 # `)`／`}` 收尾一個 subshell／group 的輸出、數字、`2>&1` 的 `1`……）都不在這個排除集合裡，不受影響。
 PIPED_RE = re.compile(r"[^|\s;&(]\s*\|(?!\|)&?\s*python3\s+\S*neutralise\.py(\s|$)")
 LOGFILTER_RE = re.compile(r"^\s*#\s*LOG-FILTER:\s*(in-process|none — .+)")
-# **fd 流向**（#33 verify R34 security S-2／logic F5／DA G-B）：把 stdout 轉到 stderr（`>&2`、`1>&2`、`>/dev/stderr`）
-# 或開 xtrace（`set -x`、`set -o xtrace`、`bash -x`）都讓 PR 文字繞過只接 stdout 的管線——而且**帶了 `2>&1` 也一樣**：
-# `>&2 2>&1 |` 的 `>&2` 先把 fd1 指到原本的 stderr；xtrace 在命令自己的 `2>&1` 套用之前就印到 shell 的 fd2。
-# 只對「靠管線過濾」的 step 適用；`# LOG-FILTER:` 明示不過濾的 step 不受限（它已經聲明不印 PR 文字）。
-FD_RE = re.compile(r">&\s*2\b|>\s*/dev/stderr|\bset\b[^;&|]*\s-[A-Za-z]*x|\bset\b[^;&|]*-o\s+xtrace\b|\bbash\s+-[A-Za-z]*x")
-STRICT_NEUT_RE = re.compile(r"(2>&1\s*\||\|&)\s*python3\s+\S*neutralise\.py")
-PIPEFAIL_RE = re.compile(r"\bset\b[^;&|]*-[A-Za-z]*o\s+pipefail\b")
-ANY_PIPE_RE = re.compile(r"(?<!\|)\|(?!\|)")
-# `--strict` 接受的 shell：`bash`，可帶 GitHub 模板的 `{0}` 與選項（`bash -euo pipefail {0}`、`bash --noprofile --norc -e {0}`）；
-# 選項裡有 xtrace（`-x`、`-xeuo`、`-o xtrace`）另外拒絕。`bash -l {0}`（login shell）也是 bash。
-BASH_SHELL_RE = re.compile(r"^bash(?:\s+(?:--[a-z-]+|[-+][A-Za-z]*o\s+[a-z]+|-[A-Za-z]+|\+[A-Za-z]+))*(?:\s+\{0\})?$")
-XTRACE_OPT_RE = re.compile(r"(?:^|\s)-[A-Za-z]*x|-o\s+xtrace")
+# **fd 流向、`--strict` 的 `2>&1`、pipefail、shell 樣板**這四條規則不在這裡用正規式寫——它們讀的是 run 區塊的**結構**
+# （詞、重導向、管線的每一段、群組、`case`），見 `shell_scan()` 之後的「規則層的詞法」一節（#33 verify R36 第 3、4、8、9、22 列）。
+# R35 在這裡的五條正規式（`FD_RE`、`STRICT_NEUT_RE`、`PIPEFAIL_RE`、`ANY_PIPE_RE`、`BASH_SHELL_RE`＋`XTRACE_OPT_RE`）是拼法清單，
+# R36 在每一條上都找到作者沒點名的相鄰輸入，所以整組換掉。
 # **extglob 改變 bash 的詞法**（#33 verify R36 第 17 列；`shell_scan()` 已知不涵蓋第三組第 4 條，見下）：
 # `shopt -s extglob` 之後 `@(`、`!(`、`+(`、`?(`、`*(pattern-list)` 都是合法語法，`(` 不再只是 subshell／
 # 命令替換的開括號。本掃描器完全沒有模擬這套額外詞法，continuing 會把 `@(x 2>&1| python3 …)` 的 `(` 讀成
@@ -635,6 +636,72 @@ def _case_head(line, i):
     return w_end > j and k > w_end and line.startswith("in", k) and line[k + 2:k + 3] in ("", " ", "\t", ";")
 
 
+def _cmdsub_end_case(line, j):
+    """`_cmdsub_end` 加上 case 模式括號的追蹤（R37 合併 r37b×r37c 時加）：只給**雙引號**裡的命令替換用。
+
+    `_cmdsub_end` 對詞首的 `case` 一律回 None——那是 r37c 在 `${…}` 裡刻意的 fail-closed（第 7 列）。但雙引號裡同一行
+    收尾的 `"$(case … esac)"` 是常見寫法，r37c 的掃描器對它改走 code 模式，而 r37b 的規則層（`_hidden_subs`、`_word`）
+    假設雙引號內容是挖空的——兩包各自在 380e4a4 上都對，合在一起 `good-r37c-dq-cmdsub-case-sameline` 與
+    `…-multiline-case` 被誤擋。這一支照主掃描器 `cases` 的規則追蹤 case（模式 `)` 不減深度、`;;`／`;&` 回到等模式、
+    `esac` 在命令起點或等模式時收尾），其餘照 `_cmdsub_end`：詞首 `#`、`<<`、`$'`、`$[` 一律回 None。
+    輸入可以跨行（規則層傳的是接起來的原文）：換行在命令起點判定裡當 `;`。"""
+    if line.startswith("$((", j):
+        return _arith_end(line, j)
+    k, n, depth = j + 2, len(line), 1
+    code, cases, prev = ["("], [], "("
+    while k < n:
+        c = line[k]
+        at_word = prev in SHELL_WORD_BREAK or prev == "\n"
+        if c == "\\":
+            code.append("xx"); k += 2; prev = "x"; continue
+        if c == "\n":
+            code.append(";"); k += 1; prev = "\n"; continue
+        if (c == "#" and at_word) or line.startswith("$'", k) or line.startswith("$[", k):
+            return None
+        if line.startswith("<<<", k):
+            code.append("<<<"); k += 3; prev = "<"; continue
+        if line.startswith("<<", k):
+            return None
+        if at_word:
+            kw = CASE_KW_RE.match(line, k)
+            if kw:
+                at_cmd = _at_command("".join(code), cases, depth)
+                if kw.group(1) == "case":
+                    if not (at_cmd and _case_head(line, k)):
+                        return None
+                    cases.append([depth, "pat"])
+                elif cases and cases[-1][0] == depth and (cases[-1][1] == "pat" or at_cmd):
+                    cases.pop()
+                code.append(kw.group(1)); k = kw.end(); prev = "x"; continue
+        if cases and cases[-1][0] == depth and cases[-1][1] == "cmd" and line.startswith((";;", ";&"), k):
+            cases[-1][1] = "pat"
+        if c == "'":
+            e = line.find("'", k + 1)
+            if e < 0:
+                return None
+            code.append("x" * (e + 1 - k)); k = e + 1; prev = "x"; continue
+        if c == '"' or c == "`" or line.startswith("${", k) or line.startswith("$(", k):
+            e = (_dq_end(line, k) if c == '"' else _backtick_end(line, k) if c == "`"
+                 else _param_end(line, k) if line[k + 1] == "{" else _cmdsub_end_case(line, k))
+            if e is None:
+                return None
+            code.append("x" * (e - k)); k = e; prev = "x"; continue
+        if c == "(":
+            if not (cases and cases[-1][0] == depth and cases[-1][1] == "pat"):
+                depth += 1                              # 等模式時的 `(` 是模式的前導括號，不計深度
+        elif c == ")":
+            if cases and cases[-1][0] == depth:
+                if cases[-1][1] == "cmd":
+                    return None                         # 子句命令之後同一層的單獨 `)`：bash 語法錯誤
+                cases[-1][1] = "cmd"                    # 模式括號：不減深度
+            else:
+                depth -= 1
+                if not depth:
+                    return None if cases else k + 1
+        code.append(c); prev = c; k += 1
+    return None
+
+
 def _param_end(line, i):
     r"""`${…}` 的配對剖析：回傳展開結束之後的位置；本 lint 不解析的構造回 `None`（呼叫端 fail-closed）。
 
@@ -875,7 +942,7 @@ def shell_scan(lines):
                     # 記下進入點（`dq_ret`），這個命令替換收尾時回到雙引號。heredoc 因此由一般的 `<<` 分支登記（R35 的
                     # 「暫時離開雙引號、登記完就回來」只修到登記那一點：heredoc 之後命令替換裡的 `"…"` 仍被當外層的收尾與開頭，
                     # `bypass-r37c-dq-cmdsub-heredoc-then-quoted-code`）。
-                    e = _backtick_end(line, i) if ch == "`" else _cmdsub_end(line, i)
+                    e = _backtick_end(line, i) if ch == "`" else _cmdsub_end_case(line, i)   # 雙引號裡：認得 case（合併 r37b×r37c）
                     if e is not None:
                         code.append(" " * (e - i)); i = e; prev_sig = "x"; continue
                     if line.startswith("$((", i):
@@ -1222,13 +1289,903 @@ def shell_scan(lines):
     return code_lines, decls, unparsed
 
 
+# ══ 規則層的詞法（#33 verify R36 第 3、4、8、9、22 列）══════════════════════════════════════════════════
+# 前一版的 fd 流向、`--strict` 的 `2>&1`、pipefail 三條規則都是**對挖空後的程式碼搜正規式**：`FD_RE` 是一份拼法清單
+# （`>&2`、`>/dev/stderr`、`set -x`…），`--strict` 的 `2>&1` 比 `PIPED_RE` 與 `STRICT_NEUT_RE` 的**總數**，pipefail 用
+# `ANY_PIPE_RE` 找「第一個 `|`」、用 `BASH_SHELL_RE` 把「shell 是 bash」當成「有 pipefail」。R36 在每一條上都找到作者沒點名
+# 的相鄰輸入：引號包住的目標 `>"/dev/stderr"`（挖空之後字面清單看不到）、`/dev/fd/2`、`>&02`、`>&"2"`、另存的 fd、
+# `set -eo xtrace`、`shopt -so xtrace`、從 `env:` 帶進的 SHELLOPTS；前段管線的 stderr、子殼層湊數、黏在詞上的 `"$X"2>&1`；
+# `bash -e {0}`／`bash -l {0}` 沒有 pipefail；`case … in a|b)` 的模式 `|` 被當成管線；規則還擋掉它自己推薦的群組寫法。
+# 修法是改成**按結構與流向**判：把 `shell_scan()` 的程式碼半邊對回原文（`_aligned_sources`），切成詞與運算子（`_lex`），
+# 剖析成管線／群組／簡單命令（`_Sh`）。三條規則讀同一份結構：
+#   · fd 流向：fd 複製（`2>&1` 與 no-op 的 `>&1` 除外）、去引號後落在 `/dev`、`/proc` 底下的寫檔目標（`_SAFE_TARGETS` 除外）、
+#     開 xtrace／verbose 的命令、run 裡設定 SHELLOPTS 等變數——都算外流，除非它位在「收尾後緊接 `2>&1 |`（或 `|&`）進
+#     neutralise 的群組」裡：那個群組是管線的一段、在子殼層裡跑，fd 1 與 fd 2 都是管線。
+#   · `--strict` 的 `2>&1`：每一條接 neutralise 的管線，neutralise 之前的**每一段**都要讓 fd 2 併進管線（那一段最後一個動到
+#     fd 2 的重導向是 `2>&1`，或接下一段的運算子是 `|&`）。
+#   · pipefail：照詞元順序模擬——起始值由 shell 樣板決定（`_bash_template`），頂層的 `set ±o pipefail`／`shopt -s|-uo pipefail`
+#     改變它，每一個管線運算子出現時它必須是開的。
+# **已知不涵蓋（這一節的，封閉列舉，只有四條，不得依性質相似類推第五條）**：
+#   1. 重導向目標含參數展開或命令替換（`> "$GITHUB_OUTPUT"`、`> "$X"`）時不求值——`$GITHUB_OUTPUT` 這類是 Actions 的日常寫法；
+#      只有目標的**字面部分**已經落在 `/dev`、`/proc` 底下（`>/dev/fd/$N`）才擋。
+#   2. `eval`／`bash -c`／`trap` 的**字串**不剖析（同 `shell_scan` 第一組：本 lint 不求值）；`eval` 後面全是字面詞時例外——
+#      那時 bash 執行的就是那幾個詞（`eval set -x`）。
+#   3. `if`／`while`／`for` 不建結構、當成一般的詞，所以判定不看可達性：沒走到的分支裡的 `set -o pipefail` 也算數。
+#   4. 未引號 heredoc 的**內文**裡的命令替換（bash 會展開、執行它）不剖析：掃描器把內文整行當資料、規則層收不到那些行。
+#      雙引號與 `${…}` 裡的命令替換**有**剖析（`_hidden_subs`）。
+import posixpath
+
+_OPS = ("&>>", ";;&", "<<<", "&>", "&&", ">>", ">|", ">&", "<&", "<>", "<<", "||", "|&", ";;", ";&",
+        "&", "|", ";", "(", ")", "<", ">")
+_REDIR_OPS = frozenset(("&>>", "&>", ">>", ">|", ">&", "<&", "<>", "<<", "<<<", "<", ">"))
+_WORD_END = " \t\n;&|<>()"
+_TRACE_OPTS = frozenset(("xtrace", "verbose"))
+_SHELL_NAMES = frozenset(("bash", "sh", "dash", "ksh", "zsh", "mksh", "ash", "posh"))
+# 不會把 stdout 帶離管線的寫檔目標（normpath 之後比對；另外 `/dev/tcp/…`、`/dev/udp/…` 是 bash 的網路 socket，見 `_redir_hit`）；
+# 其餘落在 /dev、/proc 底下的一律算外流（`/dev/stderr`、`/dev/fd/2`、`/proc/self/fd/2`、`/dev/tty`…）——白名單，不是拼法清單。
+_SAFE_TARGETS = frozenset(("/dev/null", "/dev/stdout", "/dev/fd/1", "/proc/self/fd/1"))
+# bash 啟動時讀、會開 xtrace 或執行別的程式碼的環境變數（`env:` 三層都查；ENV 只有 `env:` 層——run 裡 `ENV=prod make` 是常見寫法）。
+ENV_TRACE_KEYS = ("SHELLOPTS", "BASHOPTS", "BASH_ENV", "ENV", "BASH_XTRACEFD")
+_RUN_ENV_KEYS = ("SHELLOPTS", "BASHOPTS", "BASH_ENV", "BASH_XTRACEFD")
+_ASSIGN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(\[[^\]]*\])?\+?=")
+_LEAD_WORDS = frozenset(("!", "time", "if", "then", "else", "elif", "do", "while", "until", "builtin", "command"))
+
+
+def _skip_delim_word(s, j):
+    """`<<` 後面（含 `-` 與空白）那個分隔字詞在**原文**裡的結尾——`shell_scan()` 讀了它卻不輸出到程式碼，對齊時要跳過。
+    讀不出來（引號沒收尾）回 None，呼叫端把那一行當成對不齊。"""
+    n = len(s)
+    if s[j:j + 1] == "-":
+        j += 1
+    while s[j:j + 1] in (" ", "\t"):
+        j += 1
+    while j < n and s[j] not in DELIM_WORD_BREAK:
+        if s[j] in ("'", '"', "`") or s.startswith("$'", j):
+            ansic = s[j] == "$"
+            q = "'" if ansic else s[j]
+            k = j + (2 if ansic else 1)
+            while k < n and s[k] != q:
+                k += 2 if (s[k] == "\\" and (q != "'" or ansic)) else 1
+            if k >= n:
+                return None
+            j = k + 1
+            continue
+        j += 2 if s[j] == "\\" else 1
+    return j
+
+
+def _aligned_sources(code_lines, src_lines):
+    r"""每一個程式碼行在原文裡的對應文字——與程式碼**等長、逐位置對齊**；對不齊回 None。
+
+    `shell_scan()` 的程式碼行與原文逐位置相同，只有四種差異：引號內容、`${…}`、`$'…'`、逃脫字元被挖成空白（等長）；
+    `#` 註解被截掉（程式碼較短）；行尾 `\` 續行把下一個實體行接上來重掃；`<<` 之後的分隔字詞被讀掉、不輸出（原文較長）。
+    這裡照這四條對上去，並**逐字驗證**：程式碼每一個非空白字元都要等於原文同一位置的字元。驗證不過就是 None——
+    規則層把那一行的詞當成「看不到原文」，往 fail-closed 的方向判（`_redir_hit`、`set`／`shopt` 的非字面參數）。
+
+    **行尾 `\` 要不要接下一行，看掃描器自己的答案**：它把接進來的每一個實體行記成空的程式碼行。所以「下一個實體行的程式碼
+    是空字串」⟺ 掃描器接了它；不是空字串就是引號裡的字面反斜線（雙引號裡程式碼挖成兩格空白）。前一版試過用程式碼裡的引號
+    字元自己追蹤引號狀態——雙引號裡的 `$(…)` 讓程式碼的引號配對與 bash 不同，追蹤一錯就連錯到後面每一行（野外語料 5 → 20 行）。"""
+    out = []
+
+    def joined(m):
+        """實體行 m 之後的下一個實體行（跳過折疊佔位）；掃描器接過它就回它的 index，否則 None。"""
+        m += 1
+        while m < len(src_lines) and src_lines[m] is None:
+            m += 1
+        return m if m < len(src_lines) and not code_lines[m] else None
+
+    for k, c in enumerate(code_lines):
+        if not c:
+            out.append("")
+            continue
+        s, tail, a, i, j, ok = src_lines[k] or "", k, [], 0, 0, True
+        while i < len(c):
+            if j >= len(s):
+                ok = not c[i:].strip()          # 雙引號裡的行尾 `\`：程式碼是兩格空白、原文只有一格
+                a.append(" " * (len(c) - i))
+                break
+            if s[j] == "\\" and j == len(s) - 1 and joined(tail) is not None:
+                tail = joined(tail)
+                s = s[:j] + src_lines[tail]
+                continue
+            # `<<` 在**第一個** `<` 就命中：here-string `<<<` 因此走到這裡時分隔字詞是空的（第三個 `<` 是詞界），照樣對齊——
+            # 這一支必須排在逐字比對之前，否則第二個 `<` 會被當成 heredoc 開頭、吃掉 `<<< "$X"` 的 `"$X"`（`good-here-string`）。
+            if c.startswith("<<", i) and s.startswith("<<", j):
+                e = _skip_delim_word(s, j + 2)
+                while (e is None or e > len(s)) and s.endswith("\\") and joined(tail) is not None:
+                    # 分隔字詞本身跨行（`<<AB\` ⏎ `CD`、`<<"AB\` ⏎ `CD"`）：掃描器同樣把 `\` 與換行拿掉、接上下一行
+                    tail = joined(tail)
+                    s = s[:-1] + src_lines[tail]
+                    e = _skip_delim_word(s, j + 2)
+                if e is None or e > len(s):
+                    ok = False
+                    break
+                a.append("<<")
+                i, j = i + 2, e
+                continue
+            if c[i] != " " and c[i] != s[j]:
+                ok = False
+                break
+            a.append(s[j])
+            i, j = i + 1, j + 1
+        out.append("".join(a) if ok else None)
+    return out
+
+
+def _clamp(C, p, e):
+    """挖空的構造在程式碼裡全是空白：由原文算出的結尾 e 不可越過任何活的程式碼字元（否則原文剖析與掃描器一有分歧，
+    一個真的 `>` 就會被吞進詞裡）。至少前進一格。"""
+    q = p
+    while q < min(e, len(C)) and C[q] == " ":
+        q += 1
+    return max(q, p + 1)
+
+
+def _brace_end(S, k):
+    """`${` 之後（k 指向內容開頭）配對的 `}` 之後的位置；只用來跳過挖空段，結果一律再經 `_clamp`。"""
+    d, n = 1, len(S)
+    while k < n and d:
+        c = S[k]
+        if c == "\\":
+            k += 2
+            continue
+        if c in ("'", '"'):
+            e = S.find(c, k + 1)
+            k = n if e < 0 else e + 1
+            continue
+        if S.startswith("${", k):
+            d, k = d + 1, k + 2
+            continue
+        d -= c == "}"
+        k += 1
+    return k
+
+
+_PARAM_RE = re.compile(r"\$(?:[A-Za-z_][A-Za-z0-9_]*|[0-9@*#?$!-])")
+
+
+def _dq_parts(body):
+    """雙引號內容（原文）→（去引號後的字面，含展開就是 None；骨架）。骨架把展開換成 `\\0`，給目標的字面部分判定用。"""
+    lit, sk, i, n, literal = [], [], 0, len(body), True
+    while i < n:
+        c = body[i]
+        if c == "\\" and i + 1 < n and body[i + 1] in '$`"\\\n':
+            lit.append(body[i + 1])
+            sk.append(body[i + 1])
+            i += 2
+            continue
+        if c == "`":
+            e = body.find("`", i + 1)
+            i, literal = (n if e < 0 else e + 1), False
+            sk.append("\0")
+            continue
+        if body.startswith("${", i):
+            i, literal = _brace_end(body, i + 2), False
+            sk.append("\0")
+            continue
+        if body.startswith("$(", i):
+            d, i, literal = 1, i + 2, False
+            while i < n and d:
+                d += (body[i] == "(") - (body[i] == ")")
+                i += 1
+            sk.append("\0")
+            continue
+        m = _PARAM_RE.match(body, i)
+        if m:
+            i, literal = m.end(), False
+            sk.append("\0")
+            continue
+        lit.append(c)
+        sk.append(c)
+        i += 1
+    return ("".join(lit) if literal else None), "".join(sk)
+
+
+def _sub_tokens(text):
+    """原文裡一段命令替換的**內容** → 詞元串：走同一套 `shell_scan` → `_aligned_sources` → `_lex`。掃描器不解析就回 None。"""
+    lines = text.split("\n")
+    code, _decls, unparsed = shell_scan(lines)
+    if unparsed:
+        return None
+    al = _aligned_sources(code, lines)
+    return _lex("\n".join(code), "\n".join(a if a is not None else "\0" * len(c) for c, a in zip(code, al)))[0]
+
+
+_COVERED = {}      # 這一次 `_analyse` 裡已經剖析過的原文區段：{原文字串: [(起, 迄)…]}（見 `_hidden_subs`）
+
+
+def _hidden_subs(S, lo, hi, dq):
+    """原文 [lo, hi) 是掃描器挖空的一段（雙引號內容，或未引號的 `${…}`）——找出裡面**會執行**的命令替換，
+    各自剖析成詞元串（R37：`"$(cmd >&2)"`、`${X:-$(cmd >&2)}` 裡的重導向與 xtrace 同樣會外流，而挖空後規則看不到）。
+    對不到收尾或掃描器不解析的回 None（呼叫端 fail-closed）。dq＝外層是雙引號：那裡的單引號是字面、不是引號；
+    而且雙引號的結尾**由原文自己找**（hi 只當下限參考）——掃描器對 `"$(… "…" …)"` 的引號配對與 bash 不同
+    （#33 verify R36 第 6 列，工作包 c 修），程式碼給的引號位置可能落在命令替換中間。已經剖析過的區段不重做（`_COVERED`）。"""
+    if any(a <= lo < b for a, b in _COVERED.get(S, ())):
+        return []
+    out, k = [], lo
+    if dq:
+        hi = len(S)
+    while k < hi:
+        c = S[k]
+        if dq and c == '"':
+            break                                # 雙引號的真正結尾（命令替換整段跳過，裡面的引號不會停在這裡）
+        if c == "\\":
+            k += 2
+            continue
+        if c == "'" and not dq:
+            e = S.find("'", k + 1)
+            k = hi if e < 0 else e + 1
+            continue
+        if S.startswith("$((", k):
+            k += 3
+            continue
+        if S.startswith("$(", k) or c == "`":
+            e = (_cmdsub_end_case(S, k) if dq else _cmdsub_end(S, k)) if c == "$" else _backtick_end(S, k)   # 雙引號裡認得 case（合併 r37b×r37c）
+            if e is None:
+                return None
+            sub = _sub_tokens(S[k + (2 if c == "$" else 1):e - 1])
+            if sub is None:
+                return None
+            out.append(sub)
+            k = e
+            continue
+        k += 1
+    _COVERED.setdefault(S, []).append((lo, k))
+    return out
+
+
+def _word(C, S, p, stop):
+    r"""從 p 讀一個詞 → {code, lit, skel, glob, subs, bad_sub, s, e}。lit＝去引號後的字面（含展開、或看不到原文，就是 None）；
+    skel＝字面部分＋把展開換成 `\0` 的骨架（看不到原文是 None）；subs＝詞裡的命令替換，各自一串詞元——包括雙引號與
+    `${…}` 裡、掃描器挖空的那些（`_hidden_subs`）；bad_sub＝有命令替換對不到收尾（規則層 fail-closed）。"""
+    n, st = len(C), p
+    lit, skel, subs, literal, known, glob, bad_sub = [], [], [], True, True, False, False
+    while p < n:
+        c, s = C[p], S[p]
+        if s == "\0":
+            known = False
+        hollow = c == " " and s not in " \t\n\0"
+        if (c in _WORD_END and not hollow) or (c == "`" and stop == "`"):
+            break
+        if c == "`":
+            sub, p = _lex(C, S, p + 1, "`")
+            subs.append(sub)
+            literal = False
+            skel.append("\0")
+            continue
+        if C.startswith("$((", p):
+            e = C.find("))", p + 3)
+            p, literal = (n if e < 0 else e + 2), False
+            skel.append("\0")
+            continue
+        if C.startswith("$(", p):
+            sub, p = _lex(C, S, p + 2, ")")
+            subs.append(sub)
+            literal = False
+            skel.append("\0")
+            continue
+        m = _PARAM_RE.match(C, p) if c == "$" else None
+        if m:
+            p, literal = m.end(), False
+            skel.append("\0")
+            continue
+        if c in ("'", '"'):
+            e = C.find(c, p + 1)
+            e = n if e < 0 else e
+            if c == '"' and C[p + 1:e].strip():
+                # **掃描器把這段雙引號切成了 code**（R37 合併 r37b×r37c）：r37c 讓雙引號裡收不掉的命令替換（跨行、
+                # 或 `_cmdsub_end_case` 也配不起來的）改當 code 掃（`shell_scan` 的 `dq_ret`），C 裡是真的 code、不是挖空的
+                # 內容——這裡若照挖空處理，會在單一實體行的原文上找命令替換的收尾、找不到就 fail-closed，把常見的
+                # `X="$(` ⏎ … ⏎ `)"` 整批誤擋（`good-r37c-dq-cmdsub-multiline-case`）。照 code 讀下去：引號字元本身跳過。
+                literal = False
+                skel.append("\0")
+                p += 1
+                continue
+            body = S[p + 1:e]
+            if "\0" in body:
+                known = False
+            elif c == "'":
+                lit.append(body)
+                skel.append(body)
+            else:
+                d, sk = _dq_parts(body)
+                skel.append(sk)
+                if d is None:
+                    literal = False
+                    hs = _hidden_subs(S, p + 1, e, dq=True)
+                    if hs is None:
+                        bad_sub = True
+                    else:
+                        subs.extend(hs)
+                else:
+                    lit.append(d)
+            p = e + 1
+            continue
+        if hollow:                              # 掃描器挖空的未引號構造：`\x`、`$'…'`、`${…}`、`$[…]`
+            if s == "\\":
+                ch = S[p + 1] if p + 1 < n else ""
+                lit.append(ch)
+                skel.append(ch)
+                p += 2
+                continue
+            e = p + 1
+            if S.startswith("$'", p):
+                k = p + 2
+                while k < n and S[k] != "'":
+                    k += 2 if S[k] == "\\" else 1
+                dec = _ansic_decode(S[p + 2:k]) if k < n else None
+                if dec is not None:
+                    lit.append(dec)
+                    skel.append(dec)
+                    p = _clamp(C, p, k + 1)
+                    continue
+                e = k + 1
+            elif S.startswith("${", p):
+                e = _brace_end(S, p + 2)
+                hs = _hidden_subs(S, p + 2, min(e, n), dq=False)
+                if hs is None:
+                    bad_sub = True
+                else:
+                    subs.extend(hs)
+            elif S.startswith("$[", p):
+                e, d = p + 2, 1
+                while e < n and d:
+                    d += (S[e] == "[") - (S[e] == "]")
+                    e += 1
+            literal = False
+            skel.append("\0")
+            p = _clamp(C, p, e)
+            continue
+        glob = glob or c in "*?["
+        lit.append(s)
+        skel.append(s)
+        p += 1
+    return {"k": "W", "code": C[st:p], "lit": "".join(lit) if literal and known else None,
+            "skel": "".join(skel) if known else None, "glob": glob, "subs": subs, "bad_sub": bad_sub, "s": st, "e": p}
+
+
+def _opaque(C, p, e, subs=()):
+    return {"k": "W", "code": C[p:e], "lit": None, "skel": None, "glob": False, "subs": list(subs), "s": p, "e": e}
+
+
+def _lex(C, S, p=0, stop=None):
+    """程式碼（與對齊的原文）→ 詞元串：`W`（詞）、`R`（重導向：fd 前綴、運算子、目標詞）、`OP`（運算子）、`NL`。
+    stop 是 `)`（命令替換、process substitution）或反引號時，讀到配對的收尾就回傳。"""
+    toks, n, depth, cased = [], len(C), 0, 0
+    while p < n:
+        c = C[p]
+        if stop == "`" and c == "`":
+            return toks, p + 1
+        if stop == ")" and c == ")" and not depth and not cased:
+            return toks, p + 1
+        if c in " \t" and S[p] in " \t\0":       # 真的空白；程式碼是空白而原文不是＝挖空的構造，是詞的開頭（`${X}…`、`\x…`）
+            p += 1
+            continue
+        if c == "\n":
+            toks.append({"k": "NL"})
+            p += 1
+            continue
+        if C.startswith("((", p) or C.startswith("[[", p):   # 算術命令／條件式：掃描器已把內容挖空——整段是一個不透明的詞
+            e = C.find("))" if c == "(" else "]]", p + 2)
+            e = n if e < 0 else e + 2
+            toks.append(_opaque(C, p, e))
+            p = e
+            continue
+        if C.startswith("<(", p) or C.startswith(">(", p):   # process substitution：一個詞，裡面是一串命令
+            sub, e = _lex(C, S, p + 2, ")")
+            toks.append(_opaque(C, p, e, [sub]))
+            p = e
+            continue
+        op = next((o for o in _OPS if C.startswith(o, p)), None)
+        if op is None:
+            w = _word(C, S, p, stop)
+            if w["e"] == p:                                  # 不前進（不該發生）：吃一格當成看不懂的詞，不讓迴圈卡死
+                w = _opaque(C, p, p + 1)
+            toks.append(w)
+            p = w["e"]
+            if stop == ")" and w["lit"] in ("case", "esac"):  # `$(case … a) …;; esac)` 的模式 `)` 不是收尾
+                cased += 1 if w["lit"] == "case" else (-1 if cased else 0)
+            continue
+        p += len(op)
+        if op in _REDIR_OPS:
+            pre, prev = "", (toks[-1] if toks else None)
+            # fd 前綴要是**緊貼運算子的一整個字面詞**（`2>&1`）；`"$X"2>&1` 的 `2` 黏在前一個詞上，bash 讀成 `>&1`
+            if (prev is not None and prev["k"] == "W" and prev["e"] == p - len(op) and prev["lit"] is not None
+                    and prev["lit"] == prev["code"] and re.fullmatch(r"[0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\}", prev["lit"])):
+                pre = toks.pop()["lit"]
+            tgt = None
+            if op != "<<":                                   # `<<` 的分隔字詞掃描器已經讀掉了
+                while p < n and C[p] in " \t" and S[p] in " \t\0":   # 同上：挖空的 `${…}` 是目標的開頭，不是空白
+                    p += 1
+                if C.startswith("<(", p) or C.startswith(">(", p):
+                    sub, e = _lex(C, S, p + 2, ")")
+                    tgt = dict(_opaque(C, p, e, [sub]), psub=True)
+                    p = e
+                elif p < n and (C[p] not in _WORD_END or (C[p] == " " and S[p] not in " \t\n\0")):
+                    tgt = _word(C, S, p, stop)
+                    p = tgt["e"]
+            toks.append({"k": "R", "pre": pre, "op": op, "t": tgt})
+            continue
+        if op == "(":
+            depth += 1
+        elif op == ")" and depth:
+            depth -= 1
+        toks.append({"k": "OP", "op": op})
+    return toks, p
+
+
+def _is_2to1(r):
+    return r["op"] == ">&" and r["pre"] == "2" and r["t"] is not None and r["t"]["lit"] == "1"
+
+
+def _touches_fd2(r):
+    """這個重導向會不會改掉 fd 2 指向哪裡（`2>…`、`&>…`、`>&檔名`）。"""
+    if r["pre"] == "2" or r["op"] in ("&>", "&>>"):
+        return True
+    if r["op"] == ">&" and r["pre"] == "":
+        tl = r["t"]["lit"] if r["t"] is not None else None
+        return tl is None or not (tl.isdigit() or tl == "-")
+    return False
+
+
+def _fd2_to_pipe(rs):
+    """一段的重導向依序套用完，fd 2 是不是併進了管線：最後一個動到 fd 2 的重導向是 `2>&1`。"""
+    ok = False
+    for r in rs:
+        if _is_2to1(r):
+            ok = True
+        elif _touches_fd2(r):
+            ok = False
+    return ok
+
+
+def _redir_hit(r):
+    """這個重導向會不會把輸出帶離管線？會就回一句說明，不會回 None。"""
+    op, pre, t = r["op"], r["pre"], r["t"]
+    if op in ("<", "<<", "<<<"):
+        return None
+    # 訊息裡的目標用去引號後的字（程式碼半邊的引號內容是挖空的，印出來只剩空白）
+    shown = "%s%s%s" % (pre, op, "" if t is None else t["lit"] if t["lit"] is not None else t["code"])
+    if op in (">&", "<&"):
+        tl = t["lit"] if t is not None else None
+        if tl == "-":
+            return None                                  # 關閉 fd：之後的寫入失敗，不會寫到任何地方
+        if tl is not None and re.fullmatch(r"[0-9]+-", tl):
+            tl = tl[:-1]                                 # `>&2-`：搬移 fd（複製後關掉來源）——對「寫到哪裡」與複製相同
+        if tl is not None and tl.isdigit():
+            if op == ">&" and tl == "1" and pre in ("", "1", "2"):
+                return None                              # `2>&1`：fd 2 跟著 fd 1 走（管線）；`>&1`：no-op
+            return "`%s` 複製 fd（stdout 可能被帶到 stderr 或另存的 fd）" % shown
+        if op == "<&" or tl is None or t.get("psub"):
+            return "`%s` 複製到看不出值的 fd" % shown
+        # `>&word`（word 不是數字）＝stdout 與 stderr 一起寫進檔案 word，同 `&>word`——往下判目標
+    if t is None or t.get("psub"):
+        return None                                      # 缺目標是 bash 語法錯誤；process substitution 繼承當下的 fd 1
+    sk = t["skel"]
+    if sk is None:
+        return "`%s` 的目標看不到原文（本 lint 對不齊這一行）——不解析就不放行" % shown
+    if t["glob"]:
+        return "`%s` 的目標含萬用字元——bash 會對它做路徑展開" % shown
+    if t["lit"] is not None and (posixpath.normpath(t["lit"]) in _SAFE_TARGETS
+                                 or re.match(r"/dev/(tcp|udp)/", posixpath.normpath(t["lit"]))):
+        return None                                      # `/dev/tcp/host/port`：bash 的網路 socket，不是 log（野外語料 3 處）
+    if {"dev", "proc"} & set(posixpath.normpath(sk).split("/")):
+        return "`%s` 寫到 /dev 或 /proc 底下（去引號後是 `%s`）" % (
+            shown, t["lit"] if t["lit"] is not None else sk.replace("\0", "$…"))
+    return None
+
+
+class _Sh:
+    """把 `_lex` 的詞元剖析成管線／群組／簡單命令，收集三條規則要讀的東西。
+
+    不是完整的 bash 剖析器：`if`／`while`／`for` 當成一般的詞（它們不改變 fd 與管線的結構）；有自己結構的只有
+    群組 `{ …; }`／`( … )`、`case`（模式裡的 `|` 是「或」、不是管線——R36 第 22 列）、函式定義、命令替換與
+    process substitution。收集到 `out`：groups（每個群組是否豁免）、hits（（說明, 所在群組的堆疊））、
+    events（pipefail 的模擬序列）、pipelines（（各段, 段與段之間的運算子））。"""
+
+    def __init__(self, toks, out):
+        self.t, self.i, self.o = toks, 0, out
+
+    def tok(self, k=0):
+        j = self.i + k
+        return self.t[j] if j < len(self.t) else None
+
+    @staticmethod
+    def op(t, *ops):
+        return t is not None and t["k"] == "OP" and t["op"] in ops
+
+    @staticmethod
+    def word(t, *codes):
+        return t is not None and t["k"] == "W" and t["code"] in codes
+
+    def skip_nl(self):
+        while self.tok() is not None and self.tok()["k"] == "NL":
+            self.i += 1
+
+    def hit(self, why, ctx):
+        self.o["hits"].append((why, ctx["stack"]))
+
+    def group(self):
+        self.o["groups"].append(False)
+        return len(self.o["groups"]) - 1
+
+    def parse_list(self, ctx, end):
+        while self.tok() is not None:
+            t = self.tok()
+            if t["k"] == "NL" or self.op(t, ";", "&"):
+                self.i += 1
+                continue
+            if end(t):
+                return
+            i0 = self.i
+            self.parse_andor(ctx, end)
+            if self.i == i0:                     # 語法錯誤的殘渣（孤立的 `)`、`;;`…）：略過一個，不讓迴圈卡死
+                self.i += 1
+
+    def parse_andor(self, ctx, end):
+        self.parse_pipeline(ctx, end)
+        while self.op(self.tok(), "&&", "||"):
+            self.i += 1
+            self.skip_nl()
+            if self.tok() is None or end(self.tok()):
+                return
+            self.parse_pipeline(ctx, end)
+
+    def parse_pipeline(self, ctx, end):
+        ev0, segs, conns = len(self.o["events"]), [], []
+        while self.word(self.tok(), "!", "time"):
+            self.i += 1
+        seg = self.parse_command(ctx, end)
+        while seg is not None:
+            segs.append(seg)
+            if not self.op(self.tok(), "|", "|&"):
+                break
+            conns.append(self.tok()["op"])
+            self.o["events"].append({"k": "pipe"})
+            self.i += 1
+            self.skip_nl()
+            seg = self.parse_command(ctx, end)
+        if len(segs) > 1:                        # 管線的每一段都在子殼層：裡面的 `set -o pipefail` 不作用在外面
+            for ev in self.o["events"][ev0:]:
+                ev["sub"] = True
+        if segs:
+            self.o["pipelines"].append((segs, conns))
+
+    def parse_command(self, ctx, end):
+        t = self.tok()
+        if t is None or t["k"] == "NL" or end(t):
+            return None
+        if t["k"] == "OP":
+            if t["op"] != "(":
+                return None
+            gid = self.group()
+            self.i += 1
+            self.parse_list(dict(ctx, stack=ctx["stack"] + (gid,), sub=True), lambda x: self.op(x, ")"))
+            if self.op(self.tok(), ")"):
+                self.i += 1
+            return {"kind": "group", "gid": gid, "trail": self.redirs(ctx), "neut": False}
+        if self.word(t, "{"):
+            gid = self.group()
+            self.i += 1
+            self.parse_list(dict(ctx, stack=ctx["stack"] + (gid,)), lambda x: self.word(x, "}"))
+            if self.word(self.tok(), "}"):
+                self.i += 1
+            return {"kind": "group", "gid": gid, "trail": self.redirs(ctx), "neut": False}
+        if self.word(t, "case"):
+            return self.parse_case(ctx)
+        if self.word(t, "function"):             # `function f { …; }`：本體要呼叫才執行——子脈絡
+            self.i += 1
+            if self.tok() is not None and self.tok()["k"] == "W":
+                self.i += 1
+            if self.op(self.tok(), "(") and self.op(self.tok(1), ")"):
+                self.i += 2
+            self.skip_nl()
+            self.parse_command(dict(ctx, sub=True), end)
+            return {"kind": "func", "trail": [], "neut": False}
+        words, rs = [], []
+        while self.tok() is not None and self.tok()["k"] in ("W", "R"):
+            x = self.tok()
+            if x["k"] == "W":
+                words.append(x)
+                self.subs(x, ctx)
+            else:
+                rs.append(x)
+                self.redir(x, ctx)
+            self.i += 1
+            if len(words) == 1 and not rs and self.op(self.tok(), "(") and self.op(self.tok(1), ")"):
+                self.i += 2                      # `f() …`：本體要呼叫才執行——子脈絡
+                self.skip_nl()
+                self.parse_command(dict(ctx, sub=True), end)
+                return {"kind": "func", "trail": [], "neut": False}
+        self.simple(words, ctx)
+        neut = (len(words) >= 2 and words[0]["code"] == "python3"
+                and re.fullmatch(r"\S*neutralise\.py", words[1]["code"]) is not None)
+        return {"kind": "simple", "trail": rs, "neut": neut}
+
+    def parse_case(self, ctx):
+        self.i += 1                              # `case`
+        if self.tok() is not None and self.tok()["k"] == "W":
+            self.subs(self.tok(), ctx)
+            self.i += 1                          # 主詞
+        self.skip_nl()
+        if self.word(self.tok(), "in"):
+            self.i += 1
+        while self.tok() is not None:
+            i0 = self.i
+            self.skip_nl()
+            if self.tok() is None or self.word(self.tok(), "esac"):
+                break
+            if self.op(self.tok(), "("):
+                self.i += 1
+            while self.tok() is not None and self.tok()["k"] != "NL" and not self.op(self.tok(), ")"):
+                if self.tok()["k"] == "W":       # 模式：`|` 是「或」、不是管線
+                    self.subs(self.tok(), ctx)
+                self.i += 1
+            if self.op(self.tok(), ")"):
+                self.i += 1
+            self.parse_list(ctx, lambda x: self.op(x, ";;", ";&", ";;&") or self.word(x, "esac"))
+            if self.op(self.tok(), ";;", ";&", ";;&"):
+                self.i += 1
+            if self.i == i0:
+                self.i += 1
+        if self.word(self.tok(), "esac"):
+            self.i += 1
+        return {"kind": "case", "trail": self.redirs(ctx), "neut": False}
+
+    def redirs(self, ctx):
+        rs = []
+        while self.tok() is not None and self.tok()["k"] == "R":
+            rs.append(self.tok())
+            self.redir(self.tok(), ctx)
+            self.i += 1
+        return rs
+
+    def redir(self, r, ctx):
+        why = _redir_hit(r)
+        if why:
+            self.hit(why, ctx)
+        if r["t"] is not None:
+            self.subs(r["t"], ctx)
+
+    def subs(self, w, ctx):
+        if w.get("bad_sub"):
+            self.hit("引號或 `${…}` 裡的命令替換對不到收尾（或掃描器不解析它）——裡面的重導向看不到，不解析就不放行", ctx)
+        for sub in w["subs"]:                    # 命令替換、process substitution：子殼層，fd 繼承自所在的位置
+            _Sh(sub, self.o).parse_list(dict(ctx, sub=True), lambda x: False)
+
+    def simple(self, words, ctx):
+        k = 0
+        while k < len(words):                    # 前綴：變數指派（`X=1 cmd`）與不改變命令名的保留字
+            w = words[k]
+            if _ASSIGN_RE.match(w["skel"] if w["skel"] is not None else w["code"]):
+                self.env_word(w, ctx, bare=False)
+            elif w["code"] not in _LEAD_WORDS:
+                break
+            k += 1
+        if k >= len(words):
+            return
+        name = words[k]["lit"] if words[k]["lit"] is not None else words[k]["code"]
+        args = words[k + 1:]
+        if name == "eval" and args and all(a["lit"] is not None for a in args):
+            # `eval` 後面全是字面詞：bash 執行的就是那幾個詞接起來（`eval set -x`）
+            self.simple([dict(_opaque("", 0, 0), code=x, lit=x, skel=x) for x in " ".join(a["lit"] for a in args).split()], ctx)
+            return
+        if name == "set":
+            self.set_cmd(args, ctx)
+        elif name == "shopt":
+            self.shopt_cmd(args, ctx)
+        elif name in ("export", "declare", "typeset", "local", "readonly", "env"):
+            for a in args:
+                self.env_word(a, ctx, bare=True)
+        for j, w in enumerate(words):            # 任何位置的 shell 呼叫（`bash -x …`、`sudo bash -x …`、`env X=1 sh -x …`）
+            if w["lit"] is not None and w["lit"].rsplit("/", 1)[-1] in _SHELL_NAMES:
+                self.shell_opts(words[j + 1:], ctx)
+
+    def env_word(self, w, ctx, bare):
+        text = w["skel"] if w["skel"] is not None else w["code"]
+        for key in _RUN_ENV_KEYS:
+            if text.startswith((key + "=", key + "+=")) or (bare and text == key):
+                self.hit("run 裡設定 `%s`——bash（含子行程）啟動時會讀它、可以開 xtrace 或執行別的程式碼" % key, ctx)
+
+    def pf_event(self, on, ctx):
+        self.o["events"].append({"k": "pf", "on": on, "sub": ctx["sub"]})
+
+    def set_cmd(self, args, ctx):
+        i = 0
+        while i < len(args):
+            a = args[i]["lit"]
+            if a is None:
+                self.hit("`set` 的參數不是字面（`set -$X`…）——開了什麼看不出來", ctx)
+                self.pf_event(False, ctx)
+                return
+            m = re.fullmatch(r"([-+])([A-Za-z]+)", a)
+            if not m:
+                return                           # `--`、`-`、位置參數：之後都不是選項
+            on, i = m.group(1) == "-", i + 1
+            for ch in m.group(2):
+                if ch == "o":
+                    if i >= len(args):
+                        return                   # 單獨的 `set -o`：印出選項
+                    nm, i = args[i]["lit"], i + 1
+                    if nm is None:
+                        self.hit("`set %so` 的選項名不是字面——開了什麼看不出來" % m.group(1), ctx)
+                        self.pf_event(False, ctx)
+                    elif on and nm in _TRACE_OPTS:
+                        self.hit("`set %s %s` 開了 %s" % (a, nm, nm), ctx)
+                    elif nm == "pipefail":
+                        self.pf_event(on, ctx)
+                elif on and ch in "xv":
+                    self.hit("`set %s` 開了 %s" % (a, "xtrace" if ch == "x" else "verbose"), ctx)
+
+    def shopt_cmd(self, args, ctx):
+        flags, i = "", 0
+        while i < len(args):
+            a = args[i]["lit"]
+            if a is None:
+                self.hit("`shopt` 的參數不是字面——開了什麼看不出來", ctx)
+                return
+            if a == "--":
+                i += 1
+                break
+            if not re.fullmatch(r"-[A-Za-z]+", a):
+                break
+            flags, i = flags + a[1:], i + 1
+        if "o" not in flags:
+            return
+        for w in args[i:]:
+            nm = w["lit"]
+            if nm is None:
+                self.hit("`shopt -o` 的選項名不是字面——開了什麼看不出來", ctx)
+            elif "s" in flags and nm in _TRACE_OPTS:
+                self.hit("`shopt -%s %s` 開了 %s" % (flags, nm, nm), ctx)
+            elif nm == "pipefail" and ("s" in flags or "u" in flags):
+                self.pf_event("s" in flags, ctx)
+
+    def shell_opts(self, args, ctx):
+        i = 0
+        while i < len(args):
+            a = args[i]["lit"]
+            if a is None or not a.startswith(("-", "+")) or a in ("-", "--"):
+                return
+            i += 1
+            if a == "--verbose":
+                self.hit("子 shell 的 `--verbose` 開了 verbose", ctx)
+                continue
+            if a.startswith("--"):
+                continue
+            on = a[0] == "-"
+            for ch in a[1:]:
+                if ch in "oO":
+                    nm = args[i]["lit"] if i < len(args) else None
+                    i += 1
+                    if ch == "o" and on and (nm is None or nm in _TRACE_OPTS):
+                        self.hit("子 shell 的 `%so %s` 開了 trace" % (a, nm or "…"), ctx)
+                elif ch == "c":
+                    return                       # 之後是命令字串（不剖析，見本節已知不涵蓋第 2 條）
+                elif on and ch in "xv":
+                    self.hit("子 shell 的 `%s` 開了 %s" % (a, "xtrace" if ch == "x" else "verbose"), ctx)
+
+
+def _rule_lines(code_lines, src_lines):
+    """規則層的邏輯行：（程式碼, 對齊的原文或 None）。接行規則與管線判定用的 `logical` 相同（前一行以 `CONT_RE` 結尾才接），
+    但**不 strip、不丟掉整行挖空的行**——跨行字串與跨行 `"$(…)"` 的中間行在程式碼裡全是空白，丟掉就連原文一起丟了
+    （R37 自查：野外語料 12 個「命令替換對不到收尾」的誤擋全是這個）。空字串的程式碼行（heredoc 內文、被接走的續行）不收。"""
+    rl_code, rl_src = [], []
+    for c, a in zip(code_lines, _aligned_sources(code_lines, src_lines)):
+        if rl_code and CONT_RE.search(rl_code[-1]):
+            rl_code[-1] = rl_code[-1] + " " + c
+            rl_src[-1] = None if rl_src[-1] is None or a is None else rl_src[-1] + " " + a
+        elif c:
+            rl_code.append(c)
+            rl_src.append(a)
+    return rl_code, rl_src
+
+
+def _analyse(logical, logical_src):
+    """一個 step 的邏輯行（程式碼與對齊的原文）→ {fd: 外流說明, bad_segs: `--strict` 缺 `2>&1` 的段號,
+    n_neut: 接 neutralise 的管線條數, events: pipefail 的模擬序列}。"""
+    C = "\n".join(logical)
+    S = "\n".join(s if s is not None else "\0" * len(c) for c, s in zip(logical, logical_src))
+    _COVERED.clear()
+    toks, _ = _lex(C, S)
+    out = {"groups": [], "hits": [], "events": [], "pipelines": []}
+    _Sh(toks, out).parse_list({"stack": (), "sub": False}, lambda t: False)
+    bad_segs, n_neut = [], 0
+    for segs, conns in out["pipelines"]:
+        last = max((k for k, sg in enumerate(segs) if sg["neut"]), default=0)
+        if not last:
+            continue
+        n_neut += 1
+        for k in range(last):
+            if conns[k] != "|&" and not _fd2_to_pipe(segs[k]["trail"]):
+                bad_segs.append(k + 1)
+            # 群組豁免（R36 第 9 列）：收尾後緊接 `2>&1 |`（或 `|&`）進 neutralise——群組裡的 fd 1、fd 2 都是管線
+            if segs[k]["kind"] == "group" and (
+                    (conns[k] == "|&" and not segs[k]["trail"])
+                    or (conns[k] == "|" and len(segs[k]["trail"]) == 1 and _is_2to1(segs[k]["trail"][0]))):
+                out["groups"][segs[k]["gid"]] = True
+    fd = [why for why, stack in out["hits"] if not any(out["groups"][g] for g in stack)]
+    return {"fd": fd, "bad_segs": bad_segs, "n_neut": n_neut, "events": out["events"]}
+
+
+def _pipefail_holds(events, on):
+    """照詞元順序模擬 pipefail：頂層（不在子殼層、命令替換、函式本體、管線的一段裡）的設定才改變它；
+    每一個管線運算子出現時它都要是開的。非字面的 `set` 參數當成關掉（fail-closed）。"""
+    for ev in events:
+        if ev["k"] == "pf" and not ev.get("sub"):
+            on = ev["on"]
+        elif ev["k"] == "pipe" and not on:
+            return False
+    return True
+
+
+_BASH_PATHS = ("bash", "/bin/bash", "/usr/bin/bash")
+_BASH_LONG = frozenset(("--noprofile", "--norc", "--login", "--noediting"))
+_BASH_SHORT = frozenset("abefhlBCEPTu")
+_BASH_O = frozenset(("allexport", "braceexpand", "errexit", "errtrace", "functrace", "hashall", "noclobber",
+                     "noglob", "nounset", "notify", "physical", "pipefail", "xtrace", "verbose"))
+
+
+def _bash_template(sh):
+    """`shell:` 的值 → {pipefail, trace}；不是本 lint 認得的 bash 樣板就 None（`--strict` fail-closed）。
+
+    **pipefail 只有兩個來源**（#33 verify R36 第 4 列）：值恰好是關鍵字 `bash`（GitHub 對它用
+    `bash --noprofile --norc -eo pipefail {0}`），或樣板自己的選項開了 `-o pipefail`（`-eo pipefail`、`-euo pipefail` 這類捆綁也算、
+    之後的 `+o pipefail` 會關掉它）。其餘樣板照字面跑——GitHub 文件：「You can take full control over shell parameters by
+    providing a template string」。前一版把「是 bash」當成「有 pipefail」，`bash -e {0}`、`bash -l {0}`、conda 的 `bash -el {0}`
+    都漏網，而 `good-strict-bash-templates` 還把 `bash -l {0}` 釘成 pass。`/bin/bash`、`/usr/bin/bash` 是 bash，但不是關鍵字。
+    選項採**白名單**：xtrace／verbose（`-x`、`-v`、`-o xtrace`、`--verbose`，含捆綁）算 trace；白名單外的選項（`-i`、`-s`、`-c`、
+    `-O extglob`、`-o posix`、`+o interactive-comments`、`--rcfile`…）會改變詞法或讀進別的程式碼，一律不認。"""
+    if sh == "bash":
+        return {"pipefail": True, "trace": False}
+    toks = sh.split()
+    if not toks or toks[0] not in _BASH_PATHS:
+        return None
+    rest = toks[1:-1] if len(toks) > 1 and toks[-1] == "{0}" else toks[1:]
+    pf = trace = False
+    i = 0
+    while i < len(rest):
+        t = rest[i]
+        i += 1
+        if t == "--verbose":
+            trace = True
+            continue
+        if t in _BASH_LONG:
+            continue
+        m = re.fullmatch(r"([-+])([A-Za-z]+)", t)
+        if not m:
+            return None
+        on = m.group(1) == "-"
+        for ch in m.group(2):
+            if ch == "o":
+                if i >= len(rest) or rest[i] not in _BASH_O:
+                    return None
+                nm = rest[i]
+                i += 1
+                if nm == "pipefail":
+                    pf = on
+                elif nm in _TRACE_OPTS:
+                    trace = trace or on
+            elif ch in "xv":
+                trace = trace or on
+            elif ch not in _BASH_SHORT:
+                return None
+    return {"pipefail": pf, "trace": trace}
+
+
 REQUIRE_RUN_STEPS = "--require-run-steps" in sys.argv
-# **`--strict`**（#33 verify R35）：CI 與 run.sh 對**真的 workflow** 用這個模式。多兩條規則：
-#   (1) 有管線的 step 必須跑在 pipefail 之下（`shell: bash`／defaults 是 bash／run 裡先 `set -o pipefail`）——
-#       R33 的形狀普查 step 缺它，閘門在 CI 上結構上紅不了（R34 security S-1／regression H-3／requirements F1）；
-#   (2) 接 neutralise 的管線必須帶 `2>&1` 或用 `|&`——已知類別 S-2 在這個模式下是規則（R34 requirements F4）。
-# 預設模式不要求這兩條：fixture 與產生語料量的是**詞法**，不是 CI 的寫法規範；改寫兩百個 fixture 的管線只會讓
-# 每一個詞法形狀多一個與它無關的變數。
+# **`--strict`**（#33 verify R35；R37 按 R36 第 3、4、13 列改寫）：CI 與 run.sh 對**真的 workflow** 用這個模式。
+# 比預設模式多四條（封閉列舉，只有這四條）：
+#   (1) 有管線的 step 必須跑在 pipefail 之下：shell 是**關鍵字** `bash`、或樣板自帶 `-o pipefail`，或 run 裡在管線之前、
+#       頂層地 `set -o pipefail`（之後不得再關掉）——R33 的形狀普查 step 缺它，閘門在 CI 上結構上紅不了（R34 security S-1／
+#       regression H-3／requirements F1）；R36 第 4 列：`bash -e {0}`、`bash -l {0}` 這類樣板**沒有** pipefail。
+#   (2) 接 neutralise 的管線，neutralise 之前的**每一段**都要把 stderr 併進管線（`2>&1` 收尾、`|&`，或整段包成
+#       `{ …; } 2>&1 |`）——已知類別 S-2 在這個模式下是規則（R34 requirements F4；R36 第 3 列：前一版比總數）。
+#   (3) shell 只能是 bash 樣板（不得開 xtrace／verbose）；container 或 Windows／運算式 runs-on 的 job 必須明寫 shell
+#       （R35 從預設模式移過來：預設模式假設 shell 是 bash，見 `shell_scan` 已知不涵蓋第三組第 1 條）。
+#   (4) workflow 根層級 `defaults.run` 寫成 flow 形式 ⇒ PARSE（R36 第 13 列：讀不到 shell）。
+# 預設模式不要求這四條：fixture 與產生語料量的是**詞法**，不是 CI 的寫法規範；改寫兩百個 fixture 的管線只會讓
+# 每一個詞法形狀多一個與它無關的變數。fd 流向與 env 那兩條（見規則層的詞法一節）兩種模式都套用。
 STRICT = "--strict" in sys.argv
 FLAGS = ("--require-run-steps", "--strict")
 rc_all = 0
@@ -1542,13 +2499,31 @@ for path in [a for a in sys.argv[1:] if a not in FLAGS]:
         nx = [l_ for l_, ind_, _k in key_lines if l_ > l0 and ind_ <= ind0]
         return (min(nx) - 1) if nx else len(raw) - 1
 
+    def _uncomment(t):
+        """去掉 YAML 行尾註解、**保留引號內容**。`yaml_split_comment()` 的程式碼半邊是引號挖空的，只能拿它的註解半邊找起點
+        （#33 verify R36 第 12、22 列：`_scalar` 與 `ro_text` 各自踩過一次——一個把 `"bash"` 讀成一串空白，一個把
+        `# windows runners …` 這句註解讀成 Windows runner）。"""
+        _code, cmt = yaml_split_comment(t)
+        return t[:len(t) - len(cmt)] if cmt else t
+
     def _scalar(l0):
-        v = KEY_RE.match(norm[l0]).group(3) or ""      # 前後空白由下面兩次 strip 處理（opsweep 報這裡的 strip 存活，多餘、刪掉）
-        code_v, _c = yaml_split_comment(v)
-        # `yaml_decode_scalar` 自己先 strip；引號裡帶空白的值（`"bash "`）不再剝——`--strict` 會把它當成不是 bash、fail-closed
-        #（opsweep 報這兩個 strip 存活：一個多餘、一個只影響那種值，都刪掉）
-        d = yaml_decode_scalar(code_v)
-        return d if d is not None else code_v
+        body = _uncomment(KEY_RE.match(norm[l0]).group(3) or "")
+        # 解碼對**原文**做（R36 第 12 列：前一版先挖空再解碼，`shell: "bash"` 成了 `'    '`、`--strict` 判 PARSE；放回 strip
+        # 則 `shell: 'pwsh'` 變成空字串＝「沒寫 shell」而放行——兩個方向都錯）。解不出來就回原文，`--strict` 會當成不是 bash。
+        d = yaml_decode_scalar(body)
+        return d if d is not None else body.strip()
+
+    def _flow_value(l0):
+        """這個 key 的值寫成 flow 形式（`{…}`／`[…]`）。"""
+        return _uncomment(KEY_RE.match(norm[l0]).group(3) or "").strip()[:1] in ("{", "[")
+
+    def _env_names(l0, ind0):
+        """`env:` 底下的鍵名。值寫在同一行、又不是 flow（`env: ${{ fromJSON(…) }}`）⇒ 鍵名看不到，回 `["?"]`（fail-closed）；
+        flow 形式含 mapping 的，解析層已經 PARSE（jobs 子樹的 flow 規則、根層級見下），這裡不重複判。"""
+        inline = _uncomment(KEY_RE.match(norm[l0]).group(3) or "").strip()
+        if inline:
+            return [] if inline[:1] in ("{", "[") else ["?"]
+        return [k_ for _l, _i, k_ in _kids(l0, _end(l0, ind0), ind0)]
 
     def _defaults_shell(l0, ind0):
         for l1, i1, k1 in _kids(l0, _end(l0, ind0), ind0):
@@ -1561,14 +2536,25 @@ for path in [a for a in sys.argv[1:] if a not in FLAGS]:
         return None
 
     roots = [(l_, ind_, k_) for l_, ind_, k_ in key_lines if ind_ == root_indent]
-    wf_shell = None
+    wf_shell, wf_env = None, []
     for l_, ind_, k_ in roots:
         if k_ == "defaults":
             for l2, i2, k2 in _kids(l_, _end(l_, ind_), ind_):
                 if k2 == "run":
+                    # **根層級 `defaults.run` 的 flow 形式**（R36 第 13 列）：`run: {shell: sh}` 讀不到 shell，前一版 `--strict` rc=0。
+                    # jobs 子樹裡的同一寫法由 flow 規則擋；`defaults: {run: …}` 整個 flow 由 run key 守恆式擋（`{run:` 算一個 run key）。
+                    if STRICT and _flow_value(l2):
+                        reject(l2, "[--strict] workflow 的 `defaults.run` 用 flow 形式——本 lint 讀不到 shell，不解析就不放行")
                     for l3, _i3, k3 in _kids(l2, _end(l2, i2), i2):
                         if k3 == "shell":
                             wf_shell = _scalar(l3)
+        elif k_ == "env":
+            # 根層級 flow 形式的 env（`env: {SHELLOPTS: xtrace}`）讀不到鍵名（兩種模式；jobs 子樹的由 flow 規則擋）
+            if _flow_value(l_) and ":" in yaml_split_comment(KEY_RE.match(norm[l_]).group(3) or "")[0]:
+                reject(l_, "workflow 根層級的 `env` 用 flow 形式——本 lint 讀不到鍵名（SHELLOPTS、BASH_ENV… 在 bash 啟動時就生效），"
+                           "不解析就不放行")
+            else:
+                wf_env = _env_names(l_, ind_)
     jobs_info = []
     for l_, ind_, k_ in roots:
         if k_ != "jobs":
@@ -1577,14 +2563,21 @@ for path in [a for a in sys.argv[1:] if a not in FLAGS]:
             hi = _end(lj, ij)
             kids = _kids(lj, hi, ij)
             names = {k2 for _l, _i, k2 in kids}
-            ro_text = ""
+            ro_text, job_env = "", []
             for l2, i2, k2 in kids:
                 if k2 == "runs-on":
-                    ro_text = " ".join(raw[l2:_end(l2, i2) + 1])      # 只做子字串檢查與訊息，空白無妨（opsweep 報 strip 存活，刪掉）
+                    # 行尾註解不算（R36 第 22 列：`runs-on: ubuntu-latest  # windows runners are not supported` 被判成 Windows）；
+                    # 引號內容要留著（`runs-on: "windows-latest"` 仍是 Windows——`bypass-r37b-strict-runs-on-quoted-windows`）
+                    ro_text = " ".join(_uncomment(l) for l in raw[l2:_end(l2, i2) + 1])
+                elif k2 == "env":
+                    job_env += _env_names(l2, i2)
+                elif k2 == "container":
+                    # 容器 job 的 step 用 docker exec 跑在容器裡，繼承 `container.env`
+                    job_env += [n_ for l3, i3, k3 in _kids(l2, _end(l2, i2), i2) if k3 == "env" for n_ in _env_names(l3, i3)]
             jobs_info.append({"lo": lj, "hi": hi, "container": "container" in names,
                               "windows": "windows" in ro_text.lower() or "${{" in ro_text,
                               "ro": ro_text.split("runs-on:", 1)[-1][:40],      # 只進訊息（opsweep 報 strip 存活，刪掉）
-                              "shell": _defaults_shell(lj, ij)})
+                              "shell": _defaults_shell(lj, ij), "env": job_env})
 
     rc, seen = 0, 0
     for s in steps:
@@ -1599,10 +2592,11 @@ for path in [a for a in sys.argv[1:] if a not in FLAGS]:
         # 有 290 個翻紅——`shell: bash -euo pipefail {0}`、`runs-on: ${{ matrix.os }}`、container job 都是常見寫法）。
         # 預設模式量的是「lint 與 bash 的詞法對帳」，它**假設** shell 是 bash（已知不涵蓋第三組第 1 條）；
         # CI 與 run.sh 對真 workflow 用 `--strict`，在那裡驗這個假設。
-        is_bash = eff_shell is not None and BASH_SHELL_RE.match(eff_shell) is not None
-        if STRICT and eff_shell is not None and (not is_bash or XTRACE_OPT_RE.search(eff_shell)):
-            reject(s["keys"].get("shell", r), "[--strict] step 的 shell 是 %r——本 lint 的詞法是 bash 的，只接受 bash"
-                                                 "（可帶選項，但不得開 xtrace：`-x`／`-o xtrace` 會把 PR 文字印到 stderr）" % eff_shell)
+        tmpl = _bash_template(eff_shell) if eff_shell is not None else None
+        if STRICT and eff_shell is not None and (tmpl is None or tmpl["trace"]):
+            reject(s["keys"].get("shell", r), "[--strict] step 的 shell 是 %r——本 lint 的詞法是 bash 的，只接受 bash 樣板"
+                                                 "（`bash`／`/bin/bash`／`/usr/bin/bash` 帶白名單內的選項；不得開 xtrace 或 verbose："
+                                                 "`-x`、`-v`、`-o xtrace`、`--verbose` 會把 PR 文字印到 stderr）" % eff_shell)
             continue
         if STRICT and eff_shell is None and job and (job["container"] or job["windows"]):
             reject(r, "[--strict] 沒寫 shell，而這個 job %s——runner 不一定用 bash；請明寫 `shell: bash`"
@@ -1699,7 +2693,8 @@ for path in [a for a in sys.argv[1:] if a not in FLAGS]:
         # 兩種寫法下行尾的 `|` 本來就代表管線延續，所以把 run 區塊接成一串再比對是語意正確的。
         # 管線判定只看**會被執行的部分**（引號內容已挖空、註解已剝掉）。跨行管線（折疊 scalar，
         # 或行尾留 `|` 續行）仍要接成一串才判得到——但接的是 code 半邊，不再是原始文字。
-        run_code, shell_decls, run_unparsed = shell_scan(fold_block(dedent_block(run_lines, explicit_pad), block_folded))
+        scan_in = fold_block(dedent_block(run_lines, explicit_pad), block_folded)
+        run_code, shell_decls, run_unparsed = shell_scan(scan_in)
         if run_unparsed:
             reject(r, run_unparsed)
             continue
@@ -1716,29 +2711,56 @@ for path in [a for a in sys.argv[1:] if a not in FLAGS]:
                 logical[-1] = logical[-1] + " " + cs
             elif cs:
                 logical.append(cs)
+        rl_code, rl_src = _rule_lines(run_code, scan_in)     # 規則層的邏輯行：程式碼＋對齊的原文（R37，見 `_rule_lines`）
         via_pipe = any(PIPED_RE.search(l) for l in logical)
         declared = any(LOGFILTER_RE.match(l) for l in decl_lines)
         ok = via_pipe or declared
+        try:
+            an = _analyse(rl_code, rl_src)
+        except (IndexError, KeyError, ValueError, RecursionError) as e:   # 剖析器自己的錯：fail-closed，不讓 traceback 蓋掉其他檔
+            reject(r, "規則層剖析這個 run 區塊時出錯（%s: %s）——不解析就不放行" % (type(e).__name__, e))
+            continue
+        # env 帶進的 shell 設定（R36 第 8 列）：workflow／job（含 container.env）／step 三層；`?` ＝值是運算式、鍵名看不到
+        env_names = wf_env + (job["env"] if job else []) + (
+            _env_names(s["keys"]["env"], s["kindent"]) if "env" in s["keys"] else [])
+        env_hit = [k for k in env_names if k in ENV_TRACE_KEYS or k == "?"]
+        where = "%s:%d: RULE: " % (path, s["start"] + 1)
         if not ok:
-            print("%s:%d: RULE: step '%s' 的 run 區塊既沒有經 neutralise.py，也沒有 `# LOG-FILTER:` 註解說明為何不過濾"
-                  % (path, s["start"] + 1, s["name"]), file=sys.stderr)
+            print(where + "step '%s' 的 run 區塊既沒有經 neutralise.py，也沒有 `# LOG-FILTER:` 註解說明為何不過濾"
+                  % s["name"], file=sys.stderr)
             rc = 1
-        elif not declared and any(FD_RE.search(l) for l in logical):
-            print("%s:%d: RULE: step '%s' 靠管線過濾，卻把輸出轉到 stderr（`>&2`／`/dev/stderr`）或開了 xtrace——"
-                  "那些文字不經過管線（帶了 `2>&1` 也一樣：重導向由左到右套用）" % (path, s["start"] + 1, s["name"]), file=sys.stderr)
+        elif not declared and an["fd"]:
+            # **fd 流向**（#33 verify R34 security S-2／logic F5／DA G-B；R36 第 8、9 列改成按流向判）：把 stdout 帶離管線
+            # （複製到 fd 2 或另存的 fd、寫到 /dev 或 /proc 底下）或開 xtrace／verbose，PR 文字都繞過只接 stdout 的管線——
+            # **帶了 `2>&1` 也一樣**：`>&2 2>&1 |` 的 `>&2` 先把 fd 1 指到原本的 stderr；xtrace 在命令自己的 `2>&1` 套用之前就印到
+            # shell 的 fd 2。只對「靠管線過濾」的 step 適用；`# LOG-FILTER:` 明示不過濾的 step 不受限（它已經聲明不印 PR 文字）。
+            print(where + "step '%s' 靠管線過濾，卻有 %s——那些文字不經過管線（帶了 `2>&1` 也一樣：重導向由左到右套用；"
+                  "只有收尾後緊接 `2>&1 |`／`|&` 進 neutralise 的群組 `{ …; }`／`( … )` 裡面例外）" % (s["name"], an["fd"][0]),
+                  file=sys.stderr)
             rc = 1
-        elif STRICT and not declared and (sum(len(PIPED_RE.findall(l)) for l in logical)
-                                           > sum(len(STRICT_NEUT_RE.findall(l)) for l in logical)):
-            print("%s:%d: RULE: [--strict] step '%s' 接 neutralise.py 的管線沒有帶 `2>&1`（或用 `|&`）——"
-                  "PR 文字會從 stderr 繞過" % (path, s["start"] + 1, s["name"]), file=sys.stderr)
+        elif not declared and env_hit:
+            print(where + "step '%s' 靠管線過濾，而 env（workflow／job／step）帶了 %s——bash 啟動時就讀它們：可以開 xtrace、"
+                  "或在 run 之前執行別的程式碼，那些輸出不經過管線" % (s["name"], "、".join(
+                      "`%s`" % k if k != "?" else "看不到鍵名的運算式" for k in env_hit)), file=sys.stderr)
             rc = 1
-        if STRICT and not is_bash:
-            first_pipe = next((k for k, l in enumerate(logical) if ANY_PIPE_RE.search(l)), None)
-            if first_pipe is not None and not any(PIPEFAIL_RE.search(l) for l in logical[:first_pipe + 1]):
-                print("%s:%d: RULE: [--strict] step '%s' 有管線，卻沒有跑在 pipefail 之下（沒寫 `shell: bash`、defaults 不是 bash、"
-                      "run 裡也沒先 `set -o pipefail`）——GitHub 預設 `bash -e {0}`，管線前段的失敗會被後段的 rc 蓋掉"
-                      % (path, s["start"] + 1, s["name"]), file=sys.stderr)
-                rc = 1
+        elif STRICT and not declared and not an["n_neut"]:
+            print(where + "[--strict] step '%s' 看得到接 neutralise.py 的管線，本 lint 卻剖析不出它的結構——不解析就不放行"
+                  % s["name"], file=sys.stderr)
+            rc = 1
+        elif STRICT and not declared and an["bad_segs"]:
+            # **逐條管線、每一段**（R36 第 3 列）：前一版比 `PIPED_RE` 與 `STRICT_NEUT_RE` 的總數，於是前段的 stderr
+            # （`cat "$PR_TITLE" | grep x 2>&1 | …`）、子殼層湊數、黏在詞上的 `"$X"2>&1` 都放行。
+            print(where + "[--strict] step '%s' 接 neutralise.py 的管線，第 %s 段沒有把 stderr 併進管線（該段要以 `2>&1` 收尾、"
+                  "或用 `|&` 接下一段，或把前面整段包成 `{ …; } 2>&1 |`）——PR 文字會從那一段的 stderr 繞過"
+                  % (s["name"], "、".join(str(k) for k in an["bad_segs"])), file=sys.stderr)
+            rc = 1
+        if STRICT and not _pipefail_holds(an["events"], tmpl["pipefail"] if tmpl is not None else False):
+            # R36 第 4、22 列：起始值由樣板決定（只有關鍵字 `bash` 或樣板自帶 `-o pipefail`），頂層的 `set ±o pipefail` 依序改變它；
+            # 管線運算子是剖析出來的（`case … in a|b)` 的模式 `|` 不是管線）。
+            print(where + "[--strict] step '%s' 有管線，卻沒有跑在 pipefail 之下（shell 不是關鍵字 `bash`、樣板也沒帶 `-o pipefail`，"
+                  "run 裡也沒在管線之前、頂層地 `set -o pipefail`——或之後又關掉了）——GitHub 預設 `bash -e {0}`，"
+                  "管線前段的失敗會被後段的 rc 蓋掉" % s["name"], file=sys.stderr)
+            rc = 1
     for lineno, why in bad:
         # `PARSE:` / `RULE:` 是**機器可判的紅色來源標記**（R22 裁決 3）：22 個 bypass fixture 裡有
         # 8 個只靠 parse-reject 變紅，而 parse-reject 正是修誤擋必須放寬的機制——selftest 分不出

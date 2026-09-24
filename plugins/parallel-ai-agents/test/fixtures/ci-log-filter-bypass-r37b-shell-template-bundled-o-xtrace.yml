@@ -1,0 +1,14 @@
+# #33 verify R36 第 4、8、23 列 → R37：shell 樣板逐個選項解析——xtrace／verbose 的捆綁拼法也算開了 trace。
+# `bash -eo xtrace {0}`：`-o xtrace` 捆在 `-e` 後面（R36 logic 的 xtrace-shell-opt）。
+# LINT-ARGS: --strict
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: bundled xtrace template
+        shell: bash -eo xtrace {0}
+        run: |
+          printf 'ok\n' 2>&1 | python3 scripts/neutralise.py

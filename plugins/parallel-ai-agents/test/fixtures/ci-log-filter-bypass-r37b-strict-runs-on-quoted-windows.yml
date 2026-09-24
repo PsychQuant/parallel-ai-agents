@@ -1,0 +1,13 @@
+# #33 verify R36 第 22 列 → R37：`--strict` 的兩個誤擋——`runs-on` 行尾註解裡的 windows、`case … in a|b)` 的模式 `|`。
+# 守衛（相鄰輸入）：去掉行尾註解時不得連引號內容一起挖空——`runs-on: "windows-latest"` 仍是 Windows、沒寫 shell 要 PARSE。
+# LINT-ARGS: --strict
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: "windows-latest"
+    steps:
+      - name: windows runner without a shell
+        run: |
+          printf 'ok\n' 2>&1 | python3 scripts/neutralise.py

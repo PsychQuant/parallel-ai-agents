@@ -1,0 +1,12 @@
+# #33 verify R36 第 8 列 → R37：fd 流向規則按流向判——重導向目標看去引號後的字、任何 fd 複製（`2>&1`／no-op `>&1` 除外）、xtrace 的各種拼法。
+# `>&/dev/stderr`：`>&` 後面不是數字＝兩個 fd 一起寫進那個檔（相鄰輸入，R36 沒點名）
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: stdout diverted around the pipe
+        run: |
+          printf '%s\n' "$PR_TITLE" >&/dev/stderr | python3 scripts/neutralise.py

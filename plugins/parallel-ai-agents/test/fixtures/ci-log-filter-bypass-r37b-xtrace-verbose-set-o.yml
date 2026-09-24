@@ -1,0 +1,15 @@
+# #33 verify R36 第 8 列 → R37：xtrace 的各種拼法（set 的捆綁選項、shopt -o、非字面參數、經由 env 帶進子行程）。
+# verbose 當 xtrace 處理（R36 第 23 列）：`set -o verbose` 把讀到的每一行印到 stderr，run 裡直接內插 `${{ … }}` 時那就是 PR 文字。神諭量不到這一條（它只在互動 shell／配合 xtrace 時生效，神諭的 bash 看不到外流）：step 用帶 `-o pipefail` 的 bash 樣板，神諭只跑字面 `bash`、判不可比——這裡驗的只有 lint 的規則，不宣稱對帳過 runner。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: verbose on a pipe-filtered step
+        shell: bash -eo pipefail {0}
+        run: |
+          set -o verbose
+          printf 'ok\n' 2>&1 | python3 scripts/neutralise.py

@@ -1,0 +1,15 @@
+# #33 verify R36 第 4 列 → R37：GitHub 只對**關鍵字** `shell: bash` 加 `-o pipefail`；自訂樣板照字面跑。前一版把「是 bash」當成「有 pipefail」。
+# `shopt -uo pipefail` 是 `set +o pipefail` 的另一個拼法（相鄰輸入，R36 沒點名）
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: pipe without pipefail
+        shell: bash
+        run: |
+          shopt -uo pipefail
+          false 2>&1 | python3 scripts/neutralise.py

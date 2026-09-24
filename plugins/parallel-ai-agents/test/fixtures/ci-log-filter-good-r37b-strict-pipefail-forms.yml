@@ -1,0 +1,48 @@
+# #33 verify R36 第 4 列 → R37：GitHub 只對**關鍵字** `shell: bash` 加 `-o pipefail`；自訂樣板照字面跑。前一版把「是 bash」當成「有 pipefail」。
+# 負對照：關鍵字 `bash`、樣板帶 `-o pipefail`（`-eo`／`-euo` 捆綁、`-o pipefail -e`、長選項＋`-eo`、絕對路徑 `/bin/bash -euo pipefail {0}`
+# ——R36 第 4 列說前一版把它判 PARSE），以及頂層的 `set -o pipefail`（含 brace 群組裡）、`shopt -so pipefail`。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: keyword
+        shell: bash
+        run: |
+          false 2>&1 | python3 scripts/neutralise.py || true
+      - name: eo bundle
+        shell: bash -eo pipefail {0}
+        run: |
+          false 2>&1 | python3 scripts/neutralise.py || true
+      - name: euo bundle
+        shell: bash -euo pipefail {0}
+        run: |
+          false 2>&1 | python3 scripts/neutralise.py || true
+      - name: o then e
+        shell: bash -o pipefail -e {0}
+        run: |
+          false 2>&1 | python3 scripts/neutralise.py || true
+      - name: long options then eo
+        shell: bash --noprofile --norc -eo pipefail {0}
+        run: |
+          false 2>&1 | python3 scripts/neutralise.py || true
+      - name: absolute path
+        shell: /bin/bash -euo pipefail {0}
+        run: |
+          false 2>&1 | python3 scripts/neutralise.py || true
+      - name: top-level set after a template
+        shell: bash -e {0}
+        run: |
+          set -o pipefail
+          false 2>&1 | python3 scripts/neutralise.py || true
+      - name: set inside a top-level brace group
+        run: |
+          { set -o pipefail; }
+          false 2>&1 | python3 scripts/neutralise.py || true
+      - name: shopt -so
+        run: |
+          shopt -so pipefail
+          false 2>&1 | python3 scripts/neutralise.py || true

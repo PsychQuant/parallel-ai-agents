@@ -1,0 +1,13 @@
+# #33 verify R36 第 8 列 → R37：xtrace 的各種拼法（set 的捆綁選項、shopt -o、非字面參數、經由 env 帶進子行程）。
+# run 裡 `env SHELLOPTS=xtrace bash -c …`：子 bash 啟動時匯入 SHELLOPTS，trace 進原始 stderr（相鄰輸入，R36 沒點名）
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: xtrace on a pipe-filtered step
+        run: |
+          env SHELLOPTS=xtrace bash -c 'test -n "$PR_TITLE"'
+          printf 'ok\n' 2>&1 | python3 scripts/neutralise.py

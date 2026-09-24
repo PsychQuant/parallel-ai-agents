@@ -1,0 +1,31 @@
+# #33 verify R36 第 12 列 → R37：`_scalar` 只用 `yaml_split_comment()` 找註解起點，解碼對**原文**做（前一版先挖空引號再解碼，值變成一串空白）。
+# `shell: "bash"`、`shell: 'bash'`、`defaults.run.shell: "bash"`（R36 點名）與帶行尾註解的 `shell: "bash"  # …`（相鄰輸入）都是關鍵字 bash。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: double-quoted
+        shell: "bash"
+        run: |
+          false 2>&1 | python3 scripts/neutralise.py || true
+      - name: single-quoted
+        shell: 'bash'
+        run: |
+          false 2>&1 | python3 scripts/neutralise.py || true
+      - name: quoted with a trailing comment
+        shell: "bash"  # the keyword, quoted
+        run: |
+          false 2>&1 | python3 scripts/neutralise.py || true
+  k:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: "bash"
+    steps:
+      - name: quoted defaults
+        run: |
+          false 2>&1 | python3 scripts/neutralise.py || true

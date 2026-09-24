@@ -1,0 +1,15 @@
+# #33 verify R36 第 8 列 → R37：`env:`（workflow／job／step 三層，以及 job 的 container.env）帶進 SHELLOPTS、BASHOPTS、BASH_ENV、ENV、BASH_XTRACEFD ⇒ RULE。
+# job 層 `BASH_ENV`：bash 啟動時對它做命令替換再 source——值本身就是一段會執行的程式碼（R36 點名的是 step 層；job 層是相鄰輸入）。
+# 神諭要載入 YAML 的 env 才量得到外流（工作包 a）。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    env:
+      BASH_ENV: '$(printf "%s\n" "$PR_TITLE" >&2)'
+    steps:
+      - name: job env runs code at startup
+        run: |
+          printf 'ok\n' 2>&1 | python3 scripts/neutralise.py

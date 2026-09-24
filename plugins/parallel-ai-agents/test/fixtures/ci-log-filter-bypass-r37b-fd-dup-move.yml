@@ -1,0 +1,12 @@
+# #33 verify R36 第 8 列 → R37：fd 流向規則按流向判——重導向目標看去引號後的字、任何 fd 複製（`2>&1`／no-op `>&1` 除外）、xtrace 的各種拼法。
+# `>&2-`：bash 的「搬移 fd」寫法（複製後關掉 2）——`|&` 的隱含 `2>&1` 在命令自己的重導向之後才套用，stdout 仍是原本的 stderr（R36 requirements 的 h_dup_pipeamp；R37 第一版的詞法把 `2-` 當成檔名而放行，由它抓到）（R36 點名）
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: stdout diverted around the pipe
+        run: |
+          printf '%s\n' "$PR_TITLE" >&2- |& python3 scripts/neutralise.py

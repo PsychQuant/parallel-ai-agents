@@ -1,0 +1,15 @@
+# #33 verify R36 第 12 列 → R37：`_scalar` 只用 `yaml_split_comment()` 找註解起點，解碼對**原文**做（前一版先挖空引號再解碼，值變成一串空白）。
+# `shell: 'pwsh'` 加 `set -o pipefail`：舊碼把 strip 放回去時，挖空的 `'    '` 剝成空字串＝「沒寫 shell」而放行（R36 點名）。
+# LINT-ARGS: --strict
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: quoted pwsh
+        shell: 'pwsh'
+        run: |
+          set -o pipefail
+          printf 'ok\n' 2>&1 | python3 scripts/neutralise.py

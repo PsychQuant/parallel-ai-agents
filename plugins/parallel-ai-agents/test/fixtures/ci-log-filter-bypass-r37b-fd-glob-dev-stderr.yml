@@ -1,0 +1,12 @@
+# #33 verify R36 第 8 列 → R37：fd 流向規則按流向判——重導向目標看去引號後的字、任何 fd 複製（`2>&1`／no-op `>&1` 除外）、xtrace 的各種拼法。
+# 目標是萬用字元 `/d?v/stderr`——bash 對重導向目標做路徑展開，唯一相符就用它；字面上沒有 `dev` 這一段，只有萬用字元那條規則擋得到（`/dev/stde*` 會被 /dev 那條先擋，驗不到這一條）（相鄰輸入，R36 沒點名）
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: stdout diverted around the pipe
+        run: |
+          printf '%s\n' "$PR_TITLE" >/d?v/stderr 2>&1 | python3 scripts/neutralise.py

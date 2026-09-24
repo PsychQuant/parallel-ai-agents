@@ -1,0 +1,13 @@
+# #33 verify R36 第 8 列 → R37：xtrace 的各種拼法（set 的捆綁選項、shopt -o、非字面參數、經由 env 帶進子行程）。
+# `builtin set -x`：命令名前的 `builtin`（守衛：前一版的字面清單剛好抓得到——新的命令名判定不得漏；也是這條判定的 mutation 靶會翻色的那張網）（相鄰輸入，R36 沒點名）
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: xtrace on a pipe-filtered step
+        run: |
+          builtin set -x
+          printf '%s\n' "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py
