@@ -1,0 +1,14 @@
+# t8 C6（`_cmdsub_end_case`：`;;` 之後回到「等模式」）：第二個子句的模式 `b)` 是模式括號；`;;` 之後不回到等模式時 `b)` 被當成子句命令之後的落單 `)`、配不起來，掃描器改照 code 掃、把命令替換裡的管線當成這一行的過濾而放行——bash 實測外層 `echo "$PR_TITLE"` 裸印。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$PR_TITLE" "$(case b in a) echo y ;; b) echo x | python3 scripts/neutralise.py ;; esac)"

@@ -1,0 +1,16 @@
+# t8 N14（續行重掃從邏輯行起點重來時 cmd_pos 重設為 True）：邏輯行首的 `[[` 以行尾反斜線續行；重掃若沿用掃到反斜線時的 cmd_pos（False），`[[` 不被當條件式、正規式裡的 `|` 被當管線而放行。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$PR_TITLE"
+          [[ "$PR_TITLE" =~ (a| python3 scripts/neutralise.py ) ]] \
+            || true

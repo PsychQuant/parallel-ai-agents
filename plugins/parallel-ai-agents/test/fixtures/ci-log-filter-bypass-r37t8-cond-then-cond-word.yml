@@ -1,0 +1,15 @@
+# t8 N16b（`[[` 開啟與 `]]` 收尾都把 cmd_pos 收回 False）：條件式後面直接接 `[[` 在 bash 是語法錯誤（實測 bash -n rc=2），那一行不執行、第一行裸印；把第二個 `[[` 當條件式會看見假管線而放行。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$PR_TITLE"
+          [[ -n x ]] [[ # ]] 2>&1 | python3 scripts/neutralise.py

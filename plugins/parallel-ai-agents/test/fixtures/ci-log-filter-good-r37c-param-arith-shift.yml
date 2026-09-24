@@ -1,0 +1,17 @@
+# #33 verify R37 c 包 t8/U2 補件：頂層（非雙引號）`${…}` 裡的 `$((…))` 沒有既有 fixture 覆蓋——
+# 現有的 good-arith-shift 系列都是裸 `$((…))`（走 shell_scan 主掃描器自己的 arith 追蹤，不經
+# `_cmdsub_end`），good-r37c-dq-arith-shift 是雙引號裡的（走 `_cmdsub_end_case`）。這裡的
+# `${PR_TITLE:-$((1 << 2))}` 要靠 `_param_end` 呼叫 `_cmdsub_end`，`_cmdsub_end` 自己再把
+# `$((` 轉給 `_arith_end` 才能正確收尾；拿掉這個轉交，`_cmdsub_end` 的一般迴圈會在 `1 << 2` 的
+# `<<` 誤判成 heredoc（`if line.startswith("<<", k): return None`），讓 `_param_end` fail-closed，
+# 整條安全（已管線給 neutralise.py）的 pass 變成 parse-red。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: param-arith-shift
+        run: |
+          echo ${PR_TITLE:-$((1 << 2))} 2>&1 | python3 scripts/neutralise.py

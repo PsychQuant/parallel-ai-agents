@@ -1,0 +1,18 @@
+# #33 verify R37 c 包 t8/U2 補件（主掃描器 case 追蹤的 esac-pop 條件，姊妹靶是
+# bypass-r37c-case-clause-stray-paren／bypass-r37c-dq-case-esac-argument）：子句命令裡的 `esac`
+# 是 `echo` 的參數，不該收 case（`cases[-1][1]=="pat" or at_cmd` 兩者皆 False）。若把它當成不論
+# 階段都收尾（mutation_check 的靶：把這個條件換成 `True`），`cases` 提早清空，緊接著出現的同層單獨
+# `)`（bash 5.3 實測：「未預期的字組 ) 附近有語法錯誤」）就不再命中「子句命令之後的單獨 )」
+# fail-closed 分支，改落到普通的 `csub` 遞減——整段被當成合法命令替換收掉，前一行裸印的
+# `$PR_TITLE` 因此不再被判 PARSE，放行。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: cmdsub-case-esac-argument-then-stray-paren
+        run: |
+          echo "$PR_TITLE"
+          x=$(case a in a) echo esac ) 2>&1 | python3 scripts/neutralise.py ;; esac)

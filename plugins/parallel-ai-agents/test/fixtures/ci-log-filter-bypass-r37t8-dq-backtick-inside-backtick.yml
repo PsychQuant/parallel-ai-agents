@@ -1,0 +1,15 @@
+# t8 N10（雙引號分支：反引號裡的雙引號又遇到收不掉的反引號 ⇒ fail-closed）：bash 找反引號收尾不看雙引號，第一行的命令替換就在 `a` 後面收掉、PR 文字裸印；拿掉這道閘門時 lint 以為還在反引號裡、把第二行的假管線當 code 放行。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$PR_TITLE" `echo "a`
+          `: " | python3 scripts/neutralise.py ` `

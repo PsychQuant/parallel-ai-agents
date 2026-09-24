@@ -1,0 +1,18 @@
+# t8 R29（`_Sh.env_word` 的 bare 形式：`export BASH_ENV` 不帶 `=` 也算設定）：`printf -v` 指派不是指派詞、本 lint 看不到，接著的 `export BASH_ENV` 讓之後的子 bash 啟動時先 source 那個檔；拿掉 bare 那一半時放行，bash 實測子 bash 把 PR 文字裸印到 stderr。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo 'echo "$PR_TITLE" >&2' > env.sh
+          printf -v BASH_ENV '%s' "$PWD/env.sh"
+          export BASH_ENV
+          bash -c 'echo hi'
+          echo safe 2>&1 | python3 scripts/neutralise.py

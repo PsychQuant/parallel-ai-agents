@@ -1,0 +1,16 @@
+# t8 R24a（`_Sh.parse_command`：`function f { …; }` 的本體要呼叫才執行——子脈絡）：沒呼叫的函式裡的 `set -o pipefail` 不作用在外層；本體不當子脈絡時它被讀成頂層、`--strict` 的 pipefail 規則被滿足而放行（`f() {…}` 那種寫法由 bypass-r37b-strict-pipefail-set-in-function 守，`function` 關鍵字這種沒有）。
+# EXPECT: rule-red
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash -e {0}
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          function f { set -o pipefail; }
+          echo "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py

@@ -1,0 +1,15 @@
+# t8 N22（命令替換收尾的 `)` 由 csub 認領，不算裸括號）：外層裸 `(` 沒收在 bash 是語法錯誤、那一行不執行、第一行裸印；認領失效時命令替換的收尾 `)` 把外層的裸括號深度扣掉，未收尾的檢查落空而放行。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$PR_TITLE"
+          ( echo $(echo a) 2>&1 | python3 scripts/neutralise.py

@@ -1,0 +1,15 @@
+# t8 R32a（`_Sh.shell_opts`：子 shell 的 `-o xtrace` 開了 trace）：`bash -o xtrace -c …` 的 trace 行進原始 stderr；拿掉 `-o` 那一支時只認得捆綁的 `-x`、長選項形式放行，bash 實測 trace 行帶著 PR 文字裸印（`bash -xc` 那種由 bypass-r37b-xtrace-child-bash-x 守）。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          bash -o xtrace -c 'test -n "$PR_TITLE"'
+          printf 'ok\n' 2>&1 | python3 scripts/neutralise.py

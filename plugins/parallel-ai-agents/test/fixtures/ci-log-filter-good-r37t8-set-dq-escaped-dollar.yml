@@ -1,0 +1,15 @@
+# t8 R4（`_dq_parts`：雙引號裡 `\$` 是逃脫、之後的字元是字面）：`set "\$PR_TITLE"` 的引數是字面 `$PR_TITLE`（設定 $1，不是選項）；不認這個逃脫時 `$PR_TITLE` 被當成展開、`set` 規則誤判「參數不是字面」而誤擋。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set "\$PR_TITLE"
+          echo "$1" "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py

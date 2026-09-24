@@ -1,0 +1,14 @@
+# t8 R2（`_clamp`：由原文算出的挖空段結尾不得越過活的程式碼字元）：`${X:-$'\''}` 的 `\'` 是 ANSI-C 逃脫，`_brace_end` 的單引號配對找不到收尾、一路算到行尾；不夾住時整個 ` >&2 | python3 …` 被吞進同一個詞，`>&2` 看不見而放行，bash 實測 PR 文字走 stderr 裸印。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$PR_TITLE" ${X:-$'\''} >&2 | python3 scripts/neutralise.py

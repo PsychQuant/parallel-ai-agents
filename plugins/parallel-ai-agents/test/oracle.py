@@ -106,6 +106,11 @@ KNOWN_DISAGREE = {
     ("gen-d-yaml-tag-bang.yml", "tag-bang"):
         "YAML tag 一律 fail-closed（R30 MB-8 堵 `jobs: !!map` 隱形 job）；`!!str` 因此被連帶擋下。"
         "野外 0/1565，不值得為它動那條守著真洞的路徑。",
+    # **`env:` 整張來自 runner 運算式** ⇒ 誤擋（R37 完整性審查補的 fixture）。lint 看不到鍵名，記成 `?` 並 fail-closed：
+    # 那張 map 可以帶進 `SHELLOPTS: xtrace`，bash 啟動時就生效、trace 行帶著 PR 文字裸印（實測）。神諭依設計不設含
+    # `${{` 的值（runner 才知道），所以量不到那個外流、判誤擋。這是兩邊資訊量不同造成的設計差異，不是 lint 的缺陷。
+    ("ci-log-filter-bypass-r37t8-step-env-inline-expression.yml", "s"):
+        "`env:` 整張來自 `${{ … }}`，lint 看不到鍵名而 fail-closed；神諭不設 runner 運算式的值，量不到它可能帶進的 SHELLOPTS。",
 }
 
 # lint 自己的宣告正規式（與 `lint-ci-log-filter.sh` 的 `LOGFILTER_RE` 同形）。這裡只用它判**文字長相**；

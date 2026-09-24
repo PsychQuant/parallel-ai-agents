@@ -1,0 +1,16 @@
+# t8 R30（`_Sh.set_cmd`：`set -o` 的選項名不是字面 ⇒ fail-closed）：`set -o "$X"` 開了什麼看不出來（X=xtrace 時就是 xtrace）；拿掉這一條時非字面的選項名直接被略過而放行，bash 實測 xtrace 把 PR 文字印到 stderr。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          X=xtrace
+          set -o "$X"
+          echo "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py

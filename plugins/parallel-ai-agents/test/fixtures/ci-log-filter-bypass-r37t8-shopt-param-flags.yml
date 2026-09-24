@@ -1,0 +1,16 @@
+# t8 R31a（`_Sh.shopt_cmd`：`shopt` 的參數不是字面 ⇒ fail-closed）：`shopt $F xtrace`（F=-so）開了什麼看不出來；拿掉這一條時非字面的參數直接進正規式比對而 traceback（不是 fail-closed 的 RULE），bash 實測 xtrace 把 PR 文字印到 stderr。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          F=-so
+          shopt $F xtrace
+          echo "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py

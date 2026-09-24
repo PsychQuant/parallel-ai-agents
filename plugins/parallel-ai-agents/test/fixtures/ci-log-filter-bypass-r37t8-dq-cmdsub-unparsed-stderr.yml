@@ -1,0 +1,14 @@
+# t8 R27（`_Sh.subs`：引號裡的命令替換剖析不出來 ⇒ fail-closed）：`"$(shopt -s extglob; …)"` 的內容掃描器依 extglob 規則不解析，裡面的 `>&2` 看不到；拿掉 bad_sub 那一條時整段被當成無害而放行，bash 實測命令替換在外層 `2>&1` 套用之前就把 PR 文字寫到 stderr。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$(shopt -s extglob; echo "$PR_TITLE" >&2)" 2>&1 | python3 scripts/neutralise.py

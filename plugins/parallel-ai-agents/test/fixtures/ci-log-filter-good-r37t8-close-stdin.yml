@@ -1,0 +1,15 @@
+# t8 R19（`_redir_hit`：`>&-`／`<&-` 是關閉 fd，不寫到任何地方）：`cat <&-` 關掉 stdin，不會把輸出帶離管線；不認「關閉」時 `<&-` 被當成「複製到看不出值的 fd」而誤擋。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          cat <&- || true
+          echo "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py

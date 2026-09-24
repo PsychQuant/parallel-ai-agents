@@ -1,0 +1,15 @@
+# t8 N13（續行重掃前還原 bare_par）：裸子殼層以行尾反斜線續行；重掃若留著第一趟記下的裸括號深度，區塊結尾會誤判「裸 ( 沒收」。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          ( echo "$PR_TITLE" \
+            ) 2>&1 | python3 scripts/neutralise.py

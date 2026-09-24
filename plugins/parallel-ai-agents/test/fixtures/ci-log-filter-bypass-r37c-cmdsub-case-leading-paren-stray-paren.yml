@@ -1,0 +1,19 @@
+# #33 verify R37 c 包 t8/U2 補件（主掃描器 case 追蹤：模式前導 `(` 不計深度，姊妹靶是
+# good-r37c-cmdsub-case-leading-paren／bypass-r37c-case-clause-stray-paren；那張既有的 good
+# fixture 沒有姊妹的 bypass，本張補上）：`(a)` 這種帶前導括號的 case 模式，前導 `(` 依設計不算進
+# `cpar`（mutation_check 的靶：把這個條件換成永遠 `True`，讓它跟一般裸括號一樣算）。一旦算了，
+# 模式收尾的那個 `)` 深度就對不上 `cases` 記錄的深度，落到普通的 `cpar` 分支收掉、**case 的階段
+# 永遠停在 "pat"、不會轉成 "cmd"**——子句命令之後緊接的單獨 `)`（bash 5.3 實測：「未預期的字組
+# ) 附近有語法錯誤」）因此被誤判成另一個合法的模式收尾（階段不是 "cmd" 就不會 fail-closed），
+# 前一行裸印的 `$PR_TITLE` 不再被判 PARSE，放行。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: cmdsub-case-leading-paren-stray-paren
+        run: |
+          echo "$PR_TITLE"
+          x=$(case a in (a) echo x ) 2>&1 | python3 scripts/neutralise.py ;; esac)

@@ -1,0 +1,16 @@
+# t8 C2（`_cmdsub_end_case`：詞首 `#`／`$'`／`$[` ⇒ 回 None，讓掃描器照 code 掃）：`x="$(echo a # )"` 的 `#` 在命令替換裡起註解、吃到行尾，命令替換到下一行的 `)` 才收（bash 實測 x=a、管線照建）；同一行就把它配對收掉時下一行的 `)"` 變成落單的引號、fail-closed 成 PARSE 而誤擋。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          x="$(echo a # )"
+          )"
+          echo "$x $PR_TITLE" 2>&1 | python3 scripts/neutralise.py

@@ -1,0 +1,16 @@
+# #33 verify R37 合併時協調者發現（r37c×r37d 相鄰輸入）：雙引號裡的命令替換跨行、在**新的一行**收尾——
+# 每個新實體行開頭 `cmd_pos` 無條件重設為 True，回到雙引號時若沒有跟著把它收回 False，這個 True
+# 會一路帶出雙引號、帶過中間的空白，讓雙引號**之後**、真正是引數位置的 `[[` 被誤判成命令位置的條件式
+# 關鍵字。`echo "$(true` ⏎ `)" [[ # ]] 2>&1 | python3 …` 裡 `[[` 只是 echo 的引數（bash 實測印出
+# ` [[`），`#` 是真正的行首註解，把後面的假管線一起註解掉——沒有一條管線真的接到 neutralise。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        run: |
+          echo "$(true
+          )" [[ # ]] 2>&1 | python3 scripts/neutralise.py

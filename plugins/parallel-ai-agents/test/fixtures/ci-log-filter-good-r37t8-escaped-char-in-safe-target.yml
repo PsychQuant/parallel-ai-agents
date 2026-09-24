@@ -1,0 +1,15 @@
+# t8 R7（`_word`：挖空的逃脫字元 `\x` 在去引號後是字面 `x`）：`>/dev/nul\l` 去引號後是 `/dev/null`（白名單）；不解逃脫時目標變成「字面未知」、骨架落在 /dev 底下而誤擋。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          : >/dev/nul\l
+          echo "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py

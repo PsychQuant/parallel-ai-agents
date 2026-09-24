@@ -1,0 +1,13 @@
+# t8 N29／N30（`_env_names`：`env:` 的值寫成同一行的運算式 ⇒ 鍵名看不到，記成 `?`；env 規則把 `?` 算成命中）：`env: ${{ fromJSON(vars.STEP_ENV) }}` 可以帶進 SHELLOPTS、BASH_ENV…，bash 啟動時就生效；拿掉 `?` 那一支（或 env 規則不認 `?`）時放行，bash 實測 SHELLOPTS=xtrace 在環境裡時 trace 行帶著 PR 文字裸印。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env: ${{ fromJSON(vars.STEP_ENV) }}
+        run: |
+          echo "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py

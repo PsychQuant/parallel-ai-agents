@@ -1,0 +1,14 @@
+# t8 R5（`_hidden_subs`：雙引號的命令替換掃描止於雙引號的收尾）：`"$(date)"` 之後單引號裡的 `'$(echo x >&2)'` 是字面；不在雙引號收尾處停下時，雙引號模式把後面的單引號當普通字元、剖析出假的 `>&2` 而誤擋。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$(date)" '$(echo x >&2)' "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py

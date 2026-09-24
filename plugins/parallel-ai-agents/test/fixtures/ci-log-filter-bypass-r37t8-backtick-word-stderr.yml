@@ -1,0 +1,14 @@
+# t8 R10（`_word`：未引號反引號裡的命令也要剖析）：`` `echo "$PR_TITLE" >&2` `` 在外層命令的 `2>&1` 套用之前就展開，它的 stderr 是 shell 的 stderr；不剖析反引號內容時 `>&2` 看不見而放行，bash 實測 PR 文字裸印到 stderr。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo `echo "$PR_TITLE" >&2` 2>&1 | python3 scripts/neutralise.py

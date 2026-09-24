@@ -1,0 +1,15 @@
+# t8 R22（`_redir_hit`：`/dev/tcp/…`、`/dev/udp/…` 是 bash 的網路 socket，不是 log）：寫到 `/dev/tcp/127.0.0.1/1` 不會把輸出帶到 log；不豁免時它落在 /dev 底下而誤擋（野外語料有 3 處這種寫法）。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo ping >/dev/tcp/127.0.0.1/1 || true
+          echo "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py

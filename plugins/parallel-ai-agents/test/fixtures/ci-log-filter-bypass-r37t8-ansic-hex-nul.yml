@@ -1,0 +1,16 @@
+# t8 N1b（`_ansic_decode` 的 `\x`／`\u`／`\U` 門檻裡 `v == 0` 那一半；八進位那一半由 bypass-r37e-ansic-nul 守，十六進位沒有）：`$'E\x00F'` 在 bash 截斷成 `E`，下一行的 `E` 收掉 heredoc、管線照建；解出 NUL 必須 fail-closed 成 PARSE，不得讓 heredoc 永不終止、把真管線吞成誤擋（RULE）。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          cat <<$'E\x00F'
+          E
+          echo "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py

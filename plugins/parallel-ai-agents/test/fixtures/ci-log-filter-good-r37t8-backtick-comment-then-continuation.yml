@@ -1,0 +1,16 @@
+# t8 N12（續行重掃前還原 bt_at）：反引號開在上一行、這一行先以詞首註解結束它（註解止於收尾反引號）、之後又開一個反引號並以行尾反斜線續行；重掃若沿用第二個反引號記下的 bt_at，行首的註解被判成「最內層不是反引號」而吃到邏輯行尾、反引號永不收尾而誤擋。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          x=`printf a
+          # c` y=$( `echo printf` b \
+          ) && echo "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py

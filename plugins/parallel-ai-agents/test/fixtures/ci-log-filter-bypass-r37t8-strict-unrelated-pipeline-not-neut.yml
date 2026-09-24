@@ -1,0 +1,17 @@
+# t8 R34（`_analyse`：只有接 neutralise 的管線才計入 n_neut）：同一個 step 另有一條無關的 `printf | cat`；把沒接 neutralise 的管線也計入時 n_neut 不是 0、`--strict` 的「剖析不出接 neutralise 的管線」規則被繞過而放行（`case` 模式裡的 `|` 讓 `PIPED_RE` 以為有過濾），bash 實測第一行裸印 PR 文字。
+# EXPECT: rule-red
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$PR_TITLE"
+          case x in a|python3\ scripts/neutralise.py ) ;; esac
+          printf 'x\n' | cat

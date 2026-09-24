@@ -1,0 +1,17 @@
+# #33 verify R37 c 包 t8/U2 補件（`_cmdsub_end` 裡的雙引號改走 `_dq_end` 做配對剖析，姊妹靶：
+# 既有的 param-cmdsub-nested-dq-cmdsub 系列測的是巢狀命令替換，本張測的是**逃脫的引號**）：
+# `_cmdsub_end`（頂層 `${…}` 裡、非雙引號脈絡的 `$(…)`）遇到 `"` 時若只用 `line.find('"', k+1)`
+# 找下一個字面 `"`（mutation_check 的靶），會把 `it\"s escaped` 裡**被反斜線逃脫**的那個 `"`
+# 誤判成字串收尾，之後的 `s escaped")}` 落回一般 code 掃描，`_cmdsub_end` 收不到真正的收尾、
+# 一路吃到 `${…}` 也收不了，讓一條正常已管線給 neutralise.py 的合法 step 從 pass 誤判成
+# parse-red。`_dq_end` 正確處理 `\"` 逃脫，維持 pass。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: param-cmdsub-dq-escaped-quote
+        run: |
+          echo ${PR_TITLE:-$(echo "it\"s escaped")} 2>&1 | python3 scripts/neutralise.py

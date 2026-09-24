@@ -1,0 +1,16 @@
+# t8 R1／R21（`_aligned_sources` 逐字驗證；對不齊的行，重導向目標一律「看不到原文」fail-closed）：here-string 的詞是空的 `<<<<<EOF` 在 bash 是語法錯誤（實測 bash -n rc=2），第二行不執行、第一行裸印；對齊器在第一個 `<` 就把 `<<` 當 heredoc，這一行對不齊。拿掉逐字驗證時錯位的原文讓 `>out.txt` 看起來是普通檔名而放行；拿掉「看不到原文」那一條時 `normpath(None)` 直接 traceback。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$PR_TITLE"
+          cat <<<<<EOF >out.txt | python3 scripts/neutralise.py
+          EOF

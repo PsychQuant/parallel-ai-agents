@@ -1,0 +1,15 @@
+# t8 R15c（`_lex`：`{var}>&1` 的 `{var}` 是具名 fd 前綴）：`exec {out}>&1` 把原本的 stdout 另存到新 fd，之後子行程（這裡是 `sh -c` 的字串，本 lint 依已知不涵蓋第 2 條不剖析）寫那個 fd 就繞過管線；不認具名前綴時它被讀成引數加 no-op 的 `>&1` 而放行，bash 實測 PR 文字裸印。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          exec {out}>&1
+          sh -c 'printf "%s\n" "$PR_TITLE" >&"$1"' _ "$out" 2>&1 | python3 scripts/neutralise.py
