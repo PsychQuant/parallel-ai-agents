@@ -1,0 +1,17 @@
+# #33 verify R35（opsweep 存活者：分隔字 `$'…'` 收集迴圈的 `k < n` 界）：`cat <<$'EOF` 同一行沒有收尾的 `'`。
+# bash 的 ANSI-C 引號會跨行，終止字因此含換行、heredoc 永遠不會結束，後面每一行都變成資料——lint 不能照單一行
+# 的字面猜終止字，必須 fail-closed。既有的 `bypass-heredoc-delim-ansic-control-char` 走的是「有收尾、但含不解碼
+# 的逃脫」那條路，碰不到「讀到行尾還沒收尾」這一條。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: unterminated ANSI-C heredoc delimiter
+        run: |
+          set -o pipefail
+          cat <<$'EOF
+          EOF
+          gh pr view --json body 2>&1 | python3 scripts/neutralise.py

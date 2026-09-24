@@ -1,0 +1,15 @@
+# #33 verify R35（R34 修法的誤擋守衛）：`$(…)` 裡的 heredoc 以**恰好是終止字**的那一行結束、`)` 在下一行——bash 5.3 無警告正常終止；後面的真管線是 code。R34 的 fail-closed 只針對「以終止字開頭但不等於它」的行，這一檔守住它不擴大成誤擋。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: heredoc in command substitution, terminator on its own line
+        run: |
+          body=$(cat <<EOF
+          hi
+          EOF
+          )
+          echo "$body" 2>&1 | python3 scripts/neutralise.py

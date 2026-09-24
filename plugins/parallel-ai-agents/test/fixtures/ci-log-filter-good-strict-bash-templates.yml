@@ -1,0 +1,19 @@
+# #33 verify R35（`--strict` shell 規則的誤擋守衛）：帶選項的 bash 樣板都是 bash——`bash -euo pipefail {0}`、
+# `bash --noprofile --norc -eo pipefail {0}`、`bash -l {0}`。R35 第一版只接受字面 `bash`，三軸量到大量常見寫法被拒。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: strict template
+        shell: bash -euo pipefail {0}
+        run: echo hi 2>&1 | python3 scripts/neutralise.py
+      - name: noprofile template
+        shell: bash --noprofile --norc -eo pipefail {0}
+        run: echo hi 2>&1 | python3 scripts/neutralise.py
+      - name: login shell
+        shell: bash -l {0}
+        run: echo hi 2>&1 | python3 scripts/neutralise.py

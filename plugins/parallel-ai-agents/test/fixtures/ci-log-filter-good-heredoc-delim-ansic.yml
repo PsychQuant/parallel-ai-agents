@@ -1,0 +1,17 @@
+# `cat <<$'EOF'` 在 bash 以 `EOF` 那一行結束，之後的 `y| python3 …` 是 code、真管線。R33 版把終止字讀成 `$EOF` ⇒ 在 `$EOF` 那行提早結束、把後面的 code 當成另一個 heredoc 的資料 ⇒ RULE 紅＝誤擋（q2 的反方向）。
+# 來源（#33 verify R34 logic F1／F3／F4 的探針；DA 的 n 系列是它在 da-work/probes 留下的檔案）
+# EXPECT: pass
+name: t
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          cat <<$'EOF'
+          x
+          $EOF
+          echo "$PR_TITLE"; cat <<'Z'
+          EOF
+          y| python3 scripts/neutralise.py
+          Z

@@ -202,9 +202,67 @@ SHAPES = [
      lambda text, runs: any(re.search(r"\$\{[^}]*\\\}", l) for run in runs for l in run.split("\n"))),
     ("R32-6 折疊 block scalar 有 **≥3 行**連續內容（遞移折疊的觸發條件）",
      lambda text, runs: _folded_run_three_plus(text)),
+    # ── R35 的機制各自一列（#33 verify R34 中心發現：四個語意不同的最小修法在所有網上數字都不變——
+    # 網只對作者點名的輸入有鑑別力）。每一列對應 shellgen E 組的一個維度，由 `--require-nonzero R3` 守。──
+    ("R35-1 分隔字詞後緊接 `(`／`)`（`(cat <<EOF)`）",
+     lambda text, runs: any(re.search(r"<<-?\s*['\"]?\w+['\"]?[()]", l) for run in runs for l in run.split("\n"))),
+    ("R35-2 折疊區塊裡以 `\\` 結尾的行後接空行或 more-indented 行（續行跨佔位）",
+     lambda text, runs: _folded_backslash_then_break(text)),
+    ("R35-3 `${…}` 內含反引號、`$(` 或 `$'`",
+     lambda text, runs: any(re.search(r"\$\{[^}]*(?:`|\$\(|\$')", l) for run in runs for l in run.split("\n"))),
+    ("R35-4 雙引號裡的 `${…}` 內又有雙引號",
+     lambda text, runs: any(re.search(r"\"\$\{[^}]*\"", l) for run in runs for l in run.split("\n"))),
+    ("R35-5 `${…}` 在同一行沒收尾（跨行）",
+     lambda text, runs: any(re.search(r"\$\{[^}]*$", l) for run in runs for l in run.split("\n"))),
+    ("R35-6 分隔字用 `$'…'`／`$\"…\"`",
+     lambda text, runs: any(re.search(r"<<-?\s*\$['\"]", l) for run in runs for l in run.split("\n"))),
+    ("R35-7 舊式算術 `$[…]`",
+     lambda text, runs: any("$[" in l for run in runs for l in run.split("\n"))),
+    ("R35-8 算術 `$((` 在同一行沒收尾（跨行）",
+     lambda text, runs: any(re.search(r"\$\(\((?:(?!\)\)).)*$", l) for run in runs for l in run.split("\n"))),
+    ("R35-9 算術或條件式裡出現 `|`",
+     lambda text, runs: any(re.search(r"\$\(\([^)]*\||\[\[[^\]]*\|", l) for run in runs for l in run.split("\n"))),
+    ("R35-10 run 內文行以 tab 開頭（YAML 縮排之後）",
+     lambda text, runs: any(l.startswith("\t") for run in runs for l in run.split("\n"))),
+    ("R35-11 heredoc 開在 `$(…)` 裡",
+     lambda text, runs: any(re.search(r"\$\([^)]*<<", l) for run in runs for l in run.split("\n"))),
+    ("R35-12 折疊區塊以空行開頭（`prev_flush_content` 的 EXPECTED_SURVIVE 到得了的唯一情形）",
+     lambda text, runs: _folded_leading_blank(text)),
+    ("R35-13 折疊內容行帶行尾空白（`strip→id` 的 EXPECTED_SURVIVE 的觸發條件）",
+     # 不能用 `raw()`：它只看結構行，行尾空白在 block scalar **內文**裡（第一版如此，閘門當場報 0 檔）。
+     lambda text, runs: any(b.strip() and b != b.rstrip() for body in _folded_blocks(text) for b in body)),
     ("any heredoc（分母參考）", sh(lambda run, hd: True)),
     ("any `<<-`（分母參考）", sh(lambda run, hd: hd[3])),
 ]
+
+
+def _folded_blocks(text):
+    """每個 `run: >` 區塊的內文行（原始文字，含縮排）。"""
+    lines = text.split("\n")
+    for i, l in enumerate(lines):
+        m = re.match(r"^(\s*)(?:- )?run:\s*>[+-]?\d?[+-]?\s*(?:#.*)?$", l)
+        if not m:
+            continue
+        base = len(m.group(1)) + (2 if l.lstrip().startswith("- ") else 0)
+        body, j = [], i + 1
+        while j < len(lines) and (not lines[j].strip() or len(lines[j]) - len(lines[j].lstrip()) > base):
+            body.append(lines[j]); j += 1
+        yield body
+
+
+def _folded_backslash_then_break(text):
+    """R35-2：折疊區塊裡以 `\\` 結尾的內容行，後面緊接空行或 more-indented 行——`_next_phys` 會跳過佔位的地方。"""
+    for body in _folded_blocks(text):
+        pad = min((len(b) - len(b.lstrip()) for b in body if b.strip()), default=0)
+        for a, b in zip(body, body[1:]):
+            if a.rstrip().endswith("\\") and (not b.strip() or b[pad:][:1] in (" ", "\t")):
+                return True
+    return False
+
+
+def _folded_leading_blank(text):
+    """R35-12：折疊區塊的第一行是空行。"""
+    return any(body and not body[0].strip() for body in _folded_blocks(text))
 
 
 def _folded_run_three_plus(text):
@@ -215,7 +273,9 @@ def _folded_run_three_plus(text):
     觸發條件是**折疊鏈長度 ≥ 3**，形狀就要照那個條件寫。"""
     lines = text.split("\n")
     for i, l in enumerate(lines):
-        m = re.match(r"^(\s*)(?:- )?[\w-]+:\s*>[+-]?\d?[+-]?\s*(?:#.*)?$", l)
+        # **key 限定 `run`**（#33 verify R34 regression M-1）：前一版收任何 key 的 `>`，野外綠分母那 13 檔全部是
+        # `stale-issue-message: >` 之類——折疊的 run 區塊是 0 檔，而 CHANGELOG 據此說「野外 0/0 對 R32-6 是證據」。
+        m = re.match(r"^(\s*)(?:- )?run:\s*>[+-]?\d?[+-]?\s*(?:#.*)?$", l)
         if not m:
             continue
         base = len(m.group(1)) + (2 if l.lstrip().startswith("- ") else 0)

@@ -1,0 +1,13 @@
+# `>&2 |&`：`|&` 等於在所有重導向之後附加 `2>&1`，結果同上（#33 verify R34 security S-2 的探針；R35 的 fd 流向規則）。
+# EXPECT: rule-red
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: redir-order-pipeamp
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          printf "%s\n" "$PR_TITLE" >&2 |& python3 ../pai-lenses/scripts/neutralise.py

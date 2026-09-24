@@ -1,0 +1,14 @@
+# job 有 `container:` 且沒寫 `shell:`：runner 在容器裡用 sh（#33 verify R34 security S-3、DA n4／n4b 的探針）。
+# shell 是 `--strict` 的規則（R35：預設模式一律套用時合成 A 語料 290 個 base-綠檔翻紅；預設模式假設 shell 是 bash）。
+# LINT-ARGS: --strict
+# EXPECT: parse-red
+name: t
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    container: alpine:3.20
+    steps:
+      - name: in-alpine
+        run: |
+          echo "$PR_TITLE" $'\'' | python3 scripts/neutralise.py '

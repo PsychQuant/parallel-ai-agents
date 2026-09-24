@@ -1,0 +1,13 @@
+# `${…}` 跨行：bash 的展開可以跨行，R33 版到行尾就重新開始 ⇒ 下一行的假管線變 code。同一行沒收尾 ⇒ fail-closed PARSE（logic F1 p5）。
+# 來源（#33 verify R34 logic F1／F3／F4 的探針；DA 的 n 系列是它在 da-work/probes 留下的檔案）
+# EXPECT: parse-red
+name: t
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: p5-multiline-brace
+        run: |
+          echo ${PR_TITLE#
+          x| python3 scripts/neutralise.py }

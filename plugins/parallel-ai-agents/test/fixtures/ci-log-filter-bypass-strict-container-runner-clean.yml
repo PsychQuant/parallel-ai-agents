@@ -1,0 +1,19 @@
+# #33 verify R35（opsweep 存活者 `drop-operand|…(job["container"] or job["windows"])|5`，也就是**拿掉 `job["container"]`**）：
+# container job 沒寫 shell ⇒ GitHub 在容器裡用 `sh`（不是 bash），本 lint 的詞法與 pipefail 前提都不成立。run 內容
+# 在 bash 下完全合規（先 `set -o pipefail`、管線帶 `2>&1`），所以**只有** container 規則擋得住它——既有的
+# `bypass-shell-container-default` 內容是刻意扭曲的引號，拿掉 container 檢查仍被解析規則打成 PARSE，分辨不出這條規則。
+# （opsweep 的編號是「同一行原文第幾個突變體」，不是第幾個運算元：這一行外層 BoolOp 四個、內層兩個，5 號是內層的
+#  第一個 ⇒ 拿掉 `job["container"]`。昨天照運算元序號讀成 `job["windows"]`，補的是 Windows 那半邊。）
+# LINT-ARGS: --strict
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    container: alpine:3.20
+    steps:
+      - name: bash-clean content in a container without a shell
+        run: |
+          set -o pipefail
+          echo hi 2>&1 | python3 scripts/neutralise.py

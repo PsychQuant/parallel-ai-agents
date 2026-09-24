@@ -1,0 +1,15 @@
+# #33 verify R35（R35 自己的 E 組語料抓到的）：引號到 run 區塊結尾都沒收——那一行在 bash 是語法錯誤、**不會執行**，
+# 而它前面的行照樣先執行。`echo "$PR_TITLE"` 印出 PR 文字；第二行的 `| python3 …neutralise.py` 在 lint 眼中是一條管線
+# （引號開在管線**之後**），在 bash 眼中是一個永遠不會執行的語法錯誤。R35 以前 rc=0。
+# 引號開到區塊結尾 ⇒ fail-closed PARSE。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: single quote left open at the end of the run block
+        run: |
+          echo "$PR_TITLE"
+          echo hi | python3 scripts/neutralise.py '

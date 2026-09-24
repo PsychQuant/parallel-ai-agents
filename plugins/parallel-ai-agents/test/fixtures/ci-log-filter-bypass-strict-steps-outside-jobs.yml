@@ -1,0 +1,11 @@
+# #33 verify R35（opsweep 存活者 container／Windows 規則的 `job` 運算元）：step 不在任何 job 底下（composite action 的
+# `runs: steps:`）——沒有 job 的 defaults 可繼承。`--strict` 仍要求有管線的 step 在 pipefail 之下 ⇒ RULE。拿掉 `job` 的檢查 ⇒
+# `job["container"]` 在 None 上當掉。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+runs:
+  using: composite
+  steps:
+    - name: composite step without a shell
+      run: echo hi 2>&1 | python3 scripts/neutralise.py

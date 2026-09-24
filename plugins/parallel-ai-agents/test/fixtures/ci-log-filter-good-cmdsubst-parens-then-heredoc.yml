@@ -1,0 +1,16 @@
+# #33 verify R35（opsweep 存活者：主掃描器的命令替換深度 csub／cpar）：命令替換裡的 subshell 括號 `(true)` 與引號裡的 `(`。殺 `csub += 1`、`cpar ±1`、`ch == "("` 與 `ch == ")"` 的運算元。
+# 命令替換關掉之後的 heredoc 不在命令替換裡：內文 `EOFX` 只是資料（bash -n 通過、oracle 一致）。計數錯了 ⇒ 被當成還在命令替換裡 ⇒ 「以終止字開頭」fail-closed ⇒ 誤擋。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: csub-parens-then-heredoc
+        run: |
+          x=$(echo "(" ; (true) )
+          cat <<EOF
+          EOFX
+          EOF
+          echo hi 2>&1 | python3 scripts/neutralise.py

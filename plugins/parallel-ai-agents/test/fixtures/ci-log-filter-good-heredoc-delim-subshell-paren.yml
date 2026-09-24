@@ -1,0 +1,16 @@
+# #33 verify R34（regression H-1 的誤擋那一半，logic q4）：`(cat <<EOF)` 的終止字是 `EOF`，下一條真管線是 code。
+# R33 版把終止字讀成 `EOF)`，於是 heredoc 吞到檔尾、真管線被當資料 ⇒ RULE 紅＝誤擋（R32 版 rc=0）。
+# 還原 `(` `)` 出 DELIM_WORD_BREAK ⇒ 本檔翻紅。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: heredoc inside a subshell closed on the same line
+        run: |
+          (cat <<EOF)
+          plain data
+          EOF
+          echo hi | python3 scripts/neutralise.py

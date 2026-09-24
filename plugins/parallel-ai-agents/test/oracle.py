@@ -45,6 +45,7 @@ stdin `/dev/null`、逾時 5 秒。但那不是沙箱——fixture 寫絕對路�
 退出碼：有 `KNOWN_DISAGREE` 之外的不一致 → 1；`KNOWN_DISAGREE` 裡的項目變成一致（理由不再成立）→ 1；否則 0。
 「量不到」不改變退出碼，但一定逐項印出來。
 """
+import collections
 import os
 import pathlib
 import re
@@ -91,6 +92,14 @@ TIMEOUT_S = 5
 # 只說明「沒過濾」；要構成繞過還得真的把 fork 可控的文字印出去。少了這一條，任何「lint 以為有管線、
 # 但那一行根本沒執行」的構造都會被誤報成繞過（R31 自查：產生語料上 60 筆假指控全屬此類）。
 PR_MARKER = "ORACLE-PR-TITLE-MARKER"
+# 判定表的**種類**（#33 verify R34 requirements F3）：每一列的判定都必須以其中之一開頭（`main()` 逐列 assert）。
+# CHANGELOG 的「判定表有 N 種」由 `lint-changelog-counts.sh` 讀這個常數驗——前一版那一句量的是 CHANGELOG 自己打的字面清單，
+# 永遠抓不到 CHANGELOG 與神諭分岔。「不一致」的兩種各自帶後綴（繞過／誤擋），所以這裡列的是完整前綴。
+VERDICT_KINDS = ("一致", "不一致：繞過", "不一致：誤擋", "不可比", "量不到")
+# S-2 的**機制**判定（見 main 的 S-2 分支）：run 文字裡有 fd 轉向到 stderr 或 xtrace ⇒ 不是 S-2；
+# 接 neutralise 的管線帶了 `2>&1`／`|&` ⇒ 不是 S-2。
+STDERR_ROUTE_RE = re.compile(r">&2|/dev/stderr|\bset\s+-[A-Za-z]*x|\bset\s+-o\s+xtrace|\bbash\s+-[A-Za-z]*x")
+NEUT_WITH_STDERR_RE = re.compile(r"(2>&1\s*\||\|&)\s*python3\s+\S*neutralise\.py")
 
 STUB = '''#!/bin/sh
 for a in "$@"; do case "$a" in *neutralise.py) echo "called $a" >> "$ORACLE_MARK";; esac; done
@@ -188,12 +197,30 @@ def steps_with_lines(text):
     out = []
     if not isinstance(root, yaml.MappingNode):
         return out
+    def _shell_of(node):
+        """`defaults: run: shell:` 的值（沒有就 None）。"""
+        if not isinstance(node, yaml.MappingNode):
+            return None
+        d = {kk.value: vv for kk, vv in node.value if isinstance(kk, yaml.ScalarNode)}.get("defaults")
+        if not isinstance(d, yaml.MappingNode):
+            return None
+        r = {kk.value: vv for kk, vv in d.value if isinstance(kk, yaml.ScalarNode)}.get("run")
+        if not isinstance(r, yaml.MappingNode):
+            return None
+        sh = {kk.value: vv for kk, vv in r.value if isinstance(kk, yaml.ScalarNode)}.get("shell")
+        return sh.value if isinstance(sh, yaml.ScalarNode) else "<非純量>" if sh is not None else None
+    wf_shell = _shell_of(root)
     for k, v in root.value:
         if k.value != "jobs" or not isinstance(v, yaml.MappingNode):
             continue
         for jk, jv in v.value:
             if not isinstance(jv, yaml.MappingNode):
                 continue
+            jkv = {kk.value: vv for kk, vv in jv.value if isinstance(kk, yaml.ScalarNode)}
+            job_shell = _shell_of(jv)
+            ro = jkv.get("runs-on")
+            ro_text = " ".join(x.value for x in ro.value if isinstance(x, yaml.ScalarNode)) if isinstance(ro, yaml.SequenceNode) \
+                else (ro.value if isinstance(ro, yaml.ScalarNode) else "")
             for sk, sv in jv.value:
                 if sk.value != "steps" or not isinstance(sv, yaml.SequenceNode):
                     continue
@@ -218,7 +245,20 @@ def steps_with_lines(text):
                         continue
                     name = kv["name"].value if isinstance(kv.get("name"), yaml.ScalarNode) else "<未命名>"
                     end = (starts[idx + 1] - 1) if idx + 1 < len(sibs) else sv.end_mark.line
-                    out.append((jk.value, name, run.value, (starts[idx], end)))
+                    # **神諭只會用 bash 跑**（#33 verify R34 security S-3、DA n4／n4b）：runner 實際用的 shell
+                    # 由 step `shell:` → job `defaults.run.shell` → workflow `defaults.run.shell` 決定；都沒寫時，
+                    # container 裡是 sh、Windows runner 是 pwsh。這些情況神諭的判定沒有意義 ⇒ 不可比，並寫出原因。
+                    st_sh = kv.get("shell")
+                    eff = (st_sh.value if isinstance(st_sh, yaml.ScalarNode) else None) or job_shell or wf_shell
+                    if eff is not None:
+                        note = None if eff.strip() == "bash" else "shell 是 %r" % eff
+                    elif "container" in jkv:
+                        note = "job 跑在 container 裡、沒寫 shell（預設 sh）"
+                    elif "windows" in ro_text.lower() or "${{" in ro_text:
+                        note = "runs-on 是 %r、沒寫 shell（Windows 預設 pwsh；運算式無法靜態判定）" % ro_text
+                    else:
+                        note = None
+                    out.append((jk.value, name, run.value, (starts[idx], end), note))
     return out
 
 
@@ -262,11 +302,15 @@ def main(argv):
     print("bash: %s (%s)  管線判定：DEBUG trap + PIPESTATUS（bash 自己的剖析）" % (bash, ver))
     rows, disagree, stale, unmeasured = [], [], [], []
     known_cat = []      # 已知**類別**（R32 S-2：stderr-only 外流），按類別不按檔——見 run_script 的註解
+    cls_stale, cls_count = [], collections.Counter()
     with tempfile.TemporaryDirectory(prefix="oracle-") as d:
         stub_bin = os.path.join(d, "bin"); os.mkdir(stub_bin)
         p = os.path.join(stub_bin, "python3"); open(p, "w").write(STUB); os.chmod(p, 0o755)
         # CI runner 的 sudo 是無密碼的；本機的會等密碼而讓整個 step 逾時（＝把量得到的變成量不到）。
         q = os.path.join(stub_bin, "sudo"); open(q, "w").write('#!/bin/sh\nexec "$@"\n'); os.chmod(q, 0o755)
+        # **`sleep` 是空操作**（#33 verify R34 DA n6）：`sleep 6` 讓腳本超過 TIMEOUT_S，一個真繞過因此落進
+        # 「量不到（逾時）」——逾時不改 rc。等待不改變 PR 文字有沒有外流，所以不讓它耗時。
+        z = os.path.join(stub_bin, "sleep"); open(z, "w").write('#!/bin/sh\nexit 0\n'); os.chmod(z, 0o755)
         for f in files:
             text = f.read_text(encoding="utf-8")
             expect = (re.search(r"^# EXPECT: (\S+)", text, re.M) or [None, ""])[1] if "# EXPECT:" in text else ""
@@ -274,19 +318,32 @@ def main(argv):
                 steps = steps_with_lines(text)
             except yaml.YAMLError:
                 rows.append((f.name, "-", "YAML-FAIL", "-", "不可比（PyYAML 也拒絕）")); continue
-            r = subprocess.run(["bash", str(LINT), str(f)], capture_output=True, text=True)
+            # **用 fixture 宣告的模式跑 lint**（`# LINT-ARGS:`，R35）：前一版一律用預設模式，於是 `--strict` 的 fixture
+            # 被放到它沒宣告的模式下量——一個嚴格模式該擋的 step 被讀成「lint 放行」，還被算進已知類別 S-2。
+            largs = (re.search(r"^# LINT-ARGS: (.+)$", text, re.M) or [None, ""])[1].split()
+            r = subprocess.run(["bash", str(LINT)] + largs + [str(f)], capture_output=True, text=True)
             # **逐 step 歸屬用行號，不用名稱**：lint 印的是它自己解析出來的 step 名，而 `name: |` 這種
             # block scalar 的名字在 lint 眼中是 `|`、在 PyYAML 眼中是內文——名稱比對必然失配，於是
             # 一個真的被 lint 擋下來的 step 會被神諭讀成 `lint=pass` 並反過來指控 lint 放行（R31 自查）。
-            red_lines = {int(x) for x in re.findall(r":(\d+): RULE: ", r.stderr)}
+            # `[--strict]` 的 pipefail 規則管的是**退出碼被遮蔽**，不是 PR 文字外流——神諭量不到它（R35）。
+            # 只因它而紅的 step 判「不可比」並寫明原因，不當成 lint 的判定拿來對帳。
+            pf_lines = {int(x) for x in re.findall(r":(\d+): RULE: \[--strict\][^\n]*pipefail", r.stderr)}
+            red_lines = {int(x) for x in re.findall(r":(\d+): RULE: ", r.stderr)} - pf_lines
             parse_lines = {int(x) for x in re.findall(r":(\d+): PARSE: ", r.stderr)}
             bodies = block_scalar_body_lines(text)
-            ranges = [(a + 1, b + 1) for _j, _n, _r, (a, b) in steps]
+            ranges = [(a + 1, b + 1) for _j, _n, _r, (a, b), _sh in steps]
+            declared_cls = set(re.findall(r"^# KNOWN-CLASS: (\S+)", text, re.M))
+            seen_cls = set()
             # **一次算完**：落在任何一個 step 範圍外的 PARSE 才是結構性的（整檔不可信）。
             # 前一版在每個 step 內各算一次，於是別的 step 的 PARSE 讓這個 step 也變成 PARSE
             # （`bypass-duplicate-key` 的合規對照 step 被算成「PARSE ∧ piped」＝誤擋，R31 自查）。
             struct_parse = any(not any(lo <= x <= hi for lo, hi in ranges) for x in parse_lines)
-            for _job, name, run, (a, b) in steps:
+            for _job, name, run, (a, b), shell_note in steps:
+                key = (f.name, name, a + 1)     # **含行號**（#33 verify R34 DA n1）：同名 step 不得共用一個 key
+                if any(a + 1 <= x <= b + 1 for x in pf_lines):
+                    rows.append((f.name, name, "RULE-pipefail", "-", "不可比（`--strict` 的 pipefail 規則：量的是退出碼遮蔽，不是外流）")); continue
+                if shell_note:
+                    rows.append((f.name, name, "-", "-", "不可比（%s——神諭只會用 bash 跑）" % shell_note)); continue
                 o, obs, leaked = run_script(run, bash, stub_bin)
                 in_step = lambda s: any(a + 1 <= x <= b + 1 for x in s)
                 # step 範圍外的 PARSE 是**結構性**的（整檔不可信）→ 所有 step 都不可比；
@@ -300,7 +357,6 @@ def main(argv):
                 else:
                     lint = ("RULE-red" if in_step(red_lines)
                             else ("PARSE" if (in_step(parse_lines) or struct_parse) else "pass"))
-                key = (f.name, name)
                 if o == "timeout":
                     verdict = "量不到（逾時 %ds）" % TIMEOUT_S
                     unmeasured.append(key)
@@ -322,10 +378,25 @@ def main(argv):
                         # （Codex 第 4 條）。與詞法繞過不同（那種 bash 不會建管線，o ≠ piped，走下面那一支）。
                         # 按類別記已知，與 S-2 同理：整類在「什麼算已過濾」改掉的那一天一起翻。
                         verdict = "不一致：繞過（已知類別 G：一條管線＝整個區塊已過濾——顆粒度，限制第 2 條）"
-                        known_cat.append(key)
+                        known_cat.append(key); seen_cls.add("G")
+                    elif leaked[1] and not STDERR_ROUTE_RE.search(run) and not NEUT_WITH_STDERR_RE.search(run):
+                        # **S-2 按機制歸類，不按症狀**（#33 verify R34 security S-2／logic F5／DA G-B）：前一版只要
+                        # 「只有 stderr 帶 PR 文字」就記已知，於是 `>&2 2>&1 |`、`>&2 |&`、`set -x` 後接 `2>&1 |`
+                        # 這些**帶了** `2>&1`、S-2 的定義根本不涵蓋的真繞過也被算成已知、不改 rc。
+                        # 現在只有「接 neutralise 的管線確實缺 `2>&1`／`|&`、而且沒有 fd 轉向或 xtrace」才是 S-2——
+                        # 那一類在 `--strict`（CI 對真 workflow 用的模式）會被規則擋下；預設模式不要求它。
+                        verdict = "不一致：繞過（已知類別 S-2：僅 stderr，接 neutralise 的管線缺 `2>&1`——預設模式不要求，`--strict` 要求）"
+                        known_cat.append(key); seen_cls.add("S-2")
+                    elif leaked[1] and STDERR_ROUTE_RE.search(run):
+                        # fd 轉向或 xtrace：lint 的 fd 流向規則該擋下它——lint 放行就是真繞過，不屬任何已知類別。
+                        verdict = "不一致：繞過（stderr 外流，run 裡有 fd 轉向／xtrace——lint 的 fd 流向規則應擋下）"
                     elif leaked[1]:
-                        verdict = "不一致：繞過（已知類別 S-2：僅 stderr——`PIPED_RE` 不要求 `2>&1`，規則留 R34）"
-                        known_cat.append(key)
+                        # 接 neutralise 的管線帶了 `2>&1`、沒有 fd 轉向，PR 文字仍從 stderr 出去 ⇒ 印它的是**管線以外**
+                        # 的另一條命令（例：單獨一行 `cat "$PR_TITLE"`）——與 G 同一個限制（一條管線＝整個區塊已過濾），
+                        # 只是走 stderr。歸 G；`known-granularity-stderr-other-command` 是它的範例，S-2 若退回按症狀歸類，
+                        # 那一檔會被錯歸成 S-2 而觸發 KNOWN-CLASS 過期。
+                        verdict = "不一致：繞過（已知類別 G：一條管線＝整個區塊已過濾——stderr 版本，限制第 2 條）"
+                        known_cat.append(key); seen_cls.add("G")
                     else:
                         verdict = "一致"
                 elif lint == "pass":
@@ -342,18 +413,28 @@ def main(argv):
                         unmeasured.append(key)
                 elif o != "piped":
                     verdict = "一致"
+                elif leaked[0] or leaked[1]:
+                    # **有管線不等於沒有外流**（R35）：lint 擋下、bash 也確實建了接 neutralise 的管線，但 PR 文字
+                    # 仍然出去了（fd 轉向到 stderr、xtrace、管線以外的命令）——擋下是對的。前一版這一格一律判誤擋。
+                    verdict = "一致"
                 else:
                     verdict = "不一致：誤擋"
                 if verdict.startswith("不一致") and key in known_cat:
                     pass                                   # 已知**類別**（S-2 stderr-only）：印出、計入「已知」、不改 rc
                 elif verdict.startswith("不一致"):
-                    if key in KNOWN_DISAGREE:
-                        verdict += "（已知：%s）" % KNOWN_DISAGREE[key]
+                    if key[:2] in KNOWN_DISAGREE:
+                        verdict += "（已知：%s）" % KNOWN_DISAGREE[key[:2]]
                     else:
                         disagree.append(key)
-                elif key in KNOWN_DISAGREE:
+                elif key[:2] in KNOWN_DISAGREE:
                     stale.append(key)
+                assert verdict.startswith(VERDICT_KINDS), verdict   # 判定表的種類是 VERDICT_KINDS（CHANGELOG 讀它）
                 rows.append((f.name, name, lint, o, verdict))
+            # **宣告了已知類別、卻沒被歸進那一類 ⇒ stale**（#33 verify R34 security LOW-1）：前一版的 S-2 範例
+            # fixture 在檔頭說「變成一致會逼人重判」，而類別路徑根本沒有 stale 檢查。
+            for c in sorted(declared_cls - seen_cls):
+                cls_stale.append((f.name, c))
+            cls_count.update(seen_cls if len(seen_cls) else ())
     w = max(len(r[0]) for r in rows)
     for fn, name, lint, o, verdict in rows:
         print("%-*s  %-40s lint=%-9s oracle=%-14s %s" % (w, fn, name[:40], lint, o, verdict))
@@ -366,16 +447,27 @@ def main(argv):
     if disagree:
         rc = 1
         print("\n✗ KNOWN_DISAGREE 之外的不一致（lint 與 runner 對同一個 step 說不同的話）：")
-        for fn, name in disagree: print("  - %s :: %s" % (fn, name))
+        for fn, name, ln in disagree: print("  - %s :: %s（第 %d 行）" % (fn, name, ln))
     if stale:
         rc = 1
         print("\n✗ KNOWN_DISAGREE 裡的項目現在一致了（理由不再成立，移除它）：")
-        for fn, name in stale: print("  - %s :: %s" % (fn, name))
+        for fn, name, ln in stale: print("  - %s :: %s（第 %d 行）" % (fn, name, ln))
     if unmeasured:
         # R32 requirements F1：前一版這一行的標題斷言「腳本逾時」，而列在下面的大多數是另一個原因
         # （「這一次執行沒有把 PR 文字印出去」）。標題不得斷言它沒量到的原因——兩個都寫，逐列自帶。
         print("\n⚠ 量不到（逾時、或這一次執行沒有把 PR 文字印出去——各列自帶原因；不是繞過也不是一致，這一格存在本身就是揭露）：")
-        for fn, name in unmeasured: print("  - %s :: %s" % (fn, name))
+        for fn, name, ln in unmeasured: print("  - %s :: %s（第 %d 行）" % (fn, name, ln))
+    if cls_stale:
+        rc = 1
+        print("\n✗ 檔頭宣告了已知類別、神諭卻沒把它歸進那一類（KNOWN-CLASS 過期——重判這個 fixture）：")
+        for fn, c in cls_stale: print("  - %s :: %s" % (fn, c))
+    # **類別本身是閘門**（#33 verify R34 requirements F5）：已知類別依設計不改 rc，所以「類別路徑整個壞掉」
+    # 在 rc 上看不出來。只在跑 repo 自己的 fixture 集（沒有給檔案參數）時檢查：G 與 S-2 各至少一條。
+    if not argv:
+        for c in ("G", "S-2"):
+            if cls_count[c] < 1:
+                rc = 1
+                print("\n✗ 已知類別 %s 在 fixture 集上是 0 條——類別路徑沒有網（該類的範例 fixture 被改掉，或分類壞了）" % c)
     return rc
 
 

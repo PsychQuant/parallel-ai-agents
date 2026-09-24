@@ -27,7 +27,7 @@ bash test/lint-contract-enumerations.sh
 echo "── lint-ci-log-filter (every CI run step must say how its log is filtered — #33 verify R15) ──"
 bash test/lint-ci-log-filter.sh --selftest
 # R16 logic L-2：非 monorepo 佈局沒有 .github/ —— 明說略過，不是 traceback。
-if [ -f ../../.github/workflows/test.yml ]; then bash test/lint-ci-log-filter.sh; else echo "（非 monorepo 佈局，略過 workflow 檢查）"; fi
+if [ -f ../../.github/workflows/test.yml ]; then bash test/lint-ci-log-filter.sh --strict; else echo "（非 monorepo 佈局，略過 workflow 檢查）"; fi
 
 echo "── oracle：lint 判定 vs bash 真的有沒有把 neutralise.py 接在管線後（#33 verify R28 DA／R29）──"
 # selftest 只證「lint 判定 = 作者宣告」，神諭把 runner 拉進來對帳。PyYAML 缺席本機明說略過（CI 會 pip 裝再跑）。

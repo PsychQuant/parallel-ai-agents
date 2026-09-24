@@ -1,0 +1,12 @@
+# #33 verify R35（R35 的三軸量測順帶找到、6cf6864 就有的繞過）：雙引號 YAML 純量裡的 `\n` 解碼後是換行，
+# 但 lint 把解碼後的整串當成**一行**交給 shell 掃描——換行後的 `#` 不在詞首、不起註解，`#| python3 …neutralise.py`
+# 在 lint 眼中是一條管線；bash 眼中第二行是註解，`echo "$PR_TITLE"` 照樣裸印。解碼後按 `\n` 切行 ⇒ 本檔翻紅。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: double-quoted run value with an escaped newline before a comment
+        run: "echo \"$PR_TITLE\"\n#| python3 scripts/neutralise.py"

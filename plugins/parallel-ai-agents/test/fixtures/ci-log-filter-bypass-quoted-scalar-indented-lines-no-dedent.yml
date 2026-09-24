@@ -1,0 +1,12 @@
+# #33 verify R35（引號純量按 `\n` 切行之後**不 dedent**）：解碼後每一行都縮排兩格。bash 眼中 `  EOF` 不是終止字
+# （要逐字相等），heredoc 吃到結尾、假管線是資料，`echo "$PR_TITLE"` 照樣裸印。若把切出來的行當 block scalar 一樣剝
+# 最小縮排，`  EOF` 變成 `EOF`＝終止字，`x | python3 …` 變成 code ⇒ 放行。拿掉 `explicit_pad = 0` ⇒ 本檔翻綠。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: quoted run value whose lines are all indented
+        run: "echo \"$PR_TITLE\"\n  cat <<EOF\n  EOF\n  x | python3 scripts/neutralise.py"

@@ -1,0 +1,14 @@
+# #33 verify R35（opsweep 存活者 `_ansic_decode` 的 `"\x01" in r or "\x7f" in r`）：bash 5.3 讀 EOF 警告實測，`$'E\x01'` 的終止字
+# 被 bash 內部的引號跳脫字元改寫（`E\x01\x01F`／`E\x01\x7fF`）。本 lint 不模擬 ⇒ fail-closed。兩個運算元各自一檔。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: ANSI-C delimiter decoding to x01
+        run: |
+          cat <<$'E\x01F'
+          x
+          echo hi 2>&1 | python3 scripts/neutralise.py

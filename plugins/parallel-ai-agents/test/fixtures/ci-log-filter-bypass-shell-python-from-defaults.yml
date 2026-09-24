@@ -1,0 +1,18 @@
+# 同上，但 shell 從 workflow 的 `defaults.run.shell` 繼承——step 自己沒寫 `shell:` 也要查到（#33 verify R34 security S-3、DA n4／n4b 的探針）。
+# shell 是 `--strict` 的規則（R35：預設模式一律套用時合成 A 語料 290 個 base-綠檔翻紅；預設模式假設 shell 是 bash）。
+# LINT-ARGS: --strict
+# EXPECT: parse-red
+on: pull_request
+defaults:
+  run:
+    shell: python {0}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: step inherits python from workflow defaults
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          import os; print(os.environ["PR_TITLE"])
+          x=1#| python3 ../pai-lenses/scripts/neutralise.py

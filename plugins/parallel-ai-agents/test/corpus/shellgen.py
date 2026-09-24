@@ -122,21 +122,23 @@ def group_a():
 
 
 def group_b():
-    """引號種類 × 管線位置 × `#` 位置（前五種）。"""
-    for (qn, qf), pipe, hn in itertools.product(QUOTES, PIPEPOS, HASHPOS[:5]):
+    """引號種類 × 管線位置——**PR 文字就在管線那一條邏輯行上**。
+
+    #33 verify R34 logic F6：前一版每一檔第 1 行是真管線、第 3 行另外印 `echo "$PR_TITLE"`，中間夾一個 `#` 片段——
+    不管 `#` 怎麼讀，結果都一樣（整個區塊有一條管線 ⇒ 類別 G）。把 lint 的註解分支整個關掉，B 組 60 檔 0 檔變色；
+    「已知 102」裡的 G 41 條有 40 條是這一組的構造本身保證會出現的。`#` 的位置這個維度由 C 組負責（C 組有鑑別力），
+    這一組只留下它原本要量的兩個維度，並讓每一檔都有結果可比：同一行／續行 ⇒ 真的過濾（一致）；
+    行首 `|` ⇒ bash 語法錯誤、第一行照樣先印出 PR 文字 ⇒ lint 必須紅。
+    """
+    for (qn, qf), pipe in itertools.product(QUOTES, PIPEPOS):
         word = qf % "hello"
-        frag = {"line-start": "# note",
-                "after-space": "echo a # note",
-                "after-letter": "echo a#note",
-                "param-expansion": "echo ${PR_TITLE#note}",
-                "backtick": "echo a `#note`"}[hn]
         if pipe == "same-line":
-            body = ["echo %s | %s" % (word, NEUT), frag, 'echo "$PR_TITLE"']
+            body = ['echo %s "$PR_TITLE" | %s' % (word, NEUT)]
         elif pipe == "continued":
-            body = ["echo %s |" % word, "  " + NEUT, frag, 'echo "$PR_TITLE"']
+            body = ['echo %s "$PR_TITLE" |' % word, "  " + NEUT]
         else:
-            body = ["echo %s" % word, "| " + NEUT, frag, 'echo "$PR_TITLE"']
-        yield "b-%s-%s-%s" % (qn, pipe, hn), body, "|"
+            body = ['echo %s "$PR_TITLE"' % word, "| " + NEUT]
+        yield "b-%s-%s" % (qn, pipe), body, "|"
 
 
 def group_c():
@@ -207,6 +209,61 @@ def group_d():
                    ['echo "${{ format(\'{0}\', github.event.pull_request.title) }}"', "| " + NEUT], ">")
 
 
+
+def group_e():
+    """R34 找到、R35 修掉的機制——每一個都有「讀錯就繞過」（data）與「讀錯就誤擋」（real）兩個方向。
+
+    為什麼要這一組（#33 verify R34 中心發現）：四個語意不同的最小修法，在 selftest、642 檔語料、fixture 神諭、三軸上
+    **全部得到同一組數字**——網只對作者點名的輸入有鑑別力。這一組把 R34 的探針形狀做成構造維度，讓語料本身也看得見它們。
+    lint fail-closed（PARSE）的形狀自宣告 `parse-red`（同 D 組的 `$(…)` 分隔字）。
+    """
+    P = 'echo "$PR_TITLE"'
+    Z = ["cat <<'Z'"]
+    cases = [
+        # 分隔字後緊接 `(` `)`（R34 logic F2／regression H-1）
+        ("delim-paren-data", ["(cat <<EOF)", "EOF", P + "; cat <<'Z'", "EOF)", "x | " + NEUT, "Z"], "|"),
+        ("delim-paren-real", ["(cat <<EOF)", "plain", "EOF", P + " | " + NEUT], "|"),
+        # 續行跨過折疊佔位（R34 regression H-2）
+        ("nextphys-data", ["echo echo \\", '  x" | ' + NEUT, '"', P, '# "'], ">"),
+        ("nextphys-real", ["true", P + " \\", "  | " + NEUT], ">"),
+        # `${…}` 裡的構造（R34 logic F1）
+        ("paramexp-backtick-in", [P, "echo ${PR_TITLE#`}`| " + NEUT + " }"], ("|", "parse-red")),
+        ("paramexp-cmdsubst-in", [P, "echo ${PR_TITLE#$(: })| " + NEUT + " }"], ("|", "parse-red")),
+        ("paramexp-ansic-in", [P, "echo ${PR_TITLE#$'\\'}| " + NEUT + " '}"], "|"),   # p4：`\'` 是逃脫、字串到 `'}` 才收
+        ("paramexp-ansic-out", ["echo ${PR_TITLE#$'a'}| " + NEUT], "|"),
+        ("paramexp-dq-in", [P, 'echo "${PR_TITLE#"| ' + NEUT + ' "}"'], "|"),
+        ("paramexp-dq-out", ['echo "${PR_TITLE#"a"}" | ' + NEUT], "|"),
+        ("paramexp-multiline-in", [P, "echo ${PR_TITLE#", "x| " + NEUT + " }"], ("|", "parse-red")),
+        # `$'…'`／`$"…"` 分隔字（R34 logic F3 q2／q3、DA n1）
+        ("delim-ansic-data", ["cat <<$'EOF'", "EOF", P + "; cat <<'Z'", "$EOF", "x | " + NEUT, "Z"], "|"),
+        ("delim-ansic-real", ["cat <<$'EOF'", "x", "EOF", P + " | " + NEUT], "|"),
+        ("delim-ansic-escape-real", ["cat <<$'E\\x41'", "EA", P + " | " + NEUT], "|"),
+        ("delim-locale-data", ['cat <<$"EOF"', "EOF", P + "; cat <<'Z'", "$EOF", "x | " + NEUT, "Z"], "|"),
+        # 算術（R34 logic F3 t1／t2、DA t2prime）
+        ("arith-legacy-data", ["echo $[1<<2]", P + "; cat <<'Z'", "2]", "x| " + NEUT, "Z"], "|"),
+        ("arith-legacy-real", [P + " $[1+2] | " + NEUT], "|"),
+        ("arith-multiline-data", ["echo $((1", "<<2 ))", P + "; cat <<'Z'", "2", "x| " + NEUT, "Z"], "|"),
+        ("arith-multiline-real", ["x=$((1 +", "2))", P + ' "$x" | ' + NEUT], "|"),
+        # 算術／條件式裡的 `|`（R34 DA n5、n5b）
+        ("pipe-in-arith-data", [P + "; : $(( 1 | " + NEUT + " ))"], "|"),
+        ("pipe-in-cond-data", [P, 'if [[ "$PR_TITLE" =~ (a| ' + NEUT + ' ) ]]; then :; fi'], "|"),
+        ("pipe-after-cond-real", ['[[ -n "$HOME" ]] && ' + P + " | " + NEUT], "|"),
+        # tab 縮排（R34 logic F4）
+        ("tab-literal-data", ["\tcat <<EOF", "\t$PR_TITLE", "\tEOF", "\tx| " + NEUT, "\tEOF"], "|"),
+        ("tab-strip-real", ["cat <<-EOF", "\thi", "\tEOF", P + " | " + NEUT], "|"),
+        # 命令替換裡的 heredoc（R34 logic F3 r1）
+        ("cmdsub-heredoc-prefix-data", ["x=$(cat <<EOF", "hi", "EOF)", P + "; cat <<'Z'", "EOF", "x| " + NEUT, "Z"], ("|", "parse-red")),
+        ("cmdsub-heredoc-own-line-real", ["body=$(cat <<EOF", "hi", "EOF", ")", P + ' "$body" | ' + NEUT], "|"),
+        # 折疊區塊的前導空行、行尾空白（R34 requirements F6：兩條 EXPECTED_SURVIVE 的突變點原本 0 檔走得到）
+        ("folded-leading-blank-data", ["", P + " # c", "x | " + NEUT], ">"),
+        ("folded-leading-blank-real", ["", P + " | " + NEUT], ">"),
+        ("folded-trailing-ws-data", [P + " #  ", "x | " + NEUT + "  "], ">"),
+        ("folded-trailing-ws-real", [P + "   ", "| " + NEUT + "  "], ">"),
+    ]
+    for name, body, hdr in cases:
+        yield "e-" + name, body, hdr
+
+
 TAG_BANG_DOC = (HEAD + '      - name: tag-bang\n        run: !!str "echo hi | '
                 + NEUT + '"\n')
 
@@ -216,7 +273,7 @@ def main():
     ap.add_argument("--out", metavar="DIR")
     ap.add_argument("--count", action="store_true", help="只印檔數，不寫檔")
     a = ap.parse_args()
-    cases = list(group_a()) + list(group_b()) + list(group_c()) + list(group_d())
+    cases = list(group_a()) + list(group_b()) + list(group_c()) + list(group_d()) + list(group_e())
     if a.count:
         print(len(cases)); return 0
     if not a.out:

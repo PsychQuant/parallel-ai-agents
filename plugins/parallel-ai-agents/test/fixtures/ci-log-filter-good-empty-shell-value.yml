@@ -1,0 +1,12 @@
+# #33 verify R35（opsweep 存活者 `_scalar` 的 `or ""`）：`shell:` 沒有值（YAML null）。lint 不得因此當掉——取不到值就當成沒寫
+# （預設模式假設 bash；runner 對它怎麼處理不在本 lint 的範圍）。拿掉 `or ""` ⇒ `yaml_split_comment(None)` 當掉。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: shell key without a value
+        shell:
+        run: echo hi 2>&1 | python3 scripts/neutralise.py

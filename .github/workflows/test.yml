@@ -21,8 +21,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ── step log 的 PR 可控文字怎麼處理，由 test/lint-ci-log-filter.sh 對**每一個** run step 機械檢查（#33 verify R15）：
+      # ── step log 的 PR 可控文字怎麼處理，由 test/lint-ci-log-filter.sh --strict 對**每一個** run step 機械檢查（#33 verify R15）：
       #    經 ../pai-lenses/scripts/neutralise.py（validate.py LineSanitiser 那一份實作），或 `# LOG-FILTER:` 明示不過濾與理由。
+      #    --strict 另外要求：接 neutralise 的管線帶 `2>&1`／`|&`、有管線的 step 跑在 pipefail 之下；且 shell 只能是 bash、
+      #    靠管線過濾的 step 不得轉向 stderr 或開 xtrace（#33 verify R34 → R35）。
+      #    **已知例外（顆粒度）**：一個 run 區塊裡任一條邏輯行接了管線，整個區塊就算已過濾——同一區塊裡另一條命令
+      #    印出的 PR 文字不經過濾（lint 是詞法的，不判哪一行印了什麼）。追蹤：#59。
       #    R14 把這件事寫成散文列舉，R15 四個 lens 各自找到列舉外的 step（shellcheck、lint-*、整個 macOS job）。
       #    過濾器擋的是 `::`/`##[` 偽造 annotation 與跨 step 的 `::add-mask::`；真正的邊界是 `on: pull_request`
       #    （非 pull_request_target）+ `contents: read` + 零 secrets——每個 job 本來就執行 PR 自己的程式碼。
@@ -53,7 +57,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          { bash test/lint-ci-log-filter.sh --selftest && bash test/lint-ci-log-filter.sh; } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
+          { bash test/lint-ci-log-filter.sh --selftest && bash test/lint-ci-log-filter.sh --strict; } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
 
       # #33 verify R28 DA / R29：selftest 只證「lint 判定 = 作者宣告」。神諭把 runner（bash + stub python3）拉進來，
       # 對每個 fixture 的每個 run step 問「管線到底有沒有建立」——lint 與 runner 對同一個 step 說不同的話就紅。
@@ -80,6 +84,10 @@ jobs:
       # 就失守，所以這裡讓它會紅：R31-*/R32-* 任一列在產生語料上為 0 就 fail。
       - name: shape census — every new mechanism must have > 0 files in the generated corpus
         working-directory: plugins/parallel-ai-agents
+        # `shell: bash` 是這一步會紅的前提（#33 verify R34 security S-1／regression H-3／requirements F1）：沒寫時
+        # GitHub 用 `bash -e {0}`、**沒有 pipefail**，`shapes.py` 的 rc=1 被 `neutralise.py` 的 rc=0 蓋掉——R33 加的
+        # 這道閘門在 CI 上結構上紅不了，只有本機 run.sh（有 pipefail）會紅。現在由 lint 的 `--strict` 機械檢查。
+        shell: bash
         run: |
           find "$RUNNER_TEMP/gen" -name '*.yml' -print | sort | sed 's/^/x /' > "$RUNNER_TEMP/gen-list.txt"
           python3 test/corpus/shapes.py --require-nonzero R3 "$RUNNER_TEMP/gen-list.txt" 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
@@ -128,7 +136,7 @@ jobs:
           set -o pipefail
           TAP="${RUNNER_TEMP:-/tmp}/pack-anchor.tap"
           rc=0
-          bats --formatter tap test/pai-collect-lens-layers.bats 2>&1 | tee "$TAP" | python3 ../pai-lenses/scripts/neutralise.py || rc=$?
+          bats --formatter tap test/pai-collect-lens-layers.bats 2>&1 | tee "$TAP" 2>&1 | python3 ../pai-lenses/scripts/neutralise.py || rc=$?
           # #33 verify R16 DA-6: one implementation of the TAP guard, called from three places (was three hand-copies).
           bash test/assert-tap-complete.sh "$TAP" "pai-collect-lens-layers.bats"
           exit "$rc"
