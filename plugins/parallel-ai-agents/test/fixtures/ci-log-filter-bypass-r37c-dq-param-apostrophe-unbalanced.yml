@@ -1,0 +1,12 @@
+# #33 verify R37（同上，誤擋方向的那一半）：bash 5.3 對 `"${MESSAGE:-it's fine}"` 報「尋找符合的 ' 時遇到了未預期的
+# 檔案結束符」——雙引號 `${…}` 裡的 `'` 是引號，不是字面，這一步根本不會執行。lint fail-closed PARSE 與 bash 一致。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: dq-param-apostrophe-unbalanced
+        run: |
+          printf '%s\n' "${MESSAGE:-it's fine}" 2>&1 | python3 scripts/neutralise.py

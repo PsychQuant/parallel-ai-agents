@@ -1,0 +1,14 @@
+# #33 verify R37 相鄰輸入（R36 沒點名）：頂層雙引號裡的 `$[` 裡有 `"`。bash 5.3 把 `$[ … ]` 當巢狀結構讀，整串是 `:` 的
+# 一個引數（展開時報「在 $[ 中沒有閉合的 ]」），沒有管線；第一行裸印 PR 文字。380e4a4 在第一個內層 `"` 收掉外層、
+# 假管線變 code ⇒ 放行。雙引號裡的 `$[` 與 `${…}` 裡的一樣 fail-closed。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: dq-legacy-arith-inner-quote
+        run: |
+          echo "$PR_TITLE"
+          : "$[ " 2>&1 | python3 scripts/neutralise.py " ]"

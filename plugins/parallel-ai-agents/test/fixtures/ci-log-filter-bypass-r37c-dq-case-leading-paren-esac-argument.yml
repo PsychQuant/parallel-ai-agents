@@ -1,0 +1,14 @@
+# #33 verify R37（case 追蹤）：前導括號 `(a)` 若照一般括號計深度，階段會停在「等模式」，子句裡當參數的 `esac`
+# 就被當成收尾、下一個模式 `b)` 提早收掉命令替換 ⇒ 內層字串的假管線變 code ⇒ 放行。380e4a4 同樣放行。
+# bash 5.3：x 是 `esac`，沒有管線，最後一行裸印 PR 文字。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: dq-case-leading-paren-esac-argument
+        run: |
+          x="$(case a in (a) echo esac;; b) echo " 2>&1 | python3 scripts/neutralise.py ";; esac)"
+          echo "$PR_TITLE"

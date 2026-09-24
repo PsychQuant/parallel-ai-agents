@@ -1,0 +1,17 @@
+# #33 verify R37 合併時協調者發現（r37d 第 5(a) 列修法的相鄰輸入）：命令名用**引號**寫（`"printf"`），後面接引數位置的 `[[ # ]]`。
+# bash：`[[` 只是參數、` #` 起註解，管線根本不存在，PR 文字直接印出（bash 5.3 實測）。
+# r37d 的 `cmd_pos` 在引號開啟／收尾的分支都 `continue` 掉、沒被維護，於是引號詞之後的 `[[` 還以為在命令位置——
+# 被當成條件式、內容挖空、`#` 被蓋住、看到管線就放行（r37d 單獨與合併後兩種模式都 rc=0）。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          "printf" '%s\n' "$PR_TITLE" [[ # ]] 2>&1 | python3 scripts/neutralise.py

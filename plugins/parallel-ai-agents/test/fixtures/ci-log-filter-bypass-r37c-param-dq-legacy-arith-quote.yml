@@ -1,0 +1,14 @@
+# #33 verify R37（`_dq_end` 的 `$[`）：`${…}` 裡的雙引號字串裡有 `$[ … ]`，裡面又有 `"`。bash 5.3 把 `$[ … ]` 當巢狀結構讀
+# （實跑：展開時報「在 $[ 中沒有閉合的 ]」、那一行不執行，沒有管線），前一行已裸印 PR 文字。`_dq_end` 若把 `$[` 當
+# 普通字元，內層的 `"` 收掉字串、`}` 收掉展開 ⇒ 假管線變 code ⇒ 放行（380e4a4 放行）。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: param-dq-legacy-arith-quote
+        run: |
+          echo "$PR_TITLE"
+          echo ${X:-"$[ "} 2>&1 | python3 scripts/neutralise.py {" ]"}

@@ -1,0 +1,13 @@
+# #33 verify R37（`_dq_end`）：`${…}` 裡的命令替換裡的雙引號字串，又含一個命令替換、裡面還有 `"`。R37 以前
+# `_cmdsub_end` 的雙引號只認反斜線，內層的 `"` 被當成字串收尾 ⇒ `)`、`}` 提早收掉 ⇒ 假管線變 code ⇒ 放行
+# （380e4a4 放行）。bash 5.3：輸出 `PRTEXT )} 2>&1 | …`，一個詞、沒有管線。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: param-cmdsub-nested-dq-cmdsub
+        run: |
+          echo "$PR_TITLE" ${X:-$(echo "$(echo ")} 2>&1 | python3 scripts/neutralise.py {")")}

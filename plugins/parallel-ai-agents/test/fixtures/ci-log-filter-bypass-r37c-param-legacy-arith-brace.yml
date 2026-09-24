@@ -1,0 +1,13 @@
+# #33 verify R36 第 5 列 (c)（regression F1，DA 重現）：R35 把 `_param_end` 的兩個 `$[` 分支當死碼刪掉，理由是
+# 「`$[…]` 裡不可能出現 `}`」——錯的。bash 5.3 把 `${…}` 裡的 `$[ … ]` 當巢狀結構配對，`}` 放在裡面照樣過 `bash -n`；
+# 整串是一個詞、管線沒有建立、PR 文字裸印（42e0e4a PARSE → 380e4a4 兩種模式 rc=0）。還原成 fail-closed。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: param-legacy-arith-brace
+        run: |
+          echo ${PR_TITLE:-$[ } 2>&1 | python3 scripts/neutralise.py ]}

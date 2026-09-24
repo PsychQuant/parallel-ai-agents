@@ -1,0 +1,14 @@
+# #33 verify R37（case 追蹤的 `_case_head`）：命令起點的 `case` 後面不是 `WORD in`——bash 5.3 報「未預期的字組 ) 附近
+# 有語法錯誤」，那一行不執行、前一行已裸印 PR 文字。若只看命令起點就開始追蹤，`)` 被當成模式括號、`;; esac)` 收得乾乾淨淨，
+# 中間的假管線變 code ⇒ 放行（380e4a4 的 `csub` 在 `)` 歸零，同樣放行）。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: cmdsub-case-without-in
+        run: |
+          echo "$PR_TITLE"
+          x=$(case ) 2>&1 | python3 scripts/neutralise.py ;; esac)

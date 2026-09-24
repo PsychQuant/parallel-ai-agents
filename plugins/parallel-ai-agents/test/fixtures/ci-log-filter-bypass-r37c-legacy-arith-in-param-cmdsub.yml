@@ -1,0 +1,13 @@
+# #33 verify R37 相鄰輸入（R36 沒點名）：`${…}` 裡的命令替換裡有 `$[ ) ]`。bash 5.3 把 `$[ … ]` 當巢狀結構讀，`)` 不收
+# 命令替換（實跑：算術語法錯誤、PR 文字裸印、沒有管線）；`_cmdsub_end` 數括號在 `$[ )` 就收尾、`}` 收掉展開 ⇒
+# 假管線變 code ⇒ 380e4a4 放行。`_cmdsub_end` 遇到 `$[` fail-closed。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: legacy-arith-in-param-cmdsub
+        run: |
+          echo "$PR_TITLE" ${X:-$(echo $[ )} 2>&1 | python3 scripts/neutralise.py ])}

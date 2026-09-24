@@ -1,0 +1,15 @@
+# #33 verify R36 第 7 列（logic HIGH-4 p12）：`${…}` 裡的 `$(case … in a) …; esac)`——模式括號是單邊 `)`，`_cmdsub_end`
+# 的括號深度提早歸零、`}` 提早收掉展開，假管線變 code ⇒ 380e4a4 兩種模式放行（已知限制第三組第 3 條寫的
+# 「後果是 fail-closed 的方向」是錯的）。bash 5.3：輸出 `PRTEXT } 2>&1 | …`，管線沒有建立。R37：遇到 `case` 一律 fail-closed。
+# EXPECT: parse-red
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: case-in-param-cmdsub
+        shell: bash
+        run: |
+          echo "$PR_TITLE" ${X:-$(case a in a) echo };; esac) 2>&1 | python3 scripts/neutralise.py }

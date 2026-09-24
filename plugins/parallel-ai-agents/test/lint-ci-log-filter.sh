@@ -67,17 +67,17 @@ if [ "${1:-}" = "--selftest" ]; then
   done
   # R24 regression F9：門檻寫成 `>=` 而實際值更高時，那個差額**沒有網**——刪掉一個 fixture 仍然綠。
   # 三個門檻一律改成**等於實測值**：要加 fixture 就同步改這裡，讓「少了一個」立刻紅。
-  if [ "${n_pass}" -ne 111 ]; then
-    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 111（改動 fixture 請同步改這個數字）" >&2
+  if [ "${n_pass}" -ne 124 ]; then
+    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 124（改動 fixture 請同步改這個數字）" >&2
     fail=1
   fi
-  if [ "${n_rule}" -ne 106 ]; then
-    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 106" >&2
+  if [ "${n_rule}" -ne 120 ]; then
+    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 120" >&2
     fail=1
   fi
   if [ "${fail}" -ne 0 ]; then exit 1; fi
-  if [ "${n_parse}" -ne 84 ]; then
-    echo "lint-ci-log-filter selftest FAILED: parse-red 是 ${n_parse} 個，預期恰好 84（先前這一類完全沒有下限）" >&2
+  if [ "${n_parse}" -ne 102 ]; then
+    echo "lint-ci-log-filter selftest FAILED: parse-red 是 ${n_parse} 個，預期恰好 102（先前這一類完全沒有下限）" >&2
     exit 1
   fi
   echo "lint-ci-log-filter selftest ok: ${n_pass} 正向通過、${n_rule} 條規則紅、${n_parse} 條解析紅（來源逐一比對相符）"
@@ -462,6 +462,13 @@ def _ansic_decode(s):
     return None if ("\x01" in r or "\x7f" in r) else r
 
 
+# `_param_end()` 回 None 時呼叫端印的原因（兩處共用）。R36 第 24 列：前一版兩處都寫「命令替換／舊式算術」不解析——
+# 命令替換自 R35 起是配對的，那句話不再成立。現在的 None 只有這些來源（見 `_param_end`、`_cmdsub_end`）。
+PARAM_UNPARSED = ("`${…}` 在同一行沒收尾（含裡面的引號、命令替換），或裡面有本 lint 不解析的構造："
+                  "舊式算術 `$[…]`；命令替換裡的詞首 `#`、heredoc、`$'…'`、`$[…]`、`case`；"
+                  "算術 `$((…))` 裡的引號、反斜線，或 `$((…) …)` 形式")
+
+
 def _backtick_end(line, j):
     """`` `…` `` 從開頭的反引號到收尾反引號之後的位置；同一行沒收尾回 None。反斜線逃脫下一個字元。"""
     k, n = j + 1, len(line)
@@ -474,31 +481,50 @@ def _backtick_end(line, j):
     return None
 
 
-def _cmdsub_end(line, j):
-    """`$(…)` 的配對：從 `$(` 到收尾 `)` 之後的位置；同一行沒收尾回 None。
+def _arith_end(line, j):
+    """`$((…))` 的配對：從 `$((` 到收尾 `))` 之後的位置；本 lint 不解析的構造回 None（呼叫端 fail-closed）。
 
-    括號計深度，略過引號、逃脫、巢狀的 `${…}`／反引號。已知不涵蓋：`case … in a)` 的模式括號（單邊 `)`）
-    會讓深度提早歸零——那一種出現在 `${…}` 裡的命令替換中的機率是零，而它的後果是 fail-closed 的方向
-    （展開提早「結束」、後面的 `}` 由 `_param_end` 繼續找）。"""
-    k, n, depth = j + 2, len(line), 1
+    #33 verify R37（R36 第 16 列）：算術展開裡的 `<<` 是左移、`(`／`)` 是分組，不是 heredoc 也不是命令替換。
+    括號計深度；深度 0 的 `))` 收尾。**深度 0 卻只有單一個 `)`** 代表 bash 會改讀成「命令替換裡的子殼層」
+    （`$((cd x; ls) )`）——不猜，回 None。引號、反引號、反斜線出現在算術裡也回 None（bash 對它們的處理與
+    剖析、展開兩個階段相依，本 lint 不追）；`${…}`／`$(…)` 走各自的配對。"""
+    k, n, depth = j + 3, len(line), 0
     while k < n:
         c = line[k]
-        if c == "\\":
+        if c in "\\'\"`":
+            return None
+        if line.startswith("${", k) or line.startswith("$(", k):
+            e = _param_end(line, k) if line[k + 1] == "{" else _cmdsub_end(line, k)
+            if e is None:
+                return None
+            k = e; continue
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            if depth:
+                depth -= 1
+            elif line.startswith("))", k):
+                return k + 2
+            else:
+                return None
+        k += 1
+    return None
+
+
+def _dq_end(line, k):
+    """雙引號字串（在 `${…}`／`$(…)` 裡）：從開頭的 `"` 到收尾 `"` 之後的位置；同一行沒收尾或含不解析的構造回 None。
+
+    反斜線逃脫下一個字元；`$(…)`、反引號、`${…}` 走各自的配對（它們裡面的 `"` 不是這個字串的收尾）；
+    舊式算術 `$[…]` 回 None（見 `_param_end`）。R37 以前 `_param_end` 與 `_cmdsub_end` 各寫一份，
+    `_cmdsub_end` 那份不認巢狀的命令替換——三份引號邏輯互不一致正是 R36 codex 第 1 條的建議修法對象。"""
+    k, n = k + 1, len(line)
+    while k < n and line[k] != '"':
+        if line[k] == "\\":
             k += 2; continue
-        if c == "'":
-            e = line.find("'", k + 1)
-            if e < 0:
-                return None
-            k = e + 1; continue
-        if c == '"':
-            k += 1
-            while k < n and line[k] != '"':
-                k += 2 if line[k] == "\\" else 1
-            if k >= n:
-                return None
-            k += 1; continue
-        if c == "`":
-            e = _backtick_end(line, k)
+        if line.startswith("$[", k):
+            return None
+        if line.startswith("$(", k) or line[k] == "`":
+            e = _cmdsub_end(line, k) if line[k] == "$" else _backtick_end(line, k)
             if e is None:
                 return None
             k = e; continue
@@ -507,14 +533,106 @@ def _cmdsub_end(line, j):
             if e is None:
                 return None
             k = e; continue
+        k += 1
+    return k + 1 if k < n else None
+
+
+def _cmdsub_end(line, j):
+    """`$(…)` 的配對：從 `$(` 到收尾 `)` 之後的位置；同一行沒收尾、或裡面有本 lint 不解析的構造，回 None。
+
+    `$((` 是算術，交給 `_arith_end`。其餘括號計深度，略過逃脫、單雙引號（`_dq_end`）、巢狀的 `${…}`／反引號／
+    `$((…))`。**這不是 bash 的命令替換剖析**（#33 verify R36 第 7 列：logic HIGH-4、codex 第 1 條）——下列五種
+    構造讓括號計數與 bash 分岔，**遇到一律回 None**（封閉列舉，只有這五種；其餘構造照上面的規則配對）：
+      1. 詞首的 `#`：註解到行尾，註解裡的 `)` 不收尾（`$(echo a #)` 在 bash 要到下一行才收）。
+      2. `<<`（`<<<` 除外）：heredoc 的內文在下一行起，同一行收尾的 `$(cat <<EOF)` 讓 bash 從下一行讀內文。
+      3. `$'…'`：`\\'` 是逃脫不是收尾，普通單引號的規則會提早收掉字串。
+      4. `$[…]`：bash 把它當巢狀結構讀，裡面的 `)` 不收命令替換。
+      5. 詞首的 `case`：模式括號是單邊 `)`，深度提早歸零。
+    R35 在這裡寫「`case` 的後果是 fail-closed 的方向」——錯的：深度提早歸零 ⇒ `${…}` 提早收尾 ⇒ 後面的假管線
+    變 code ⇒ 放行（`bypass-r37c-case-in-param-cmdsub`）。呼叫端在頂層雙引號裡拿到 None 時不直接 PARSE，
+    改把內容當 code 掃（見 `shell_scan` 的雙引號分支；`$((` 除外，那是算術、fail-closed）；在 `${…}` 裡拿到 None
+    則 fail-closed。"""
+    if line.startswith("$((", j):
+        return _arith_end(line, j)
+    k, n, depth = j + 2, len(line), 1
+    prev = "("                                          # 詞首判定用：`$(` 之後就是詞首
+    while k < n:
+        c = line[k]
+        at_word = prev in SHELL_WORD_BREAK
+        if c == "\\":
+            k += 2; prev = "x"; continue
+        if (c == "#" and at_word) or line.startswith("$'", k) or line.startswith("$[", k):
+            return None
+        if line.startswith("<<<", k):
+            k += 3; prev = "<"; continue
+        if line.startswith("<<", k):
+            return None
+        if at_word and line.startswith("case", k) and line[k + 4:k + 5] in ("", " ", "\t"):
+            return None
+        if c == "'":
+            e = line.find("'", k + 1)
+            if e < 0:
+                return None
+            k = e + 1; prev = "x"; continue
+        if c == '"' or c == "`" or line.startswith("${", k) or line.startswith("$((", k):
+            e = (_dq_end(line, k) if c == '"' else _backtick_end(line, k) if c == "`"
+                 else _param_end(line, k) if line[k + 1] == "{" else _arith_end(line, k))
+            if e is None:
+                return None
+            k = e; prev = "x"; continue
         if c == "(":
             depth += 1
         elif c == ")":
             depth -= 1
             if not depth:
                 return k + 1
-        k += 1
+        prev = c; k += 1
     return None
+
+
+# `$(…)` 裡的 case 追蹤（見 `shell_scan` 的 `cases`）用的工具。R37，R36 第 7 列。
+CASE_KW_RE = re.compile(r"(case|esac)(?=[\s;&|()<>]|$)")
+# 命令起點：本行到目前為止的 code 以分隔字元（或行首）結尾，後面至多接幾個「後面還是命令」的保留字。
+# 保留字本身也要在命令起點——`echo do case` 的 `do` 是參數，所以要求它前面緊接分隔字元，不接受任意空白後的 `do`。
+AT_CMD_RE = re.compile(r"(?:^|[;&|(`])(?:\s*(?:do|then|else|elif|if|while|until|time|!|\{))*\s*$")
+
+
+def _at_command(code, cases, lvl):
+    """`code`（本邏輯行目前為止的 code 桶內容）之後的詞是不是在命令起點。case 子句的模式 `)` 之後也是。"""
+    s = code.rstrip()
+    if s.endswith(")") and cases and cases[-1][0] == lvl and cases[-1][1] == "cmd":
+        return True
+    return bool(AT_CMD_RE.search(s))
+
+
+def _case_head(line, i):
+    """從 `case` 起：後面是不是「一個 shell 詞 + `in`」。詞裡的引號、`$(…)`、`${…}`、反引號照各自的配對；配不起來回 False。"""
+    j, n = i + 4, len(line)
+    while j < n and line[j] in " \t":
+        j += 1
+    k = j
+    while k < n and line[k] not in " \t;&|()<>":
+        c = line[k]
+        if c == "\\":
+            k += 2; continue
+        if c == "'":
+            e = line.find("'", k + 1)
+            e = e + 1 if e >= 0 else None
+        elif c == '"':
+            e = _dq_end(line, k)
+        elif c == "`":
+            e = _backtick_end(line, k)
+        elif line.startswith("${", k) or line.startswith("$(", k):
+            e = _param_end(line, k) if line[k + 1] == "{" else _cmdsub_end(line, k)
+        else:
+            k += 1; continue
+        if e is None:
+            return False
+        k = e
+    w_end = k
+    while k < n and line[k] in " \t":
+        k += 1
+    return w_end > j and k > w_end and line.startswith("in", k) and line[k + 2:k + 3] in ("", " ", "\t", ";")
 
 
 def _param_end(line, i):
@@ -523,9 +641,14 @@ def _param_end(line, i):
     #33 verify R34 logic F1：前一版只認 `${`、`}`、逃脫與單雙引號，於是五種構造讓它在 bash 還沒結束展開的地方
     就宣告結束：反引號（`` `}` ``）、`$(…)`（`$(: })`）、`$'…'`（`\'` 是逃脫不是收尾）、雙引號裡的 `${`
     （雙引號分支根本不進來）、跨行。現在照 bash 的配對規則做：引號、`$'…'`、巢狀 `${`、`$(…)`（`_cmdsub_end`）、
-    反引號（`_backtick_end`）——雙引號裡的也一樣。**同一行沒收尾一律回 `None`**（跨行的 `${…}` 是已知不涵蓋
-    第三組第 2 條）。R35 第一版對 `${…}` 裡的命令替換與 `$[` 也一律回 `None`；三軸量到常見寫法 `${X:-$(cmd)}`
-    因此翻紅，改成配對；`$[…]` 裡不可能出現 `}`，當普通字元處理與特判等價，opsweep 報那兩個分支存活，刪掉。
+    反引號（`_backtick_end`）——雙引號裡的也一樣（`_dq_end`）。**同一行沒收尾一律回 `None`**（跨行的 `${…}` 是
+    已知不涵蓋第三組第 2 條）。R35 第一版對 `${…}` 裡的命令替換與 `$[` 也一律回 `None`；三軸量到常見寫法
+    `${X:-$(cmd)}` 因此翻紅，命令替換改成配對（`_cmdsub_end` 自己對五種構造回 None，見該函式）。
+    **舊式算術 `$[…]` 一律回 `None`**（#33 verify R36 第 5 列 (c)）：R35 以「`$[…]` 裡不可能出現 `}`，當普通字元
+    處理與特判等價」為由把兩個 `$[` 分支當死碼刪掉——前提是錯的。bash 5.3 把 `${…}` 裡的 `$[ … ]` 當巢狀結構讀，
+    `}` 放在裡面照樣過 `bash -n`：`echo ${PR_TITLE:-$[ } 2>&1 | python3 …neutralise.py ]}` 整串是一個詞、管線沒建立，
+    刪掉之後 lint 在 `$[ }` 就收掉展開、放行（`bypass-r37c-param-legacy-arith-brace`）。opsweep 報「存活」只代表
+    當時沒有 fixture 走到它，不代表它沒有行為。雙引號裡的 `$[` 同此（`_dq_end`）。
     """
     j, depth, n = i + 2, 1, len(line)
     while j < n:
@@ -540,6 +663,8 @@ def _param_end(line, i):
             if e is None:
                 return None
             j = e; continue
+        if line.startswith("$[", j):                # 舊式算術：fail-closed（見 docstring，R36 第 5 列 (c)）
+            return None
         if line.startswith("$'", j):                # ANSI-C：`\'` 是逃脫
             k = j + 2
             while k < n and line[k] != "'":
@@ -553,24 +678,10 @@ def _param_end(line, i):
                 return None
             j = k + 1; continue
         if c == '"':
-            k = j + 1
-            while k < n and line[k] != '"':
-                if line[k] == "\\":
-                    k += 2; continue
-                if line.startswith("$(", k) or line[k] == "`":
-                    e = _cmdsub_end(line, k) if line[k] == "$" else _backtick_end(line, k)
-                    if e is None:
-                        return None
-                    k = e; continue
-                if line.startswith("${", k):
-                    e = _param_end(line, k)
-                    if e is None:
-                        return None
-                    k = e; continue
-                k += 1
-            if k >= n:
+            e = _dq_end(line, j)
+            if e is None:
                 return None
-            j = k + 1; continue
+            j = e; continue
         if line.startswith("${", j):
             depth += 1; j += 2; continue
         j += 1
@@ -629,7 +740,13 @@ def shell_scan(lines):
          語料 959 個 base-綠檔 290 個翻紅，所以移進 `--strict`。
       2. **跨行的 `${…}`**（含雙引號裡的）：本 lint 的 `${…}` 配對不跨行 ⇒ fail-closed `PARSE:`（誤擋方向；
          合成 A 語料 1 檔：`"${X:+$X` ⏎ `…}"`）。
-      3. **`$(…)` 裡 `case … in a)` 的單邊 `)`**：`${…}` 裡的命令替換用括號計深度配對，模式括號會讓深度提早歸零。
+      3. **`$(…)` 裡的 `case`**：命令替換用括號計深度配對，`case … in a)` 的單邊模式括號會讓深度提早歸零。
+         **R35 這一條寫「後果是 fail-closed 的方向」，那是錯的**（R36 第 7 列）：深度提早歸零 ⇒ `${…}` 提早收尾 ⇒
+         後面的假管線變 code ⇒ 放行（`bypass-r37c-case-in-param-cmdsub`，bash 5.3 實測裸印 PR 文字）；主掃描器的
+         `csub` 同一個根因，還繞過了「命令替換裡的 heredoc 以前綴收尾 ⇒ fail-closed」（`bypass-r37c-case-cmdsub-heredoc-prefix-term`）。
+         R37 之後的實際行為：`_cmdsub_end`（`${…}` 裡、以及雙引號裡同一行收尾的那一段）遇到 `case` 一律回 None ⇒
+         在 `${…}` 裡是 fail-closed `PARSE:`（誤擋方向）；主掃描器（含雙引號裡改當 code 掃的命令替換）**追蹤** case 的
+         模式括號，追蹤表示不了的形狀 fail-closed（見主迴圈 `cases` 的註解）。
       4. **`shopt -s extglob`／`-O extglob`**：extglob 開啟後 `@(`、`!(`、`+(`… 是合法語法，本掃描器不模擬這套
          詞法，偵測到就整個 run 區塊 fail-closed `PARSE:`（見 `EXTGLOB_RE`；R36 第 17 列）。
 
@@ -663,10 +780,15 @@ def shell_scan(lines):
     # 且**不再印 `RULE:`**（R24 DA-8(b)：沒被解析出來的區塊沒有適用對象）。
     unparsed = None         # 本 lint 不解析的構造：填原因字串，呼叫端印 `PARSE:`（不再印 `RULE:`）
     # **跨行保留的詞法狀態**（#33 verify R34 logic F3／DA n5、n5b）：算術 `((`（含裡面的單括號）、舊式算術 `$[`、
-    # 條件式 `[[`、命令替換 `$(` 與反引號、雙引號裡是否出現過命令替換。前一版的算術深度每一行歸零，
-    # 於是跨行的 `$((1` ⏎ `<<2 ))` 第二行的左移被當成 heredoc。
+    # 條件式 `[[`、命令替換 `$(` 與反引號、雙引號裡收不掉而改當 code 掃的命令替換（`dq_ret`，見雙引號分支）。
+    # 前一版的算術深度每一行歸零，於是跨行的 `$((1` ⏎ `<<2 ))` 第二行的左移被當成 heredoc。
     arith = arith_par = brk = csub = cpar = 0
-    cond = bt = dq_sub = dq_resume = False
+    cond = bt = False
+    # `dq_ret`：從雙引號進入、同一行收不掉的命令替換（堆疊）。元素是進入後的 `csub + cpar`（`$(…)`：括號總深度
+    # 跌破它＝這個命令替換收尾）或 0（反引號：`bt` 回到 False＝收尾）；收尾時回到雙引號（R37，R36 第 6 列）。
+    dq_ret = []
+    # `cases`：命令替換裡開著的 case（堆疊），元素是 [所在的括號深度 `csub + cpar`, 階段 "pat"／"cmd"]（R37，見主迴圈）。
+    cases = []
     # **裸括號（不屬於 `$(`／`((` 任何一邊）的未配對深度**（R37，#33 verify R36 第 15 列）：`( cmd` 沒有對應的
     # `)` 就掃到 run 區塊結尾，是語法錯誤（跟引號沒收尾同等級），不能靜默放行。只算「沒被 `$(`／`((`／
     # 巢狀 `cpar`／`csub` 認領」的裸 `(`／`)`——判定見下方迴圈裡的 `paren_claimed`。
@@ -715,7 +837,7 @@ def shell_scan(lines):
         # 不看這個旗標（那些分支在到得了 `[[`／`((` 判定之前就 `continue` 掉了）。
         cmd_pos = True
         quote0, prev0 = quote, prev_sig      # 邏輯行起點的狀態：摺疊後要從頭重掃
-        lex0 = (arith, arith_par, brk, csub, cpar, cond, bt, dq_sub)
+        lex0 = (arith, arith_par, brk, csub, cpar, cond, bt, tuple(dq_ret), tuple(map(tuple, cases)))
         bare_par0 = bare_par                 # 裸括號深度也要快照——續行重掃前這一行已經記的深度要還原
         pending0 = list(pending)             # R28 D6（Codex #2）：快照漏了 pending，重掃會把同一個 heredoc 排兩次
         while i < n:
@@ -735,26 +857,51 @@ def shell_scan(lines):
                 if line.startswith("${", i):
                     e = _param_end(line, i)
                     if e is None:
-                        unparsed = "`${…}` 裡有本 lint 不解析的構造（命令替換／舊式算術），或同一行沒收尾"
+                        unparsed = PARAM_UNPARSED
                         break
                     code.append(" " * (e - i)); i = e; prev_sig = "x"; continue
+                if line.startswith("$[", i):
+                    # 舊式算術：bash 把 `$[ … ]` 當巢狀結構讀，裡面的 `"` 不收外層（實測 `: "$[ " | … " ]"` 是一個引數、
+                    # 沒有管線）——與 `${…}` 裡的 `$[` 同一條（R36 第 5 列 (c) 的相鄰輸入 `bypass-r37c-dq-legacy-arith-inner-quote`）。
+                    unparsed = "雙引號裡的舊式算術 `$[…]`——bash 把它當巢狀結構讀，本 lint 不解析"
+                    break
                 if ch == "`" or line.startswith("$(", i):
-                    dq_sub = True
-                if dq_sub and line.startswith("<<", i) and not line.startswith("<<<", i):
-                    # **雙引號裡的命令替換開 heredoc**（`X="$(cat <<EOF` ⏎ … ⏎ `EOF` ⏎ `)"`）：bash 照樣讀 heredoc 內文，
-                    # 讀完回到雙引號。前一版這個分支把整段挖空、不登記 heredoc，內文裡的 `"` 讓引號狀態與 bash 分岔
-                    # （`bypass-heredoc-in-dq-cmdsubst`）；R35 第一版改成 fail-closed，三軸量到合成 A 語料 8 個合法檔翻紅。
-                    # 現在照 bash 做：暫時離開雙引號、交給下面的 `<<` 分支登記 heredoc，登記完回到雙引號。
-                    quote = None; dq_resume = True        # 不在這裡消費：落到下面的 `<<` 分支
-                else:
-                    code.append('"' if ch == '"' else " ")
-                    if ch == '"':
-                        quote = None; dq_sub = False
-                    i += 1; prev_sig = ch; continue
+                    # **雙引號裡的 `$(…)`／反引號是新的引號脈絡**（#33 verify R36 第 6 列）：裡面的 `"` 開的是命令替換
+                    # 自己的字串，不是外層的收尾。380e4a4 在這裡只設一個旗標、照樣按雙引號掃，於是
+                    # `"$(echo " | python3 …")"` 的假管線變 code（繞過），`"$(tr -d '"')"` 讓引號錯到區塊結尾（PARSE 誤擋）；
+                    # 旗標又不在命令替換收尾時清除，同一個雙引號後面的字面 `<<` 也被當 heredoc（R36 第 16 列）。
+                    # 現在：(1) 同一行收得掉 ⇒ 整段當不透明內容吃掉（`$((…))` 是算術，由 `_cmdsub_end` 轉給 `_arith_end`）；
+                    # (2) 收不掉（跨行、heredoc、註解、`$'…'`、`case`…）⇒ 照 bash 把內容當 **code** 掃：離開雙引號、
+                    # 記下進入點（`dq_ret`），這個命令替換收尾時回到雙引號。heredoc 因此由一般的 `<<` 分支登記（R35 的
+                    # 「暫時離開雙引號、登記完就回來」只修到登記那一點：heredoc 之後命令替換裡的 `"…"` 仍被當外層的收尾與開頭，
+                    # `bypass-r37c-dq-cmdsub-heredoc-then-quoted-code`）。
+                    e = _backtick_end(line, i) if ch == "`" else _cmdsub_end(line, i)
+                    if e is not None:
+                        code.append(" " * (e - i)); i = e; prev_sig = "x"; continue
+                    if line.startswith("$((", i):
+                        unparsed = ("雙引號裡的算術 `$((…))` 本 lint 不解析：同一行沒收尾、裡面有引號／反引號／反斜線，"
+                                    "或其實是 `$((…) …)` 形式的命令替換")
+                        break
+                    if ch == "`" and bt:
+                        unparsed = "反引號裡的雙引號又開了一個跨行的反引號——巢狀反引號本 lint 不解析"
+                        break
+                    if ch == "`":
+                        bt = True; dq_ret.append(0)
+                    else:
+                        csub += 1; dq_ret.append(csub + cpar)
+                    w = 1 if ch == "`" else 2
+                    quote = None; code.append(line[i:i + w]); i += w; prev_sig = "`" if w == 1 else "("
+                    cmd_pos = True           # 命令替換裡的第一個詞是新命令（合併 r37c×r37d：c 的雙引號分支原本不知道 cmd_pos）
+                    continue
+                code.append('"' if ch == '"' else " ")
+                if ch == '"':
+                    quote = None
+                i += 1; prev_sig = ch; continue
             if ch == "\\":
                 if i + 1 < n:
                     code.append("  "); i += 2
                     prev_sig = "x"          # 被逃脫的字元一律當成「非空白」——`a\ #` 的 `#` 不起註解
+                    cmd_pos = False          # 被逃脫的字元是詞的一部分：之後不在命令位置（R37 合併時發現，見 bypass-r37m-*）
                     continue
                 # **行尾反斜線＝續行：把下一個實體行接上來，繼續掃同一個邏輯行。**
                 # 前一版只是丟掉它、下一行重新當成新行——於是 `cat <\` ⏎ `<EOF` 的 heredoc
@@ -767,7 +914,8 @@ def shell_scan(lines):
                     n = len(line); spans += used
                     code, i = [], 0
                     quote, prev_sig = quote0, prev0
-                    arith, arith_par, brk, csub, cpar, cond, bt, dq_sub = lex0
+                    arith, arith_par, brk, csub, cpar, cond, bt = lex0[:7]
+                    dq_ret, cases = list(lex0[7]), [list(c) for c in lex0[8]]
                     bare_par = bare_par0
                     cmd_pos = True           # 邏輯行起點永遠是命令位置，重掃回到起點也一樣
                     pending = list(pending0)
@@ -788,7 +936,7 @@ def shell_scan(lines):
                     # 假管線變 code。本 lint 的引號狀態不表示 `$'…'` 的跨行 ⇒ fail-closed。
                     unparsed = "`$'…'` 在同一行沒有收尾——跨行的 ANSI-C 字串本 lint 不解析"
                     break
-                code.append(" " * (j + 1 - i)); i = j + 1; prev_sig = "x"; continue
+                code.append(" " * (j + 1 - i)); i = j + 1; prev_sig = "x"; cmd_pos = False; continue  # 吃掉的是一個詞（的一部分），不是運算子：之後不在命令位置（R37 合併時發現，見 bypass-r37m-*）
             # R30 H-3：`${VAR#pattern}` 裡的 `#` 不起註解、`|` 不是管線——整個 `${…}` 是**一個詞的一部分**。
             # 前一版逐字元掃，於是 `echo ${PR_TITLE#| python3 …neutralise.py }` 一行就放行。
             # 與 `((` 一樣**整段消費**：找到配對的 `}`（計深度），中間一律不解讀。
@@ -798,9 +946,9 @@ def shell_scan(lines):
                 # 配對規則全部在 `_param_end()`，不解析的構造 fail-closed。
                 e = _param_end(line, i)
                 if e is None:
-                    unparsed = "`${…}` 裡有本 lint 不解析的構造（命令替換／舊式算術），或同一行沒收尾"
+                    unparsed = PARAM_UNPARSED
                     break
-                code.append(" " * (e - i)); i = e; prev_sig = "x"; continue
+                code.append(" " * (e - i)); i = e; prev_sig = "x"; cmd_pos = False; continue  # 吃掉的是一個詞（的一部分），不是運算子：之後不在命令位置（R37 合併時發現，見 bypass-r37m-*）
             if arith or brk or cond:
                 # **算術 `((…))`、舊式算術 `$[…]`、條件式 `[[…]]` 裡的內容不是 code**（#33 verify R34 DA n5、n5b）：
                 # 那裡的 `|` 是位元 OR／正規式的「或」，不是管線；`<<` 是左移／字串比較，不是 heredoc。
@@ -835,7 +983,7 @@ def shell_scan(lines):
                     cond = False; code.append("]]"); i += 2; prev_sig = "]"; cmd_pos = False; continue
                 code.append(" "); i += 1; prev_sig = "x"; continue
             if ch in ("'", '"'):
-                quote = ch; code.append(ch); i += 1; prev_sig = ch; continue
+                quote = ch; code.append(ch); i += 1; prev_sig = ch; cmd_pos = False; continue  # 吃掉的是一個詞（的一部分），不是運算子：之後不在命令位置（R37 合併時發現，見 bypass-r37m-*）
             # **保留字**（R37，#33 verify R36 第 5(a) 列）：`then`／`do`／`else`／`elif`／`if`／`while`／`until`
             # 本身就是命令位置才成立的保留字，且它們後面**接著也是**命令位置（`if <cmd>`、`then <cmd>`…）。
             # 只在目前已經是命令位置、且這裡是一個詞的開頭（`prev_sig` 落在詞界）時才整段消費並保持
@@ -866,8 +1014,39 @@ def shell_scan(lines):
             paren_claimed = False
             if line.startswith("((", i) and (prev_sig == "$" or cmd_pos):
                 arith += 1; code.append("(("); i += 2; prev_sig = "("; paren_claimed = True; continue
+            # **`$(…)` 裡的 `case`**（#33 verify R36 第 7 列，logic HIGH-4 p12）：模式括號是單邊 `)`，只數括號的 `csub` 會提早
+            # 歸零，之後開的 heredoc 被當成不在命令替換裡——R35 的「命令替換裡的 heredoc 以前綴收尾 ⇒ fail-closed」因此被繞過
+            # （`bypass-r37c-case-cmdsub-heredoc-prefix-term`）；從雙引號進來的命令替換（`dq_ret`）也會提早回到雙引號。
+            # R37 第一版照工作包一律 fail-closed，語料對照量到野外合法寫法（`bad="$(` ⏎ `… case "$p" in a|b) ;; esac` ⏎ `)"`，
+            # openclaw 兩檔、`bash -n` rc=0）因此新增 PARSE，改成**追蹤**：`cases` 記每個開著的 case 所在的括號深度與階段
+            # （"pat"：等模式、"cmd"：模式之後的命令），在它那一層 `)` 是模式括號、不減深度。凡是追蹤表示不了的形狀一律
+            # fail-closed（封閉列舉，只有這兩種）：(1) `case` 不在命令起點（`_at_command`）或後面不是 `WORD in`（`_case_head`）；
+            # (2) 子句命令裡出現同一層的單獨 `)`（bash 語法錯誤）。不在命令起點、也不在模式位置的 `esac` 是一般參數，
+            # 照 bash 不理它（`bypass-r37c-dq-case-esac-argument`）。命令替換外的 case 不追蹤：那一層的 `)` 本來就不動深度。
+            if csub and (prev_sig is None or prev_sig in SHELL_WORD_BREAK):
+                kw = CASE_KW_RE.match(line, i)
+                if kw:
+                    at_cmd = _at_command("".join(code), cases, csub + cpar)
+                    if kw.group(1) == "case":
+                        if not (at_cmd and _case_head(line, i)):
+                            unparsed = ("命令替換 `$(…)` 裡的 `case` 不在命令起點、或後面不是 `WORD in`——"
+                                        "模式括號是單邊 `)`，本 lint 表示不了這個形狀，不解析")
+                            break
+                        cases.append([csub + cpar, "pat"])
+                    elif cases and cases[-1][0] == csub + cpar and (cases[-1][1] == "pat" or at_cmd):
+                        cases.pop()
+            if cases and cases[-1][0] == csub + cpar and cases[-1][1] == "cmd" and line.startswith((";;", ";&"), i):
+                cases[-1][1] = "pat"                        # `;;`／`;&`／`;;&`：回到等模式
             if ch == "(" and csub and not line.startswith("((", i):   # `((` 是算術，下面另外處理
-                cpar += 1; paren_claimed = True
+                if not (cases and cases[-1][0] == csub + cpar and cases[-1][1] == "pat"):
+                    cpar += 1                               # 等模式時的 `(` 是模式的前導括號（`(a) cmd;;`），不計深度
+                paren_claimed = True                        # 在命令替換裡：由 cpar／case 追蹤負責，不是裸括號（合併 r37c×r37d）
+            elif ch == ")" and cases and cases[-1][0] == csub + cpar:
+                if cases[-1][1] == "cmd":
+                    unparsed = "命令替換裡 case 子句的命令之後有同一層的單獨 `)`——bash 語法錯誤，本 lint 不解析"
+                    break
+                cases[-1][1] = "cmd"                        # case 的模式括號：不減深度
+                paren_claimed = True                        # 模式括號不是裸括號（合併 r37c×r37d）
             elif ch == ")" and cpar:
                 cpar -= 1; paren_claimed = True
             elif ch == ")" and csub:
@@ -875,6 +1054,11 @@ def shell_scan(lines):
             elif ch == "`":
                 cmd_pos = not bt    # 開啟（bt False→True）：裡面第一個詞是新命令；關閉：回到外層的引數位置
                 bt = not bt
+            if dq_ret and ((ch == "`" and not bt) if dq_ret[-1] == 0 else (ch == ")" and csub + cpar < dq_ret[-1])):
+                # 從雙引號進來的命令替換在這裡收尾（見雙引號分支）：回到雙引號。
+                dq_ret.pop(); quote = '"'
+                cmd_pos = False          # 回到雙引號＝回到同一個詞的中間，不是命令位置（合併 r37c×r37d）
+                code.append(ch); i += 1; prev_sig = ch; continue
             if ch == "#" and (prev_sig is None or prev_sig in SHELL_WORD_BREAK):
                 decls.append(line[i:]); break
             # R28 D1（logic／requirements／Codex 第 3 條）：前一版 `$((` 在 `$` 處與第一個 `(` 處各命中一次、
@@ -984,9 +1168,7 @@ def shell_scan(lines):
                         quoted = True; delim += line[j + 1]; j += 2; continue
                     delim += c; j += 1; saw_word = True
                 if saw_word:
-                    pending.append((delim, strip_tabs, quoted, bool(csub or bt or dq_resume)))
-                if dq_resume:
-                    quote, dq_resume = '"', False       # 回到雙引號（見雙引號分支）
+                    pending.append((delim, strip_tabs, quoted, bool(csub or bt)))   # 從雙引號進來的命令替換也計入 csub／bt（見雙引號分支）
                 code.append("<<"); i = j; prev_sig = "<"; continue
             code.append(ch); i += 1
             # **裸括號深度**（R37，#33 verify R36 第 15 列）：走到這裡的 `(`／`)` 是沒被 `$(`／`((`／巢狀
@@ -997,7 +1179,11 @@ def shell_scan(lines):
             elif ch == ")" and not paren_claimed and bare_par:
                 bare_par -= 1
             # **命令位置**（R37）：見 `CMD_POS_CHARS` 旁的說明。
-            if ch in CMD_POS_CHARS:
+            if ch in "!{":
+                # `!`／`{` 只有**本身在命令位置、而且是獨立的詞**時才是保留字（其後是命令位置）；在引數位置它們只是
+                # 普通字元——`echo ! [[ # ]] …` 的 `[[` 是參數、` #` 起註解（R37 合併時發現，見 bypass-r37m-*）。
+                cmd_pos = cmd_pos and line[i:i + 1] in ("", " ", "\t")
+            elif ch in CMD_POS_CHARS:
                 cmd_pos = True
             elif not ch.isspace():
                 cmd_pos = False
@@ -1016,6 +1202,11 @@ def shell_scan(lines):
         # **引號開到 run 區塊結尾**（R35，E 組語料抓到）：那一行在 bash 是語法錯誤、不會執行，而它前面的行照樣先執行——
         # lint 若照讀引號之前的 `| python3 …` 就會看到一條永遠不會建立的管線。bash 語法錯誤的行本 lint 不解析 ⇒ fail-closed。
         unparsed = "引號到 run 區塊結尾都沒收——那一行在 bash 是語法錯誤、不會執行，本 lint 不解析"
+    elif dq_ret:
+        # **雙引號裡的命令替換開到 run 區塊結尾**（R37）：與上一條同一個理由。R37 以前這一種落在上一條（整段都按雙引號掃，
+        # 引號狀態停在 `"`）；現在收不掉的命令替換照 code 掃、引號狀態是「沒有引號」，上一條碰不到它
+        #（`bypass-r37c-dq-cmdsub-unclosed-at-block-end`）。
+        unparsed = "雙引號裡的命令替換到 run 區塊結尾都沒收——那一行在 bash 是語法錯誤、不會執行，本 lint 不解析"
     elif arith or brk or cond or csub or bt or bare_par:
         # **掃描結束時任一構造沒收尾**（R37，#33 verify R36 第 15 列）：`((`／`$[`／`[[`／`$(`／反引號／裸
         # `(` 任一沒配對，那一段在 bash 都是語法錯誤（或至少是本 lint 表示不了的懸置狀態），比照「引號開到

@@ -1,0 +1,15 @@
+# #33 verify R37（守 R37 自己的改寫）：雙引號裡的 `$(` 到 run 區塊結尾都沒收——bash 5.3 是語法錯誤，那一行之後什麼都不跑，
+# 而它前面的 `echo "$PR_TITLE"` 照樣先執行。R37 把「收不掉的命令替換」改成照 code 掃，引號狀態在區塊結尾是「沒有引號」，
+# 380e4a4 靠的「引號開到區塊結尾」檢查就碰不到它——少了「雙引號裡的命令替換沒收」這一條，最後一行的管線會被當真 ⇒ 放行。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: dq-cmdsub-unclosed-at-block-end
+        run: |
+          echo "$PR_TITLE"
+          x="$(echo hi
+          echo x 2>&1 | python3 scripts/neutralise.py

@@ -1,0 +1,14 @@
+# #33 verify R37 合併時協調者發現（r37d 第 5(a) 列 `cmd_pos` 修法的相鄰輸入）：對照：`!` 真的在命令位置，後面的 `[[ x =~ (a|b) ]]` 是條件式、`|` 是正規式的「或」，不是管線——必須照舊放行。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          ! [[ x =~ (a|b) ]] || echo "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py

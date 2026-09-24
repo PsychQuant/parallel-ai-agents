@@ -1,0 +1,12 @@
+# #33 verify R37 相鄰輸入（R36 沒點名）：同第 16 列，但前面是反引號——`dq_sub` 對反引號也成立、收尾後也不清除 ⇒
+# 380e4a4 PARSE 誤擋。bash 5.3：`hi << literal` 是字串，管線接到 neutralise。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: dq-backtick-then-literal-lshift
+        run: |
+          printf '%s\n' "`printf hi` << literal" 2>&1 | python3 scripts/neutralise.py

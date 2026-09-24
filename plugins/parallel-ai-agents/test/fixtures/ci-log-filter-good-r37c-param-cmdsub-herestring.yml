@@ -1,0 +1,12 @@
+# #33 verify R37（`_cmdsub_end`）：`<<<` 是 here-string，不是 heredoc——`_cmdsub_end` 對 `<<` 回 None 之前要先認出 `<<<`，
+# 否則 `${X:-$(cat <<< hi)}` 被擋成 PARSE。bash 5.3 實跑接到 neutralise。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: param-cmdsub-herestring
+        run: |
+          echo ${X:-$(cat <<< hi)} 2>&1 | python3 scripts/neutralise.py

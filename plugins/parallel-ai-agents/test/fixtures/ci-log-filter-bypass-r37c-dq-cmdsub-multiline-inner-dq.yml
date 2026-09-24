@@ -1,0 +1,17 @@
+# #33 verify R37 相鄰輸入（R36 沒點名；第 6 列的「收不掉」路徑）：雙引號裡的 `$(` 在同一行沒收尾，內容跨到下一行。
+# 380e4a4 照樣按雙引號掃，第二行 `"…"` 的兩個引號各被當成外層的收尾與開頭 ⇒ 字串裡的假管線變 code ⇒ 放行。
+# bash 5.3：第二行是命令替換裡的 printf 引數，沒有管線，第四行裸印 PR 文字。R37：收不掉時照 bash 把內容當 code 掃、
+# 命令替換收尾時回到雙引號 ⇒ 內層字串是資料 ⇒ RULE。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: dq-cmdsub-multiline-inner-dq
+        run: |
+          x="$(
+          printf '%s' " 2>&1 | python3 scripts/neutralise.py "
+          )"
+          echo "$PR_TITLE"

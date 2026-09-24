@@ -1,0 +1,16 @@
+# #33 verify R36 第 6 列（logic HIGH-1／regression F3／DA，codex 第 7 條）：頂層雙引號裡的 `$(…)` 是新的引號脈絡，
+# 裡面的 `"` 開的是命令替換自己的字串。380e4a4 的雙引號分支遇到 `$(` 只設旗標、照樣按雙引號掃，內層第一個 `"`
+# 被當成外層收尾 ⇒ `2>&1 | python3 …` 變成 code ⇒ 放行（6cf6864 就有）。bash 5.3：整串是 echo 的一個引數、沒有管線、
+# PR 文字直接印出。R37 改用 `_cmdsub_end` 把同一行收得掉的 `$(…)` 整段當不透明內容吃掉 ⇒ 沒有管線 ⇒ RULE。
+# EXPECT: rule-red
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: dq-cmdsub-inner-quote
+        shell: bash
+        run: |
+          echo "$PR_TITLE$(echo " 2>&1 | python3 scripts/neutralise.py ")"

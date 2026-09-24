@@ -1,0 +1,14 @@
+# #33 verify R37（case 追蹤）：case 子句的命令之後出現同一層的單獨 `)`——bash 5.3 報「未預期的字組 ) 附近有語法錯誤」，
+# 那一行不執行、前一行已裸印 PR 文字。380e4a4 的 `csub` 在 `a)` 就歸零、後面的 `)` 不理，假管線變 code ⇒ 放行。
+# 追蹤後這個形狀表示不了 ⇒ fail-closed。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: case-clause-stray-paren
+        run: |
+          echo "$PR_TITLE"
+          x=$(case a in a) echo ) 2>&1 | python3 scripts/neutralise.py ;; esac)

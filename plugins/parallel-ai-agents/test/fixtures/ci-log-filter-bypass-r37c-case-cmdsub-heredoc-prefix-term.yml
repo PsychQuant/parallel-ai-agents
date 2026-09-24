@@ -1,0 +1,20 @@
+# #33 verify R36 第 7 列（logic HIGH-4 p12，主掃描器）：`$(case a in a) …` 的模式括號讓 `csub` 提早歸零，之後開的
+# heredoc 被當成不在命令替換裡，R35 的「命令替換裡的 heredoc 以前綴收尾 ⇒ fail-closed」被繞過。bash 5.3 以
+# `EOF;; esac)` 收掉 heredoc、裸印 PR 文字，`cat <<'Z'` 吞掉後面的假管線。R37：主掃描器追蹤 case 的模式括號，
+# `csub` 不再提早歸零 ⇒ heredoc 被標成在命令替換裡 ⇒ 前綴收尾守衛生效 ⇒ PARSE（關掉追蹤就翻回放行）。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: case-cmdsub-heredoc-prefix-term
+        run: |
+          x=$(case a in a) cat <<EOF
+          data
+          EOF;; esac)
+          echo "$PR_TITLE"; cat <<'Z'
+          EOF
+          echo x 2>&1 | python3 scripts/neutralise.py
+          Z

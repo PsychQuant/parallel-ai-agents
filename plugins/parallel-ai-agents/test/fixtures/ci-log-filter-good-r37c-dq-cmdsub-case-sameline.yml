@@ -1,0 +1,13 @@
+# #33 verify R37（守 R37 第一版的誤擋）：雙引號裡同一行的 `$(case …)`，WORD 本身又是命令替換。`_cmdsub_end` 對 `case`
+# 回 None ⇒ 內容改當 code 掃、追蹤模式括號 ⇒ 放行。對 `case` 一律 fail-closed 的寫法會把它擋成 PARSE。bash 5.3 實跑接到 neutralise。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: dq-cmdsub-case-sameline
+        run: |
+          ARCH="$(case "$(uname -m)" in x86_64) echo amd64;; aarch64|arm64) echo arm64;; esac)"
+          echo "$ARCH" 2>&1 | python3 scripts/neutralise.py

@@ -1,0 +1,15 @@
+# #33 verify R37（case 追蹤的命令起點判定）：`f() { case …` 的 `case` 在函式本體的命令起點，但 `_at_command` 只認
+# 分隔字元與少數保留字之後——認不出來。這時若把它當一般參數略過，`a)` 會提早收掉命令替換、回到雙引號、
+# 內層字串的假管線變 code ⇒ 放行（380e4a4 同樣放行）。認不出命令起點的 `case` 一律 fail-closed。
+# bash 5.3：x 是字串，沒有管線，最後一行裸印 PR 文字。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: dq-case-in-function-body
+        run: |
+          x="$(f() { case a in a) echo " 2>&1 | python3 scripts/neutralise.py ";; esac; }; f)"
+          echo "$PR_TITLE"

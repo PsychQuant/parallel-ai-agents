@@ -1,0 +1,14 @@
+# #33 verify R37（雙引號裡的 `$((` 收不掉 ⇒ fail-closed）：算術跨行，`_arith_end` 同一行配不到。若落到「收不掉的命令替換
+# 照 code 掃」那條路，算術內容裡的 `1 | python3 …` 被當成管線 ⇒ 放行。bash 5.3：算術語法錯誤、沒有管線，第一行裸印 PR 文字。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: dq-arith-fake-pipe-multiline
+        run: |
+          echo "$PR_TITLE"
+          : "$(( 1 | python3 scripts/neutralise.py
+          ))"
