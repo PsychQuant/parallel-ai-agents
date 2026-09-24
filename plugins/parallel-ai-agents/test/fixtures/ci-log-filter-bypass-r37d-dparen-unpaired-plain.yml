@@ -1,0 +1,15 @@
+# R37 相鄰輸入（不是 R36 點名的那個檔）：同一個「未配對的單獨 `)`」缺陷，換一個不靠引號、不靠 `#` 註解的
+# 形狀——`(( x ) )` 裡完全沒有 `(` 被算術計數過（`arith_par` 始終是 0），第一個裸 `)` 就落在
+# 「非 `arith_par`、也不構成 `))`」那一支，必須 fail-closed；不像上一個探針要靠 `#` 才不建立管線，
+# 這裡連 `#` 都不需要——bash 印出整串（管線在字面上根本沒建立，`|` 在 `((…))` 內是位元 OR）。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: dparen-unpaired-plain
+        run: |
+          echo "$PR_TITLE"
+          (( x ) ) 2>&1| python3 scripts/neutralise.py

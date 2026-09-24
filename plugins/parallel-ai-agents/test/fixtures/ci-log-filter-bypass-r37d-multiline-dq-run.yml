@@ -1,0 +1,17 @@
+# #33 verify R36 第 21 列 LOW（logic／R35 三軸順帶找到、6cf6864 就有的繞過）：`run:` 的值是**跨 YAML 實體行**
+# 的雙引號純量——`"echo hi` 開在第一行、`| python3 …neutralise.py"` 收在第二行，這是合法 YAML（PyYAML 解出
+# `echo hi | python3 …neutralise.py`，runner 真的執行帶管線的那條命令，本來會被過濾）。前一版
+# `yaml_decode_scalar` 對「開頭是引號但沒在同一行收尾」的字串不回 `None`（只有 `v[0]==v[-1]=='"'` 才判定，
+# 這裡 `v[-1]` 是 `i` 不是 `"`），落到 `return v` 把**含引號字元的原始 YAML 文字**原樣送進 `shell_scan()`——
+# YAML 的引號被當成 shell 的引號掃，整段被 blank 掉，`RULE`（未過濾）因此誤判：這是把兩層語意混在一起的
+# 誤判，不是真的繞過，但一樣是錯的判定。跨行純量的重新序列化規則本 lint 沒有實作，改成 fail-closed PARSE。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: multiline dq run
+        run: "echo hi
+          | python3 scripts/neutralise.py"

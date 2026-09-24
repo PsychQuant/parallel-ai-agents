@@ -1,0 +1,14 @@
+# #33 verify R36 第 15 列（logic）：管線後面接 `; (` 沒收尾——裸括號，不屬於 `$(`／`((` 任何一邊。
+# 前一版連追蹤這個深度的機制都沒有，這個 `(` 就這樣悄悄消失在字元流裡；現在用 `bare_par` 追蹤，
+# 掃描結束時非零就 fail-closed。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: unterm-subshell
+        run: |
+          echo "$PR_TITLE"
+          echo x 2>&1 | python3 scripts/neutralise.py ; (

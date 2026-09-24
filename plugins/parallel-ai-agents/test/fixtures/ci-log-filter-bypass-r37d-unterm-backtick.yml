@@ -1,0 +1,12 @@
+# #33 verify R36 第 15 列（logic）：管線後面接反引號沒收尾。同一族缺陷，換成 `bt` 這個跨行狀態。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: unterm-backtick
+        run: |
+          echo "$PR_TITLE"
+          echo x 2>&1 | python3 scripts/neutralise.py `

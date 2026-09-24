@@ -1,0 +1,18 @@
+# R37 相鄰輸入（不是 R36 點名的那個檔）：同一個「分隔字裡的 `${…}` 沒被擋」缺陷，換一個位置——`${…}`
+# 不在分隔字的**開頭**（R36 探針的 `\x${X:-a b}` 是反斜線緊接著 `${` 開頭），這裡前面先收一個普通字元
+# `E`，`${` 出現在收集迴圈的**第二次**疊代才命中。驗證這個判定是在 `while` 迴圈裡逐位置檢查，不是只在
+# 分隔字起點判一次。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: delim-param-midword
+        run: |
+          echo "$PR_TITLE"
+          cat <<E${X:-a b}
+          E${X:-a
+          echo hi 2>&1 | python3 scripts/neutralise.py
+          E${X:-a b}

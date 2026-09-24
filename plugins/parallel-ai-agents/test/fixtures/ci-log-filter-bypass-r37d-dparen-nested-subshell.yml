@@ -1,0 +1,14 @@
+# #33 verify R36 第 5(a) 列（logic HIGH-2 / regression / DA / codex 第 2 條）：`((cmd) )` 不是算術——中間夾了
+# 空白，`)` 與 `)` 不構成 `))`，bash 讀成巢狀 subshell（外層 `(` 加內層 `(echo "$PR_TITLE")`）並實際執行、
+# 印出 PR 文字；`#` 之後是註解，假管線從未建立。前一版把這個未配對的單獨 `)` 靜默 blank 掉，繼續等 `))`
+# 等到檔尾，把後面的真管線一起吞掉卻不出聲——現在改成看到就 fail-closed PARSE。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: dparen-nested-subshell
+        run: |
+          ((echo "$PR_TITLE") ) #))2>&1| python3 scripts/neutralise.py

@@ -1,0 +1,14 @@
+# #33 verify R36 第 15 列（logic）：管線後面接 `$(` 沒收尾。整條邏輯行在 bash 是語法錯誤，前面那行
+# `echo "$PR_TITLE"` 照樣先執行、裸印，管線那行整條根本跑不到；前一版對這種「掃描結束時 `csub` 還沒歸零」
+# 完全沒有網（只查 `quote`），於是這條假管線被靜默放行。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: unterm-cmdsub
+        run: |
+          echo "$PR_TITLE"
+          echo x 2>&1 | python3 scripts/neutralise.py $(

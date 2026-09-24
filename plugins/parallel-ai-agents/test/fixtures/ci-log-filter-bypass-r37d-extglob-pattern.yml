@@ -1,0 +1,15 @@
+# #33 verify R36 第 17 列（logic）：`shopt -s extglob` 之後 `@(…)` 是合法語法，`(` 不再只是 subshell／
+# 命令替換的開括號。本掃描器完全不模擬這套詞法，把 `@(` 之後的 `(` 當成裸括號、內容照常掃成 code，
+# 於是假管線 `2>&1| python3 …` 被讀成真的——bash 實際印出整串（管線在字面上不存在，`@(…)` 是一個
+# pattern）。偵測到 `shopt -s extglob` 就整個 run 區塊 fail-closed，不猜這套額外詞法。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: extglob-pattern
+        run: |
+          shopt -s extglob
+          echo "$PR_TITLE" @(x 2>&1| python3 scripts/neutralise.py )

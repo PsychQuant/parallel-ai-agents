@@ -1,0 +1,15 @@
+# #33 verify R36 第 15 列（logic）：`true ;|& python3 …` 的管線**左邊沒有命令**——`;` 之後直接接 `|&`，
+# bash 在這裡是語法錯誤（管線的第一段是空的）。前一版的 `PIPED_RE` 左邊界 `[^|\s]` 太寬，`;` 本身也滿足
+# 「不是 `|` 也不是空白」，於是被誤判成「已過濾」。收窄成 `[^|\s;&(]` 之後，`;` 前面沒有可以接的
+# 命令字元，管線判定失效——這一行沒有真的過濾，`$PR_TITLE` 在前一行裸印。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: semi-pipe
+        run: |
+          echo "$PR_TITLE"
+          true ;|& python3 scripts/neutralise.py

@@ -1,0 +1,13 @@
+# R37 相鄰輸入（不是 R36 點名的那個檔）：同一個「`brk` 沒歸零」缺陷，換一個分隔字元——不是 `;`（R36 探針
+# 用的），是 `&&`。`&&` 之後同樣是命令位置，`$[` 不看命令位置就會進入，一樣沒有 `]` 收尾。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: unterm-legacy-arith-andand
+        run: |
+          echo "$PR_TITLE"
+          echo x 2>&1 | python3 scripts/neutralise.py && $[

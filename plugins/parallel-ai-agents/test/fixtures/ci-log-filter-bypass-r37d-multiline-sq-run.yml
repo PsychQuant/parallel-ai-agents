@@ -1,0 +1,14 @@
+# R37 相鄰輸入（不是 R36 點名的那個檔）：同一個「跨行引號純量沒被擋」缺陷，換成**單引號**（R36 探針只測了
+# 雙引號）。單引號純量沒有跳脫規則（YAML 的單引號只用 `''` 表示字面單引號），`yaml_decode_scalar` 同一支
+# 函式處理兩種引號，`has_continuation` 的判定路徑（讀第一階段分類器的 `kind`／`owner`）對兩種引號一視同仁
+# ——驗證這條修法不是只釘住雙引號那一種。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: multiline sq run
+        run: 'echo hi
+          | python3 scripts/neutralise.py'

@@ -1,0 +1,13 @@
+# #33 verify R36 第 15 列（logic）：管線後面接 `; $[` 沒收尾。同一族缺陷，換成 `brk` 這個跨行狀態
+# （舊式算術展開；`$[` 不看命令位置，任何位置都成立）。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: unterm-legacy-arith
+        run: |
+          echo "$PR_TITLE"
+          echo x 2>&1 | python3 scripts/neutralise.py ; $[

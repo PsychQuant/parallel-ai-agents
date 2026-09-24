@@ -1,0 +1,13 @@
+# R37 相鄰輸入（不是 R36 點名的那個檔）：`[[` 是 `echo` 的**第二個**引數，前面是 `1 `（不是 R36 探針用的
+# `echo "$PR_TITLE" [[` 那種緊接寫法）——同一個「命令位置 vs 引數位置」缺陷，換一個引數形狀。`$PR_TITLE`
+# 裸印，`#` 詞首起註解、假管線從未建立（bash 印出 `1 PRTEXT [[`）。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: cond-second-arg
+        run: |
+          echo 1 "$PR_TITLE" [[ # ]] 2>&1 | python3 scripts/neutralise.py

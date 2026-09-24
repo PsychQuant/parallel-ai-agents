@@ -1,0 +1,15 @@
+# R37 相鄰輸入（不是 R36 點名的那個檔）：同一個「`CONT_RE` 缺 `|&`」修法，換成**兩段**續行串接（`|&` 出現
+# 兩次，第一次接 `cat`、第二次才接 `python3 …neutralise.py`）——驗證 `CONT_RE` 的接續判定是逐行重覆套用
+# （每接完一行，新的 `logical[-1]` 結尾若仍是 `|&`，下一行照樣接上去），不是只處理一次接續就不管了。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: pipe-amp-cont-chained
+        run: |
+          echo "$PR_TITLE" |&
+          cat |&
+          python3 scripts/neutralise.py

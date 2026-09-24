@@ -1,0 +1,14 @@
+# #33 verify R36 第 5(a) 列（logic HIGH-2 / codex 第 2 條）：`[[` 只在命令位置才是條件式關鍵字。R35 只查
+# 「前一個字元是不是 metacharacter」（`SHELL_WORD_BREAK` 本身含空白），於是「前面有空白」被誤當「在命令
+# 位置」——這裡的 `[[` 其實是 `echo` 的**引數**，bash 對它沒有特殊待遇；`#` 詞首起註解，後面的假管線
+# 從來沒建立過（bash 只印出 `PRTEXT [[`）。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: cond-arg-position
+        run: |
+          echo "$PR_TITLE" [[ # ]] 2>&1 | python3 scripts/neutralise.py
