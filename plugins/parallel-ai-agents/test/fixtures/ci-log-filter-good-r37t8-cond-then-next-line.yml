@@ -1,0 +1,15 @@
+# #33 verify R37（缺陷 b 修法的邊界）：`]]` 在行尾、`then` 在下一行是最常見的寫法之一——換行本身就是分隔字元，`then` 照一般命令位置處理，不是「`]]` 之後直接接保留字」。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          if [[ -n "$PR_TITLE" ]]
+          then echo "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py; fi
