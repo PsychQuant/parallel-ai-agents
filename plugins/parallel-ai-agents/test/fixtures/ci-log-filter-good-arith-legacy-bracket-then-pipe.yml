@@ -1,0 +1,11 @@
+# #33 verify R35（R34 修法的誤擋守衛）：`$[1+2]` 是舊式算術展開，結束之後的真管線是 code。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: legacy arithmetic, then a real pipe
+        run: |
+          echo $[1+2] 2>&1 | python3 scripts/neutralise.py

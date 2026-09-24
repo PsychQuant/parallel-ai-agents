@@ -1,0 +1,17 @@
+# `cat <<$'EOF'` 的終止字是 `EOF`（quote removal），R33 版讀成 `$EOF`——比 bash 長，bash 已經當 code 的 `echo "$PR_TITLE"` 開自己的 heredoc 把假管線收成資料（logic F3 q2）。
+# 來源（#33 verify R34 logic F1／F3／F4 的探針；DA 的 n 系列是它在 da-work/probes 留下的檔案）
+# EXPECT: rule-red
+name: t
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: q2-delim-ansic
+        run: |
+          cat <<$'EOF'
+          EOF
+          echo "$PR_TITLE"; cat <<'Z'
+          $EOF
+          x| python3 scripts/neutralise.py
+          Z

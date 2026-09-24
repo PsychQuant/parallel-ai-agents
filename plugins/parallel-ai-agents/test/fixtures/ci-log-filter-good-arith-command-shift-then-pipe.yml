@@ -1,0 +1,11 @@
+name: t
+on: push
+# EXPECT: pass
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: bare arithmetic command with a shift, then a real pipe on the next line
+        run: |
+          (( n = 1 << 4 ))
+          echo "$PR_TITLE $n" | python3 scripts/neutralise.py

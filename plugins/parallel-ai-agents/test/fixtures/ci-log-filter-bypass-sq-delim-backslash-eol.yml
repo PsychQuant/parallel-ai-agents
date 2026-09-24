@@ -1,0 +1,19 @@
+# R31 opsweep：續行規則裡的 `q == '"'` 守衛沒有網。bash 5.3 實測 `cat <<'AB\` ⏎ `CD'`
+# **不**續行——單引號裡反斜線與換行都是字面，分隔字變成含換行的 `AB\⏎CD`，永遠對不上任何一行，
+# bash 警告「立即檔案被檔案結束符分隔」並把後面全部當內文（實測：`echo` 沒有執行）。
+# 本 lint 表示不了含換行的分隔字 → `PARSE:`。把守衛拿掉的版本會續行成 `ABCD` → 提早終止 → 放行。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: backslash at end of line inside a single-quoted delimiter is literal
+        run: |
+          cat <<'AB\
+          CD'
+          ABCD
+          echo hi | python3 scripts/neutralise.py
+      - name: compliant control
+        run: echo hi | python3 scripts/neutralise.py

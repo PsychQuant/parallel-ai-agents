@@ -1,0 +1,11 @@
+name: t
+on: push
+# EXPECT: rule-red
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: logical or is not a pipe
+        run: echo "$PR_TITLE" || python3 scripts/neutralise.py
+      - name: compliant control
+        run: echo hi | python3 scripts/neutralise.py

@@ -1,0 +1,9 @@
+name: t
+on: push
+# EXPECT: pass
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: single-quoted run containing backslash then an escaped quote (''), then a YAML trailing comment
+        run: 'echo a\''b | python3 scripts/neutralise.py' # note

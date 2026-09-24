@@ -1,0 +1,11 @@
+# fixture（R17 security S-1 ③）：`neutralise.py` 只是被**提到**（字串、env value），不是 pipeline 的一段
+# EXPECT: rule-red
+jobs:
+  j:
+    steps:
+      - name: mentioned-in-string
+        run: echo "not piped through python3 scripts/neutralise.py"
+      - name: mentioned-in-env
+        env:
+          FILTER: scripts/neutralise.py
+        run: shellcheck foo.sh

@@ -1,0 +1,12 @@
+name: t
+on: push
+# EXPECT: pass
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: quoted-delimiter heredoc piped straight into neutralise with no space
+        run: |
+          cat <<'EOF'| python3 scripts/neutralise.py
+          $PR_TITLE
+          EOF

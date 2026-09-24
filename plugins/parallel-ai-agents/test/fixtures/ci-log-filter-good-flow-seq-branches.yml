@@ -1,0 +1,11 @@
+name: t
+on:
+  push:
+    branches: [main]
+# EXPECT: pass
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: compliant
+        run: echo hi | python3 scripts/neutralise.py

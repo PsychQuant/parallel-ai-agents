@@ -1,0 +1,15 @@
+# R31 opsweep：`li + spans < len(lines)`（有沒有下一行可接）與逃脫分支的 `j + 1 < n` 兩個邊界
+# 守衛都沒有網。bash 5.3：`cat <<"AB\` 是區塊最後一行時報「尋找符合的 `"` 時遇到了未預期的
+# 檔案結束符」＝語法錯誤。沒有下一行可接 ⟹ 續行不成立 ⟹ 引號到區塊結束都沒收尾 → `PARSE:`。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: double-quoted delimiter ends with a backslash and there is no next line
+        run: |
+          cat <<"AB\
+      - name: compliant control
+        run: echo hi | python3 scripts/neutralise.py

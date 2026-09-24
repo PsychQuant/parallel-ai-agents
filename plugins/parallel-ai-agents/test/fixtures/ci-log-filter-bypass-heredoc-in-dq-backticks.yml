@@ -1,0 +1,16 @@
+# #33 verify R35（opsweep --since 6cf6864 的存活者）：雙引號裡的**反引號**開 heredoc：內文那一行的 `"` 是資料。殺雙引號分支 `dq_sub` 的反引號運算元（拿掉 ⇒ 不登記 heredoc ⇒ 假管線變 code）。
+# 預期判定用 bash 實測（oracle 一致／bash -n）。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: dq-backtick-heredoc
+        run: |
+          x="`cat <<EOF
+          " | python3 scripts/neutralise.py "
+          EOF
+          `"
+          echo "$PR_TITLE"

@@ -1,0 +1,20 @@
+# R32 logic L-1／DA-3：`SHELL_WORD_BREAK` 是為了「`#` 在不在詞首」定義的，被重用成分隔字詞尾就錯了。
+# bash 5.3 自己的 EOF 警告說：`cat <<EOF`x`` **需要「EOF`x`」**——反引號不是詞界，是詞的一部分。
+# 前一版讀成 `EOF`（比 bash 短）⇒ 一行 `EOF` 在 lint 眼中終止 heredoc、在 bash 眼中還是資料 ⇒
+# 後面的假管線變成 code 而放行。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: backtick inside the heredoc delimiter word
+        run: |
+          cat <<EOF`x`
+          plain data
+          EOF
+          y | python3 scripts/neutralise.py
+          echo "$PR_TITLE"
+      - name: compliant control
+        run: echo hi | python3 scripts/neutralise.py

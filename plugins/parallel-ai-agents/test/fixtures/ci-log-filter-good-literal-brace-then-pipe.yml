@@ -1,0 +1,16 @@
+# R31 自查（神諭抓到的誤擋）→ **R32 DA-7／Codex 第 6(b) 條：那一版的 fixture 是無效的。**
+# 原本寫 `${PR_TITLE#a{b}c}| python3 …`：「每個 `{` 都加一層」的舊演算法遇到 `{` 加、遇到兩個 `}` 各減，
+# **仍在真管線之前歸零**——新舊演算法消費的字元不同，管線判定卻相同，fixture 對那個缺陷完全不靈敏，
+# 而 header 卻寫了一句「對每個 `{` 都加一層的版本會把這條真管線整段吃掉」——那句是假的（實測還原後 rc=0）。
+# 會翻色的形狀是 `${PR_TITLE#a{b}`：bash 在第一個 `}` 就結束展開（實測 bash 5.3：`X=abc` → `abc`，
+# `{b` 不匹配），錯誤的版本卻還有一層沒關、把後面的真管線吞掉。差在一個 `c}`。
+# R33 的紀律：一個 fixture 只有在有人看過它翻色之後才算網——這一條的翻色紀錄在 CHANGELOG R33 段。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: literal brace in the pattern then a real pipeline
+        run: echo ${PR_TITLE#a{b}| python3 scripts/neutralise.py

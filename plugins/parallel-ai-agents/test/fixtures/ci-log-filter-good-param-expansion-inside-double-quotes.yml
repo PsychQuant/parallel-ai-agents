@@ -1,0 +1,11 @@
+# #33 verify R35（R34 修法的誤擋守衛）：雙引號裡的 `${…}` 走同一個配對剖析：`"${GITHUB_REF#refs/heads/}"` 在 `}` 結束、收尾引號之後的真管線是 code。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: parameter expansion inside double quotes, then a real pipe
+        run: |
+          echo "${GITHUB_REF:-x#y}" "${HOME#"/"}" 2>&1 | python3 scripts/neutralise.py

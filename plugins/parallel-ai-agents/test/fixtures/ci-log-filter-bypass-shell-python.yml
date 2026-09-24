@@ -1,0 +1,17 @@
+# `shell: python {0}`：runner 用 python 執行，`#` 在 python 是註解、在本 lint 的 bash 詞法下 `x=1#|…` 的 `#` 不在詞首——
+# lint 看到一條管線、python 直接印出 PR 文字。本 lint 的詞法只對 bash 成立 ⇒ 非 bash 的 shell 一律 PARSE（#33 verify R34 security S-3、DA n4／n4b 的探針）。
+# shell 是 `--strict` 的規則（R35：預設模式一律套用時合成 A 語料 290 個 base-綠檔翻紅；預設模式假設 shell 是 bash）。
+# LINT-ARGS: --strict
+# EXPECT: parse-red
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: python shell step
+        shell: python {0}
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          import os; print(os.environ["PR_TITLE"])
+          x=1#| python3 ../pai-lenses/scripts/neutralise.py

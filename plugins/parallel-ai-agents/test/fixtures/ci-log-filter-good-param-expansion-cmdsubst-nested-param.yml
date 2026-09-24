@@ -1,0 +1,12 @@
+# #33 verify R35（opsweep --since 6cf6864 的存活者）：命令替換裡的 `${Y:-)}`：那個 `)` 是展開的內容、不是命令替換的收尾（bash -n 通過）。殺 `_cmdsub_end` 的 `${` 分支。
+# 預期判定用 bash 實測（oracle 一致／bash -n）。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: cmdsub-nested-param
+        run: |
+          echo "${HOME:-$(echo ${HOSTNAME:-)} )}" 2>&1 | python3 scripts/neutralise.py

@@ -1,0 +1,12 @@
+# #33 verify R35（opsweep --since 6cf6864 的存活者）：`[[ -z "" ]]`：條件式裡的引號開頭只前進一格——兩格就跳過收尾引號、引號開著吞掉後面的真管線。殺算術／條件式區塊的 `quote = ch; … i += 1`（±1→±2）。
+# 預期判定用 bash 實測（oracle 一致／bash -n）。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: cond-empty-string
+        run: |
+          [[ -z "" ]] && echo hi 2>&1 | python3 scripts/neutralise.py

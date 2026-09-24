@@ -1,0 +1,21 @@
+# #33 verify R35（opsweep 存活者 `_kids` 的 `lo < l_ <= hi`）：job 的 `defaults.run.shell` 只管**它自己**的 step。job a 有
+# `defaults: run: shell: bash`，job b 沒有——b 的帶管線 step 在 `--strict` 下缺 pipefail ⇒ RULE。拿掉行號範圍的條件 ⇒ `_kids` 把
+# job a 的 key 也算成 job b 的子 key ⇒ b 繼承了 a 的 bash ⇒ 放行。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  a:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: job a is fine
+        run: echo hi 2>&1 | python3 scripts/neutralise.py
+  b:
+    runs-on: ubuntu-latest
+    steps:
+      - name: job b has no bash default
+        run: echo hi 2>&1 | python3 scripts/neutralise.py

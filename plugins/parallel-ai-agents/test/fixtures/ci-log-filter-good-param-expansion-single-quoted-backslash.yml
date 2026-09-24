@@ -1,0 +1,11 @@
+# R33 opsweep（`${…}` 內引號分支的 `q == '"'`）：單引號裡的反斜線是**字面**，後面的 `'` 照樣收尾
+# （bash 5.3 實測 `X=abc; echo "[${X#'\\'}]"` → `[abc]`）。把它當逃脫的版本會讓引號永不收尾、吞掉真管線。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: backslash inside single quotes within a parameter expansion is literal
+        run: echo ${PR_TITLE#'\'}| python3 scripts/neutralise.py

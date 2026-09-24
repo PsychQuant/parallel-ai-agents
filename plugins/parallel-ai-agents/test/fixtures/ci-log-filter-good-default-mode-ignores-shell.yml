@@ -1,0 +1,13 @@
+# #33 verify R35（opsweep 存活者 shell 規則的 `STRICT` 運算元）：**預設模式不讀 `shell:`**——它量的是 lint 與 bash 的詞法對帳，
+# 假設 shell 是 bash（已知不涵蓋第三組第 1 條）；shell 由 `--strict` 驗。R35 第一版在預設模式也套用 shell 規則，三軸量到合成 A 語料
+# 959 個 base-綠檔 290 個翻紅。這一檔守住那個設計決定：把 shell 規則搬回預設模式 ⇒ 本檔翻 PARSE。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: non-bash shell is a --strict concern
+        shell: pwsh
+        run: echo hi 2>&1 | python3 scripts/neutralise.py

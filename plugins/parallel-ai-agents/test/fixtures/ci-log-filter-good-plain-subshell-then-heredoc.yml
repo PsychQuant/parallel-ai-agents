@@ -1,0 +1,16 @@
+# #33 verify R35（opsweep 存活者 `elif ch == ")" and csub` 的 `and csub`）：命令替換**外面**的 subshell `(true)` 的 `)` 不得讓命令替換深度減一
+# （減到負數仍是真值 ⇒ 後面的 heredoc 被當成在命令替換裡 ⇒ 內文 `EOFX` 被「以終止字開頭」fail-closed ⇒ 誤擋）。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: plain subshell before a heredoc
+        run: |
+          (true)
+          cat <<EOF
+          EOFX
+          EOF
+          echo hi 2>&1 | python3 scripts/neutralise.py

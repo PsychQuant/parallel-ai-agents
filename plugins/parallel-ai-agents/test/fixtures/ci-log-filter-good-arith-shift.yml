@@ -1,0 +1,11 @@
+name: t
+on: push
+# EXPECT: pass
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: arithmetic left shift must not latch as a heredoc
+        run: |
+          n=$(( 1 << 4 ))
+          echo "$PR_TITLE $n" | python3 scripts/neutralise.py

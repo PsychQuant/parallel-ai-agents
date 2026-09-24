@@ -1,0 +1,13 @@
+# R22 logic：引號字串裡提到管線不是管線
+# EXPECT: rule-red
+name: t
+on:
+  pull_request:
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: compliant
+        run: echo hi | python3 ../pai-lenses/scripts/neutralise.py
+      - name: string mention
+        run: echo "提醒：輸出請接 | python3 ../pai-lenses/scripts/neutralise.py 再看" && cat pr.txt

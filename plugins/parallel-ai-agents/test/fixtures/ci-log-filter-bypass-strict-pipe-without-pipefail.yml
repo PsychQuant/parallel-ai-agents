@@ -1,0 +1,14 @@
+# #33 verify R34（security S-1／regression H-3／requirements F1）→ R35 `--strict` 的 pipefail 規則：有管線的 step 沒寫 `shell: bash`、
+# job／workflow 的 `defaults.run.shell` 也不是 bash、run 裡也沒有 `set -o pipefail` ⇒ GitHub 用 `bash -e {0}`、沒有 pipefail，
+# 管線前段的失敗被 neutralise.py 的 rc=0 蓋掉。R33 的形狀普查 step 正是這個形狀。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: census-like step without an explicit bash shell
+        run: |
+          python3 test/corpus/shapes.py --require-nonzero R3 list.txt 2>&1 | python3 ../pai-lenses/scripts/neutralise.py

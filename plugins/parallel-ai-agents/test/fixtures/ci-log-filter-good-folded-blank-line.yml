@@ -1,0 +1,16 @@
+# R31：folded block scalar 的**空行不折**——空行前後各自是一條 shell 行，
+# 所以第一行行尾的 `#` 註解不會吃掉空行之後那條真管線。
+# R33（Codex 第 4 條）：第一行原本是 `echo "$PR_TITLE"`——與這個 fixture 要釘的折疊語意無關，
+# 卻讓它把一個會外流的 workflow 釘成 pass（神諭誠實化後報「有管線，但 PR 文字仍外流」）。改成不外流的第一行。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: folded with a blank line keeps the later pipeline
+        run: >
+          echo hello # note
+
+          echo more | python3 scripts/neutralise.py

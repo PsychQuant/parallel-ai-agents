@@ -1,0 +1,17 @@
+# t2：同上但分隔字詞緊接 `))`。R32 版靠 `)` 斷詞碰巧紅、R33 版綠；算術跨行修好之後它因正確的理由而紅。
+# 來源（#33 verify R34 logic F1／F3／F4 的探針；DA 的 n 系列是它在 da-work/probes 留下的檔案）
+# EXPECT: rule-red
+name: t
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: t2-arith-multiline-shift
+        run: |
+          echo $((1
+          <<2))
+          echo "$PR_TITLE"; cat <<'Z'
+          2))
+          x| python3 scripts/neutralise.py
+          Z

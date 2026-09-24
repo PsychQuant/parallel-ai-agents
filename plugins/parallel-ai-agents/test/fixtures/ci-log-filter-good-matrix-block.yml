@@ -1,0 +1,16 @@
+# 正向 fixture：block 形式的 `strategy.matrix`（flow 形式先前才過得了）
+# EXPECT: pass
+name: t
+on:
+  pull_request:
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+    steps:
+      - name: a
+        run: echo hi | python3 ../pai-lenses/scripts/neutralise.py

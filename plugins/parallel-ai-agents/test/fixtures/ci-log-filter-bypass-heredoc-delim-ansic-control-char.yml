@@ -1,0 +1,15 @@
+# #33 verify R35（R34 修法：`_ansic_decode` 的 fail-closed）：`$'E\cAF'` 在 bash 5.3 的終止字是 `E\x01\x01F`——`\x01` 是
+# bash 內部的引號跳脫字元、會被重複（讀 EOF 警告實測）。本 lint 不模擬這個內部表示 ⇒ `\c` 與解出 `\x01`／`\x7f` 的一律
+# fail-closed PARSE。拿掉這個守衛，`\c` 會被當成認不得的逃脫保留成 `\cA`，終止字憑空變成可比對的字串。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: ANSI-C delimiter with a control-character escape
+        run: |
+          cat <<$'E\cAF'
+          E\cAF
+          echo hi 2>&1 | python3 scripts/neutralise.py

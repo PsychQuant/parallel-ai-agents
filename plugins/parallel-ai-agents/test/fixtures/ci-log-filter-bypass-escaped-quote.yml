@@ -1,0 +1,13 @@
+name: t
+on: push
+# EXPECT: rule-red
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: backslash escaped quote
+        run: |
+          echo "x\" | python3 scripts/neutralise.py "
+          echo "$PR_TITLE"
+      - name: compliant control
+        run: echo hi | python3 scripts/neutralise.py

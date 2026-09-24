@@ -1,0 +1,19 @@
+# #33 verify R35（R34 修法：分隔字的 `$'…'` 解 ANSI-C 逃脫）：`$'E\x41'` 的終止字是 `EA`、`$'E\'F'` 的是 `E'F`（bash 5.3 讀 EOF 警告）。
+# 解碼錯 ⇒ 終止字對不上 ⇒ heredoc 吃掉後面的真管線 ⇒ 誤擋（6cf6864 版 rc=1）。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: ANSI-C quoted delimiter with an escape
+        run: |
+          cat <<$'E\x41'
+          EA
+          echo hi 2>&1 | python3 scripts/neutralise.py
+      - name: ANSI-C quoted delimiter with an escaped single quote
+        run: |
+          cat <<$'E\'F'
+          E'F
+          echo hi 2>&1 | python3 scripts/neutralise.py

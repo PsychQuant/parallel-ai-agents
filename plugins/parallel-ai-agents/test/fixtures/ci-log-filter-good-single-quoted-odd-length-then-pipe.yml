@@ -1,0 +1,9 @@
+name: t
+on: push
+# EXPECT: pass
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: odd-length single-quoted string then a real pipe
+        run: echo 'abc' "$PR_TITLE" | python3 scripts/neutralise.py

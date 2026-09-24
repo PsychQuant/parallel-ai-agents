@@ -1,0 +1,14 @@
+# #33 verify R35（`--strict` 的 stderr 規則）：接 neutralise 的管線必須帶 `2>&1` 或用 `|&`——否則 PR 文字從 stderr 繞過。
+# CI 與 run.sh 對真 workflow 用 `--strict`；預設模式（fixture 與產生語料量的是詞法）不要求。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: pipeline without 2>&1
+        shell: bash
+        run: |
+          cat "$PR_TITLE" | python3 scripts/neutralise.py

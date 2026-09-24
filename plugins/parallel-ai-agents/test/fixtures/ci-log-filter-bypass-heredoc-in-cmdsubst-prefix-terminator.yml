@@ -1,0 +1,18 @@
+# heredoc 開在 `$(…)` 裡：bash 5.3 以**以終止字開頭**的那一行結束它（`EOF)`、`EOF )`、`EOFx)` 都算，並警告 delimited by end-of-file；行首多空白不算；一般 `( … )` subshell 不算）。這是版本相依的舊式相容行為，本 lint 不猜 ⇒ 看到這種行就 fail-closed PARSE（logic F3 r1）。
+# 來源（#33 verify R34 logic F1／F3／F4 的探針；DA 的 n 系列是它在 da-work/probes 留下的檔案）
+# EXPECT: parse-red
+name: t
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: r1-comsub-term-paren
+        run: |
+          x=$(cat <<EOF
+          hi
+          EOF)
+          echo "$PR_TITLE"; cat <<'Z'
+          EOF
+          x| python3 scripts/neutralise.py
+          Z

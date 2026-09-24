@@ -1,0 +1,15 @@
+# R31 opsweep：未引號分隔字這一側的兩個邊界守衛（有沒有下一行、`j + 1 < n`）沒有網。
+# bash 5.3：`cat <<AB\` 是最後一行時警告「立即檔案被檔案結束符分隔（需要 AB）」，內文為空。
+# 本 lint 讀成 `AB\`，同樣沒有管線 → 紅。兩者判定一致；這個 fixture 守的是**邊界不得越界**。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: unquoted delimiter ends with a backslash and there is no next line
+        run: |
+          cat <<AB\
+      - name: compliant control
+        run: echo hi | python3 scripts/neutralise.py

@@ -1,0 +1,12 @@
+# #33 verify R35（opsweep 存活者 container／Windows 規則的 `STRICT` 運算元）：預設模式不看 container 與 runs-on——container job
+# 沒寫 shell 的預設是 sh，但那是 `--strict` 的事（已知不涵蓋第三組第 1 條）。把這條規則搬回預設模式 ⇒ 本檔翻 PARSE。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    container: alpine:3.20
+    steps:
+      - name: container job without an explicit shell
+        run: echo hi 2>&1 | python3 scripts/neutralise.py

@@ -1,0 +1,12 @@
+# #33 verify R35（opsweep 存活者 runs-on 判斷的 `"${{" in ro_text`）：`runs-on: ${{ matrix.os }}` 在靜態上看不出是不是 Windows
+# （matrix 可能含 windows-latest ⇒ 預設 pwsh）。`--strict` 下沒寫 shell ⇒ fail-closed。拿掉這個條件 ⇒ 只看字面有沒有 windows ⇒ 放行。
+# LINT-ARGS: --strict
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: runner decided by an expression, no shell
+        run: echo hi 2>&1 | python3 scripts/neutralise.py

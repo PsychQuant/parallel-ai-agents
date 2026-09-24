@@ -1,0 +1,13 @@
+# 折疊區塊裡以 tab 開頭的行在 YAML 是 more-indented、不折；lint 剝掉 tab 之後把兩行折成一條管線（logic F4 p7）。
+# 來源（#33 verify R34 logic F1／F3／F4 的探針；DA 的 n 系列是它在 da-work/probes 留下的檔案）
+# EXPECT: rule-red
+name: t
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: p7
+        run: >
+          	echo "$PR_TITLE"
+          	| python3 scripts/neutralise.py

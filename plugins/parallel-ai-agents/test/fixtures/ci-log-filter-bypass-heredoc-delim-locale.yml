@@ -1,0 +1,17 @@
+# `cat <<$"EOF"` 同上（`$"…"` 的引號規則與雙引號相同）（logic F3 q3）。
+# 來源（#33 verify R34 logic F1／F3／F4 的探針；DA 的 n 系列是它在 da-work/probes 留下的檔案）
+# EXPECT: rule-red
+name: t
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: q3-delim-locale
+        run: |
+          cat <<$"EOF"
+          EOF
+          echo "$PR_TITLE"; cat <<'Z'
+          $EOF
+          x| python3 scripts/neutralise.py
+          Z

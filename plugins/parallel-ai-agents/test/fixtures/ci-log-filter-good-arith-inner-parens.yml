@@ -1,0 +1,12 @@
+# #33 verify R35（opsweep --since 6cf6864 的存活者）：算術裡的單括號 `(1+2)` 計深度，`))` 才收尾。殺 `arith_par += 1`／`arith_par -= 1`（±1→±2）與 `elif ch == ")" and arith_par`（刪運算元、`==`↔`!=`）。
+# 預期判定用 bash 實測（oracle 一致／bash -n）。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: arith-inner-parens
+        run: |
+          echo $(( (1+2) * 3 )) 2>&1 | python3 scripts/neutralise.py

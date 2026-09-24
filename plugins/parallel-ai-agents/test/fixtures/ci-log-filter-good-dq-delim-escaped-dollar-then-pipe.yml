@@ -1,0 +1,16 @@
+# R31 opsweep：續行規則裡的 `j + 1 == n` 守衛沒有網——續行只發生在**行尾**，詞中間的反斜線
+# 仍然是逃脫。bash 5.3 實測 `cat <<"A\$B"` 的終止字是 `A$B`（`\$` 是逃脫，一行 `A\$B` 不終止它）。
+# 拿掉守衛的版本會在那個反斜線上把下一行接進來 → delim 變形 → 真管線被吞 → 誤擋。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: escaped dollar inside a double-quoted delimiter then a real pipeline
+        run: |
+          cat <<"A\$B"
+          data
+          A$B
+          echo hi | python3 scripts/neutralise.py

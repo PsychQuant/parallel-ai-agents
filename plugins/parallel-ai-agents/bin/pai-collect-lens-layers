@@ -101,6 +101,15 @@ def main():
         print("用法：pai-collect-lens-layers <profile>", file=sys.stderr)
         return 2
     profile = sys.argv[1].strip()
+    # R22 security S-4（R21 的放行條件漏做且未揭露，R23 補）：`profile` 直接被接進
+    # `<dir>/<profile>.csv`，沒有任何驗證——`..` 與絕對路徑都逃得出去，而 pack README 說那個檔
+    # 的內容會變成**未經 sentinel 包裹的 role 級 reviewer 指令**。今天不是 fork 面（呼叫端都傳
+    # 字面值，只有 `ensemble-compose` 會傳使用者自己的 `--base`），但「今天沒有呼叫端把不可信
+    # 的字串傳進來」不是機制，是巧合。profile 名就是一個檔名，封閉字元集足矣。
+    if profile and not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", profile):
+        print("profile 名只能是小寫英數與 `_` `-`（收到 %r）—— 它會被接成檔名，"
+              "`..`／絕對路徑會讀到預期外的檔" % profile, file=sys.stderr)
+        return 2
     if not profile:
         print("用法：pai-collect-lens-layers <profile>", file=sys.stderr)
         return 2

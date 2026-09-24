@@ -1,0 +1,13 @@
+# #33 verify R35（opsweep 存活者 `_cmdsub_end` 的 `${` 分支）：命令替換裡的 `${UNSET_Y:-)}`——那個 `)` 是展開的內容，
+# 不是命令替換的收尾（bash -n 通過）。拿掉 `${` 分支 ⇒ 命令替換在那個 `)` 提早結束、外層展開跟著在內層的 `}` 結束，
+# `| python3 …` 被讀成外層的管線 ⇒ 放行；bash 眼中它在命令替換裡（neutralise 有被呼叫，但接的不是外層 echo），PR 文字照樣外流。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: cmdsub-nested-param2
+        run: |
+          echo "$PR_TITLE" ${UNSET_X:-$(echo ${UNSET_Y:-)}| python3 scripts/neutralise.py )}

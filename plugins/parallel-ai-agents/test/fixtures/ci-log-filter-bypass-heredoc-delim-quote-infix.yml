@@ -1,0 +1,15 @@
+# R30 H-1：`<<"EO"F` —— bash 對整個分隔字詞做 quote removal，終止字是 EOF
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: leak
+        run: |
+          cat <<"EO"F
+          EO
+          echo marker | python3 ../pai-lenses/scripts/neutralise.py
+          EOF
+          echo "$PR_TITLE"

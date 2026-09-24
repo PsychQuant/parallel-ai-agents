@@ -1,0 +1,12 @@
+# #33 verify R35（opsweep --since 6cf6864 的存活者）：`$(( ((1) ) ))`：算術裡的 `((` 只是兩個括號。R35 第一版為它寫的巢狀 `((` 分支排在單括號判斷之後、永遠走不到（opsweep 報兩個突變體存活）——刪掉，這一檔守住刪掉之後仍正確收尾。
+# 預期判定用 bash 實測（oracle 一致／bash -n）。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: arith-double-paren
+        run: |
+          echo $(( ((1) ) )) 2>&1 | python3 scripts/neutralise.py

@@ -1,0 +1,16 @@
+# R31：folded block scalar 的 **more-indented 行前後不折**——它自己是一條 shell 行，
+# 它之後的行也另起一條，所以前面那個 `#` 註解吃不到後面的真管線。
+# R33（Codex 第 4 條）：第一行原本是 `echo "$PR_TITLE"`——與這個 fixture 要釘的折疊語意無關，
+# 卻讓它把一個會外流的 workflow 釘成 pass（神諭誠實化後報「有管線，但 PR 文字仍外流」）。改成不外流的第一行。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: folded with a more-indented line keeps the later pipeline
+        run: >
+          echo hello # note
+            more indented
+          echo more | python3 scripts/neutralise.py

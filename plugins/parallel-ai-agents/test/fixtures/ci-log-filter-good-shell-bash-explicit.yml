@@ -1,0 +1,22 @@
+# #33 verify R35（shell 規則的誤擋守衛）：step `shell: bash`、job `defaults.run.shell: bash`、container job 明寫 bash——都放行。
+# shell 是 `--strict` 的規則（R35：預設模式一律套用時合成 A 語料 290 個 base-綠檔翻紅；預設模式假設 shell 是 bash）。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  a:
+    runs-on: ubuntu-latest
+    steps:
+      - name: explicit bash
+        shell: bash
+        run: echo hi 2>&1 | python3 scripts/neutralise.py
+  b:
+    runs-on: ubuntu-latest
+    container: alpine:3.20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: container job with bash defaults
+        run: echo hi 2>&1 | python3 scripts/neutralise.py
