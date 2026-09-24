@@ -26,6 +26,17 @@
   C：3 × 4          （`#` 的六個位置 × block 形式）                          = 48
 每個檔產生前先用 PyYAML 驗一次；不合法的丟掉並在結尾報數（**不靜默跳過**）。
 
+**已知類別由構造決定、寫進檔頭**（R37，#33 verify R36 第 2 列）：神諭的類別閘門是雙向的——被歸進已知類別 X 的 step
+數必須等於檔頭 `# KNOWN-CLASS: X` 的行數。這一支知道每個檔的每個維度，所以**由構造**判定哪些檔該落進哪一類並寫出宣告，
+不是事後照神諭的輸出補（那樣宣告只是神諭的影子，雙向閘門就量不到東西）。封閉列舉，**只有兩種**，不得依相似類推第三種：
+  S-2 —— A 組、方向 real、折疊 block（`>` 開頭）、內文確實被折成一行、終止字非空白：
+         折疊後整段是 `cat <<X plain data X echo "$PR_TITLE" | neutralise`，`cat` 把 `$PR_TITLE` 當檔名、錯誤訊息
+         走 stderr，而管線沒有 `2>&1`。「確實被折成一行」＝ auto-detect 縮排（`>`、`> # note`），或明寫縮排 `>2` 且內文
+         不多縮（多縮的行 YAML 不折）；終止字是空字串或空白的三個分隔字，那一行在 YAML 裡是空行、會留下換行 ⇒ 不是一行。
+  G   —— D 組 `d-paramexp-literal-brace-in`：bash 不為字面的 `{` 配對 `}`，`${PR_TITLE#a{b}` 在第一個 `}` 結束，
+         剩下的 `c| neutralise }` 是真管線；第一行 `echo "$PR_TITLE"` 是**另一條命令**印的。
+  沒有「無法由構造決定」的檔：上面之外的構造，神諭歸進任何已知類別都是缺陷（lint 或神諭的），要讓它紅。
+
 「方向」指的是兩種構造，兩個都要有才擋得住兩個方向的錯：
   data —— 管線的文字只出現在 heredoc **內文**裡，之後有一行會洩漏的 `echo "$PR_TITLE"`。
            分隔字讀錯而提早終止 ⟹ lint 看見假管線 ⟹ pass ⟹ 神諭報**繞過**。
@@ -107,18 +118,30 @@ def wrap(name, body_lines, style_hdr, key_indent=8):
     return HEAD + "      - name: %s\n%srun: %s\n%s\n" % (name, " " * key_indent, style_hdr, body)
 
 
+def _folds_to_one_line(shdr, extra, dterm):
+    """A 組 real 方向的四行內文，在 YAML 裡是不是被折成**一行**（見 docstring 的 S-2 構造條件）。"""
+    if not shdr.startswith(">"):
+        return False                       # literal：換行保留
+    if any(ch.isdigit() for ch in shdr.split("#")[0]) and extra:
+        return False                       # 明寫縮排 2、內文多縮一格 ⇒ 每一行都是 more-indented，YAML 不折
+    return bool(dterm.strip())             # 終止字空白 ⇒ 那一行是 YAML 空行，折疊會留下換行
+
+
 def group_a():
     """分隔字 × block 形式 × 內文縮排 × 方向。"""
     for dspec, (sn, shdr, _), (inm, extra), direction in itertools.product(
             DELIMS, STYLES, INDENTS, ("data", "real")):
         dn, dlit, dterm = dspec[:3]; expect = dspec[3] if len(dspec) > 3 else None
         ind = " " * extra
+        cls = None
         if direction == "data":
             body = [ind + "cat <<" + dlit, ind + "x | " + NEUT, ind + dterm, ind + 'echo "$PR_TITLE"']
         else:
             body = [ind + "cat <<" + dlit, ind + "plain data", ind + dterm,
                     ind + 'echo "$PR_TITLE" | ' + NEUT]
-        yield "a-%s-%s-%s-%s" % (dn, sn, inm, direction), body, (shdr, expect)
+            if expect is None and _folds_to_one_line(shdr, extra, dterm):
+                cls = "S-2"
+        yield "a-%s-%s-%s-%s" % (dn, sn, inm, direction), body, (shdr, expect, cls)
 
 
 def group_b():
@@ -159,12 +182,14 @@ def group_c():
 
 # ── D 組的維度（R33 新增；每一條對應 R31／R32 的一個機制，且 `shapes.py` 各有一列）──
 # 維度 7：參數展開的內部構造（5）——決定「展開在哪裡結束」，是 `${…}` 消費器的實際觸發條件
+# 第三欄：bash 是不是在**核心裡面**就結束這個展開（R37：由構造決定已知類別 G，見 docstring）。只有字面的 `{b}`——
+# bash 不為字面 `{` 配對，第一個未引用、未逃脫的 `}` 就收尾；`${SEP}` 的 `}` 收的是內層展開，外層繼續。
 PARAMEXP_CORES = [
-    ("plain",        "a"),
-    ("literal-brace", "a{b}c"),
-    ("nested",       "${SEP}"),
-    ("escaped-brace", "a\\}b"),
-    ("quoted-brace", '"}"'),
+    ("plain",        "a",      False),
+    ("literal-brace", "a{b}c", True),
+    ("nested",       "${SEP}", False),
+    ("escaped-brace", "a\\}b", False),
+    ("quoted-brace", '"}"',    False),
 ]
 # 維度 8：分隔字詞的跨行構造（4）——不是 (名, 字面, 終止字) 三元組表示得了的，所以另立
 DELIM_WORDS = [
@@ -183,12 +208,15 @@ def group_d():
     為什麼要這一組（#33 verify R32 DA-9）：`shapes.py` 對 R31 的每一個機制都報 0 檔——語料**沒有**
     那些形狀，而 CHANGELOG 仍然拿那份語料當「不一致 0」的證據。**分母裡沒有的形狀，量到的 0 不是證據。**
     """
-    for (cn, core), place in itertools.product(PARAMEXP_CORES, ("in", "out")):
+    for (cn, core, closes_early), place in itertools.product(PARAMEXP_CORES, ("in", "out")):
         if place == "in":      # 管線文字在展開**裡面** ⇒ 提早結束展開的 lint 會看到假管線
             body = ['echo "$PR_TITLE"', "echo ${PR_TITLE#%s| %s }" % (core, NEUT)]
+            # bash 在核心裡就收尾 ⇒ 後面是真管線、第一行是另一條命令印的 ⇒ 已知類別 G（見 docstring）
+            hdr = ("|", None, "G") if closes_early else "|"
         else:                  # 展開正確收尾後接**真**管線 ⇒ 過度消費的 lint 會把它吞掉
             body = ["echo ${PR_TITLE#%s}| %s" % (core, NEUT)]
-        yield "d-paramexp-%s-%s" % (cn, place), body, "|"
+            hdr = "|"
+        yield "d-paramexp-%s-%s" % (cn, place), body, hdr
 
     for (wn, opener, term), direction in itertools.product(DELIM_WORDS, ("data", "real")):
         tail = (["x | " + NEUT] + ([term] if term else []) + ['echo "$PR_TITLE"']
@@ -213,8 +241,9 @@ def group_d():
 def group_e():
     """R34 找到、R35 修掉的機制——每一個都有「讀錯就繞過」（data）與「讀錯就誤擋」（real）兩個方向。
 
-    為什麼要這一組（#33 verify R34 中心發現）：四個語意不同的最小修法，在 selftest、642 檔語料、fixture 神諭、三軸上
-    **全部得到同一組數字**——網只對作者點名的輸入有鑑別力。這一組把 R34 的探針形狀做成構造維度，讓語料本身也看得見它們。
+    為什麼要這一組（#33 verify R34 中心發現）：四個語意不同的最小修法，在**量過的每一張網上**都得到同一組數字
+    （前兩條四軸全量；後兩條只量了 selftest 與／或 642 檔語料，神諭與三軸那幾格沒有量——R35 CHANGELOG 已更正，
+    R37 補改這一句，R36 第 24 列）——網只對作者點名的輸入有鑑別力。這一組把 R34 的探針形狀做成構造維度，讓語料本身也看得見它們。
     lint fail-closed（PARSE）的形狀自宣告 `parse-red`（同 D 組的 `$(…)` 分隔字）。
     """
     P = 'echo "$PR_TITLE"'
@@ -283,12 +312,15 @@ def main():
     for name, body, hdr in cases:
         # `body is None` 的那一個是 YAML 層的 tag 形狀：它的 `run:` 值帶 `!!str`，
         # 不是 block scalar，`wrap()` 表示不了，所以整份 workflow 自己組。
-        expect = None
+        # hdr 是 標頭字面、(標頭, 自宣告的 EXPECT) 或 (標頭, EXPECT, 構造決定的已知類別)。
+        expect = cls = None
         if isinstance(hdr, tuple):
-            hdr, expect = hdr
+            hdr, expect, cls = (hdr + (None,))[:3]
         text = TAG_BANG_DOC if body is None else wrap(name, body, hdr)
         if expect:
             text = "# EXPECT: %s\n" % expect + text
+        if cls:
+            text = "# KNOWN-CLASS: %s\n" % cls + text
         try:
             yaml.safe_load(text)
         except yaml.YAMLError as e:

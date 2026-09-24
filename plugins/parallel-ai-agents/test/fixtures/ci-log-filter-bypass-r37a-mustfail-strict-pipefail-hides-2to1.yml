@@ -1,0 +1,18 @@
+# #33 verify R37（R36 第 18 列的相鄰輸入）：**must-fail 探針**——pipefail 的排除不得把同一 step 的其他 RULE 藏起來。
+# 這個 step 沒寫 shell ⇒ `--strict` 的 pipefail 規則紅；管線沒帶 `2>&1` ⇒ `--strict` 的 `2>&1` 規則也紅（R36 點名的是
+# fd 流向規則，那一條由 `bypass-r37a-strict-pipefail-plus-fd-rule` 管，結果是「一致」、rc 看不出差別）。
+# `2>&1` 規則是**預防性**的：這一次執行 `echo safe` 沒寫 stderr、沒有外流，而 bash 確實建了接 neutralise 的管線——
+# 神諭量的是一次執行，照它的判定表這是「不一致：誤擋」。這張探針釘住的是：那個判定**看得見**，不被 pipefail 的「不可比」吃掉。
+# 把排除改回「step 起始行上有 pipefail RULE 就整個不可比」，這一檔就不再失敗 ⇒ 神諭 rc=1。
+# ORACLE-MUST-FAIL: 不一致：誤擋
+# EXPECT: rule-red
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: no pipefail and a pipeline without 2>&1
+        run: |
+          echo safe | python3 scripts/neutralise.py

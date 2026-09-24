@@ -1,0 +1,25 @@
+# #33 verify R37（R36 第 8 列，神諭側）：**神諭要把 YAML 的 `env:` 帶進腳本**，workflow → job → step 三層依序覆蓋。
+# 前一版用固定的 env 跑，`SHELLOPTS: xtrace` 這類從 env 帶進的 xtrace 神諭量不到。這一檔不靠任何 lint 缺陷：
+# 三層的值都到了、而且 step 蓋過 job、job 蓋過 workflow，第一行才不會印 PR 文字——少帶一層、或覆蓋順序錯，
+# 那一行就印出 PR 文字，神諭（照 lint 限制第 2 條）把它歸進已知類別 G，而這一檔**沒有**宣告 KNOWN-CLASS ⇒ rc=1。
+# 相鄰輸入（R36 點名的是 SHELLOPTS 等五個鍵）：這裡量的是「所有純量值、三層、覆蓋順序」，不是那五個鍵名。
+# EXPECT: pass
+name: t
+on: pull_request
+env:
+  WF_ONLY: a
+  LAYER: workflow
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    env:
+      JOB_ONLY: b
+      LAYER: job
+    steps:
+      - name: env from all three layers reaches the script, step wins
+        env:
+          STEP_ONLY: c
+          LAYER: step
+        run: |
+          if [ "$WF_ONLY$JOB_ONLY$STEP_ONLY$LAYER" != "abcstep" ]; then echo "::notice::$PR_TITLE"; fi
+          echo safe 2>&1 | python3 scripts/neutralise.py

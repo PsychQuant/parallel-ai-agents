@@ -1,0 +1,17 @@
+# #33 verify R37（R36 第 2 列）：**must-fail 探針**——神諭必須在這一檔上失敗，而且理由必須是「歸了類卻沒宣告」。
+# 這個 step 是道地的已知類別 G（PR 文字由管線以外的 `printf` 印出，lint 限制第 2 條，lint 依設計放行），但檔頭**沒有**
+# `# KNOWN-CLASS: G`。前一版的類別閘門只查「宣告了卻沒歸進去」，反方向不查——一張沒宣告的正向 fixture 被歸進已知類別時
+# selftest 與神諭都綠（DA 的負對照）。拿掉「歸了類卻沒宣告」那一支檢查，這一檔就不再失敗 ⇒ 神諭 rc=1。
+# 它的失敗不計入神諭的總 rc 與統計數字；它**沒有**以宣告的理由失敗，神諭才 rc=1。
+# ORACLE-MUST-FAIL: 歸了類卻沒宣告：G
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: a G step without its KNOWN-CLASS signature
+        run: |
+          echo safe 2>&1 | python3 scripts/neutralise.py
+          printf '::warning::%s\n' "$PR_TITLE"
