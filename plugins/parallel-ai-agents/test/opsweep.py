@@ -10,7 +10,7 @@
 運算子（封閉列舉，五種；改動這個集合是另一次 change）：
   strip→id       `x.strip()/.rstrip()/.lstrip()` 的呼叫換成 `x`
   ±1→±2          `+= 1`／`-= 1` 換成 `+= 2`／`-= 2`
-  drop-operand   `a and b`／`a or b` 拿掉其中一個運算元
+  drop-operand   `a and b`／`a or b` 拿掉其中一個運算元（整個運算式換成其餘運算元各自加括號接回去）
   startswith→F   `x.startswith(...)` 換成 `False`
   ==↔!=          `==` 換成 `!=`
 
@@ -142,14 +142,16 @@ def mutants(py):
                 func_of.setdefault(id(n), fn.name)
     raw = []
 
-    def add(op, node, start, end, new, part=None):
+    def add(op, node, start, end, new, part=None, cut=None):
         # 切到的文字必須就是這個運算子的原文——位置算錯時要當場失敗，不能安靜地突變到別的文字上
         # （_span 的位元組／字元混用就是這樣藏了好幾輪）。drop-operand 的切片含 and/or 與空白，只驗被拿掉的運算元在內。
         want = {"==↔!=": "==", "±1→±2": "1"}.get(op) or ast.get_source_segment(py, part or node)
         got = py[start:end]
         if (want not in got) if part is not None else (got != want):
             raise SystemExit("opsweep: %s 在第 %d 行切到 %r，應該是 %r——位置計算錯了" % (op, node.lineno, got, want))
-        raw.append((start, end, op, func_of.get(id(node), "<module>"), lines[node.lineno - 1].strip(), new))
+        # 排序鍵與行號用 (start, end)——id 的序號由它決定，不能動；實際替換的範圍與文字可以另給（cut）。
+        raw.append(((start, end, op, func_of.get(id(node), "<module>"), lines[node.lineno - 1].strip(), new),
+                    cut or (start, end, new)))
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
@@ -165,13 +167,19 @@ def mutants(py):
             add("±1→±2", node, s, e, "2")
         elif isinstance(node, ast.BoolOp) and len(node.values) >= 2:
             spans = [_span(lines, v) for v in node.values]
+            bs, be = _span(lines, node)
+            word = " and " if isinstance(node.op, ast.And) else " or "
             for k in range(len(node.values)):
-                # 拿掉第 k 個運算元：連同它前面（或它是第一個時後面）的 `and`/`or` 一起拿掉
+                # 拿掉第 k 個運算元。(s, e) 是它連同前面（或它是第一個時後面）的 `and`/`or` 的範圍，只用來排序與驗位置；
+                # **實際的突變是把整個布林運算式換成其餘運算元各自加括號再接回去**。R37 以前直接刪 (s, e)，
+                # 而運算元外面的括號不在 AST 節點的範圍裡，`(a or (b and c))` 拿掉 a 會刪到 `a or (`——括號不平衡、
+                # 程式碼壞掉，那個位置等於沒量（R37 的 lint 全段 1044 個突變體裡有 46 個這樣）。
                 if k == 0:
                     s, e = spans[0][0], spans[1][0]
                 else:
                     s, e = spans[k - 1][1], spans[k][1]
-                add("drop-operand", node, s, e, "", part=node.values[k])
+                rest = word.join("(%s)" % ast.get_source_segment(py, v) for i, v in enumerate(node.values) if i != k)
+                add("drop-operand", node, s, e, "", part=node.values[k], cut=(bs, be, rest))
         elif isinstance(node, ast.Compare) and len(node.ops) == 1 and isinstance(node.ops[0], ast.Eq):
             ls, le = _span(lines, node.left); rs, re_ = _span(lines, node.comparators[0])
             gap = py[le:rs]
@@ -183,10 +191,10 @@ def mutants(py):
     starts = [0]
     for l in lines:
         starts.append(starts[-1] + len(l) + 1)
-    for start, end, op, fn, line, new in sorted(raw):
+    for (pos, _e, op, fn, line, _new), (start, end, new) in sorted(raw, key=lambda r: r[0]):
         key = (op, fn, line)
         seen[key] = seen.get(key, 0) + 1
-        lineno = next(k for k in range(len(lines), 0, -1) if starts[k - 1] <= start)
+        lineno = next(k for k in range(len(lines), 0, -1) if starts[k - 1] <= pos)
         out.append(("%s|%s|%s|%d|L%d" % (op, fn, line, seen[key], lineno), start, end, new))
     return out
 
@@ -259,6 +267,13 @@ def run_mutant(src, py, py_off, m, work, fixtures, sample):
     R29 第一輪掃到一半時作者又加了三個 fixture，之後每個突變體都因「數量與門檻不符」被判殺——整輪後半段作廢。
     lint 原始碼與 fixture 都要在同一個時間點凍結。"""
     mid, s, e, new = m
+    # 語法壞掉要在跑 selftest **之前**直接判：selftest 每張 fixture 只印 stderr 的前兩行，`SyntaxError:` 那一行
+    # 被截掉，下面那個「輸出裡有沒有 SyntaxError」的判準因此量不到——R37 以前這類突變體一律記成 KILLED
+    # （R29、R30 DA 那個切錯位置、把 `if seq_at[i]:` 的冒號換成 2 的突變體就是這樣被算成殺掉的）。
+    try:
+        compile(py[:s] + new + py[e:], "<lint>", "exec")
+    except SyntaxError:
+        return "BROKEN"
     mutated = src[:py_off] + py[:s] + new + py[e:] + src[py_off + len(py):]
     d = tempfile.mkdtemp(dir=work, prefix="op_")
     try:
