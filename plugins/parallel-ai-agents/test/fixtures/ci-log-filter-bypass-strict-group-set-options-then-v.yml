@@ -1,0 +1,15 @@
+# 群組規則的 `set` 前綴：`-o NAME` 之後的每一個詞都要再驗——`set -o pipefail -v` 的 `-v` 不得因為跟在合法的
+# `-o pipefail` 後面就被跳過（opsweep：前綴掃描的步長改成 2 時，沒有 fixture 翻色）。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: verbose after a whitelisted option
+        shell: bash
+        run: |
+          set -o pipefail -v
+          { echo "ORACLE-PR-TITLE-MARKER"; } 2>&1 | python3 scripts/neutralise.py

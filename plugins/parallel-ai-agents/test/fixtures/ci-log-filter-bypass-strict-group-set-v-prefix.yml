@@ -1,0 +1,15 @@
+# `set -v` 在群組**外**把原始碼（含 runner 代入的 `${{ … }}`）印到 stderr——前綴只收 `-e`／`-u`／`-o <選項>`。
+# 群組裡寫的字面標記就是 runner 代入 `${{ github.event.pull_request.title }}` 之後 bash 看到的樣子——`set -v` 把它原樣印出。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: set -v before the group
+        shell: bash
+        run: |
+          set -v
+          { echo "ORACLE-PR-TITLE-MARKER"; } 2>&1 | python3 scripts/neutralise.py

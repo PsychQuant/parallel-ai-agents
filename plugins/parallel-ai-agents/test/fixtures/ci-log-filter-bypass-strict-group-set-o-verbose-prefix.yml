@@ -1,0 +1,15 @@
+# 群組規則的 `set` 前綴：`-o` 的選項名只收 pipefail／errexit／nounset——`-o verbose` 與 `set -v` 相同，把群組的原始碼
+# （含 runner 代入的 `${{ … }}`；這裡以字面標記代表）印到群組外的 stderr。`set -o xtrace` 另由 fd 流向規則擋。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: set -o verbose before the group
+        shell: bash
+        run: |
+          set -o verbose
+          { echo "ORACLE-PR-TITLE-MARKER"; } 2>&1 | python3 scripts/neutralise.py

@@ -10,10 +10,13 @@ jobs:
     steps:
       - name: strict template
         shell: bash -euo pipefail {0}
-        run: echo hi 2>&1 | python3 scripts/neutralise.py
+        run: |
+          { echo hi; } 2>&1 | python3 scripts/neutralise.py
       - name: noprofile template
         shell: bash --noprofile --norc -eo pipefail {0}
-        run: echo hi 2>&1 | python3 scripts/neutralise.py
+        run: |
+          { echo hi; } 2>&1 | python3 scripts/neutralise.py
       - name: login shell
         shell: bash -l {0}
-        run: echo hi 2>&1 | python3 scripts/neutralise.py
+        run: |
+          { echo hi; } 2>&1 | python3 scripts/neutralise.py

@@ -1,0 +1,37 @@
+# #59／#60 群組規則的誤擋守衛：合規的群組寫法都要放行——單行、多行、`|&`、`set` 前綴（合寫與分行）、
+# 行尾 `|` 續行、群組裡的 heredoc／引號與逃脫的大括號／`${…}`／大括號展開、背景 `&` 後接 `}`。
+# #60 表格裡「經過濾」那幾列（群組內的展開期與重導向錯誤）也在這裡：神諭實跑確認沒有外流。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: one-line group
+        shell: bash
+        run: |
+          { echo hi; echo there; } 2>&1 | python3 scripts/neutralise.py
+      - name: multi-line group with set prefix, default shell
+        run: |
+          set -euo pipefail
+          {
+            echo "${!PR_TITLE}" || true
+            echo x > "$PR_TITLE/y" || true
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: split set prefix and stderr pipe
+        run: |
+          set -e
+          set -o pipefail
+          { echo hi; } |& python3 scripts/neutralise.py
+      - name: braces that are not reserved words
+        shell: bash
+        run: |
+          {
+            echo "{" '}' \} ${PR_TITLE} {a,b}
+            cat <<EOF
+          }
+          EOF
+            sleep 0 & } 2>&1 |
+            python3 ../pai-lenses/scripts/neutralise.py
