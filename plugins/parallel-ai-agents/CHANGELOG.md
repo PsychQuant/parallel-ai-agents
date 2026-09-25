@@ -647,12 +647,12 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
     同一段的展開，兩者由同一條群組規則關掉）。
   - 既有 `--strict` fixture 改寫成群組形式，讓每一檔仍然只因它點名的那條規則變紅（pipefail 三檔先前會同時吃到群組規則，拿掉 pipefail
     規則也照樣紅）；`run: { … }` 的純量寫法是 YAML flow mapping（PyYAML 拒絕整檔），一律改成 `run: |`。
-  數字：lint fixture 268 → 289 個（`python3 -c "import pathlib;print(len(list(pathlib.Path('test/fixtures').glob('ci-log-filter-*.yml'))))"`）——
-  110 個正向（`python3 -c "import pathlib;print(sum(1 for f in pathlib.Path('test/fixtures').glob('ci-log-filter-*.yml') if '# EXPECT: pass' in f.read_text().splitlines()))"`）、117 條規則紅（`python3 -c "import pathlib;print(sum(1 for f in pathlib.Path('test/fixtures').glob('ci-log-filter-*.yml') if '# EXPECT: rule-red' in f.read_text().splitlines()))"`）、62 條解析紅（`python3 -c "import pathlib;print(sum(1 for f in pathlib.Path('test/fixtures').glob('ci-log-filter-*.yml') if '# EXPECT: parse-red' in f.read_text().splitlines()))"`）；
-  CI run step 25 個（`grep -c "^        run:" ../../.github/workflows/test.yml`）；fixture 神諭 380 個 step：一致 302、不一致 6（**全部已知**：
-  G 3、S-2 1、巢狀群組 1、stub python3 的盲區 1）、不可比 72、量不到 0；產生語料 624 個 step：一致 524、不一致 62（全部已知，且逐條被
+  數字：lint fixture 268 → 290 個（`python3 -c "import pathlib;print(len(list(pathlib.Path('test/fixtures').glob('ci-log-filter-*.yml'))))"`）——
+  110 個正向（`python3 -c "import pathlib;print(sum(1 for f in pathlib.Path('test/fixtures').glob('ci-log-filter-*.yml') if '# EXPECT: pass' in f.read_text().splitlines()))"`）、118 條規則紅（`python3 -c "import pathlib;print(sum(1 for f in pathlib.Path('test/fixtures').glob('ci-log-filter-*.yml') if '# EXPECT: rule-red' in f.read_text().splitlines()))"`）、62 條解析紅（`python3 -c "import pathlib;print(sum(1 for f in pathlib.Path('test/fixtures').glob('ci-log-filter-*.yml') if '# EXPECT: parse-red' in f.read_text().splitlines()))"`）；
+  CI run step 25 個（`grep -c "^        run:" ../../.github/workflows/test.yml`）；fixture 神諭 381 個 step：一致 302、不一致 7（**全部已知**：
+  G 3、S-2 1、巢狀群組 1、stub python3 的盲區 2）、不可比 72、量不到 0；產生語料 624 個 step：一致 524、不一致 62（全部已知，且逐條被
   `--strict` 擋下）、不可比 38、量不到 0；形狀普查閘門綠；mutation 靶清單 193 → 195 個（`grep -c "^    (\"" ../pai-lenses/scripts/mutation_check.py`；
-  群組規則那一條換成三條：群組、字面、pipefail 窗口，連同兩條改了靶文字的逐一實跑、全部被 selftest 殺掉）；`opsweep --since 380e4a4` 的結果記在下一個 commit（本 commit 時仍在跑）。
+  群組規則那一條換成三條：群組、字面、pipefail 窗口，連同兩條改了靶文字的逐一實跑、全部被 selftest 殺掉）；`opsweep --since 380e4a4`（最終 lint 上跑；區域含 shell_scan，因為它的 docstring 改了）150 個突變體 → 殺 147（當掉 18、產生語料抓到而 selftest 沒抓到的 0）／存活 3（預期 1、**非預期 2**）。兩條非預期都在新程式碼、都是缺 fixture 不是等價：tail 的路徑檢查（補 `bypass-strict-group-variable-filter-path`）、`l.strip()`（`good-strict-group-forms` 補一行多縮排的註解）；補完後兩個突變體逐一實跑都被 selftest 殺掉（沒有重跑整輪）。
 - **verify R34（4 lens + DA 前半；Codex 因 OpenAI 429 缺席、使用者決定不等）— 7 HIGH（其中 3 條 R33 回歸）、7 MEDIUM blocking。**（R34 發文時寫成 8 MEDIUM，但它自己的表只有 #8–#14 七條——
   協調者合併時算錯；這裡原本照抄了那個數，R35 發 commit 前的宣稱查核抓到。）
   R33 換的證據標準確認是真的：點名的 7 個機制還原後 selftest 全部轉紅，R33 的每個數字逐條重跑吻合。**缺的是另一半**：

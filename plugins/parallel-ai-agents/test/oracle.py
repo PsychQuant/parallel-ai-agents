@@ -90,6 +90,8 @@ KNOWN_DISAGREE = {
     # PR 文字、寫在 python3 自己的 stderr）在這裡不會出現。lint 擋下是對的，神諭量不到——這是儀器的盲區，不是 lint 的誤擋。
     ("ci-log-filter-bypass-strict-group-expansion-in-filter-path.yml", "expansion in the filter path"):
         "stub python3 不報「can't open file」；真 python3 會把含 PR 文字的路徑印到群組外的 stderr。",
+    ("ci-log-filter-bypass-strict-group-variable-filter-path.yml", "variable in the filter path"):
+        "同上：路徑是 `$PR_TITLE/neutralise.py`，stub python3 不報「can't open file」。",
 }
 
 # lint 自己的宣告正規式（與 `lint-ci-log-filter.sh` 的 `LOGFILTER_RE` 同形）。這裡只用它判**文字長相**；

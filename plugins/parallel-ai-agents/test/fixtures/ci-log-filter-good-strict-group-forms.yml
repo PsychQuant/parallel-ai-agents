@@ -23,7 +23,9 @@ jobs:
       - name: split set prefix and stderr pipe
         run: |
           set -e
+            # 前綴與群組之間、多縮排的註解行：程式碼半邊是一串空白，不得被算成一個實體行（opsweep：`l.strip()` 換成 `l` 時沒有 fixture 翻色）
           set -o pipefail
+
           { echo hi; } |& python3 scripts/neutralise.py
       - name: braces that are not reserved words
         shell: bash

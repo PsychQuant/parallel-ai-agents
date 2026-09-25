@@ -1,0 +1,15 @@
+# 群組規則的 tail：neutralise 的路徑只收 `[\w./-]`——`python3 $PR_TITLE/neutralise.py` 沒被挖空（字面檢查看不到它），
+# bash 卻把 PR 文字接進路徑，真 python3 的「can't open file」帶著它印到 stderr（opsweep：拿掉路徑檢查時沒有 fixture 翻色）。
+# 神諭的 python3 是 stub、不報這個錯：記在 oracle.py 的 KNOWN_DISAGREE。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: variable in the filter path
+        shell: bash
+        run: |
+          { echo safe; } 2>&1 | python3 $PR_TITLE/neutralise.py
