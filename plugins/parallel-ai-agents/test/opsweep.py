@@ -20,6 +20,7 @@
   test/opsweep.py               整段內嵌 Python（不分區域；數字只供揭露，收手條件用 --since）
   test/opsweep.py --list        只列突變體 id 與數量，不跑
   test/opsweep.py --json F      把結果寫成 JSON（CI／量測用）
+  test/opsweep.py --jobs N      同時跑 N 個突變體（判定不變，只改完成順序與耗時）
 退出碼：有**非預期**存活或**預期存活被殺**（等價性不再成立）→ 1；否則 0。
 
 EXPECTED_SURVIVE 的紀律（G-R29-5）：
@@ -113,12 +114,21 @@ def embedded_python(src):
 
 
 def _span(py_lines, node):
-    """(start_offset, end_offset) in the python text, from ast line/col (0-based col, 1-based line)."""
+    """(start_offset, end_offset) in the python text, from ast line/col (0-based col, 1-based line).
+
+    ast 的 col_offset／end_col_offset 是 **UTF-8 位元組**位置，不是字元位置。R37 以前這裡直接加，
+    同一行在節點前面有中文的節點就切錯位置——`==↔!=` 會找不到 `==` 而當掉，其他運算子則是
+    **安靜地**替換到別的文字上。這支工具 R28 進 repo 起每一版 lint 都有 3 個這樣的節點（`縮排含 tab` 那行的
+    `i += 1`、`cur["name"]` 那行的 `or`、`而不解析就不放行` 那行的 `.strip()`），一直沒人發現；R37 的 lint
+    多了 3 個，其中兩個是 `==`，量測時當掉才看到。"""
     starts = [0]
     for l in py_lines:
         starts.append(starts[-1] + len(l) + 1)
-    return (starts[node.lineno - 1] + node.col_offset,
-            starts[node.end_lineno - 1] + node.end_col_offset)
+
+    def col(lineno, byte_col):
+        return len(py_lines[lineno - 1].encode()[:byte_col].decode())
+    return (starts[node.lineno - 1] + col(node.lineno, node.col_offset),
+            starts[node.end_lineno - 1] + col(node.end_lineno, node.end_col_offset))
 
 
 def mutants(py):
@@ -132,7 +142,13 @@ def mutants(py):
                 func_of.setdefault(id(n), fn.name)
     raw = []
 
-    def add(op, node, start, end, new):
+    def add(op, node, start, end, new, part=None):
+        # 切到的文字必須就是這個運算子的原文——位置算錯時要當場失敗，不能安靜地突變到別的文字上
+        # （_span 的位元組／字元混用就是這樣藏了好幾輪）。drop-operand 的切片含 and/or 與空白，只驗被拿掉的運算元在內。
+        want = {"==↔!=": "==", "±1→±2": "1"}.get(op) or ast.get_source_segment(py, part or node)
+        got = py[start:end]
+        if (want not in got) if part is not None else (got != want):
+            raise SystemExit("opsweep: %s 在第 %d 行切到 %r，應該是 %r——位置計算錯了" % (op, node.lineno, got, want))
         raw.append((start, end, op, func_of.get(id(node), "<module>"), lines[node.lineno - 1].strip(), new))
 
     for node in ast.walk(tree):
@@ -155,7 +171,7 @@ def mutants(py):
                     s, e = spans[0][0], spans[1][0]
                 else:
                     s, e = spans[k - 1][1], spans[k][1]
-                add("drop-operand", node, s, e, "")
+                add("drop-operand", node, s, e, "", part=node.values[k])
         elif isinstance(node, ast.Compare) and len(node.ops) == 1 and isinstance(node.ops[0], ast.Eq):
             ls, le = _span(lines, node.left); rs, re_ = _span(lines, node.comparators[0])
             gap = py[le:rs]
@@ -331,7 +347,10 @@ def main():
     ap.add_argument("--since", metavar="REF", help="只掃自 REF 起被改動的區域（見 docstring）")
     ap.add_argument("--verify-expected", action="store_true",
                     help="把每一條 EXPECTED_SURVIVE 的「依構造等價」真的跑一次（見 docstring）")
+    ap.add_argument("--jobs", type=int, default=1, metavar="N", help="同時跑幾個突變體（預設 1）")
     args = ap.parse_args()
+    if args.jobs < 1:
+        ap.error("--jobs 至少是 1")
     src = LINT.read_text(encoding="utf-8")
     py, py_off = embedded_python(src)
     ms = mutants(py)
@@ -374,18 +393,24 @@ def main():
             # 取樣為空 = 沒有第二道判準。前一版只印數字，而 0 印出來與 40 印出來一樣不引人注意。
             raise SystemExit("✗ 第二道判準的樣本是空的——掃描會退化成只問 selftest，拒絕繼續")
         print("   第二道判準：%d 個產生檔（形狀完整樣本，非作者挑選）" % len(sample), flush=True)
-        for m in ms:
-            st = run_mutant(src, py, py_off, m, work, fixtures, sample)
-            results[m[0]] = st
-            tag = st if not (st == "SURVIVED" and base_id(m[0]) in EXPECTED_SURVIVE) else "EXPECTED"
-            print("  %-9s %s" % (tag, m[0]), flush=True)
+
+        def one(m):
+            return m[0], run_mutant(src, py, py_off, m, work, fixtures, sample)
+        # 每個突變體在自己的 mkdtemp 裡跑、只讀共用的 fixture 快照與樣本，彼此沒有依賴；--jobs 只改完成順序，
+        # 不改任何一個突變體的判定（R37：區域 868 個突變體循序估計要 8 小時）。
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=args.jobs) as pool:
+            for mid, st in pool.map(one, ms):
+                results[mid] = st
+                tag = st if not (st == "SURVIVED" and base_id(mid) in EXPECTED_SURVIVE) else "EXPECTED"
+                print("  %-9s %s" % (tag, mid), flush=True)
     elapsed = time.monotonic() - t0
     survived = [i for i, st in results.items() if st == "SURVIVED"]
     unexpected = [i for i in survived if base_id(i) not in EXPECTED_SURVIVE]
     expected = [i for i in survived if base_id(i) in EXPECTED_SURVIVE]
     killed_expected = [i for i in EXPECTED_SURVIVE if any(base_id(k) == i and v == "KILLED" for k, v in results.items())]
     broken = [i for i, st in results.items() if st == "BROKEN"]
-    print("\n耗時 %.1f 分 / %d 突變體 = 每個 %.1f s" % (elapsed / 60, len(ms), elapsed / max(1, len(ms))))
+    print("\n耗時 %.1f 分 / %d 突變體（--jobs %d）= 每個 %.1f s 牆鐘" % (elapsed / 60, len(ms), args.jobs, elapsed / max(1, len(ms))))
     crashed = [i for i, st in results.items() if st == "CRASHED"]
     by_corpus = [i for i, st in results.items() if st == "KILLED-BY-CORPUS"]
     print("殺掉 %d（其中當掉 %d、**產生語料抓到而 selftest 沒抓到的 %d**）/ 存活 %d（非預期 %d、預期 %d）/ 壞掉（語法）%d"
