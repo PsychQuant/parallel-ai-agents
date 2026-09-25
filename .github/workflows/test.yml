@@ -23,10 +23,10 @@ jobs:
 
       # ── step log 的 PR 可控文字怎麼處理，由 test/lint-ci-log-filter.sh --strict 對**每一個** run step 機械檢查（#33 verify R15）：
       #    經 ../pai-lenses/scripts/neutralise.py（validate.py LineSanitiser 那一份實作），或 `# LOG-FILTER:` 明示不過濾與理由。
-      #    --strict 另外要求：接 neutralise 的管線帶 `2>&1`／`|&`、有管線的 step 跑在 pipefail 之下；且 shell 只能是 bash、
-      #    靠管線過濾的 step 不得轉向 stderr 或開 xtrace（#33 verify R34 → R35）。
-      #    **已知例外（顆粒度）**：一個 run 區塊裡任一條邏輯行接了管線，整個區塊就算已過濾——同一區塊裡另一條命令
-      #    印出的 PR 文字不經過濾（lint 是詞法的，不判哪一行印了什麼）。追蹤：#59。
+      #    --strict 另外要求：靠管線過濾的 step 整個 run 區塊是**一個群組** `{ …; } 2>&1 | python3 …neutralise.py`
+      #    （前面只准 `set -e`／`-u`／`-o pipefail`）——群組外的命令、以及某一段 `2>&1` 生效前的展開期／重導向錯誤
+      #    都不經過濾（#59／#60）；有管線的 step 跑在 pipefail 之下；shell 只能是 bash；不得轉向 stderr 或開 xtrace
+      #    （#33 verify R34 → R35）。要印 `::error::` 的檢查另開一個 `# LOG-FILTER: none` 的 step（放進群組會被中和）。
       #    R14 把這件事寫成散文列舉，R15 四個 lens 各自找到列舉外的 step（shellcheck、lint-*、整個 macOS job）。
       #    過濾器擋的是 `::`/`##[` 偽造 annotation 與跨 step 的 `::add-mask::`；真正的邊界是 `on: pull_request`
       #    （非 pull_request_target）+ `contents: read` + 零 secrets——每個 job 本來就執行 PR 自己的程式碼。
@@ -42,7 +42,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          shellcheck bin/pai-build-diff bin/pai-parse-verdict bin/pai-iter-commit bin/pai-list-profiles references/regen-builtin-lenses.sh test/run.sh test/assert-tap-complete.sh test/lint-bats.sh test/lint-changelog-counts.sh test/lint-contract-enumerations.sh test/lint-ci-log-filter.sh 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
+          { shellcheck bin/pai-build-diff bin/pai-parse-verdict bin/pai-iter-commit bin/pai-list-profiles references/regen-builtin-lenses.sh test/run.sh test/assert-tap-complete.sh test/lint-bats.sh test/lint-changelog-counts.sh test/lint-contract-enumerations.sh test/lint-ci-log-filter.sh; } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
 
       # Round 6 RC11 (#37): a bare `!` assertion is a no-op under bats' errexit — it recurred four
       # times as a prose rule, so it is a machine rule now, and the guard proves it can fail first.
@@ -66,8 +66,10 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          { python3 -c 'import yaml' || python3 -m pip install --quiet pyyaml; } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
-          python3 test/oracle.py 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
+          {
+            python3 -c 'import yaml' || python3 -m pip install --quiet pyyaml
+            python3 test/oracle.py
+          } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
 
       # #33 verify R30 §六「第 14 類：網的投餵」：上一個 step 餵給神諭的是**作者寫的** fixture，
       # 而同一支神諭在別人產生的語料上會報出一堆。這個 step 把投餵也拿掉——`shellgen.py` 按封閉的
@@ -77,8 +79,10 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          python3 test/corpus/shellgen.py --out "$RUNNER_TEMP/gen" 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
-          python3 test/oracle.py "$RUNNER_TEMP"/gen/*.yml 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
+          {
+            python3 test/corpus/shellgen.py --out "$RUNNER_TEMP/gen"
+            python3 test/oracle.py "$RUNNER_TEMP"/gen/*.yml
+          } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
       # 形狀普查閘門（#33 verify R32 DA-9）：R31 的每個機制在 shapes.py 都是零列而 CHANGELOG 照寫 GREEN→RED 0。
       # 「分母裡沒有的形狀，量到的 0 不是證據」寫在 shapes.py 檔頭，作者 R29 遵守、R31 破壞——散文規則一輪
       # 就失守，所以這裡讓它會紅：R31-*/R32-* 任一列在產生語料上為 0 就 fail。
@@ -89,8 +93,10 @@ jobs:
         # 這道閘門在 CI 上結構上紅不了，只有本機 run.sh（有 pipefail）會紅。現在由 lint 的 `--strict` 機械檢查。
         shell: bash
         run: |
-          find "$RUNNER_TEMP/gen" -name '*.yml' -print | sort | sed 's/^/x /' > "$RUNNER_TEMP/gen-list.txt"
-          python3 test/corpus/shapes.py --require-nonzero R3 "$RUNNER_TEMP/gen-list.txt" 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
+          {
+            find "$RUNNER_TEMP/gen" -name '*.yml' -print | sort | sed 's/^/x /' > "$RUNNER_TEMP/gen-list.txt"
+            python3 test/corpus/shapes.py --require-nonzero R3 "$RUNNER_TEMP/gen-list.txt"
+          } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
 
       # 中和只有**一份**實作（validate.py 的 LineSanitiser，neutralise.py 只是把 stdin 接上去）——R13 用 sed 另寫一份，
       # 第一天就與它分岔（`[[:space:]]` 比 .NET IsWhiteSpace 小、`^` 只認 \n；R14 L-4 / S2）。
@@ -98,19 +104,26 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          python3 -m py_compile bin/pai-parse-lens-csv bin/pai-collect-lens-layers 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
+          { python3 -m py_compile bin/pai-parse-lens-csv bin/pai-collect-lens-layers; } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
 
       # builtin-lenses.csv is generated from the harness PROFILES. It drives nothing at runtime
       # (#29 keeps the built-in baseline inside the harness), so a stale catalog is a DOCS defect,
       # not a correctness one — but this repo's pitch is "contribute a lens", and a catalog that
       # disagrees with the code sends contributors at the wrong thing. Three lines to prevent that.
-      - name: builtin-lenses.csv drift (regenerate → expect no diff)
+      - name: builtin-lenses.csv drift (regenerate)
         shell: bash
         run: |
           set -o pipefail
           # #33 verify R14 (E-1): the regen script evaluates the harness with node — a SyntaxError code
           # frame echoes fork-controlled source. Same filter as py_compile (single implementation).
-          bash references/regen-builtin-lenses.sh 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
+          { bash references/regen-builtin-lenses.sh; } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
+
+      # #59：比對與 `::error::` 拆成自己的 step——放進上一步的過濾群組，annotation 會被 neutralise 中和掉；
+      # 留在群組外，`--strict` 的群組規則不接受（群組外的命令印什麼 lint 看不出來）。
+      - name: builtin-lenses.csv drift (expect no diff)
+        # LOG-FILTER: none — `git diff --quiet` prints no diff body; the only output is the fixed ::error:: text below
+        shell: bash
+        run: |
           # #33 verify R13 (R13-5): do NOT print the diff body — a lens `focus` is fork-controlled
           # text and `##[…]` / `::` inside it would land in this step's log verbatim (the V1 parser
           # is IndexOf-based). `--quiet` reports drift without echoing content.
@@ -130,16 +143,20 @@ jobs:
       # #33 verify R15 (regression F1): R14's copy of the guard could not fire — bats truncates the CJK
       # skip reason mid-codepoint, grep sees a binary file and `-q` reports no match. `-a` reads it as
       # text; and the TAP plan-vs-executed check from the macOS job comes along (it was a strict subset).
-      - name: bats (pack anchor) — fail on failure OR on skip
+      - name: bats (pack anchor) — run the suite, keep the TAP
         shell: bash
         run: |
           set -o pipefail
-          TAP="${RUNNER_TEMP:-/tmp}/pack-anchor.tap"
-          rc=0
-          bats --formatter tap test/pai-collect-lens-layers.bats 2>&1 | tee "$TAP" 2>&1 | python3 ../pai-lenses/scripts/neutralise.py || rc=$?
-          # #33 verify R16 DA-6: one implementation of the TAP guard, called from three places (was three hand-copies).
-          bash test/assert-tap-complete.sh "$TAP" "pai-collect-lens-layers.bats"
-          exit "$rc"
+          { bats --formatter tap test/pai-collect-lens-layers.bats 2>&1 | tee "${RUNNER_TEMP:-/tmp}/pack-anchor.tap"; } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
+
+      # #59：TAP 守衛拆成自己的 step——它印的 `::error::` 放進上一步的過濾群組會被中和掉。
+      # `success() || failure()`：上一步（bats 失敗）紅了也要跑，才印得出「哪一種」失敗（取代先前的 `rc=$?` ⋯ `exit "$rc"`）。
+      - name: bats (pack anchor) — fail on failure OR on skip (TAP guard)
+        if: success() || failure()
+        # LOG-FILTER: none — assert-tap-complete.sh prints fixed ::error:: text and TAP counts only, never TAP lines
+        shell: bash
+        # #33 verify R16 DA-6: one implementation of the TAP guard, called from three places (was three hand-copies).
+        run: bash test/assert-tap-complete.sh "${RUNNER_TEMP:-/tmp}/pack-anchor.tap" "pai-collect-lens-layers.bats"
 
       # 守備範圍（#33 verify R13 security S2 / DA-4）：validate.py 的輸出邊界只守它自己那個 **step** 的 log
       # （`::stop-commands::` 是 step-scoped；跨 step 的只有 `::add-mask::`）；這裡的 node 測試（以及 bats）是 PR 自己的程式碼，stdout 原樣進 step log —— 那是
@@ -280,13 +297,13 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          python3 -m py_compile scripts/*.py 2>&1 | python3 scripts/neutralise.py
+          { python3 -m py_compile scripts/*.py; } 2>&1 | python3 scripts/neutralise.py
 
       - name: validate.py 自身的回歸測試（stdlib unittest，無額外依賴）
         shell: bash
         run: |
           set -o pipefail
-          python3 scripts/test_validate.py 2>&1 | python3 scripts/neutralise.py
+          { python3 scripts/test_validate.py; } 2>&1 | python3 scripts/neutralise.py
 
       # 完整的 mutation 量測太慢（一輪 = 靶數 × 全套測試（本機最近一輪：112 靶 / 64.2 分 / 每靶 34.4 s，由 mutation_check.py 收尾自己印）），不進 CI。但**靶清單相對
       # validate.py 的漂移**便宜就能擋：改動被 mutate 的那幾行、或搬走一道閘門，靶就對不上。
@@ -295,7 +312,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          python3 scripts/mutation_check.py --check-targets 2>&1 | python3 scripts/neutralise.py
+          { python3 scripts/mutation_check.py --check-targets; } 2>&1 | python3 scripts/neutralise.py
 
       # 檢查的內容不寫進 workflow 而放在 scripts/validate.py：`run: |` 區塊裡的
       # heredoc 一旦把內容放在第 0 欄就會跳出 YAML block scalar，workflow 靜默停止解析。

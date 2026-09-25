@@ -81,6 +81,17 @@ KNOWN_DISAGREE = {
     ("gen-d-yaml-tag-bang.yml", "tag-bang"):
         "YAML tag 一律 fail-closed（R30 MB-8 堵 `jobs: !!map` 隱形 job）；`!!str` 因此被連帶擋下。"
         "野外 0/1565，不值得為它動那條守著真洞的路徑。",
+    # **`--strict` 群組規則只收恰好一對大括號**（#59／#60）⇒ 群組裡再包一個群組是誤擋。刻意保留：計深度要判斷每個
+    # `{`／`}` 在 bash 眼中是不是保留字，而 `case` 模式的 `{)` 會讓計數器以為群組還開著（`bypass-strict-group-case-pattern-brace`
+    # 實測外流）。代價只落在 `--strict`（真 workflow）：要短路改寫成 `if`，repo 自己的 workflow 沒有巢狀群組。
+    ("ci-log-filter-restrict-strict-group-nested.yml", "nested group"):
+        "群組規則只收恰好一對大括號（計深度會被 `case` 的 `{)` 騙過）；巢狀群組因此被連帶擋下，改寫成 `if` 即可。",
+    # **神諭的 python3 是 stub**：它不檢查路徑存不存在，所以真 python3 的「can't open file '<路徑>'」（路徑裡帶著展開後的
+    # PR 文字、寫在 python3 自己的 stderr）在這裡不會出現。lint 擋下是對的，神諭量不到——這是儀器的盲區，不是 lint 的誤擋。
+    ("ci-log-filter-bypass-strict-group-expansion-in-filter-path.yml", "expansion in the filter path"):
+        "stub python3 不報「can't open file」；真 python3 會把含 PR 文字的路徑印到群組外的 stderr。",
+    ("ci-log-filter-bypass-strict-group-variable-filter-path.yml", "variable in the filter path"):
+        "同上：路徑是 `$PR_TITLE/neutralise.py`，stub python3 不報「can't open file」。",
 }
 
 # lint 自己的宣告正規式（與 `lint-ci-log-filter.sh` 的 `LOGFILTER_RE` 同形）。這裡只用它判**文字長相**；
@@ -95,6 +106,8 @@ PR_MARKER = "ORACLE-PR-TITLE-MARKER"
 # 判定表的**種類**（#33 verify R34 requirements F3）：每一列的判定都必須以其中之一開頭（`main()` 逐列 assert）。
 # CHANGELOG 的「判定表有 N 種」由 `lint-changelog-counts.sh` 讀這個常數驗——前一版那一句量的是 CHANGELOG 自己打的字面清單，
 # 永遠抓不到 CHANGELOG 與神諭分岔。「不一致」的兩種各自帶後綴（繞過／誤擋），所以這裡列的是完整前綴。
+# 形狀像已知類別、`--strict` 卻放行 ⇒ 不是已知，是真繞過（計入不一致、rc=1）。
+STRICT_MISS = "不一致：繞過（形狀像已知類別 %s，但 `--strict` 也放行——已知類別的定義是 CI 模式擋得下）"
 VERDICT_KINDS = ("一致", "不一致：繞過", "不一致：誤擋", "不可比", "量不到")
 # S-2 的**機制**判定（見 main 的 S-2 分支）：run 文字裡有 fd 轉向到 stderr 或 xtrace ⇒ 不是 S-2；
 # 接 neutralise 的管線帶了 `2>&1`／`|&` ⇒ 不是 S-2。
@@ -334,6 +347,16 @@ def main(argv):
             ranges = [(a + 1, b + 1) for _j, _n, _r, (a, b), _sh in steps]
             declared_cls = set(re.findall(r"^# KNOWN-CLASS: (\S+)", text, re.M))
             seen_cls = set()
+            # **已知類別＝`--strict` 真的擋下這個 step**（#59／#60）：G 與 S-2 是「預設模式（量詞法）放行、CI 用的
+            # `--strict` 擋下」的類別。前一版只按形狀歸類，於是「`--strict` 也放行的同形繞過」一樣被算成已知、不改 rc。
+            # 現在歸類前先問 `--strict`：它對這個 step 印 RULE（pipefail 那條除外——它管退出碼，不管外流）或 PARSE，
+            # 才算已知；否則是真繞過。檔案本身就用 `--strict` 跑的，上面那一次就是答案。
+            if "--strict" in largs:
+                rs = r
+            else:
+                rs = subprocess.run(["bash", str(LINT), "--strict"] + largs + [str(f)], capture_output=True, text=True)
+            # 逐則訊息判斷，不用行號相減：同一個 step 可以同時吃 pipefail 與群組兩條 RULE（行號相同）。
+            strict_block = {int(m.group(1)) for m in re.finditer(r":(\d+): (?:PARSE: |RULE: (?!\[--strict\][^\n]*pipefail))", rs.stderr)}
             # **一次算完**：落在任何一個 step 範圍外的 PARSE 才是結構性的（整檔不可信）。
             # 前一版在每個 step 內各算一次，於是別的 step 的 PARSE 讓這個 step 也變成 PARSE
             # （`bypass-duplicate-key` 的合規對照 step 被算成「PARSE ∧ piped」＝誤擋，R31 自查）。
@@ -346,6 +369,8 @@ def main(argv):
                     rows.append((f.name, name, "-", "-", "不可比（%s——神諭只會用 bash 跑）" % shell_note)); continue
                 o, obs, leaked = run_script(run, bash, stub_bin)
                 in_step = lambda s: any(a + 1 <= x <= b + 1 for x in s)
+                strict_blocks = lambda: in_step(strict_block) or any(
+                    not any(lo <= x <= hi for lo, hi in ranges) for x in strict_block)
                 # step 範圍外的 PARSE 是**結構性**的（整檔不可信）→ 所有 step 都不可比；
                 # 範圍內的 PARSE 只影響那一個 step。前一版對整檔一視同仁，於是
                 # `bypass-duplicate-key` 的合規對照 step 被算成「PARSE ∧ piped」＝誤擋（R31 自查）。
@@ -377,8 +402,9 @@ def main(argv):
                         # 只能是**另一條命令**印的——這正是 lint 明寫的限制第 2 條「一條管線＝整個區塊已過濾」
                         # （Codex 第 4 條）。與詞法繞過不同（那種 bash 不會建管線，o ≠ piped，走下面那一支）。
                         # 按類別記已知，與 S-2 同理：整類在「什麼算已過濾」改掉的那一天一起翻。
-                        verdict = "不一致：繞過（已知類別 G：一條管線＝整個區塊已過濾——顆粒度，限制第 2 條）"
-                        known_cat.append(key); seen_cls.add("G")
+                        verdict = "不一致：繞過（已知類別 G：一條管線＝整個區塊已過濾——顆粒度，限制第 2 條；`--strict` 的群組規則擋）"
+                        if strict_blocks(): known_cat.append(key); seen_cls.add("G")
+                        else: verdict = STRICT_MISS % "G"
                     elif leaked[1] and not STDERR_ROUTE_RE.search(run) and not NEUT_WITH_STDERR_RE.search(run):
                         # **S-2 按機制歸類，不按症狀**（#33 verify R34 security S-2／logic F5／DA G-B）：前一版只要
                         # 「只有 stderr 帶 PR 文字」就記已知，於是 `>&2 2>&1 |`、`>&2 |&`、`set -x` 後接 `2>&1 |`
@@ -386,7 +412,8 @@ def main(argv):
                         # 現在只有「接 neutralise 的管線確實缺 `2>&1`／`|&`、而且沒有 fd 轉向或 xtrace」才是 S-2——
                         # 那一類在 `--strict`（CI 對真 workflow 用的模式）會被規則擋下；預設模式不要求它。
                         verdict = "不一致：繞過（已知類別 S-2：僅 stderr，接 neutralise 的管線缺 `2>&1`——預設模式不要求，`--strict` 要求）"
-                        known_cat.append(key); seen_cls.add("S-2")
+                        if strict_blocks(): known_cat.append(key); seen_cls.add("S-2")
+                        else: verdict = STRICT_MISS % "S-2"
                     elif leaked[1] and STDERR_ROUTE_RE.search(run):
                         # fd 轉向或 xtrace：lint 的 fd 流向規則該擋下它——lint 放行就是真繞過，不屬任何已知類別。
                         verdict = "不一致：繞過（stderr 外流，run 裡有 fd 轉向／xtrace——lint 的 fd 流向規則應擋下）"
@@ -395,8 +422,12 @@ def main(argv):
                         # 的另一條命令（例：單獨一行 `cat "$PR_TITLE"`）——與 G 同一個限制（一條管線＝整個區塊已過濾），
                         # 只是走 stderr。歸 G；`known-granularity-stderr-other-command` 是它的範例，S-2 若退回按症狀歸類，
                         # 那一檔會被錯歸成 S-2 而觸發 KNOWN-CLASS 過期。
-                        verdict = "不一致：繞過（已知類別 G：一條管線＝整個區塊已過濾——stderr 版本，限制第 2 條）"
-                        known_cat.append(key); seen_cls.add("G")
+                        # #60 第 2 類（管線那一段的 `2>&1` 生效**之前**寫出的展開期／重導向錯誤）也落在這一格：神諭分不出
+                        # 印 PR 文字的是另一條命令還是同一段的展開，而兩者由同一條 `--strict` 群組規則關掉。
+                        verdict = ("不一致：繞過（已知類別 G：stderr 不經過濾——管線以外的命令，或那一段 `2>&1` 生效前的"
+                                   "展開期／重導向錯誤；`--strict` 的群組規則擋）")
+                        if strict_blocks(): known_cat.append(key); seen_cls.add("G")
+                        else: verdict = STRICT_MISS % "G"
                     else:
                         verdict = "一致"
                 elif lint == "pass":

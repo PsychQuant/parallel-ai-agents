@@ -67,12 +67,12 @@ if [ "${1:-}" = "--selftest" ]; then
   done
   # R24 regression F9：門檻寫成 `>=` 而實際值更高時，那個差額**沒有網**——刪掉一個 fixture 仍然綠。
   # 三個門檻一律改成**等於實測值**：要加 fixture 就同步改這裡，讓「少了一個」立刻紅。
-  if [ "${n_pass}" -ne 108 ]; then
-    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 108（改動 fixture 請同步改這個數字）" >&2
+  if [ "${n_pass}" -ne 110 ]; then
+    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 110（改動 fixture 請同步改這個數字）" >&2
     fail=1
   fi
-  if [ "${n_rule}" -ne 98 ]; then
-    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 98" >&2
+  if [ "${n_rule}" -ne 118 ]; then
+    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 118" >&2
     fail=1
   fi
   if [ "${fail}" -ne 0 ]; then exit 1; fi
@@ -154,7 +154,6 @@ LOGFILTER_RE = re.compile(r"^\s*#\s*LOG-FILTER:\s*(in-process|none — .+)")
 # `>&2 2>&1 |` 的 `>&2` 先把 fd1 指到原本的 stderr；xtrace 在命令自己的 `2>&1` 套用之前就印到 shell 的 fd2。
 # 只對「靠管線過濾」的 step 適用；`# LOG-FILTER:` 明示不過濾的 step 不受限（它已經聲明不印 PR 文字）。
 FD_RE = re.compile(r">&\s*2\b|>\s*/dev/stderr|\bset\b[^;&|]*\s-[A-Za-z]*x|\bset\b[^;&|]*-o\s+xtrace\b|\bbash\s+-[A-Za-z]*x")
-STRICT_NEUT_RE = re.compile(r"(2>&1\s*\||\|&)\s*python3\s+\S*neutralise\.py")
 PIPEFAIL_RE = re.compile(r"\bset\b[^;&|]*-[A-Za-z]*o\s+pipefail\b")
 ANY_PIPE_RE = re.compile(r"(?<!\|)\|(?!\|)")
 # `--strict` 接受的 shell：`bash`，可帶 GitHub 模板的 `{0}` 與選項（`bash -euo pipefail {0}`、`bash --noprofile --norc -e {0}`）；
@@ -547,14 +546,15 @@ def shell_scan(lines):
       * 續行重掃前還原 `pending` 快照：前一版只還原 quote／prev_sig，同一個 heredoc 被排兩次。
     **已知不涵蓋，第二組（這一組是封閉列舉，只有三條，不得依性質相似類推第四條；R32 抓到它們不在檔內）**：
       1. **stderr（預設模式）**：預設模式的 `PIPED_RE` 只要求管線存在，不要求 `2>&1`／`|&`（已知類別 S-2，範例
-         `known-stderr-cmd-error-missing-2to1`）。**`--strict` 要求它**——CI 與 run.sh 對真 workflow 用 `--strict`，
-         所以這一條只剩 fixture／產生語料（它們量的是詞法）。另：把輸出轉到 stderr 或開 xtrace 的寫法（`>&2`、
+         `known-stderr-cmd-error-missing-2to1`）；帶了 `2>&1` 也擋不住那一段 `2>&1` 生效**之前**寫出的展開期／重導向
+         錯誤（#60 第 2 類，範例 `known-expansion-error-before-2to1`）。**`--strict` 的群組規則兩者都擋**——CI 與 run.sh
+         對真 workflow 用 `--strict`，所以這一條只剩 fixture／產生語料（它們量的是詞法）。另：把輸出轉到 stderr 或開 xtrace 的寫法（`>&2`、
          `set -x`…）在**兩種模式**都是規則（R35；R33 的 S-2 範例用的正是 `>&2`，它不屬於這一條）。
          R34 更正：R33 這裡寫「repo 自己的 17 條管線全部已帶 `2>&1`／`|&`」——`--strict` 第一次跑就在 pack anchor
          那一步抓到一條 `… | tee | python3 …` 的最後一段沒帶（`tee` 的 stderr 沒有 PR 文字，但宣稱是假的）。
-      2. **顆粒度**：一個 run 區塊裡**任一條**邏輯行接了管線，整個區塊就算已過濾（Codex 第 4 條）。
-         `echo "$PR_TITLE"` ⏎ `echo safe | python3 …` 因此放行。這是宣告過的語意，不是漏洞的偽裝；
-         但它從來沒寫在這份清單裡，現在寫了。要關它得改「什麼算已過濾」，那是另一次 change——追蹤 #59。
+      2. **顆粒度（預設模式）**：一個 run 區塊裡**任一條**邏輯行接了管線，整個區塊就算已過濾（Codex 第 4 條）。
+         `echo "$PR_TITLE"` ⏎ `echo safe | python3 …` 因此放行（已知類別 G）。**`--strict` 改了「什麼算已過濾」**
+         （#59）：整個區塊必須是一個 `{ …; } 2>&1 | python3 …neutralise.py` 群組（見 `strict_group_violation`）。
          同一條也涵蓋「管線不可達」：外流的行先執行、接管線的行因語法錯誤／`exit`／沒走到的分支不執行
          （R35 已把其中「引號開到區塊結尾」改成 fail-closed）。
       3. **多行分隔字**：`cat <<"A` ⏎ `B" | python3 …` 在 bash 是引號跨行、heredoc 永不終止但**管線照建**；
@@ -876,11 +876,108 @@ REQUIRE_RUN_STEPS = "--require-run-steps" in sys.argv
 # **`--strict`**（#33 verify R35）：CI 與 run.sh 對**真的 workflow** 用這個模式。多兩條規則：
 #   (1) 有管線的 step 必須跑在 pipefail 之下（`shell: bash`／defaults 是 bash／run 裡先 `set -o pipefail`）——
 #       R33 的形狀普查 step 缺它，閘門在 CI 上結構上紅不了（R34 security S-1／regression H-3／requirements F1）；
-#   (2) 接 neutralise 的管線必須帶 `2>&1` 或用 `|&`——已知類別 S-2 在這個模式下是規則（R34 requirements F4）。
+#       群組形式的 step，`set -o pipefail` 必須寫在群組**前**的 `set` 前綴裡；
+#   (2) 靠管線過濾的 step，整個 run 區塊必須是**一個群組** `{ …; } 2>&1 | python3 …neutralise.py`（#59／#60；
+#       R35 的前一版只要求「接 neutralise 的管線帶 `2>&1`」——已知類別 S-2 在這個模式下是規則，G 與展開期錯誤不是）。
 # 預設模式不要求這兩條：fixture 與產生語料量的是**詞法**，不是 CI 的寫法規範；改寫兩百個 fixture 的管線只會讓
 # 每一個詞法形狀多一個與它無關的變數。
 STRICT = "--strict" in sys.argv
 FLAGS = ("--require-run-steps", "--strict")
+
+# **`--strict` 的群組規則**（#59／#60）：靠管線過濾的 step，整個 run 區塊必須是
+#     [若干行 `set -e`／`-u`／`-o pipefail`]
+#     { …整個區塊… ; } 2>&1 | python3 <路徑>/neutralise.py        （或 `} |& python3 …`）
+# 前一版的 `--strict` 只要求「接 neutralise 的管線帶 `2>&1`」，關不掉兩類：
+#   · #59（已知類別 G）：同一個區塊裡**另一條命令**印的 PR 文字不經任何管線；
+#   · #60 第 2 類：bash 先展開詞、再由左到右套用重導向——`echo "${!PR_TITLE}" 2>&1 | …` 的展開期錯誤、
+#     `echo x > "$PR_TITLE" 2>&1 | …` 的重導向錯誤，都在那一段的 `2>&1` 生效**之前**寫到當下的 stderr。
+# 群組的重導向在群組內任何展開之前生效，而整個區塊都在群組裡——兩類一起關掉，不需要 taint、不列拼法清單。
+#
+# **為什麼是「恰好一個 `{`、一個 `}`」而不是計深度**：計深度要知道每個 `{`／`}` 在 bash 眼中是不是保留字，
+# 而 `case` 的模式（`{)`）、陣列字面（`a=(` ⏎ `}` ⏎ `)`）裡的大括號不是——一個被多算的 `{` 讓 lint 以為群組
+# 還開著、bash 卻已經關了，之後那一行就在群組外執行（bash 5.2 實測：`{` ⏎ `case x in` ⏎ `{) :;;` ⏎ `esac` ⏎ `}` ⏎
+# `echo "$PR_TITLE"` ⏎ `} 2>&1 | …` 印出 PR 文字）。只允許一對，就不必判斷：
+#   · 程式碼半邊（引號內容、`\` 逃脫、`${…}`、算術、heredoc 內文、註解都已挖空）裡的**獨立詞** `{`／`}`
+#     是 bash 保留字的超集；多出任何一個 ⇒ 拒絕。
+#   · 唯一的 `{` 是 `set` 前綴之後第一個詞 ⇒ bash 一定把它當群組開頭。
+#   · 唯一的 `}` 若因為某個沒收的構造（`case`、陣列、`$(`）而不被 bash 當成保留字，群組就到檔尾都沒關——
+#     bash 在執行群組裡任何東西之前就報語法錯誤（它先讀完整個複合命令），什麼都不會印。
+# `set` 前綴只收 `-e`／`-u`／`-o pipefail|errexit|nounset`：`set -v` 會把原始碼（含 runner 代入的 `${{ … }}`）
+# 印到群組外的 stderr，`-x` 同理。
+# **子殼層 `( … ) 2>&1 |` 不收**：`(`／`)` 也出現在 `$(`、`$((`、陣列、`case` 模式裡，同一套「恰好一對」的論證不成立。
+# 斷詞只認 ASCII 空白與 tab——bash 的詞界就是這兩個加上 metachar。Python 的 `\s` 還認 NBSP 等 Unicode 空白：
+# `{<NBSP>true` 在 `\s` 下斷成 `{`、`true`，bash 卻讀成一個詞（不存在的命令），群組根本沒開、後面的行在過濾之外
+# （bash 5.2 實測外流；`bypass-strict-group-nbsp-after-opener`）。
+GROUP_TOK_RE = re.compile(r"&>>|&>|>&|<&|>>|<<<|<<|&&|\|\||\|&|;;|[;&|()<>]|[^ \t;&|()<>]+")
+GROUP_TAIL = (["2", ">&", "1", "|", "python3"], ["|&", "python3"])
+NEUT_PATH_RE = re.compile(r"^[\w./-]*neutralise\.py$")
+SET_OPT_NAMES = {"pipefail", "errexit", "nounset"}
+
+
+def _set_prefix_line(toks):
+    """`set` 前綴行：只收 `-e`／`-u`（可合寫）與 `-o NAME`（可與 `-eu` 合寫成 `-euo NAME`），NAME 限 SET_OPT_NAMES。
+    裸 `set` 不收：它把**所有變數**（含 PR 可控的 env）印到群組外的 stdout。"""
+    if toks[:1] != ["set"] or len(toks) < 2:
+        return False
+    k = 1
+    while k < len(toks):
+        m = re.fullmatch(r"-(?=.)([eu]*)(o?)", toks[k])       # `(?=.)`：單獨一個 `-` 不是選項
+        if not m:
+            return False
+        if m.group(2):
+            if toks[k + 1:k + 2] not in [[n] for n in SET_OPT_NAMES]:
+                return False
+            k += 1
+        k += 1
+    return True
+
+
+OPEN_AT_RE = re.compile(r"(?<![^ \t;&|()<>])\{(?![^ \t;&|()<>])")     # 實體行裡獨立詞 `{`／`}` 的位置
+CLOSE_AT_RE = re.compile(r"(?<![^ \t;&|()<>])\}(?![^ \t;&|()<>])")
+
+
+def strict_group_violation(logical, code, raw):
+    """回 (違規原因 or None, set 前綴的邏輯行)。`logical` 是 shell_scan 的程式碼半邊接成的邏輯行；
+    `code`／`raw` 是逐實體行對齊的程式碼半邊與原文（字面檢查用）。"""
+    toks = [GROUP_TOK_RE.findall(l) for l in logical]
+    k = next((i for i, t in enumerate(toks) if not _set_prefix_line(t)), len(toks))
+    prefix, body = logical[:k], toks[k:]
+    if not body:
+        return "run 區塊只有 `set` 前綴，沒有群組", prefix
+    flat = [t for line in body for t in line]
+    n_open, n_close = flat.count("{"), flat.count("}")
+    if body[0][:1] != ["{"]:
+        return ("`set` 前綴之後的第一個詞必須是群組的 `{`，實際是 `%s`（前綴只收 `set` 的 `-e`／`-u`／`-o <選項>`，不得開 `-v`／`-x`）"
+                % (body[0][0] if body[0] else ""), prefix)
+    if (n_open, n_close) != (1, 1):
+        return ("區塊裡獨立的 `{` 有 %d 個、`}` 有 %d 個——群組規則只接受恰好一對（巢狀群組、`case` 模式、陣列裡的"
+                "大括號本 lint 不判斷是不是保留字）" % (n_open, n_close), prefix)
+    last = body[-1]
+    if "}" not in last:
+        return "群組的 `}` 必須在最後一個邏輯行——它之後的命令在過濾之外", prefix
+    c = last.index("}")
+    if c and last[c - 1] not in (";", "&"):
+        return "群組的 `}` 必須在命令位置（行首，或緊接在 `;`／`&` 之後）——否則它只是一個參數", prefix
+    tail = last[c + 1:]
+    if not (tail[:-1] in GROUP_TAIL and NEUT_PATH_RE.match(tail[-1])):
+        return ("群組的 `}` 之後必須恰好是 `2>&1 | python3 <路徑>/neutralise.py` 或 `|& python3 <路徑>/neutralise.py`"
+                "（路徑不加引號、不帶變數），實際是 `%s`" % " ".join(tail), prefix)
+    # **字面檢查**：上面每一個判斷讀的都是挖空後的程式碼——`${PR_TITLE} {` 挖空後第一個詞是 `{`、`python3 ${X}neutralise.py`
+    # 挖空後路徑是 `neutralise.py`、`set -e ${X}` 挖空後是 `set -e`，而 bash 看到的是展開後的東西（命令名、路徑、選項）。
+    # 群組**內**可以有任何東西；群組**外**這三段（`set` 前綴、`{` 之前、`}` 之後）必須逐字就是 lint 讀到的字。
+    # shell_scan 挖空時保留長度、註解整段切掉，所以同一個實體行的程式碼半邊與原文逐位置對齊；續行摺進來的行對不齊
+    # ⇒ 不相等 ⇒ 拒絕（fail-closed）。`set` 前綴的邏輯行各自就是一個實體行（它們不以 `|`／`&&`／`||` 結尾）。
+    lines = [i for i, l in enumerate(code) if l.strip()]
+    opener = lines[k]
+    closer = max(i for i in lines if CLOSE_AT_RE.search(code[i]))
+    spans = ([(i, 0, len(code[i])) for i in lines[:k]]
+             + [(opener, 0, OPEN_AT_RE.search(code[opener]).end()),
+                (closer, CLOSE_AT_RE.search(code[closer]).start(), len(code[closer]))]
+             + [(i, 0, len(code[i])) for i in lines if i > closer])
+    if not all(raw[i][a:b] == code[i][a:b] for i, a, b in spans):
+        return ("群組外的 `set` 前綴、`{` 之前、`}` 之後必須是字面文字——裡面有引號、逃脫或 `${…}` 展開"
+                "（挖空後看不見，bash 會展開成命令名、選項或路徑）", prefix)
+    return None, prefix
 rc_all = 0
 for path in [a for a in sys.argv[1:] if a not in FLAGS]:
     text = open(path, encoding="utf-8").read()
@@ -1334,7 +1431,8 @@ for path in [a for a in sys.argv[1:] if a not in FLAGS]:
         # 兩種寫法下行尾的 `|` 本來就代表管線延續，所以把 run 區塊接成一串再比對是語意正確的。
         # 管線判定只看**會被執行的部分**（引號內容已挖空、註解已剝掉）。跨行管線（折疊 scalar，
         # 或行尾留 `|` 續行）仍要接成一串才判得到——但接的是 code 半邊，不再是原始文字。
-        run_code, shell_decls, run_unparsed = shell_scan(fold_block(dedent_block(run_lines, explicit_pad), block_folded))
+        scan_in = fold_block(dedent_block(run_lines, explicit_pad), block_folded)
+        run_code, shell_decls, run_unparsed = shell_scan(scan_in)
         if run_unparsed:
             reject(r, run_unparsed)
             continue
@@ -1354,6 +1452,7 @@ for path in [a for a in sys.argv[1:] if a not in FLAGS]:
         via_pipe = any(PIPED_RE.search(l) for l in logical)
         declared = any(LOGFILTER_RE.match(l) for l in decl_lines)
         ok = via_pipe or declared
+        group_why, group_prefix = strict_group_violation(logical, run_code, scan_in) if STRICT else (None, [])
         if not ok:
             print("%s:%d: RULE: step '%s' 的 run 區塊既沒有經 neutralise.py，也沒有 `# LOG-FILTER:` 註解說明為何不過濾"
                   % (path, s["start"] + 1, s["name"]), file=sys.stderr)
@@ -1362,14 +1461,22 @@ for path in [a for a in sys.argv[1:] if a not in FLAGS]:
             print("%s:%d: RULE: step '%s' 靠管線過濾，卻把輸出轉到 stderr（`>&2`／`/dev/stderr`）或開了 xtrace——"
                   "那些文字不經過管線（帶了 `2>&1` 也一樣：重導向由左到右套用）" % (path, s["start"] + 1, s["name"]), file=sys.stderr)
             rc = 1
-        elif STRICT and not declared and (sum(len(PIPED_RE.findall(l)) for l in logical)
-                                           > sum(len(STRICT_NEUT_RE.findall(l)) for l in logical)):
-            print("%s:%d: RULE: [--strict] step '%s' 接 neutralise.py 的管線沒有帶 `2>&1`（或用 `|&`）——"
-                  "PR 文字會從 stderr 繞過" % (path, s["start"] + 1, s["name"]), file=sys.stderr)
+        elif not declared and group_why:                  # group_why 只在 --strict 下計算
+            # 訊息不得含 pipefail 這個字：oracle.py 以它辨認「只因退出碼遮蔽而紅」的列。
+            print("%s:%d: RULE: [--strict] step '%s' 靠管線過濾，但 run 區塊不是整個包在一個群組裡"
+                  "（`{ …; } 2>&1 | python3 …neutralise.py`）——群組外的命令、以及管線那一段 `2>&1` 生效之前的"
+                  "展開期／重導向錯誤，都不經過濾（#59／#60）：%s"
+                  % (path, s["start"] + 1, s["name"], group_why), file=sys.stderr)
             rc = 1
         if STRICT and not is_bash:
-            first_pipe = next((k for k, l in enumerate(logical) if ANY_PIPE_RE.search(l)), None)
-            if first_pipe is not None and not any(PIPEFAIL_RE.search(l) for l in logical[:first_pipe + 1]):
+            if group_why is None:
+                # 群組形式：pipefail 必須在 `set` 前綴裡——群組在管線裡是子殼層，群組內的 `set -o pipefail`
+                # 管不到外層那條 `{ … } | python3 …` 管線。
+                window = group_prefix
+            else:
+                first_pipe = next((k for k, l in enumerate(logical) if ANY_PIPE_RE.search(l)), None)
+                window = None if first_pipe is None else logical[:first_pipe + 1]
+            if window is not None and not any(PIPEFAIL_RE.search(l) for l in window):
                 print("%s:%d: RULE: [--strict] step '%s' 有管線，卻沒有跑在 pipefail 之下（沒寫 `shell: bash`、defaults 不是 bash、"
                       "run 裡也沒先 `set -o pipefail`）——GitHub 預設 `bash -e {0}`，管線前段的失敗會被後段的 rc 蓋掉"
                       % (path, s["start"] + 1, s["name"]), file=sys.stderr)

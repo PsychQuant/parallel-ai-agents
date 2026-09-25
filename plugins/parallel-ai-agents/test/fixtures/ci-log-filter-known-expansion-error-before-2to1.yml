@@ -1,0 +1,15 @@
+# #60 第 2 類（預設模式）：`${!PR_TITLE}` 的展開期錯誤在這一段的 `2>&1` 生效**之前**寫到 stderr——帶了 `2>&1`
+# 仍然外流。預設模式量的是詞法、放行它；`--strict`（CI 對真 workflow 用的模式）的群組規則擋下
+# （對照 `bypass-strict-expansion-error-indirect`）。神諭歸它進 G 的 stderr 格：它分不出印 PR 文字的是
+# 另一條命令還是同一段的展開，兩者由同一條群組規則關掉；「已知」的判準是 `--strict` 真的擋下這個 step。
+# KNOWN-CLASS: G
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: expansion-time error before 2>&1 applies
+        run: |
+          echo "${!PR_TITLE}" 2>&1 | python3 scripts/neutralise.py

@@ -1,0 +1,14 @@
+# #59：群組**之後**的命令同樣在過濾之外——`}` 必須在最後一個邏輯行。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: command after the group
+        shell: bash
+        run: |
+          { echo safe; } 2>&1 | python3 scripts/neutralise.py
+          echo "::notice::$PR_TITLE"

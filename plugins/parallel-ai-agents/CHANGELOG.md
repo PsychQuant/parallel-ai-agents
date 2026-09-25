@@ -618,6 +618,41 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
     （security S-4 / regression F3，改成 lint 認的形式）；mutation 耗時再上修為 30–50 分（logic 實測 29 s × 96 ≈ 47 分）。
   測試 118 → 124 條；靶清單 96 → 98 個（3 個 EXPECTED_SURVIVE；lint 形式的宣稱只留在最新一段）。
   量測（R16 後）：全輪 98 靶 93 殺／2 存活（emit 自己的中和層，補單元測試後單靶轉殺）→ 95／0／3（複合值）。
+- **#59／#60 —— `--strict` 改成群組規則：靠管線過濾的 step，整個 run 區塊必須是一個 `{ …; } 2>&1 | python3 …neutralise.py`。**
+  兩張 issue 是同一個缺口的兩面：R35 的 `--strict` 只要求「接 neutralise 的管線帶 `2>&1`」，那量的是**有沒有一條**過濾管線，
+  不是**每一個位元組**都經過它——(1) 同一個區塊裡另一條命令印的 PR 文字不經任何管線（#59，已知類別 G）；(2) bash 先展開詞、
+  再由左到右套用重導向，`echo "${!PR_TITLE}" 2>&1 | …` 的展開期錯誤、`echo x > "$PR_TITLE" 2>&1 | …` 的重導向錯誤，都在那一段的
+  `2>&1` 生效**之前**寫到當下的 stderr（#60 第 2 類，逐段 `2>&1` 在結構上看不到）。群組的重導向在群組內任何展開之前生效，
+  而整個區塊都在群組裡——兩類一起關掉，不需要 taint，也不列拼法清單（#60 Expected 的第一個方向；第二、三個方向不採用）。
+  - **規則**（`strict_group_violation`）：`set` 前綴（只收 `-e`／`-u`／`-o pipefail|errexit|nounset`；裸 `set` 印出所有變數、
+    `-v`／`-o verbose` 印出含 `${{ … }}` 代入值的原始碼，都不收）＋ 恰好一對獨立詞 `{`／`}` ＋ `}` 在最後一個邏輯行的命令位置
+    ＋ 之後恰好是 `2>&1 | python3 <路徑>/neutralise.py` 或 `|& python3 …`。有管線而 shell 不是 bash 時，`set -o pipefail`
+    必須在前綴裡（群組在管線裡是子殼層，群組內的 `set` 管不到外層管線）。
+  - **為什麼是「恰好一對」而不是計深度**：計深度要判斷每個大括號在 bash 眼中是不是保留字；`case` 的模式 `{)` 不是，計數器會以為
+    群組還開著、bash 已經關了——`bypass-strict-group-case-pattern-brace` 在 bash 5.2 實測外流。只收一對就不必判斷：多出任何一個
+    ⇒ 拒絕；唯一的 `}` 若被某個沒收的構造吞掉，bash 讀不完那個複合命令、群組裡什麼都不執行。代價是巢狀群組被連帶擋下
+    （`restrict-strict-group-nested`，神諭記在 KNOWN_DISAGREE；改寫成 `if` 即可）。
+  - **字面檢查**：規則讀的是 shell_scan 挖空後的程式碼，而群組**外**被挖空的內容 bash 會展開——`${PR_TITLE} {` 挖空後第一個詞是
+    `{`（bash 把 PR 文字當命令名執行）、`python3 ${X}neutralise.py` 挖空後路徑是 `neutralise.py`、`set -e ${X:+-v}` 挖空後是
+    `set -e`。群組外這三段（前綴、`{` 之前、`}` 之後）必須與原文逐字相同。這一條是寫 opsweep 存活者的 fixture 時自己找到的，
+    不在兩張 issue 裡。斷詞只認 ASCII 空白與 tab：Python 的 `\s` 還認 NBSP，`{<NBSP>true` 會被讀成開群組，bash 卻讀成一個
+    不存在的命令、群組沒開、下一行在過濾之外（`bypass-strict-group-nbsp-after-opener`；自審時找到，改回 `\s` 這一檔即放行）。
+  - **test.yml**：10 個靠管線過濾的 step 改成群組形式（另外 5 個本來就是單一群組）；兩個刻意印 `::error::` 的檢查（`builtin-lenses.csv` drift、pack 錨點的
+    TAP 守衛）拆成自己的 `# LOG-FILTER: none` step——放進群組 annotation 會被中和，留在群組外群組規則不收。pack 錨點原本的
+    `assert-tap-complete.sh` 就在管線之外，是 repo 裡一個真的 G 類實例（它只印固定文字與計數，所以沒有外流）。
+    TAP 守衛用 `if: success() || failure()` 取代先前的 `rc=$?` ⋯ `exit "$rc"`。
+  - **神諭**：已知類別（G、S-2）的判準改成「`--strict` 真的擋下這個 step」（RULE，pipefail 那條除外；或 PARSE）——前一版只按形狀
+    歸類，`--strict` 也放行的同形繞過一樣算已知、不改 rc。產生語料上 62 條已知逐條都被 `--strict` 擋下（數字與 base 相同）。
+    #60 第 2 類補了預設模式的範例 `known-expansion-error-before-2to1`（歸 G 的 stderr 格：神諭分不出印 PR 文字的是另一條命令還是
+    同一段的展開，兩者由同一條群組規則關掉）。
+  - 既有 `--strict` fixture 改寫成群組形式，讓每一檔仍然只因它點名的那條規則變紅（pipefail 三檔先前會同時吃到群組規則，拿掉 pipefail
+    規則也照樣紅）；`run: { … }` 的純量寫法是 YAML flow mapping（PyYAML 拒絕整檔），一律改成 `run: |`。
+  數字：lint fixture 268 → 290 個（`python3 -c "import pathlib;print(len(list(pathlib.Path('test/fixtures').glob('ci-log-filter-*.yml'))))"`）——
+  110 個正向（`python3 -c "import pathlib;print(sum(1 for f in pathlib.Path('test/fixtures').glob('ci-log-filter-*.yml') if '# EXPECT: pass' in f.read_text().splitlines()))"`）、118 條規則紅（`python3 -c "import pathlib;print(sum(1 for f in pathlib.Path('test/fixtures').glob('ci-log-filter-*.yml') if '# EXPECT: rule-red' in f.read_text().splitlines()))"`）、62 條解析紅（`python3 -c "import pathlib;print(sum(1 for f in pathlib.Path('test/fixtures').glob('ci-log-filter-*.yml') if '# EXPECT: parse-red' in f.read_text().splitlines()))"`）；
+  CI run step 25 個（`grep -c "^        run:" ../../.github/workflows/test.yml`）；fixture 神諭 381 個 step：一致 302、不一致 7（**全部已知**：
+  G 3、S-2 1、巢狀群組 1、stub python3 的盲區 2）、不可比 72、量不到 0；產生語料 624 個 step：一致 524、不一致 62（全部已知，且逐條被
+  `--strict` 擋下）、不可比 38、量不到 0；形狀普查閘門綠；mutation 靶清單 193 → 195 個（`grep -c "^    (\"" ../pai-lenses/scripts/mutation_check.py`；
+  群組規則那一條換成三條：群組、字面、pipefail 窗口，連同兩條改了靶文字的逐一實跑、全部被 selftest 殺掉）；`opsweep --since 380e4a4`（最終 lint 上跑；區域含 shell_scan，因為它的 docstring 改了）150 個突變體 → 殺 147（當掉 18、產生語料抓到而 selftest 沒抓到的 0）／存活 3（預期 1、**非預期 2**）。兩條非預期都在新程式碼、都是缺 fixture 不是等價：tail 的路徑檢查（補 `bypass-strict-group-variable-filter-path`）、`l.strip()`（`good-strict-group-forms` 補一行多縮排的註解）；補完後兩個突變體逐一實跑都被 selftest 殺掉（沒有重跑整輪）。
 - **verify R34（4 lens + DA 前半；Codex 因 OpenAI 429 缺席、使用者決定不等）— 7 HIGH（其中 3 條 R33 回歸）、7 MEDIUM blocking。**（R34 發文時寫成 8 MEDIUM，但它自己的表只有 #8–#14 七條——
   協調者合併時算錯；這裡原本照抄了那個數，R35 發 commit 前的宣稱查核抓到。）
   R33 換的證據標準確認是真的：點名的 7 個機制還原後 selftest 全部轉紅，R33 的每個數字逐條重跑吻合。**缺的是另一半**：
@@ -696,11 +731,11 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
   另有 15 條挑戰者意見分歧，我回原始資料判定採納 12 條（多數同屬「量測樹」這一個根因）、駁回 3 條。
   數字（selftest、fixture 神諭、opsweep、run.sh 在 R35 最終樹上實跑；產生語料、`--verify-expected`、三軸、全輪 mutation 在 `d135f13`
   上實跑——兩者之間只加了兩個 fixture、lint 只改 selftest 門檻四行，這四項的輸入與被量的程式碼都沒變。這裡原本寫成「全部在
-  最終樹上實跑」，是對外文字的第二輪查核抓到的）：lint fixture 173 → 268 個（`python3 -c "import pathlib;print(len(list(pathlib.Path('test/fixtures').glob('ci-log-filter-*.yml'))))"`）——
-  108 個正向（`python3 -c "import pathlib;print(sum(1 for f in pathlib.Path('test/fixtures').glob('ci-log-filter-*.yml') if '# EXPECT: pass' in f.read_text().splitlines()))"`）、98 條規則紅（`python3 -c "import pathlib;print(sum(1 for f in pathlib.Path('test/fixtures').glob('ci-log-filter-*.yml') if '# EXPECT: rule-red' in f.read_text().splitlines()))"`）、62 條解析紅（`python3 -c "import pathlib;print(sum(1 for f in pathlib.Path('test/fixtures').glob('ci-log-filter-*.yml') if '# EXPECT: parse-red' in f.read_text().splitlines()))"`）；
+  最終樹上實跑」，是對外文字的第二輪查核抓到的）：lint fixture 173 → 268 個（R35 當時以指令計數；lint 形式的宣稱只留在最新一段，見 #59／#60 段）——
+  108 個正向、98 條規則紅、62 條解析紅；
   **四個數字都改成帶指令的宣稱**（`lint-changelog-counts.sh` 會實際執行它們）——先前這一行的 fixture 計數
-  只是散文，而 selftest 的門檻與它之間沒有任何機械連結，抄錯不會有人叫。靶清單 161 → 193 個
-  （`grep -c "^    (\"" ../pai-lenses/scripts/mutation_check.py`）；CI run step 23 個（`grep -c "^        run:" ../../.github/workflows/test.yml`）；
+  只是散文，而 selftest 的門檻與它之間沒有任何機械連結，抄錯不會有人叫。靶清單 161 → 193 個；
+  CI run step 23 個；
   fixture 神諭 356 個 step：一致 282、不一致 3（**全部已知**：G 2、S-2 1——三張都是刻意寫成已知類別的 `known-*` fixture）、不可比 71、量不到 0；產生語料 624 檔：一致 524、不一致 62（**全部已知**：S-2 60、G 1、`!!str` 1）、不可比 38、
   量不到 0；`opsweep --since 6cf6864` 252 個突變體 → 249 殺（其中當掉 26）／3 存活（**非預期 0**、預期 3）；第二道判準（產生語料抓到而 selftest 沒抓到）0；`--verify-expected` 的 7 條在 624 檔上逐檔相同；
   三軸（base `6cf6864`）合成 A 1222 檔（base-綠 959）GREEN→RED 10（9 個是 `bash -n` 自己就報語法錯誤的檔、1 個跨行 `${…}`）、
@@ -767,7 +802,7 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
   靶清單 155 → 161 個（R33 當時以 grep 計數；lint 形式的宣稱只留在最新一段）（7 個 EXPECTED_SURVIVE，
   **五條全部**由 `opsweep.py --verify-expected` 在 642 檔上逐檔跑出「全部相同」——R31 留了兩條沒驗，這次沒有）；
   lint fixture 156 → 173 個（70 正向／67 規則紅／36 解析紅；`ls test/fixtures/ci-log-filter-*.yml | wc -l`）；
-  CI run step 23 個（`grep -c "^        run:" ../../.github/workflows/test.yml`）。
+  CI run step 23 個。
   三軸（base `d8340a6`）：野外清單 1565 檔中本機今日可解析 1534（31 檔隨 plugin cache 換版消失——R34 requirements F8 更正：原寫 25，1565 − 1534 = 31；`threeaxis.py`
   對解不開的路徑 fail-loud、不印假 0）／分母 362：`RULE:` 8550 → 8550、`PARSE:` 1619 → 1619、`GREEN→RED` 0、
   `RED→GREEN` 0；合成 A 1222／分母 959 同（0／0）。**但這個 0 只對一個機制是證據**：用 `shapes.py` 量野外
