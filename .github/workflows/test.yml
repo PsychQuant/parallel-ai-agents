@@ -19,7 +19,12 @@ jobs:
       run:
         working-directory: plugins/parallel-ai-agents
     steps:
-      - uses: actions/checkout@v4
+      # checkout 釘在完整 commit SHA（tag 可被重新指向，會安靜換掉 checkout 的程式碼），並關掉
+      # persist-credentials（預設 true 會把 GITHUB_TOKEN 寫進 .git/config，之後跑 PR 程式碼的 step 都讀得到）。
+      # 三個 job checkout 之後都沒有要用 token 的 git 操作（沒有 fetch / push）。換版時連同 `# vX.Y.Z` 一起改（#58）。
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       # ── step log 的 PR 可控文字怎麼處理，由 test/lint-ci-log-filter.sh --strict 對**每一個** run step 機械檢查（#33 verify R15）：
       #    經 ../pai-lenses/scripts/neutralise.py（validate.py LineSanitiser 那一份實作），或 `# LOG-FILTER:` 明示不過濾與理由。
@@ -160,7 +165,10 @@ jobs:
       run:
         working-directory: plugins/parallel-ai-agents
     steps:
-      - uses: actions/checkout@v4
+      # 釘 SHA + 不留 token，理由見第一個 job（#58）。
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       # `bash` is load-bearing (round 6 RC7, #37): bats runs under `/usr/bin/env bash`, and on the
       # macOS runner that resolved to the system bash 3.2, which cannot encode non-ASCII test
@@ -253,8 +261,11 @@ jobs:
       run:
         working-directory: plugins/pai-lenses
     steps:
-      - uses: actions/checkout@v4
+      # 釘 SHA + 不留 token，理由見第一個 job（#58）。這個 job 也不需要 token：fetch-depth: 0 在 checkout
+      # 當下就把歷史抓齊，之後 validate.py 只對本地物件庫做 diff / show / merge-base，不 fetch。
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          persist-credentials: false
           # fetch-depth: 0 是必要的 —— 預設 shallow clone 只有一個 commit，base SHA
           # 不在本地歷史裡，bump 檢查就跑不了。（validate.py 現在對此**報錯**而非略過，
           # 所以缺了不會安靜消失；但報錯也不等於檢查過 —— 還是要把歷史抓齊。）
