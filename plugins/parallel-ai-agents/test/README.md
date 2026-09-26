@@ -21,6 +21,7 @@ ensemble-* 的程式表面看似都是「LLM 驅動的編排」，不可測。�
 | `ensemble-workflow.test.mjs` | `../workflows/ensemble-workflow.js`（共用 harness，4 個 skill 的底層）|
 | `pai-parse-lens-csv.bats` | `../bin/pai-parse-lens-csv`（ensemble-compose 的 `--lens-file` CSV 解析器）|
 | `pai-list-profiles.bats` | `../bin/pai-list-profiles`（validate.py 的 profile 名稱真源：求值 harness PROFILES 印 key；`PAI_HARNESS` 只在測試裡指向 fixture，validate.py 呼叫時顯式傳入被 containment 過的路徑——#33 verify R14 E-2）|
+| `skill-lens-wiring.bats` | `../skills/ensemble-*-review/SKILL.md`（#40）：每一支專屬 review skill 都以自己的 profile 呼叫 `bin/pai-collect-lens-layers`、派發帶 `customLenses`、`profile` 不改成 `custom`、報表印 provenance 行。以目錄 glob 列舉，新增 review skill 自動涵蓋 |
 | `pai-parse-verdict.bats` | `../bin/pai-parse-verdict`（ensemble-academic-review `--auto-iterate` 的 verdict tag 解析器）|
 | `pai-iterate-decide.test.mjs` | `../bin/pai-iterate-decide`（`--auto-iterate` 主迴圈的純狀態機：halt / 套 fix / mode 交替 / focus-rotation）|
 | `pai-iter-commit.bats` | `../bin/pai-iter-commit`（`--auto-iterate` 的 per-round checkpoint commit + 空輪防護）|
