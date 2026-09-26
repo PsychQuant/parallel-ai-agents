@@ -117,7 +117,7 @@ fsize() { wc -c <"$1" 2>/dev/null | tr -d ' '; }
 # ── 列檔（NUL 分隔，相對 ROOT，位元組序排序） ──
 LIST="$(mktemp "${TMPDIR:-/tmp}/pai-codex-bundle.list.XXXXXX")" || { err "mktemp 失敗"; exit 1; }
 BUNDLE=""
-# shellcheck disable=SC2329  # 由 trap EXIT 間接呼叫
+# shellcheck disable=SC2317,SC2329  # 由 trap EXIT 間接呼叫（0.9 報 SC2317、0.10+ 報 SC2329）
 cleanup() { rm -f "$LIST"; if [ -n "$BUNDLE" ]; then rm -f "$BUNDLE"; fi; return 0; }
 trap cleanup EXIT
 trap 'exit 130' INT
