@@ -1,0 +1,22 @@
+# #33 verify R37 opsweep 補件（最終 lint，協調者補）：殺 `drop-operand|_rule_lines|rl_src[-1] = None if rl_src[-1] is None or a is None else rl_src[-1] + " " + a|2`
+# （拿掉 `a is None`）。`true &&` 這一行的原文對得齊，以 `&&` 續到下一行；下一行 heredoc 分隔字裡有未收尾的反引號，
+# `_aligned_sources` 對它回 None。原版把併接後的來源判成 None（fail-closed：`2>/dev/null` 的目標看不到原文 ⇒ RULE）；
+# 突變體改去算 `rl_src[-1] + " " + None`，拋出沒被捕捉的 TypeError，整支 lint 以 traceback 結束。
+# bash 5.3 實測：反引號讓分隔字吃進後面兩行、之後到檔尾才是內文，`cat` 把內文的 `$PR_TITLE` 印到未過濾的 stdout（外流）。
+# 另一個運算元（拿掉 `rl_src[-1] is None`）要「第一行對不齊、再續到對得齊的一行」，把 `&&` 放在那一行尾會被吞進
+# 未收尾的分隔字，續行不成立——那一個仍列在無解。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: aligned line continued into a misaligned heredoc line
+        run: |
+          echo "$PR_TITLE" | python3 scripts/neutralise.py
+          true &&
+          cat 2>/dev/null <<a`b
+          plain data
+          a`b
+          $PR_TITLE
