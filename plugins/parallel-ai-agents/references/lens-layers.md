@@ -18,7 +18,7 @@
 |---|---|---|
 | 只想自己用 | 層 ③ user | 編 `~/.claude/pai-lenses/<profile>.csv`，立即生效，不必發布 |
 | 想貢獻，且是**既有** profile 的 lens | 層 ② lens pack | 編 `plugins/pai-lenses/lenses/<profile>.csv` + bump **兩處** version（`plugin.json` 與 `marketplace.json` 對應 entry）|
-| 想貢獻，且需要**新 profile** | 層 ① built-in | 改 `workflows/ensemble-workflow.js` 的 `PROFILES` → 跑 `references/regen-builtin-lenses.sh` → bump 兩處 version |
+| 想貢獻，且需要**新 profile** | 層 ① built-in | 改 `workflows/ensemble-workflow.js` 的 `PROFILES` → 跑 `references/regen-builtin-lenses.sh` → bump 兩處 version（**有機械閘門**：`PROFILES` 求值後有任何差異——含 focus 錯字、profile 級欄位——而主 plugin 版本沒增加，CI 紅，#42）|
 | 想貢獻，且要**取代**一條既有 lens（`override`）| 層 ② lens pack | 同上，但 CSV 的 `override` 欄填 `true`，**且在 PR 描述寫清楚原本那條為什麼不夠用**。預設不送 —— 見下方警告 |
 | 本機已經寫好，想一次送上去 | — | **自動回流工具尚未就緒**（見 [#39](https://github.com/PsychQuant/parallel-ai-agents/issues/39)）；目前照上面兩列手動做 |
 

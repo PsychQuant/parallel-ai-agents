@@ -76,3 +76,66 @@ setup() {
     [ "$from_tool" = "$from_src" ]
   fi
 }
+
+# ── `--json` 與 `PAI_HARNESS=-`（#42）────────────────────────────────────────────
+# 消費者是 pai-lenses/scripts/validate.py 的層 ① bump 閘門：它把 base 與 HEAD 兩版 harness 都交給
+# 這支求值、比對輸出。所以這裡錨的是「值相同 ⇔ 輸出相同」的兩個方向，以及「看不見的型別不得靜默」。
+
+mini() {  # $1 = PROFILES 的 JS 字面值；寫成一份最小 harness（分隔線之後的內容不該被求值）
+  printf 'const PROFILES = %s\n// ── Orchestration ──\nthrow new Error("不該被求值")\n' "$1"
+}
+
+@test "--json：一行 JSON，頂層 key 與 keys 模式逐一相符" {
+  run bash "$BIN" --json
+  [ "$status" -eq 0 ]
+  [ "$(printf '%s\n' "$output" | wc -l)" -eq 1 ]
+  from_json=$(printf '%s' "$output" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{for(const k of Object.keys(JSON.parse(s)))console.log(k)})' | sort)
+  from_keys=$(bash "$BIN" | sort)
+  [ -n "$from_keys" ]
+  [ "$from_json" = "$from_keys" ]
+}
+
+@test "PAI_HARNESS=- 從 stdin 讀，結果與讀檔逐字相同" {
+  a=$(bash "$BIN" --json)
+  b=$(PAI_HARNESS=- bash "$BIN" --json < "$HARNESS")
+  [ -n "$a" ]
+  [ "$a" = "$b" ]
+}
+
+@test "--json 是標準形：物件 key 的書寫順序與字串串接不影響輸出" {
+  mini "{ a: { title: 'x', lenses: [{ key: 'k', focus: 'ab' }] } }" > "$BATS_TEST_TMPDIR/h1.js"
+  mini "{ a: { lenses: [{ focus: 'a' + 'b', key: 'k' }], title: 'x' } }" > "$BATS_TEST_TMPDIR/h2.js"
+  a=$(PAI_HARNESS="$BATS_TEST_TMPDIR/h1.js" bash "$BIN" --json)
+  b=$(PAI_HARNESS="$BATS_TEST_TMPDIR/h2.js" bash "$BIN" --json)
+  [ -n "$a" ]
+  [ "$a" = "$b" ]
+}
+
+@test "--json 對值的差異有鑑別力：focus 一個字、lens 順序各自改變輸出" {
+  mini "{ a: { lenses: [{ key: 'k', focus: 'ab' }, { key: 'm', focus: 'c' }] } }" > "$BATS_TEST_TMPDIR/h1.js"
+  mini "{ a: { lenses: [{ key: 'k', focus: 'aB' }, { key: 'm', focus: 'c' }] } }" > "$BATS_TEST_TMPDIR/h2.js"
+  mini "{ a: { lenses: [{ key: 'm', focus: 'c' }, { key: 'k', focus: 'ab' }] } }" > "$BATS_TEST_TMPDIR/h3.js"
+  a=$(PAI_HARNESS="$BATS_TEST_TMPDIR/h1.js" bash "$BIN" --json)
+  b=$(PAI_HARNESS="$BATS_TEST_TMPDIR/h2.js" bash "$BIN" --json)
+  c=$(PAI_HARNESS="$BATS_TEST_TMPDIR/h3.js" bash "$BIN" --json)
+  [ -n "$a" ]
+  [ "$a" != "$b" ]
+  [ "$a" != "$c" ]
+}
+
+@test "--json 遇到 JSON 表達不了的值（函式）fail-loud，不靜默丟掉" {
+  mini "{ a: { title: 'x', pick: () => 1 } }" > "$BATS_TEST_TMPDIR/h.js"
+  PAI_HARNESS="$BATS_TEST_TMPDIR/h.js" run bash "$BIN" --json
+  [ "$status" -ne 0 ]
+  # 同一份 harness 在 keys 模式仍然可用（函式值不影響「有哪些 profile」）——證明紅的原因是型別，不是 fixture 壞了
+  PAI_HARNESS="$BATS_TEST_TMPDIR/h.js" run bash "$BIN"
+  [ "$status" -eq 0 ]
+  [ "$output" = "a" ]
+}
+
+@test "未知參數是用法錯（rc=2），不是安靜地走 keys 模式" {
+  run bash "$BIN" --jsn
+  [ "$status" -eq 2 ]
+  run bash "$BIN" --json extra
+  [ "$status" -eq 2 ]
+}

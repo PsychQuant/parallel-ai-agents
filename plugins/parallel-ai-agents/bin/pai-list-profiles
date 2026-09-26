@@ -15,25 +15,66 @@
 # 交給真的 JS engine 求值。不用 regex 撈 key —— PROFILES 的 focus 字串含大量
 # 標點與跳脫，regex 會撈錯。
 #
-# 退出碼：0 成功；1 harness 找不到或求值失敗。
+# `--json`（#42）：改印**整個 PROFILES 的標準形 JSON**（一行）—— 物件 key 排序、陣列保序、只收 JSON
+# 原生型別（string／有限 number／boolean／null／陣列／plain object；值為 undefined 的屬性視同不存在）。
+# 其他型別（函式、Map、class instance、NaN…）**直接失敗**：`JSON.stringify` 會把函式靜默丟掉，
+# 那樣一個改在函式值裡的差異就看不見。消費者是 pai-lenses/scripts/validate.py 的層 ① bump 閘門：
+# 它把 base 與 HEAD 兩版 harness 都交給**這同一支**求值，比的是值，不是原始碼文字。
+#
+# `PAI_HARNESS=-`（#42）：從 stdin 讀 harness 原始碼（validate.py 從 git 物件取出兩側的內容餵進來，
+# 兩側都不碰工作目錄）。
+#
+# 退出碼：0 成功；1 harness 找不到或求值失敗；2 用法錯。
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 harness="${PAI_HARNESS:-$here/../workflows/ensemble-workflow.js}"
 
-if [ ! -f "$harness" ]; then
-  echo "找不到 harness：$harness" >&2
-  exit 1
-fi
+mode=keys
+case "$#:${1:-}" in
+  0:) ;;
+  1:--json) mode=json ;;
+  *) echo "用法：pai-list-profiles [--json]（harness 由 PAI_HARNESS 指定；- 表示 stdin）" >&2; exit 2 ;;
+esac
 
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 tmp="$tmpdir/profiles.mjs"
 
+if [ "$harness" = "-" ]; then
+  cat > "$tmpdir/harness.js"
+  harness="$tmpdir/harness.js"
+elif [ ! -f "$harness" ]; then
+  echo "找不到 harness：$harness" >&2
+  exit 1
+fi
+
 awk '/^\/\/ ── Orchestration ──/{exit} {print}' "$harness" \
   | sed 's/^export const meta/const meta/' > "$tmp"
 echo 'export { PROFILES }' >> "$tmp"
 
+# NOTE：下面的 heredoc 不加引號（要內插 tmp／mode），所以 JS 裡不能出現反引號與錢字號。
 node --input-type=module <<NODE
 import { PROFILES } from '${tmp}'
-for (const k of Object.keys(PROFILES)) console.log(k)
+if ('${mode}' === 'keys') {
+  for (const k of Object.keys(PROFILES)) console.log(k)
+} else {
+  const canon = (v, at) => {
+    if (v === null || typeof v === 'string' || typeof v === 'boolean') return v
+    if (typeof v === 'number') {
+      if (!Number.isFinite(v)) throw new Error('PROFILES 含非有限數值：' + at)
+      return v
+    }
+    if (Array.isArray(v)) return Array.from(v, (x, i) => canon(x, at + '[' + i + ']'))
+    const proto = (typeof v === 'object') ? Object.getPrototypeOf(v) : undefined
+    if (proto === Object.prototype || proto === null) {
+      const o = {}
+      for (const k of Object.keys(v).sort()) {
+        if (v[k] !== undefined) o[k] = canon(v[k], at + '.' + k)
+      }
+      return o
+    }
+    throw new Error('PROFILES 含無法標準化的值（' + typeof v + '）：' + at)
+  }
+  console.log(JSON.stringify(canon(PROFILES, 'PROFILES')))
+}
 NODE
