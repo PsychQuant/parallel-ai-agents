@@ -23,7 +23,7 @@ jobs:
         # shellcheck 已預裝在 ubuntu-latest runner
 
       - name: shellcheck
-        run: shellcheck bin/pai-build-diff bin/pai-parse-verdict bin/pai-iter-commit test/lint-bats.sh
+        run: shellcheck bin/pai-build-diff bin/pai-codex-bundle bin/pai-parse-verdict bin/pai-iter-commit test/lint-bats.sh
 
       # Round 6 RC11 (#37): a bare `!` assertion is a no-op under bats' errexit — it recurred four
       # times as a prose rule, so it is a machine rule now, and the guard proves it can fail first.
@@ -31,7 +31,7 @@ jobs:
         run: bash test/lint-bats.sh --selftest && bash test/lint-bats.sh
 
       - name: py_compile
-        run: python3 -m py_compile bin/pai-parse-lens-csv bin/pai-collect-lens-layers
+        run: python3 -m py_compile bin/pai-parse-lens-csv bin/pai-collect-lens-layers bin/pai-codex-bundle-dir
 
       # builtin-lenses.csv is generated from the harness PROFILES. It drives nothing at runtime
       # (#29 keeps the built-in baseline inside the harness), so a stale catalog is a DOCS defect,
@@ -99,6 +99,31 @@ jobs:
       - name: lint-contract-enumerations — selftest, then the real contract
         shell: bash
         run: bash test/lint-contract-enumerations.sh --selftest && bash test/lint-contract-enumerations.sh
+
+      # #45 verify R1: the Codex-leg bundler silently dropped valid multi-byte files on macOS (BSD iconv
+      # returns rc=1 when writing to /dev/null) and the suite only ran on ubuntu. Run it here too, with
+      # the SUT under the SYSTEM bash 3.2 (PAI_TEST_BASH) — brew's bash 5 is first on PATH for bats
+      # itself, so without this the 3.2 compatibility of bin/pai-codex-bundle would never be exercised.
+      # Skips are allowed (e.g. no /dev/full on macOS); failures, a short run, or missing anchor cases are not.
+      - name: bats (pai-codex-bundle under /bin/bash 3.2 + BSD userland)
+        shell: bash
+        run: |
+          set -o pipefail
+          echo "SUT bash: $(/bin/bash -c 'echo $BASH_VERSION')"
+          TAP="${RUNNER_TEMP:-/tmp}/pai-codex-bundle.tap"
+          rc=0
+          PAI_TEST_BASH=/bin/bash bats --formatter tap test/pai-codex-bundle.bats | tee "$TAP" || rc=$?
+          if grep -q '^not ok' "$TAP"; then echo "::error::a pai-codex-bundle test failed on macOS"; exit 1; fi
+          plan="$(grep -m1 -oE '^1\.\.[0-9]+' "$TAP" | sed 's/^1\.\.//')"
+          ran="$(grep -cE '^(ok|not ok) ' "$TAP" || true)"
+          if [ -z "$plan" ] || [ "$ran" -ne "$plan" ]; then
+            echo "::error::TAP plan announces $plan tests but $ran executed"; exit 1
+          fi
+          for anchor in 'R1 數 KB 的合法多位元組檔' 'R1 不依賴 iconv' 'R2 git 追蹤 src/x' 'R5 讀不到的子目錄'; do
+            grep -E "^ok [0-9]+ $anchor" "$TAP" | grep -qv '# skip' \
+              || { echo "::error::macOS anchor case did not run and pass: $anchor"; exit 1; }
+          done
+          exit "$rc"
 
       - name: Assert swift toolchain is usable (the real gate — a present shim is not enough)
         run: swift --version

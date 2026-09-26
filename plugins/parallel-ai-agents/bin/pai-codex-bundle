@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+# pai-codex-bundle — Codex leg 的 artifact 組裝器（單一真相源，#45）
+#
+# 把 artifact 交給 codex-call 的 --prompt-file，bytes 不經過 agent context。
+# #37 只處理了單一檔案（path 直接當 --prompt-file）；目錄模式由這裡機械組裝。
+#
+# 用法：
+#   pai-codex-bundle [--max-bytes N] [--max-file-bytes N] [--max-files N] [--] <artifact> -- <cmd> [args...]
+#       regular file → exec <cmd> [args...] --prompt-file <artifact>（逐 byte 同 #37，不複製）
+#       directory    → 組 bundle 到暫存檔 → <cmd> [args...] --prompt-file <bundle>
+#                      → 等 <cmd> 返回後刪 bundle，exit code 照傳
+#   pai-codex-bundle [--max-bytes N] [--max-file-bytes N] [--max-files N] [--] <directory>
+#       只把 bundle 寫到 stdout（除錯／測試用）
+#   以 - 開頭的 artifact 路徑必須放在 -- 之後（engine 一律寫 `-- <artifact>`）；不認得的選項 → exit 1。
+#
+# 退出碼：0 成功（或 <cmd> 的 exit code）；1 錯誤（用法錯／路徑不存在／非檔案非目錄／
+#         目錄內沒有可送出的檔案／組裝失敗）——這些情況下 <cmd> 不會被呼叫。
+#
+# 依賴：單一檔案只用 bash（3.2 相容）；目錄模式用 python3 跑同目錄的 pai-codex-bundle-dir
+#       （python3 本來就是本 plugin 的 runtime 依賴：pai-collect-lens-layers／pai-parse-lens-csv）。
+#
+# 目錄規則（#45；實作與常數在 pai-codex-bundle-dir，兩處一起改）：
+#   列檔  git 工作樹內 → 只送**被追蹤**的檔（`git ls-files`，尊重 .gitignore）；未追蹤的檔只在
+#         manifest 列出「untracked (not sent)」——還沒 commit 的東西最可能是本機草稿或祕密。
+#         git 以 `-c core.fsmonitor=false`（等）執行，不跑目標 repo 設定的命令；呼叫端的 GIT_* 環境變數不帶入。
+#         root 底下沒有任何被追蹤的檔（root 被 ignore、整個未追蹤、或還沒 commit）→ 當一般目錄（find）。
+#         非 git → find，不 follow symlink；node_modules dist build target .venv .git 等 build/vendor 目錄
+#         不進入，但**每個被剪掉的目錄都在 manifest 列一行並計數**。git 模式下被追蹤的檔不因目錄名剪掉，
+#         只排到最後。submodule／巢狀 repo 不進入（列出、計數）。讀不到的子目錄略過並列出，不讓整份失敗。
+#   排除  路徑上任何一段是 symlink（含父目錄）、FIFO 等特殊檔、含 NUL 的檔、非合法 UTF-8 的檔、
+#         疑似憑證的檔名（.env .env.* *.env .envrc *.pem *.key *.p12 *.pfx *.p8 *.jks *.keystore *.ppk
+#         *.kdbx *.tfstate *.tfvars id_rsa* id_dsa* id_ecdsa* id_ed25519* client_secret* credentials
+#         credentials.json secrets.{json,yml,yaml,toml} .secrets .npmrc .netrc .pypirc .pgpass
+#         .git-credentials .htpasswd .dockercfg，以及 .ssh/ .gnupg/ .aws/ .docker/ .kube/ 底下的任何檔）
+#         → 只在 manifest 列原因，不送內容。**檔名 denylist 不是祕密偵測**：寫死在原始碼裡的金鑰照樣會送出。
+#   順序  內容依優先層：0 原始碼（含無副檔名的 script）→ 1 測試 → 2 設定／其他 → 3 文件（README、
+#         CHANGELOG、*.md…）→ 4 fixture／lockfile／minified／vendored；同層依路徑位元組序。manifest 依路徑序。
+#         預算不夠時先犧牲後面的層——主要原始碼不會被 CHANGELOG 或大型 fixture 擠掉。
+#   大小  --max-bytes（預設 524288）是**整份 bundle** 的上限（header、manifest、邊界行都算）；
+#         單檔 --max-file-bytes（預設 65536，同 pai-build-diff），超過截斷並標注（不切壞多位元組字元）；
+#         --max-files（預設 2000）依優先序取前 N 個，其餘只計數。每個檔只開一次、最多讀上限 +1 byte，
+#         分類與輸出用同一份 bytes。放不下的標「omitted: total cap (not inspected)」。
+#   回報  任何檔沒有完整送出（截斷、省略、排除、未追蹤、剪掉的目錄…）→ stderr 印一行
+#         `PAI-BUNDLE-TRUNCATED: …`（只含數字，不含檔名），bundle 開頭也有 NOTE，
+#         讓 Codex 與 wrapper agent 都在報告裡明說覆蓋不完整。
+#
+# 安全：檔名與內容都是不可信 DATA。檔案邊界用每份 bundle 隨機產生的 token 標記，
+#       內容偽造不出邊界；檔名一律以 JSON 字串呈現（非 ASCII 保持可讀，換行等控制字元跳脫），
+#       換行檔名造不出假邊界行。stdout 只屬於 <cmd>（codex-call --detach 的 run id）；本腳本自己只寫 stderr。
+#
+# 遷移（#45）：engine 以 `codexCallPath` 的同目錄找本 script（或 `codexBundlePath` 覆蓋）。
+#       外部 consumer 若把 codex-call 複製到別處，要一起帶上 pai-codex-bundle 與 pai-codex-bundle-dir。
+
+set -uo pipefail
+
+err() { printf 'pai-codex-bundle: %s\n' "$*" >&2; }
+usage() { sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//' >&2; }
+
+MAX_BYTES=524288
+MAX_FILE_BYTES=65536
+MAX_FILES=2000
+
+is_posint() {
+  case "$1" in ''|0*|*[!0-9]*) return 1 ;; esac
+  [ "${#1}" -le 12 ]
+}
+
+ARTIFACT=""
+HAVE_ARTIFACT=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --max-bytes|--max-file-bytes|--max-files)
+      if [ $# -lt 2 ] || ! is_posint "$2"; then err "$1 需要正整數"; exit 1; fi
+      case "$1" in
+        --max-bytes) MAX_BYTES="$2" ;;
+        --max-file-bytes) MAX_FILE_BYTES="$2" ;;
+        *) MAX_FILES="$2" ;;
+      esac
+      shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    --)
+      [ $# -ge 2 ] || { err "-- 之後缺 <artifact>"; exit 1; }
+      ARTIFACT="$2"; HAVE_ARTIFACT=1; shift 2; break ;;
+    -*) err "不認得的選項（以 - 開頭的路徑請寫在 -- 之後）"; exit 1 ;;
+    *) ARTIFACT="$1"; HAVE_ARTIFACT=1; shift; break ;;
+  esac
+done
+
+if [ "$HAVE_ARTIFACT" -ne 1 ] || [ -z "$ARTIFACT" ]; then usage; exit 1; fi
+HAVE_CMD=0
+if [ $# -gt 0 ]; then
+  [ "$1" = "--" ] || { err "<artifact> 之後只能接 -- <cmd>"; exit 1; }
+  shift
+  [ $# -ge 1 ] || { err "-- 之後缺 <cmd>"; exit 1; }
+  HAVE_CMD=1
+fi
+
+# 以 - 開頭的相對路徑：交給 <cmd> 時加 ./，不會被當成它的選項
+case "$ARTIFACT" in -*) ARTIFACT="./$ARTIFACT" ;; esac
+
+# ── 單一 regular file：#37 的 path-only 路徑，逐 byte 不變（不複製、不包裝） ──
+if [ -f "$ARTIFACT" ] && [ ! -d "$ARTIFACT" ]; then
+  if [ "$HAVE_CMD" -eq 1 ]; then exec "$@" --prompt-file "$ARTIFACT"; fi
+  err "stdout 模式只接受目錄（單一檔案請直接用 --prompt-file）"; exit 1
+fi
+[ -d "$ARTIFACT" ] || { err "不是檔案也不是目錄"; exit 1; }
+
+case "$0" in */*) HERE="${0%/*}" ;; *) HERE="." ;; esac
+HELPER="$HERE/pai-codex-bundle-dir"
+[ -f "$HELPER" ] || { err "找不到 pai-codex-bundle-dir（應與本 script 同目錄）"; exit 1; }
+command -v python3 >/dev/null 2>&1 || { err "目錄模式需要 python3"; exit 1; }
+
+if [ "$HAVE_CMD" -eq 0 ]; then
+  exec python3 "$HELPER" --max-bytes "$MAX_BYTES" --max-file-bytes "$MAX_FILE_BYTES" \
+    --max-files "$MAX_FILES" --out - -- "$ARTIFACT"
+fi
+
+BUNDLE="$(mktemp "${TMPDIR:-/tmp}/pai-codex-bundle.XXXXXX")" || { err "mktemp 失敗"; exit 1; }
+# shellcheck disable=SC2317,SC2329  # 由 trap EXIT 間接呼叫（0.9 報 SC2317、0.10+ 報 SC2329）
+cleanup() { rm -f "$BUNDLE"; return 0; }
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+chmod 600 "$BUNDLE" || { err "chmod 失敗"; exit 1; }
+
+# helper 失敗（沒有可送的檔、寫入失敗…）→ 不呼叫 <cmd>；它自己的 stderr（含 PAI-BUNDLE-TRUNCATED）原樣留著
+python3 "$HELPER" --max-bytes "$MAX_BYTES" --max-file-bytes "$MAX_FILE_BYTES" \
+  --max-files "$MAX_FILES" --out "$BUNDLE" -- "$ARTIFACT" || exit 1
+
+# 不 exec：<cmd>（codex-call --detach）在印出 run id 前已同步讀完 prompt，返回後即可刪 bundle。
+"$@" --prompt-file "$BUNDLE"
+rc=$?
+exit "$rc"

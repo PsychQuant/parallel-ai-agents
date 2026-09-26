@@ -150,6 +150,7 @@ FILE_OR_DIR      — 審閱對象（缺則問使用者）
    }
    ```
 
+   - **`file` 可以是目錄；`--codex` 時的 Codex leg（#45）**：harness 把 `file` 經 `${CLAUDE_PLUGIN_ROOT}/bin/pai-codex-bundle`（`codexCallPath` 的同目錄；可用 `codexBundlePath` 覆蓋）交給 `codex-call`——檔案逐 byte 直通，目錄由 bundler 機械組成**有上限的 bundle**（只送 git 追蹤的檔、symlink／二進位／非 UTF-8／疑似憑證檔名只列不送、原始碼優先、整份 512 KiB），bytes 不經 agent context。**不要**自己把目錄內容讀出來串成暫存檔再傳。只要目錄有任何檔沒完整送出，結果會多一條 INFO「cross-model coverage partial」，渲染時照列。檔名 denylist 不是祕密偵測：目錄裡寫死的金鑰仍會送給外部模型。完整規則見 `bin/pai-codex-bundle` 開頭與 `ensemble-code-review` 的 Phase 0 註。
    - harness 組裝順序：base profile lens → include（跨 profile）→ custom，**key 去重預設 first-wins，標了 `override` 的後來者原位取代**（#29），再砍到 `maxAgents − codex − DA`、replicas 依剩餘 budget clamp。**組合自由但成本始終有 ceiling。**
 4. Workflow 回 `{ findings, verdict, stats }`，已 merge+dedup。`stats.reviewers` 列出實際跑了哪些 lens；`stats.lensProvenance` 列出每個 lens 的處置（`added` / `overridden` / `ignored`）供 provenance 行使用。
 

@@ -11,6 +11,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **目錄模式的 Codex leg 不再把整棵原始碼樹經過 agent context（#45）。** #37 把 Codex leg 改成
+  path-only（`--prompt-file <path>`），但只涵蓋單一 regular file；`ensemble-code-review` 的路徑模式允許傳
+  **目錄**，而 engine 無法 stat、分不出 `args.file` 是檔案還是目錄——目錄被原樣塞進 `--prompt-file`
+  （`codex-call` 讀不了目錄 → leg 失敗），或 agent 退回「先讀進 context 再寫回暫存檔」的舊路徑（#37 的成因）。
+
+  修法比照 `bin/pai-build-diff` 的單一真相源：新增 **`bin/pai-codex-bundle`**，engine 的 `args.file`
+  一律經它交給 `codex-call --detach`（命令形狀見下方「遷移」）：
+  - **單一檔案** → `exec` 原 path 當 `--prompt-file`，逐 byte 同 #37，不複製不包裝
+  - **目錄** → 機械組成 bundle（manifest + 隨機邊界 token 的逐檔內容）寫進暫存檔，`codex-call` 同步讀完
+    prompt 後即刪；stdout 只屬於 `codex-call`（run id 不被污染），exit code 照傳
+
+  #37 PR 的 Decision Point D3 列的三件事，明文化在 script 開頭（實作在同目錄的 python3 helper
+  `bin/pai-codex-bundle-dir`；python3 本來就是本 plugin 的 runtime 依賴——`pai-collect-lens-layers`、
+  `pai-parse-lens-csv`；單一檔案的直通路徑只用 bash、不需要 python3）：
+  - **送什麼**：git 工作樹內只送**被追蹤**的檔（尊重 `.gitignore`）；未追蹤的檔只在 manifest 列「untracked (not sent)」。
+    root 底下沒有任何被追蹤的檔 → 送 git 眼中未被 ignore 的檔；root 本身被 ignore → 當一般目錄並在 header 說明。
+    submodule／巢狀 repo 不進入（列出、計數）。非 git 目錄以不跟隨 symlink 的走訪列檔，`node_modules`／`dist`／`build`／
+    `target`／`.venv` 等目錄不進入，但每個被剪掉的目錄都在 manifest 列一行並計數；git 模式下被追蹤的檔不因目錄名剪掉。
+  - **排除（只列原因、不送內容）**：路徑上**任何一段**是 symlink、特殊檔、含 NUL、非合法 UTF-8（strict 驗證實際送出的
+    bytes）、疑似憑證的檔名（`.env*`、`*.env`、`.envrc`、`*.pem`、`*.key`、`*.p12`、`*.jks`、`*.keystore`、`*.tfstate`、
+    `*.tfvars`、`id_rsa*`、`client_secret*`、`credentials`、`.npmrc`、`.netrc`…，以及 `.ssh/`、`.gnupg/`、`.aws/`、`.docker/`、
+    `.kube/` 底下的任何檔）。**檔名 denylist 不是祕密偵測**：寫死在原始碼裡的金鑰照樣會送出。
+  - **順序**：內容依優先層——原始碼（含無副檔名 script）→ 測試 → 設定／其他 → 文件 → fixture／lockfile／vendored，
+    同層依路徑位元組序；manifest 依路徑序。預算不夠時先犧牲後面的層，主要原始碼不會被 `CHANGELOG.md` 擠掉。
+  - **大小**：`--max-bytes`（512 KiB）是**整份 bundle** 的上限（header、manifest、邊界行都算）；單檔 64 KiB（同
+    `pai-build-diff`），截斷不切壞多位元組字元；檔案數 2000（依優先序取前 N 個）。每個檔只開一次、最多讀上限 +1 byte，
+    分類與輸出用同一份 bytes。
+  - **回報**：只要有任何檔沒有完整送出（截斷、上限、**排除規則**）→ bundle 開頭寫 NOTE、stderr 印一行只含數字的
+    `PAI-BUNDLE-TRUNCATED: …`，engine 要求 agent 據此回一條 INFO「cross-model coverage partial」——**報告明說 Codex
+    沒看完整個目錄**，不靜默。這條 INFO 與 FAILED／TIMEOUT 時「恰好一條」的失敗 finding 並存（prompt 明說「恰好一條」只算失敗 finding）。
+
+  #45 verify（FAIL，7 blocking）後的修正：macOS 的 `iconv` 輸出到 `/dev/null` 會回 rc=1，數 KB 的合法中文檔被悄悄排除
+  → 改用 Python strict decode，且排除也計入 `PAI-BUNDLE-TRUNCATED`；只檢查最後一段的 `-L` 讓父目錄 symlink 可以穿出去
+  → 逐段 `openat(O_NOFOLLOW)`；`git ls-files` 會執行目標 repo 的 `core.fsmonitor` → 以 `-c core.fsmonitor=false`
+  （等）執行、不帶入呼叫端的 `GIT_*`；讀取量、manifest 開銷不受上限約束、2000 個小檔要數十秒 → 有上限的單次讀取，
+  Linux 上 2000 個小檔由約 19 秒降到 1 秒內；寫入失敗被吞掉、一個讀不到的子目錄讓整份失敗 → 寫入失敗非零退出、
+  讀不到的目錄略過並列出；祕密 denylist 與文件不一致且會送出未追蹤檔 → 擴充並對齊、未追蹤檔不送；位元組序讓
+  `CHANGELOG.md` 擠掉原始碼、目錄名剪枝不計數 → 優先層＋計數。檔名改以 JSON 字串呈現（非 ASCII 保持可讀，不再是
+  `printf %q` 的八進位跳脫）。
+
+  **遷移**：engine 對 `file` 一律經 `pai-codex-bundle`（`'<bundle>' -- '<file>' -- '<codex-call>' --detach …`，逐值
+  `shQuote()`；artifact 前的 `--` 讓以 `-` 開頭的路徑不會被當成選項）。bundler 以 `codexCallPath` 的**同目錄**解析
+  （新增可選 arg `codexBundlePath` 覆蓋）——從 `${CLAUDE_PLUGIN_ROOT}/bin/` 傳路徑的第一方 skill 不受影響；外部
+  consumer 若把 `codex-call` 複製到別處，要一起複製 `pai-codex-bundle` 與 `pai-codex-bundle-dir`，或傳 `codexBundlePath`。
+  `diffFile` 永遠是 `pai-build-diff` 產的單一檔案，維持直接 `--prompt-file`。既有 arg 與回傳形狀不變。
+  Claude lens 讀目錄的那一半屬 #44，本版不動。
+
+  測試：`test/pai-codex-bundle.bats` 共 52 個 case（`grep -c "^@test" test/pai-codex-bundle.bats`），CI 的 macOS job
+  另以系統 bash 3.2（`PAI_TEST_BASH=/bin/bash`）跑一次；`test/ensemble-workflow.test.mjs` 新增 9 個 #45 case。
+  `ensemble-code-review` 與 `ensemble-compose` 的 SKILL.md 同步說明目錄模式的 Codex leg。
+
 ## [2.23.0] - 2026-09-10
 
 ### Changed
