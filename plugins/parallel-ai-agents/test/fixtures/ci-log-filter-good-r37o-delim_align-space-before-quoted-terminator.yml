@@ -1,0 +1,26 @@
+# #33 verify R37 opsweep 補件：delim_align 群組——殺 `±1→±2|_skip_delim_word|j += 1|2`。
+# `_skip_delim_word` 用 `while s[j:j+1] in (" ", "\t"): j += 1` 逐格跳過 `<<` 與分隔字詞
+# 之間的空白；突變體把身體改成 `j += 2`。當只有**一個**空白字元時（`<< 'EOF_Q'`），原版
+# 一次跳一格恰好停在開引號上；突變體一次跳兩格，直接越過開引號、落在引號內部第一個字元
+# （`E`），開引號被當成普通字元吃掉——後面掃到的反而是結尾引號，被誤判成新的開引號，
+# 向後找不到收尾、回傳 `None`。heredoc 之後接的安全重導向目標（`>/tmp/out`）因此讀不到
+# 原文，被判定「目標看不到原文，不解析就不放行」＝規則誤擋。
+#
+# 原版為什麼是 pass：heredoc 本體只是把 PR 標題寫進 `/tmp/out`（不落在 `/dev`／`/proc`），
+# 下一個 step 再把它讀出來餵給 neutralise.py，整個區塊沒有未過濾的外流路徑。
+#
+# bash 5.3.15 實測：`<<` 與分隔字之間允許空白，`cat << 'EOF_Q'` 能正確以 `EOF_Q` 收尾。
+#
+# EXPECT: pass
+name: t
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: heredoc opener has a space before a quoted terminator, target is safe, later read through neutralise
+        run: |
+          cat << 'EOF_Q' >/tmp/out
+          $PR_TITLE
+          EOF_Q
+          cat /tmp/out | python3 scripts/neutralise.py

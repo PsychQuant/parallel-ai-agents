@@ -1,0 +1,40 @@
+# #33 verify R37 opsweep 補件：殺兩個等價突變（同一行、同一個效果）：
+#   drop-operand|shell_scan|if ch == "(" and csub and not line.startswith("((", i): ...|3|L1032
+#   startswith→F|shell_scan|同一行|1|L1032
+# 前者拿掉 `not line.startswith("((", i)` 這個排除條件（只留 `ch == "(" and csub`）；後者把
+# `line.startswith("((", i)` 硬換成 `False`，結果 `not False` 恆為 True——兩個突變體讓這一行
+# 變成完全相同的程式碼：`if ch == "(" and csub:`。
+#
+# 原版這一行的用途（命令替換 `$(…)` 裡，一個單獨的 `(` 該算 case 模式的前導括號／子殼層
+# `cpar`，還是留給裸括號 `bare_par`）：**排除**「這個 `(` 其實是 `((` 的第一個字元」這個情形——
+# 因為 `((` 命令要在命令位置才成立（見 L1006 那條），command 位置判定失敗時，`((` 的兩個 `(`
+# 會被**逐一**、分開送到這裡；第一個 `(` 因為 `not line.startswith("((", i)` 在它自己這格是
+# False（此時 `line[i:]` 剛好是 "((…"）而被排除、落到裸括號 `bare_par`；第二個 `(`（此時只剩
+# 一個 `(` 在原地、`startswith("((",i)` 不成立）才進 case/cpar 追蹤。這種「一個算裸括號、一個算
+# cpar」看似分裂，但兩邊各自的開合都會有對應的收尾字元把它們配平。
+#
+# 突變體拿掉排除之後，`((` 的**兩個** `(` 都進 case/cpar 追蹤（`cpar += 2`），不再有任何字元落到
+# `bare_par`。差別在後面接的到底是 `case`／`esac` 還是普通程式碼：本例
+# `x=$(echo abc((1+1)) case bad esac)`——"abc((1+1))" 不在命令位置（不成立 `((` 命令），兩個 `(`
+# 原版走「一裸一 cpar」路線，兩個對應的 `)` 也各自配平（先收 cpar 再收 bare_par），乾淨收尾；
+# 後面 " case bad esac)" 的 "case" 出現時 `csub` 已經正確地還在同一層，`_case_head` 發現
+# "case bad" 後面不是 "WORD in" 而 fail-closed（PARSE，屬本掃描器另一條既有的 fail-closed
+# 分支，不是本次要驗的行為）——但因為前面 bare_par／cpar 已經乾淨收平，這個 PARSE 訊息
+# 最終被「run 區塊結尾 csub 未收尾」蓋掉，整體仍是 PARSE。
+# 突變體因為 `((` 兩個 `(` 都算 cpar（不佔 bare_par），對應的兩個 `)` 也都走 cpar 收尾路線，
+# 同樣乾淨；但因為完全沒有 bare_par 被動到，"case bad esac" 出現時的內部狀態與原版不同，
+# 使得同一段文字最終**不再觸發任何 unparsed**，整段照常掃成 code、管線乾淨接到
+# neutralise.py → PASS，與原版的 PARSE 相反。
+# bash 5.3 實測：`x=$(echo abc((1+1)) case bad esac) 2>&1 | python3 scripts/neutralise.py`
+# 是語法錯誤（`bash: syntax error near unexpected token '(' while looking for matching ')'`）——
+# 原版判 PARSE 與 bash 的判定方向一致。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: double-paren-off-command-position-then-malformed-case
+        run: |
+          x=$(echo abc((1+1)) case bad esac) 2>&1 | python3 scripts/neutralise.py

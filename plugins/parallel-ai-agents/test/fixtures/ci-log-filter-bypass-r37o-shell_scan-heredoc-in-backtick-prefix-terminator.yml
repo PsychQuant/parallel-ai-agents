@@ -1,0 +1,47 @@
+# #33 verify R37 opsweep 補件：殺 drop-operand|shell_scan|pending.append((delim, strip_tabs, quoted, bool(csub or bt)))|2|L1175。
+# 這行登記一個即將讀取的 heredoc，第四個欄位 `in_sub = bool(csub or bt)` 記著「這個 heredoc
+# 是不是開在命令替換 `$(…)` 或反引號裡」——bash 對開在命令替換／反引號裡的 heredoc 有一個
+# 版本相依的相容行為：終止字**只要是那一行的前綴**就能收尾（不必整行完全相等），本掃描器
+# 對這個行為 fail-closed（見 `unparsed = "命令替換裡的 heredoc 以「以終止字開頭、但不等於它」
+# 的行收尾——bash 的行為版本相依，本 lint 不解析"`）。突變體拿掉 `bt`，只留 `bool(csub)`——
+# 於是**開在純反引號裡**（不在 `$(…)` 裡、`csub=0`）的 heredoc 一律被記成 `in_sub=False`，
+# 完全喪失這條 fail-closed 保護，只用最嚴格的「整行完全相等」規則判終止。
+#
+# 本例：在一個反引號 `` `cat <<EOF … EOF` `` 裡開 heredoc，終止字是 "EOF"，中間內文的一行
+# 剛好是 "EOFX"（以終止字開頭、但不完全相等——bash 5.3 實測這一行就會終止 heredoc）。
+# 原版：`in_sub=True`（`bt=True`），掃到 "EOFX" 這行時，雖然不是完全相等，但因為
+# `in_sub` 成立而命中 `elif in_sub and delim and probe.startswith(delim) and not
+# body_continued:` 這條 fail-closed 分支 → PARSE（本掃描器誠實承認自己表示不了這個
+# 版本相依行為，不猜）。突變體因為 `in_sub=False`，這條分支的前提就不成立，"EOFX" 既不
+# 完全相等（不觸發正常收尾）、也不觸發 fail-closed 分支，heredoc **完全不收尾**，
+# 一路把後面所有實體行（含真正該收尾的那個獨立一行 "EOF"，以及反引號本身的收尾、
+# 後面接的管線）全部當成 heredoc 內文吃掉、整批消失，整個 run 區塊最終「反引號未收尾」，
+# 卻因為看起來乾淨（沒有任何可疑符號跑到 code 半邊）而**沒有觸發任何 unparsed**，
+# 整段被判成安全、管線視為乾淨接到 neutralise.py → PASS，與原版的 PARSE 方向相反。
+# bash 5.3 實測（heredoc 開在反引號裡，內文一行以終止字開頭但不完全相等）：
+#   x=`cat <<EOF
+#   content
+#   EOFX
+#   EOF
+#   `
+#   echo "got:[$x]"
+#   → got:[content
+#   EOFX]
+#   確認 heredoc 真的在 "EOFX" 這一行（前綴、非完全相等）就收尾了，後面那個獨立的 "EOF"
+#   已經是反引號外、被當成一般文字——與原版的 fail-closed（承認自己判不了）一致，
+#   不是「乾淨、可以放行」的情形。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: heredoc-in-plain-backtick-prefix-terminator
+        run: |
+          x=`cat <<EOF
+          content
+          EOFX
+          EOF
+          `
+          echo "$x" 2>&1 | python3 scripts/neutralise.py

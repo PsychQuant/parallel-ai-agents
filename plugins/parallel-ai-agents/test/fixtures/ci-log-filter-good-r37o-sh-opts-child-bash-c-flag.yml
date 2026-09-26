@@ -1,0 +1,18 @@
+# #33 verify R37 opsweep 補件（sh-opts F）：`_Sh.shell_opts` 的 `if a == "--verbose": self.hit(…); continue`
+# 把 `==` 換成 `!=` 後，條件對**任何不是 `"--verbose"` 的旗標**都成立——`bash -c '…'` 的第一個旗標
+# `-c` 就滿足 `a != "--verbose"`，於是還沒掃到 `-c` 本身該有的「之後是命令字串、直接 return」那支
+# 就先在這裡誤觸發一次 hit（訊息文字雖然錯誤地寫著開了 verbose，但 `RULE:` 標記已經印出，判定翻紅）。
+# 原版對 `bash -c '…'`：`a == "--verbose"` 為假、`a.startswith("--")` 為假、`on=True`，
+# `for ch in a[1:]` 只有一個字元 `c`，直接 `elif ch == "c": return`——完全不觸發任何 hit，
+# 這是安全、常見的子 shell 呼叫寫法。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        run: |
+          bash -c 'echo hi'
+          echo done 2>&1 | python3 scripts/neutralise.py

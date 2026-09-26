@@ -1,0 +1,47 @@
+# #33 verify R37 opsweep 補件：`_cmdsub_end_case` 詞首 `#`／`$'…'`／`$[…]` 三選一 bail 判斷（同一行三個
+# drop-operand、兩個 startswith→F 突變體）、以及 `esac` 找不到對應 `case` 時的 fail-open 判斷（drop-operand
+# 拿掉最外層 `cases and` 這個判空守門，讓 `cases[-1]` 在 `cases` 是空 list 時直接 IndexError）。三個 step 各自
+# 對到一組突變體：
+#   1. `$'a\'b)'`：ANSI-C 逃脫的單引號（`\'` 是逃脫不是收尾）——原版偵測到 `$'` 立刻回 None（本 lint 不解析，
+#      fail-closed），呼叫端改把內容當 code 掃、正確認出這是同一個 `$'…'`（一般字元逐位掃描仍然認得逃脫），
+#      整段安全接住 neutralise。拿掉這個 bail（`|4|` 或 `startswith→F |1|`）後，突變體改用一般單引號規則找收尾，
+#      在這個字面裡剛好也收在同一個位置——但**判定路徑一旦分岔，`shell_scan` 頂層對這個 `$(` 的「是否已經配對」
+#      認知就跟原版不同**，導致重新落回雙引號後把剩下的內容判成新的一段命令替換，量出的結果是 RULE
+#      （量測見下方 mutcheck 記錄；不是construct 出的理論——實測差異）。
+#   2. `$[1)2]`：舊式算術 `$[…]`，bash 把它當巢狀結構讀，裡面的 `)` 不是收尾——原版偵測到 `$[` 立刻回 None，
+#      同樣安全過關。拿掉這個 bail（`|5|` 或 `startswith→F |2|`）後，突變體把 `$[` 的 `[` 當成一般字元，`)` 被
+#      當成收尾，量出的結果同樣是 RULE。
+#   3. `esac` 前面沒有任何 `case`：`cases` list 是空的，原版 `elif cases and cases[-1][0] == depth and (...)`
+#      的 `cases and` 這一段守住空 list、不執行 `cases[-1]`，`esac` 就當一般文字略過，整段順利配對收尾（放行）。
+#      拿掉 `cases and`（只留 `cases[-1][0] == depth and (...)`）後，空 list 上 `cases[-1]` 直接
+#      `IndexError: list index out of range`，未被任何 try/except 接住（`shell_scan` 呼叫本身在 `_analyse` 的
+#      try 之外），整支 lint 對這個檔案當場丟 Python traceback，rc≠0 且輸出裡沒有 RULE/PARSE/VACUOUS 字樣。
+#
+# bash 5.3 實測（`bash -n`／執行）：
+#   - `echo "pre$(echo $'a\'b)' )post"` → 剖析與執行都成功，印出 `prea'b)post`（`$'a\'b)'` 是一個逃脫過的字面，
+#     `)` 不收尾，真正收尾的是最後那個 `)`）。
+#   - `echo "pre$(echo $[1)2])post"` → 剖析成功（`$[…]` 語法上被接受），執行時印出算術語法錯誤到 stderr、
+#     `$(…)` 本身仍完整收尾、印出 `prepost`（`)` 沒有提早結束替換）。
+#   - `echo "pre$(esac)post"` → **這一行本身是 bash 語法錯誤**（`esac` 前面沒有 `case`，"syntax error near
+#     unexpected token `esac' while looking for matching `)'"）。放進本 fixture 是因為本 lint 的職責是「這條
+#     pipeline 會不會把 PR 文字外流」而不是「這是不是合法 bash」——一支語法錯誤的 script 在 CI 上本來就會直接
+#     失敗、不會執行到任何危險的外流動作，原版把它判定為「配對成功、視為不透明內容」正是既有（未受本次突變影響）
+#     的寬鬆放行行為，不是本次要修的東西；这裡只是拿它來精準命中「`esac` 找不到 case 時的 fail-open 判斷」這一個
+#     分支，殺掉會讓整支 lint 崩潰的突變體。
+#
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: ansic-escape-in-cmdsub-case
+        run: |
+          echo "pre$(echo $'a\'b)' )post" 2>&1 | python3 scripts/neutralise.py
+      - name: legacy-arith-in-cmdsub-case
+        run: |
+          echo "pre$(echo $[1)2])post" 2>&1 | python3 scripts/neutralise.py
+      - name: stray-esac-in-cmdsub-case
+        run: |
+          echo "pre$(esac)post" 2>&1 | python3 scripts/neutralise.py

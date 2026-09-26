@@ -1,0 +1,17 @@
+# #33 verify R37 opsweep 補件（sh-opts G）：`_Sh.shell_opts` 的 `if a.startswith("--"): continue`
+# 是「長選項整個跳過，不逐字元掃」這條守衛。換成 `if False:` 之後，任何長選項都會落進
+# `for ch in a[1:]` 逐字元掃描——`--version` 展開後的字元序列是 `-version`，其中的 `v` 撞上
+# `elif on and ch in "xv":`，被誤判成開了 verbose。`--version` 是無害的 bash 內建選項（印版本後
+# bash 5.3 實測不影響後續執行、也不會讓任何一行輸出帶 `+` 開頭的 trace），原版靠 `startswith("--")`
+# 把整個長選項當成不透明字串跳過，不會誤觸發。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        run: |
+          bash --version -c 'true'
+          echo done 2>&1 | python3 scripts/neutralise.py

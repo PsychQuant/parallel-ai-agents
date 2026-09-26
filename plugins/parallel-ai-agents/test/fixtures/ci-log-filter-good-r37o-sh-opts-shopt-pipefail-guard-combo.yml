@@ -1,0 +1,37 @@
+# #33 verify R37 opsweep 補件（sh-opts D）：`_Sh.shopt_cmd` 選項名迴圈第二、三支
+# （`elif "s" in flags and nm in _TRACE_OPTS:` 與 `elif nm == "pipefail" and ("s" in flags or "u" in flags):`）
+# 各拿掉一個運算元的三個突變體，用同一組輸入一次殺掉：
+#   1) `shopt -uo xtrace`——只給 `-u`（關掉），沒有 `-s`：原版第二支要求 `"s" in flags`，
+#      這裡沒有 `s` ⇒ 不觸發 hit（`-u` 是關閉 shopt 選項，不是開 trace）；拿掉 `"s" in flags`
+#      這個運算元後，只看 `nm in _TRACE_OPTS` 就會對 `-uo xtrace` 誤判成開了 trace。
+#      同一行第三支（`nm == "pipefail" and (...)`）在原版也不會觸發（`nm` 是 `"xtrace"`，
+#      不等於 `"pipefail"`）；拿掉 `nm == "pipefail"` 這個運算元後，只看 `("s" in flags or "u" in flags)`——
+#      這裡有 `u` ⇒ 誤觸發 `pf_event(False, …)`，把 pipefail 狀態改成關（`"s" in flags` 是 False），
+#      污染後面管線的 pipefail 判定。
+#   2) `shopt -o pipefail`——單獨 `-o`、沒有 `-s`/`-u`：這是**查詢**、不是設定（bash 5.3 實測：
+#      `bash -c 'shopt -o pipefail; false | true; echo $?'` 印 `0`，pipefail 沒被設定）。原版第三支
+#      要求 `"s" in flags or "u" in flags`，這裡都沒有 ⇒ 不觸發；拿掉 `("s" in flags or "u" in flags)`
+#      這個運算元、只看 `nm == "pipefail"` 後，會把這次查詢誤判成「關掉 pipefail」的 `pf_event`。
+# 三個突變體都不影響 hit／event 本身觸不觸發之外的東西，唯一能觀察到差異的地方是後面那段
+# `--strict` 的 pipefail 判定：`shell: bash`（關鍵字）使起始值是 True，兩行 shopt 在原版完全不動
+# 這個狀態，所以到 `false 2>&1 | python3 scripts/neutralise.py` 這個管線時 pipefail 仍然成立、
+# `--strict` 判 pass；三個突變體任一個都會在管線前把狀態污染成 False（或多印一條假的 xtrace hit），
+# 讓判定翻成 rule-red。
+# **R37 移植 #61 群組規則後**：step 改成宣告 `# LOG-FILTER:`（寫不成群組），pipefail 規則照樣適用——第 1) 點的第三支與第 2) 點
+# 兩個突變體仍由這一檔殺；第 1) 點的第二支（`"s" in flags` 拿掉 ⇒ 假的 xtrace hit）在宣告的 step 看不到（fd 流向規則只管
+# 靠管線過濾的 step），移到預設模式的 `good-r37o-sh-opts-shopt-uo-xtrace-default`。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        run: |
+          # LOG-FILTER: none — fixture 只測 pipefail 的模擬（寫不成群組：前綴只收 `set`）
+          shopt -uo xtrace
+          shopt -o pipefail
+          false | true

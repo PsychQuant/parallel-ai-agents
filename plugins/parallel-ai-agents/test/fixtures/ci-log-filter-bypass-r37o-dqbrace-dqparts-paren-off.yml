@@ -1,0 +1,27 @@
+# #33 verify R37 opsweep 補件：殺 `startswith→F|_dq_parts|if body.startswith("$(", i):` 存活突變體——雙引號
+# 內容裡辨認 `$(…)` 的判斷被鎖死成 `False`。body 是 `$(id -u)`：
+#   - 原版：認出 `$(`，用括號計深度找收尾、把 `literal` 設成 `False`──回傳 `(None, "\0")`，代表這個詞的字面
+#     值不可知（依賴命令替換執行期的輸出）。
+#   - 突變體：`$(` 判斷永遠不成立，`$` 後面接的是 `(`──不在 `_PARAM_RE` 的兩種允許形狀裡（`(` 兩邊都不
+#     算），也不是 `${` 或反引號──整段 `$(id -u)` 逐字元落進預設分支被當成純字面文字照抄，`literal` 沒被
+#     關掉，回傳 `("$(id -u)", "$(id -u)")`。
+# 這個（錯誤的）字面值餵給 `>&"$(id -u)"` 這個 fd 複製重導向：
+#   - 原版 `t["lit"] is None`，命中「複製到看不出值的 fd」，RULE，正確——目標是**命令替換的輸出**，執行期
+#     可能是任何字串（含剛好是數字的情況，變成真的 fd 複製）。
+#   - 突變體把原始語法文字 `"$(id -u)"` 當成已知字面值，不是 `None`、不是數字、不是 `"-"`，落到最後的一般
+#     檔案目標判定，字面文字 `$(id -u)` 不含 `/dev`／`/proc`，判定通過（pass）。
+# bash 5.3 實測：`echo hi >&"$(id -u)"` 執行期噴出 `Bad file descriptor`（`id -u` 印出的數字被當成 fd 編號
+# 嘗試複製，失敗）──證實這個目標確實是「執行期才決定、可能是數字 fd」的危險形狀，`bash -n` parse rc=0
+# 確認語法本身合法。
+# 神諭對帳（R37 移植 #61 時補）：被擋下的那個命令改成真的把 PR 文字印出去（原本印常數、或那一支不會執行），
+# 讓 lint 的紅是「一致」而不是「誤擋」；殺掉的突變體逐一重驗仍然殺。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe
+        run: |
+          echo "$PR_TITLE" >&"$(echo 2)" 2>&1 | python3 scripts/neutralise.py

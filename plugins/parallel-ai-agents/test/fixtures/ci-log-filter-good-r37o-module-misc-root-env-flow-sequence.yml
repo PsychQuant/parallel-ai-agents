@@ -1,0 +1,29 @@
+# #33 verify R37 opsweep 補件：殺
+# `drop-operand|<module>|if _flow_value(l_) and ":" in yaml_split_comment(KEY_RE.match(norm[l_]).group(3) or "")[0]:|2`
+# ——把根層級 `env:` flow-形式檢查裡的 `":" in yaml_split_comment(...)[0]` 拿掉，變成
+# `if (_flow_value(l_)):`。
+# 這裡根層級 `env:` 寫成 flow **序列**（`env: [FOO, BAR]`）——是 flow 形式，但內容不含冒號
+# （序列不是 mapping，沒有鍵值對）。
+# 原版：`_flow_value(l_)` 是 True，但 `":" in "[FOO, BAR]"` 是 False，`and` 整體 False，
+# 這一行不拒絕，落到 `else: wf_env = _env_names(l_, ind_)`。`_env_names()` 看到
+# `inline="[FOO, BAR]"`、`[:1]` 是 `[`，回傳 `[]`（flow 形式的鍵名本來就讀不到，但這裡**不**
+# 塞 `"?"`——docstring 明寫「flow 形式含 mapping 的，解析層已經 PARSE…這裡不重複判」，序列
+# 沒有 mapping、也沒有已知的 trace key，直接放行）。`wf_env=[]`，其餘 job／step 都乾淨，
+# 整體 `pass`。
+# 突變體拿掉 `":" in ...` 這個判斷，只剩 `_flow_value(l_)`——任何 flow 形式的 `env:`（不論
+# 是不是 mapping、有沒有冒號）都會在這一行被拒絕（PARSE：「根層級的 env 用 flow 形式」），
+# `else` 分支被跳過，變成 `parse-red`。與原版的 `pass` 不同，這張 fixture 殺得掉它。
+# bash 5.3 實測：`echo hi 2>&1 | python3 -c "import sys; sys.stdin.read()"` rc=0，
+# `bash -n` parse 正常；`FOO`／`BAR` 這兩個名字從未真的成為 shell 環境變數（lint 判定發生在
+# YAML 解析層，不影響 runner 實際執行），爭點純粹在這一行的判定路徑。
+# EXPECT: pass
+name: t
+on: pull_request
+env: [FOO, BAR]
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe
+        run: |
+          echo hi 2>&1 | python3 scripts/neutralise.py

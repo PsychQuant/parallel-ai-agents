@@ -1,0 +1,33 @@
+# #33 verify R37 opsweep 補件（sh-opts E）：`_Sh.shell_opts` 迴圈頂端的守衛
+# `if a is None or not a.startswith(("-", "+")) or a in ("-", "--"): return`
+# 是三個條件的 or，各拿掉一個運算元用三個獨立的子行程呼叫殺掉：
+#   1) 拿掉 `a is None`——只剩 `(not a.startswith(...)) or (a in ("-", "--"))`。這支獨立殺不掉：
+#      要讓 `a is None` 真的成立才踩得到差異，得先讓 `a.startswith` 在 `a=None` 上被呼叫，
+#      而 Python 的 `None.startswith` 會丟 `AttributeError`——原版靠 `a is None` 這個運算元排在
+#      `or` 最前面短路擋掉它，拿掉之後這裡會直接當掉（`_analyse` 只接 `IndexError/KeyError/
+#      ValueError/RecursionError`，`AttributeError` 不在白名單內，會整個 selftest 子行程炸掉、
+#      rc≠0 且沒有 `RULE:`／`PARSE:`——這本身就是可觀察的差異）。用 `X=-x; bash $X -c true`：
+#      `$X` 沒加引號，詞法層判不出字面值，`lit=None`。
+#   2) 拿掉 `not a.startswith(("-", "+"))`——只剩 `(a is None) or (a in ("-", "--"))`。`bash` 後面接一個
+#      不是選項的字面詞（例如腳本檔名）時，原版靠這支在看到第一個非選項詞就停止掃描（match 真正的
+#      bash 命令列解析行為：bash 5.3 實測 `bash /tmp/z.sh -x` 只是把 `-x` 當成腳本的位置參數，
+#      不會讓子 bash 自己開 trace，`printf` 前也沒有任何 `+` 開頭的 xtrace 輸出）；拿掉這個運算元後，
+#      迴圈不會在檔名處停下，會把後面的 `-x` 當成子 shell 自己的旗標繼續掃，誤判成開了 trace。
+#   3) 拿掉 `a in ("-", "--")`——只剩 `(a is None) or (not a.startswith(("-", "+")))`。`bash -- -x` 的
+#      `--` 依 bash 慣例結束選項解析，之後的 `-x` 是位置參數（bash 5.3 實測：`bash -- /tmp/z.sh -x`
+#      印出的參數是 `-x` 本身，子 bash 沒有自己開 trace）；原版靠這支在 `--` 處停止，拿掉之後
+#      `--` 被當成長選項（`a.startswith("--")` 為真）`continue` 過去，接著把 `-x` 當旗標掃，誤判開了 trace。
+# 三個輸入放在同一個 step 裡各自獨立驗證，互不干擾（各自的 `a` 值只影響各自那一行）。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        run: |
+          bash /tmp/z.sh -x 2>&1 | python3 scripts/neutralise.py || true
+          bash -- -x 2>&1 | python3 scripts/neutralise.py || true
+          X=-x
+          bash $X -c true 2>&1 | python3 scripts/neutralise.py || true

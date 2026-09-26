@@ -1,0 +1,27 @@
+# #33 verify R37 opsweep 補件：殺 `==↔!=|_dq_parts|d += (body[i]=="(") - (body[i]==")")|2` 存活突變體──第二個
+# 比較反向成 `d += (body[i]=="(") - (body[i]!=")")`。推導：對任何**不是**括號的字元，這個算式變成
+# `0 - 1 = -1`；對 `"("` 變成 `1 - 1 = 0`；對 `")"` 變成 `0 - 0 = 0`（後兩者恆等於 0，等於完全不追蹤真正的
+# 括號）。於是遇到 `$(` 之後**第一個非括號字元**就讓 `d` 從 1 掉到 0，迴圈立刻結束——`_dq_parts` 把
+# `$(cat /dev/null)x` 這種 body 只吃掉開頭 3 個字元（`$(c`）當成「看不見」的骨架，剩下 `at /dev/null)x`
+# 整段落回預設分支、逐字元當**字面文字**照抄進 `sk`（`literal` 不受影響，遇到 `$(` 那一刻已經被設成
+# `False`，所以 `lit`／回傳的 `d` 兩版都是 `None`，差別只在 `sk` 的內容）。
+# 這裡的關鍵是：命令替換**自己的參數** `/dev/null` 被突變體錯誤地攤開成字面文字，讓它意外冒出現在
+# `_redir_hit` 的骨架保底檢查（`{"dev","proc"} & set(posixpath.normpath(sk).split("/"))`）裡：
+#   - 原版：整個 `$(cat /dev/null)` 正確地被辨識成一個命令替換、全部變成 `"\0"`，`/dev/null` 是**替換內部
+#     command 自己的參數**、不是這個重導向目標的字面路徑，`sk == "\0x"`，沒有 `"dev"`／`"proc"` 路徑段，
+#     判定通過（pass）——目標其實在執行期解析成字面 `"x"`（`cat /dev/null` 沒有輸出）。
+#   - 突變體：`/dev/null` 從命令替換內部「洩漏」成這個詞自己的字面骨架，`sk` 含 `"dev"` 路徑段，誤判成
+#     RULE（「寫到 /dev 或 /proc 底下」）——把「命令替換內部剛好提到 /dev/null」誤當成「這個重導向目標
+#     落在 /dev 底下」，方向是誤擋而非漏放。
+# bash 5.3 實測：`echo hi > "$(cat /dev/null)x"` 因為 `$(cat /dev/null)` 輸出空字串，實際建立的是一個叫
+# `x` 的普通檔案，與 `/dev` 完全無關；`bash -n` parse rc=0。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe
+        run: |
+          echo hi > "$(cat /dev/null)x" 2>&1 | python3 scripts/neutralise.py

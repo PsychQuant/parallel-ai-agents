@@ -1,0 +1,49 @@
+# #33 verify R37 opsweep 補件：反駁 _aligned_sources 的 `if e is None or e > len(s):`（L1340 位置 1）
+# 「依構造不可達」的等價主張——heredoc 分隔字詞裡有未收尾反引號時，`_skip_delim_word` 真的會回
+# `None`（不是靠 `e > len(s)` 撐住），砍掉 `e is None` 那一半、只留 `if e > len(s):` 會讓
+# `None > len(s)` 在 Python 3 直接拋 `TypeError`，使整支 lint 對這個 fixture 崩潰。
+#
+# 原版判定：rule-red（`2>/dev/null` 的目標因整行對不齊被 fail-closed 判定看不到原文）。
+#
+# 構造：`cat 2>/dev/null <<a\`b` 的 heredoc 分隔字詞含一個沒有配對的反引號（後面只有 `b`，沒有
+# 第二個反引號收尾）。
+#
+# `shell_scan()` 自己讀分隔字詞時，反引號分支是「找配對反引號，找不到就把剩下整段吃進 delim、
+# 不設 unparsed」（`k = line.find("\`", j + 1); k = n if k < 0 else k + 1; delim += line[j:k]; j = k`）——
+# bash 5.3 對這個構造只要求分隔字詞逐字元相等即可終止 heredoc，未收尾的反引號不是語法錯誤
+# （已用 `bash -c` 對照：`cat <<a\`b` 接內文 `a\`b` 收尾，heredoc 正常結束，指令照樣執行）。
+#
+# 但 `_skip_delim_word` 把反引號當成跟單／雙引號同一類（`s[j] in ("'", '"', "\`")`）——要求找到
+# **配對的反引號**才算收尾，找不到（`k >= n`）直接回傳 `None`。這是兩份「應該互相鏡射」的分隔字詞
+# 讀取邏輯之間的真實分歧，不是同一份邏輯的兩次求值。
+#
+# 已用抽出的同一份原始碼直接對照（見下方對照組摘要，非本檔內容）：
+#   lines = ['cat 2>/dev/null <<a`b', 'plain data', 'a`b']
+#   shell_scan(lines) → unparsed=None（不觸發任何拒絕）
+#   _skip_delim_word(s, j) 對這一行的分隔字詞位置 → None
+#   原版 _aligned_sources(...)[0] → None（第 0 行對不齊）
+#   _analyse(...)["fd"] → ["`>/dev/null` 的目標看不到原文（本 lint 對不齊這一行）——不解析就不放行"]
+#
+# 若砍掉 `if e is None or e > len(s):` 的第一個運算元（只剩 `if e > len(s):`）：`e` 是 `None`，
+# `None > len(s)` 在 Python 3 直接拋 `TypeError: '>' not supported between instances of
+# 'NoneType' and 'int'`——lint 對這個 fixture 的整個 run（`for path in [...]:` 迴圈）會被這個
+# 未捕捉例外中止，輸出裡不會有 `RULE:`／`PARSE:`、returncode 也不是原本的 0/1（mutcheck.py 的
+# `verdict()` 對這種情形回傳 `"rc=%d" % r.returncode`，不等於 EXPECT 的 `rule-red`，判定為 KILL）。
+#
+# 神諭對帳（R37 移植 #61 時補）：bash 把分隔字裡的反引號當成跨行引號，分隔字吃進後兩行、之後到檔尾才是內文——
+# 內文加一行 `$PR_TITLE`，`cat` 把它印到未過濾的 stdout（bash 5.3 實測），
+# 讓 lint 的紅是「一致」而不是「誤擋」；殺掉的突變體逐一重驗仍然殺。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: unterminated backtick inside the heredoc delimiter word poisons an earlier redirect on the same line
+        run: |
+          echo "$PR_TITLE" | python3 scripts/neutralise.py
+          cat 2>/dev/null <<a`b
+          plain data
+          a`b
+          $PR_TITLE

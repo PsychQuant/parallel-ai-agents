@@ -1,0 +1,29 @@
+# #33 verify R37 opsweep 補件：殺 `_at_command` 的 drop-operand 第4個突變體（拿掉 `cases[-1][1] == "cmd"`，
+# `if s.endswith(")") and cases and cases[-1][0] == lvl and cases[-1][1] == "cmd":` 的第四個 and 子句）。
+# 原版：主掃描器在遇到第二個 `case` 關鍵字時呼叫 `_at_command`，此時 code 桶是 `x=$(case a in $(true)`
+# （以 `)` 結尾，是**模式裡**那個巢狀 `$(true)` 的收尾——不是 case 自己的模式括號），`cases` 是
+# `[[1, "pat"]]`（外層 case 開在 lvl=1，模式**還沒**收，還在等模式階段），呼叫的 lvl=1（與 cases[-1][0]
+# 同層，因為巢狀 `$(true)` 已經收尾、csub 已經退回 1）。
+# 原版：`cases[-1][1] == "cmd"` 是 `"pat" == "cmd"`，False，整個 and 短路，落到 `AT_CMD_RE.search(s)`——`s`
+# 結尾是 `)`，比對不到，回 False；`_at_command` 回 False。呼叫端因此判定第二個 `case` 不在命令起點，run
+# 區塊 fail-closed（`PARSE:`）。
+# 突變體拿掉 `cases[-1][1] == "cmd"` 這個階段核對後，`s.endswith(")")` 真、`cases` 非空、
+# `cases[-1][0] == lvl` 真（都是 1）——三者都成立，`_at_command` 誤回 True。呼叫端接著呼叫 `_case_head`
+# 核對「`case` 後面是不是 `WORD in`」，這裡的 `b in` 符合，於是把「其實還在外層模式裡」的這個 `case` 誤當
+# 合法巢狀 case 收下，整段字元被消費完（`CODE` 等於整行、`UNPARSED` 是 `None`）——與原版的 fail-closed 判
+# 定不同，殺得掉。
+# 本 fixture 只測本 lint 自己詞法層對 `cases[-1][1] == "cmd"` 這道階段守衛的依賴；`$(true)case` 中間沒有
+# 分隔字，bash 詞法上會讀成一個詞（不是保留字 `case`），這段命令本身在 bash 會是語法錯誤，不依賴它真的執行。
+# EXPECT: parse-red
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: cmdsub-case-pattern-nested-cmdsub-before-case
+        shell: bash
+        run: |
+          x=$(case a in $(true)case b in b) c;;esac) c;;esac)
+          echo "$x" 2>&1 | python3 scripts/neutralise.py

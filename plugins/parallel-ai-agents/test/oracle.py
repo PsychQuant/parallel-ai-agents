@@ -115,6 +115,11 @@ KNOWN_DISAGREE = {
         "`env:` 整張來自 `${{ … }}`，lint 看不到鍵名而 fail-closed；神諭不設 runner 運算式的值，量不到它可能帶進的 SHELLOPTS。",
     # **頂層 `case` 的模式 `|` 被預設模式讀成管線** ⇒ 繞過（R37 完整性審查缺陷 d，刻意保留的已知限制）：`--strict` 擋下它；
     # 預設模式要修得把 case 追蹤延伸到頂層，代價與理由見 lint 已知不涵蓋第三組第 5 條。修好之後這一列變一致，神諭 rc=1 逼人拿掉。
+    # **根層級 `env:` 是純量**（R37 opsweep 補件 `bypass-r37o-module-misc-root-env-nonflow-colon-value`）：`env: FOO:bar` 讀不到
+    # 鍵名，lint 記成 `?` 並 fail-closed（那張 map 可能帶進 SHELLOPTS）；神諭沒有鍵可設、量不到外流而判誤擋。與上面
+    # `step-env-inline-expression` 同一種兩邊資訊量不同的設計差異。GitHub 本身也不接受非 mapping 的 `env`。
+    ("ci-log-filter-bypass-r37o-module-misc-root-env-nonflow-colon-value.yml", "probe"):
+        "根層級 `env:` 是純量、看不到鍵名，lint fail-closed；神諭沒有鍵可設，量不到它可能帶進的 SHELLOPTS。",
     ("ci-log-filter-known-r37t8-default-case-pattern-pipe.yml", "s"):
         "頂層 case 模式的 `|` 是「或」，預設模式的 `PIPED_RE` 算它接了 neutralise；`--strict` 由群組規則擋下（區塊不是 `{ …; } 2>&1 | python3 …` 群組）。",
     # **`--strict` 群組規則只收恰好一對大括號**（#59／#60）⇒ 群組裡再包一個群組是誤擋。刻意保留：計深度要判斷每個

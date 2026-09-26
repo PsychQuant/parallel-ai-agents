@@ -1,0 +1,36 @@
+# #33 verify R37 opsweep 補件：殺 drop-operand|shell_scan|if bt and nest() == bt_at:|1|L1063。
+# 這行在「掃到 `#` 且落在詞界」時，判斷這個 `#` 是不是**目前開著的反引號裡**的註解（bash 對
+# 反引號裡的 `#` 是先照字面找收尾反引號、再把中間當指令剖析，所以註解止於收尾反引號，不是
+# 到行尾）。條件是 `bt`（目前確實在反引號裡）**且** `nest() == bt_at`（自從那個反引號開啟後，
+# 沒有其他構造淨開著——`bt_at` 是開啟那一刻記下的巢狀狀態快照）。突變體拿掉 `bt` 這個前提，
+# 只留 `nest() == bt_at`——`bt_at` 從第一次有反引號開啟後就一路保留舊值，**即使那個反引號早就
+# 收尾、`bt` 已經變回 False**，只要目前 `nest()`（各種巢狀計數器）剛好回到跟當初開啟時相同的
+# 基準值（沒有其他東西還開著），這個比較就會巧合地成立。
+#
+# 本例：一個反引號 `` `x` `` 先正常開合（開啟時記下 `bt_at`，收尾後 `bt` 變回 False，所有計數器
+# 也回到跟開啟時相同的基準）；後面接一個 `#` 開頭、正常應該吃到行尾的註解，裡面剛好又寫了
+# 一個**看起來像反引號指令替換**的片段（純文字、不是真的要執行）。原版：`bt` 已經是 False，
+# 整個 `if` 條件短路成 False，這個 `#` 被當成**一般到行尾的註解**（`decls.append(line[i:]);
+# break`），後面那段「看起來像反引號」的文字完整留在註解裡，不會被當成 code。突變體因為
+# `nest() == bt_at` 巧合成立，誤判成「還在原本那個反引號裡的註解」，改呼叫
+# `_backtick_end(line, i)` 從 `#` 之後找**下一個反引號**——結果找到的是註解文字裡那個
+# 「看起來像反引號」片段的開頭反引號，於是註解被提早截斷在那裡，**從那個反引號開始的所有
+# 文字（含裡面的管線）改當成真正的 code 掃出來**，露出一條看起來乾淨接到 neutralise.py 的管線。
+# 原版整段都是註解、沒有任何真管線，也沒有 LOG-FILTER 宣告 → RULE:「既沒有經
+# neutralise.py」；突變體因為誤把註解截斷、露出假管線 → PASS，方向相反。
+# bash 5.3 實測：
+#   echo `x` # note `echo "$PR_TITLE" | python3 -c "pass"`
+#   → `x: command not found`（`x` 不存在，反引號結果是空字串），沒有任何 PR_TITLE 被印出——
+#   `#` 之後整行（含那段看起來像反引號的文字）都是註解，完全不執行，原版的判法與 bash 一致。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: comment-after-closed-backtick-with-fake-nested-backtick
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo `x` # note `echo "$PR_TITLE" | python3 scripts/neutralise.py`

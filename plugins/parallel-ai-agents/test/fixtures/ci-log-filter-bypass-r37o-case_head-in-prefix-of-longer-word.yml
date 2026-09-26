@@ -1,0 +1,28 @@
+# #33 verify R37 opsweep 補件：殺 `_case_head` 最後那個 return 式的 drop-operand 突變體第4個（拿掉
+# `line[k + 2:k + 3] in ("", " ", "\t", ";")`——`return w_end > j and k > w_end and
+# line.startswith("in", k) and line[k + 2:k + 3] in ("", " ", "\t", ";")` 少了第四個 and 子句）。
+# 原版：`case foo into cmd) result;; esac)`——case 後面的詞是 `foo`，跳過空白後是 `into`，
+# `line.startswith("in", k)` 對 `"in"` 前綴比對會成立（`into` 的前兩個字元就是 `in`），但
+# `line[k + 2:k + 3]`（`in` 之後那個字元）是 `t`，不在 `("", " ", "\t", ";")` 允許集合裡——`into` 是一個
+# 完整的詞，不是保留字 `in` 後面接別的東西，`_case_head` 正確回 `False`；主掃描器判定這不是合法的
+# case 起頭，fail-closed（`PARSE:`）。bash 5.3 實測 `case foo into cmd)` 確實語法錯誤
+# （`syntax error near unexpected token 'into'`）——`case` 後面一定要是**單獨**的保留字 `in`，`into`
+# 不成立。
+# 突變體拿掉這個字元邊界檢查後，只要 `line[k:k+2]` 是 `"in"` 就算數，不管 `in` 後面接的是空白、`;`
+# 還是任意字母——`into` 因此被誤判成合法的 `in`，`_case_head` 誤回 `True`。跟第3個突變體同一套機制：
+# 主掃描器收下這個假 case，之後的 `)` 被當成模式收尾括號、`;;` 撥回等模式、`esac` 在等模式下彈出，
+# 整段 `$(…)` 因此完整收尾、run 區塊乾淨解析完（不是 parse-red），與原版的 fail-closed 判定不同，
+# 殺得掉。
+# EXPECT: parse-red
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: cmdsub-case-head-in-prefix-of-longer-word
+        shell: bash
+        run: |
+          x=$(case foo into cmd) result;; esac)
+          echo "$x" 2>&1 | python3 scripts/neutralise.py

@@ -1,0 +1,29 @@
+# #33 verify R37 opsweep 補件：殺 drop-operand|shell_scan|elif cases and cases[-1][0] == csub + cpar and (cases[-1][1] == "pat" or at_cmd):|2|L1028。
+# 這行是「`esac` 收尾判定」的深度守衛：拿掉 `cases[-1][0] == csub + cpar`（只留
+# `cases` 非空、以及 `("pat" or at_cmd)`），於是**不管目前深度跟 outer case 記錄的深度對不對得上**，
+# 只要頂端案例還在 "pat" 就一律 pop 掉。
+#
+# 本例 outer case 的模式文字本身塞了一個巢狀命令替換 `$(echo esac))`（case 模式可以含展開，
+# 這是合法寫法），裡面剛好有字面引數 "esac"（只是給 `echo` 的普通文字，不是真的收尾）。
+# 原版：這個字面 "esac" 出現時目前深度是 2（巢狀 `$(` 的 1 加 outer `$(` 的 1），跟
+# `cases[-1][0]=1`（outer，還在 "pat"）對不上，`elif` 整個不成立，outer 追蹤完全不受影響；
+# 巢狀 `$(…)` 正常收尾、outer 的追蹤繼續生效，後面緊接一個明顯錯誤的 `case bad esac`
+# （沒有 "in"，`_case_head` 必定失敗）被正確攔下來 → `unparsed = "命令替換 $(…) 裡的 case
+# 不在命令起點…"` → PARSE。突變體無視深度，讓這個字面 "esac" 提前把 outer 的追蹤清空
+# （`cases` 變成空 list）；後面真正 outer 該追蹤的東西（包含那個明顯錯誤的
+# `case bad esac`）因為 `cases` 已空、`if csub and (...)` 這一整條追蹤機制對它形同虛設，
+# 完全不驗證，整段照常當成一般 code 掃出來，管線乾淨接到 neutralise.py → PASS，
+# 與原版的 PARSE 方向相反。
+# bash 5.3 實測：
+#   bash -n -c 'x=$(case $a in $(echo esac)) case bad esac) 2>&1 | python3 scripts/neutralise.py'
+#   → syntax error near unexpected token 'esac'，原版判 PARSE 與 bash 判定方向一致。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: literal-esac-inside-pattern-cmdsub-pops-outer
+        run: |
+          x=$(case $a in $(echo esac)) case bad esac) 2>&1 | python3 scripts/neutralise.py

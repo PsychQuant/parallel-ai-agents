@@ -1,0 +1,28 @@
+# #33 verify R37 opsweep 補件：殺 drop-operand|shell_scan|elif ch == ")" and cases and cases[-1][0] == csub + cpar:|3|L1036。
+# 這行判斷一個 `)` 該不該交給目前 `cases` 堆疊頂端的 case 條目處理（模式收尾／子句命令後的
+# 同層單獨 `)` 是語法錯誤）：非空、而且深度要對上。突變體拿掉深度檢查，只留
+# `ch == ")" and cases`——**只要 `cases` 非空，不管目前深度跟頂端記錄的深度對不對得上**，
+# 任何 `)` 都被交給頂端案例處理。
+#
+# 本例：`case $a in p) $(echo hi) more;; esac`——外層 case 的模式 "p)" 已經收尾
+# （`cases[-1]` 是 [1,"cmd"]），命令子句裡開了一個**巢狀命令替換** `$(echo hi)`（合法，
+# case 的命令可以是任何指令）。這個巢狀 `$(…)` 自己的收尾 `)` 出現時，目前深度是 2
+# （外層 `$(` 的 1，加上這個巢狀 `$(` 的 1），跟 `cases[-1][0]=1` 對不上。原版靠深度檢查
+# 正確排除，讓這個 `)` 落到 `elif ch == ")" and csub:`（一般命令替換收尾）正常把 `csub`
+# 減一、乾淨收掉巢狀 `$(…)`。突變體無視深度，把這個 `)` 硬塞給頂端 case 條目：
+# `if cases[-1][1] == "cmd": unparsed = "命令替換裡 case 子句的命令之後有同一層的單獨 `)`
+# ——bash 語法錯誤"; break`——`cases[-1][1]` 剛好是 "cmd"（外層模式早就收尾了），直接命中
+# 這條「語法錯誤偵測」而 fail-closed，把一個完全合法、只是**深度不同**的巢狀命令替換收尾
+# 誤判成同層的語法錯誤。
+# bash 5.3 實測：`x=$(case $a in p) $(echo hi) more;; esac) 2>&1 | python3 scripts/neutralise.py`
+# 是合法語法（`bash -n` rc=0）——case 子句命令裡巢狀一個命令替換完全正常。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: nested-cmdsub-close-inside-case-command
+        run: |
+          x=$(case $a in p) $(echo hi) more;; esac) 2>&1 | python3 scripts/neutralise.py

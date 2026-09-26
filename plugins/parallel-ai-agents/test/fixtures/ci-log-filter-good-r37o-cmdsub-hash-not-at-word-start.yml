@@ -1,0 +1,13 @@
+# #33 verify R37 opsweep 補件：`_cmdsub_end` 封閉列舉第 1 條只針對**詞首**的 `#`（註解）。拿掉 `(c == "#" and at_word)`
+# 裡的 `at_word` 的突變體存活——既有 fixture 的 `$(…)` 裡沒有不在詞首的 `#`。這裡 `a#b` 的 `#` 是字面：原版照常配對、
+# 放行；突變體把它當註解回 None，`${…}` fail-closed → PARSE。bash 5.3：`echo ${PR_TITLE:-$(echo a#b)}` 印 a#b。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: hash-not-at-word-start
+        run: |
+          echo ${PR_TITLE:-$(echo a#b)} 2>&1 | python3 scripts/neutralise.py

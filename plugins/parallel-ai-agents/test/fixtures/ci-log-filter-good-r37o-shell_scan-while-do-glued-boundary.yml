@@ -1,0 +1,26 @@
+# #33 verify R37 opsweep 補件：殺 drop-operand|shell_scan|if w in ("then", "do", "else", "elif", "if", "while", "until") \|2|L971。
+# 這行在 `after_compound` 分支（`]]`／算術命令 `))` 收尾後緊接一個詞，判斷那個詞是不是保留字）：
+#   if w in ("then", "do", ...) and line[i+len(w):i+len(w)+1] in (" ", "\t", ";", ""):
+#       unparsed = "…之後直接接保留字…"; break
+# `w` 是 `re.match(r"[A-Za-z]+", …)` 抓到的**整段連續字母**，不是「掃到 `w` 這幾個字母就停」；
+# 只有在 `w` 之後緊接的字元也是空白／分號／行尾，才代表 `w` 真的是一個獨立保留字。突變體拿掉這個
+# 邊界檢查，只留 `if w in (...)：`，於是任何**以保留字開頭、後面接非邊界字元**的詞（本例 `do1`）
+# 都被誤判成「複合命令收尾後直接接保留字」而 fail-closed，即使 `w` 其實是 "do"、後面貼著的是
+# 不屬於邊界的 "1"（`do1` 整體是另一個詞，不是保留字 `do`）。
+# 原版：邊界檢查失敗（`do1` 的 `1` 不在 (" ","\t",";","") 裡）→ 這個分支不觸發，整段落回一般逐字元
+# 掃描，`do1` 只是普通文字，後面「hi | python3 scripts/neutralise.py」照常被掃成真正的 code、
+# 管線乾淨接到 neutralise.py → PASS。突變體無視邊界，直接判「複合命令收尾後接保留字」→ PARSE。
+# bash 5.3 實測：`while [[ -n x ]] do1 hi | python3 scripts/neutralise.py; done` 是語法錯誤
+# （`do1` 不是 bash 認得的 `do`，"do" 之後沒有分號／換行就不能接 `while` 的條件），
+# 什麼都不會執行——原版判 pass 是把它當成「本掃描器詞法上看不出可達性」的一般情形，
+# 不是在斷言這段真的會安全執行；這裡驗證的是**這一行邊界檢查本身**的行為，不是整段 bash 的合法性。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: after-compound-glued-do
+        run: |
+          while [[ -n x ]] do1 hi | python3 scripts/neutralise.py; done

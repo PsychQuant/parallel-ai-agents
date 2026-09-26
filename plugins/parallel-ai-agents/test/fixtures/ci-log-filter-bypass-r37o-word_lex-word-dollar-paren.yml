@@ -1,0 +1,22 @@
+# #33 verify R37 opsweep 補件（word_lex 群）：`startswith→F|_word|if C.startswith("$(", p):|1`（把這個判定
+# 換成 `False`）。`_word` 在一般詞裡遇到 `$(…)` 要走這一支才會剖成命令替換；換成 `False` 後，`$` 字元
+# 落到後面的參數展開判定（`_PARAM_RE`，只認 `$VAR`／`$1`／`$@` 這類，不認 `$(`）與其餘分支都不吃它，
+# 最後被當成一個普通字面字元收進詞（`lit.append("$")`），詞在下一格的 `(` 就因為 `(` 落在 `_WORD_END`
+# 裡而斷詞。接下來 `_lex` 的主迴圈把落單的 `(` 認成**普通子殼層群組**的開頭（跟 `_Sh` 認的合法安全寫法
+# `(cmd) 2>&1 | neutralise.py` 長得一模一樣），而這個「群組」後面緊接著本來就要接進管線的 `2>&1 |`——
+# 於是 `_analyse` 的群組豁免（R36 第 9 列：收尾後緊接 `2>&1 |` 進 neutralise 的群組，裡面的 fd 1／fd 2
+# 都算進了管線、不算外流）把整段命令替換誤判成「豁免的安全群組」，藏在裡面的 `>&2` 因此不再算外流。
+# bash 5.3 實測：`echo $(echo leak >&2)` 印出 `leak`（來自 `>&2`）之後才印展開值（空字串，因為
+# `echo leak >&2` 沒有寫任何東西到 stdout）。
+# 神諭對帳（R37 移植 #61 時補）：被擋下的那個命令改成真的把 PR 文字印出去（原本印常數、或那一支不會執行），
+# 讓 lint 的紅是「一致」而不是「誤擋」；殺掉的突變體逐一重驗仍然殺。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: cmdsub-in-word-with-leak
+        run: |
+          echo $(echo "$PR_TITLE" >&2) 2>&1 | python3 scripts/neutralise.py

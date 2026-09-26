@@ -1,0 +1,27 @@
+# #33 verify R37 opsweep 補件：殺 drop-operand|shell_scan|if w in ("then", "do", "else", "elif", "if", "while", "until") \|4|L986。
+# 這是主要保留字判定分支（命令位置、任何時候都會經過，不限「複合命令收尾後」）：
+#   if w in ("then", "do", ...) and line[i+len(w):i+len(w)+1] in (" ", "\t", ";", ""):
+#       code.append(w); i += len(w); prev_sig = w[-1]; continue
+# 同 #5（L971）的邊界檢查，只是位置不同：這裡整段消費保留字的目的是**保留 `cmd_pos=True`**，
+# 讓緊貼在後面的 `((` 被正確認成算術命令，而不是被拆成兩個裸括號。突變體拿掉邊界檢查，
+# `if((…))`（`if` 後面直接貼 `((`，中間沒有空白）裡的 `if` 仍然滿足 `w in (...)`（`re.match` 抓到
+# 的整段字母剛好就是 "if"，因為下一個字元 "(" 不是字母），於是被誤判成「保留字」而整段消費、
+# 錯誤地**保留 `cmd_pos=True`**——實際上原版故意讓這條件失敗（`"(" 不在邊界集合裡`），逐字元
+# 掃描 "if" 兩個字母各自把 `cmd_pos` 收回 False，這樣緊接的 `((` 因為 `cmd_pos` 不成立（`prev_sig`
+# 也不是 "$"）而**不被承認**成算術命令，兩個 `(` 分別落到裸括號計數，內容（含管線）當成真正的
+# code 逐字元掃出來、配上後面兩個 `)` 剛好收平，沒有殘留、也沒有把管線藏起來 → PASS。
+# 突變體因為誤判成保留字、保留了 `cmd_pos=True`，緊接的 `((` 被**正確判成算術命令**——但因此
+# `1 | python3 scripts/neutralise.py` 整段被算術內容的遮蔽機制吃成空白，管線消失不見，
+# 這個 run 區塊沒有任何真管線、也沒有 LOG-FILTER 宣告 → RULE:「既沒有經 neutralise.py」。
+# bash 5.3 實測：`if((1 > 0)); then echo yes; fi` 印出 "yes"、rc=0——`if((` 中間沒有空白在 bash
+# 眼中完全合法（`(` 本身是 metacharacter，自動斷詞），`((…))` 確實是算術命令。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: if-glued-arith-fake-pipe
+        run: |
+          if((1 | python3 scripts/neutralise.py)); then :; fi

@@ -1,0 +1,37 @@
+# #33 verify R37 opsweep 補件：delim_align 群組——殺
+# `drop-operand|_skip_delim_word|k += 2 if (s[k] == "\\" and (q != "'" or ansic)) else 1|2`
+# （拿掉整個內層 `(q != "'" or ansic)`，剩 `s[k] == "\\"`）。
+#
+# 用單引號分隔字 `<<'A\'`（單引號裡反斜線是**字面**，不是逃脫——bash 對單引號字一律
+# 逐字元讀，`\` 就是普通字元，終止字是含一個反斜線的 `A\`，由**下一個** `'` 收尾）。
+# 原版：`q="'"`、`ansic=False`，逃脫判定 `(q!="'" or ansic)` = `(False or False)` =
+# `False`，於是反斜線在單引號裡**不**被當成逃脫——`k+=1`（逐格前進），正確走到那個
+# 反斜線之後的收尾引號、回傳正確位置。
+#
+# 突變體（拿掉整個內層判斷）：條件退化成 `s[k]=="\\"`，反斜線在單引號裡也被誤判成
+# 逃脫字元——`k+=2`（反斜線＋下一格一起跳過），把**真正的收尾引號**當成被逃脫的字元
+# 吞掉，之後找不到第二個收尾引號、回傳 `None`。
+#
+# heredoc 之後接的安全重導向目標 `>/tmp/out` 因此讀不到原文，被判定「目標看不到
+# 原文，不解析就不放行」＝規則誤擋。
+#
+# 原版為什麼是 pass：heredoc 本體只是把 PR 標題寫進 `/tmp/out`（不落在 `/dev`／
+# `/proc`），下一個 step 再讀出來餵給 neutralise.py，整個區塊沒有未過濾的外流路徑。
+#
+# bash 5.3.15 實測：`cat <<'A\'` 的終止字確實是含反斜線的 `A\`（單引號裡反斜線是
+# 字面字元），本體與該終止字都能正確收尾（`bash -c $'cat <<\'A\\\'\nhi\nA\\'`
+# 印出 `hi`）。
+#
+# EXPECT: pass
+name: t
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: heredoc terminator is a single-quoted word ending in a literal backslash, target safe, later neutralised
+        run: |
+          cat <<'A\' >/tmp/out
+          $PR_TITLE
+          A\
+          cat /tmp/out | python3 scripts/neutralise.py

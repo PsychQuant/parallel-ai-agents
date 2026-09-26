@@ -1,0 +1,46 @@
+# #33 verify R37 opsweep 補件：反駁 _aligned_sources 的 while 迴圈守衛（L1335 位置 3）「依構造不可達」的
+# 等價主張——heredoc 分隔字詞真的跨行續接時，L1335 的 `e is None or e > len(s)` 這一支確實會被
+# `e > len(s)` 那一半撐起來（不是只有 `e is None`），砍掉它會讓「該續行卻不續行」。
+#
+# 原版判定：pass。
+#
+# 構造：`cat 2>/dev/null <<EOF\` 的分隔字詞不加引號、以字面反斜線收尾，且**後面確實還有下一個實體行**
+# （`CONT`）可以續接——這是 R31 已經處理過的正常情形（`<<AB\` ⏎ `CD` 的終止字是 `ABCD`，bash 5.3
+# 實測不是語法錯誤）。
+#
+# `_skip_delim_word` 對這一行原文的處理：讀到行尾字面反斜線時走「跳兩格」的逃逸分支
+# （`j += 2 if s[j] == "\\" else 1`），反斜線剛好是這一行最後一個字元 ⇒ `j` 溢出成 `len(s) + 1`，
+# 回傳 `e = len(s) + 1`（一個真整數、`> len(s)`，不是 `None`）。
+#
+# 原版 L1335 的 while 守衛：`(e is None or e > len(s)) and s.endswith("\\") and joined(tail) is not None:`
+# ——`e > len(s)` 這一半成立、`s.endswith("\\")` 成立、`joined(tail) is not None`（真的有下一行 `CONT`）
+# 成立 ⇒ 進迴圈：把 `s` 接上 `CONT` 重新呼叫 `_skip_delim_word`，這次能正確找到分隔字尾端（因為
+# 分隔字實際上跨了兩行），對齊成功，`al[1]` 是原文本身，`2>/dev/null` 的目標正常對到 `/dev/null`
+# （`_SAFE_TARGETS` 白名單內，`_redir_hit` 回 `None`），`an["fd"]` 空。
+#
+# 若砍掉 while 守衛內側 `or` 的第二個運算元（只剩 `while (e is None) and s.endswith(...) and
+# joined(...) is not None:`）：`e` 不是 None ⇒ 條件恆假 ⇒ **完全不進迴圈**，跳過本來該做的續行，
+# 直接落到 `if e is None or e > len(s): ok = False; break`（這條 if 本身沒被動——這裡測的是 while，
+# 不是 if）——`al[1]` 變成 `None`，`2>/dev/null` 的目標「看不到原文」被 fail-closed 判定，`an["fd"]`
+# 非空，本 fixture 的判定從 pass 掉成 rule-red。
+#
+# 已用抽出的同一份原始碼直接對照（見下方對照組摘要，非本檔內容）：
+#   lines = ['cat 2>/dev/null <<EOF\\', 'CONT', 'x', 'EOFCONT']
+#   原版 _aligned_sources(...)  → al[0] == 'cat 2>/dev/null <<'（對齊成功，`al` 是逐字元對齊後的完整程式碼）
+#   只改 L1335 while 守衛（砍第二運算元）→ al[0] == None（對齊失敗）
+#   兩者 shell_scan 的 unparsed 皆是 None、code 完全相同——差異只在 `_aligned_sources` 的輸出。
+#
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: unquoted heredoc delimiter continues onto a real next physical line
+        run: |
+          echo "$PR_TITLE" | python3 scripts/neutralise.py
+          cat 2>/dev/null <<EOF\
+          CONT
+          x
+          EOFCONT

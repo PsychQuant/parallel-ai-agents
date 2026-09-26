@@ -1,0 +1,49 @@
+# #33 verify R37 opsweep 補件：delim_align 群組——殺三個突變體（同一張 fixture 一次補齊）：
+#   1. `drop-operand|_skip_delim_word|if s[j] in ("'", '"', "`") or s.startswith("$'", j):|2`
+#      （拿掉 `s.startswith("$'", j)`）
+#   2. `startswith→F|_skip_delim_word|if s[j] in ("'", '"', "`") or s.startswith("$'", j):|1`
+#      （把 `s.startswith("$'", j)` 換成 `False`——效果與上面拿掉這個運算元完全相同）
+#   3. `==↔!=|_skip_delim_word|k += 2 if (s[k] == "\\" and (q != "'" or ansic)) else 1`
+#      （`s[k] == "\\"` 換成 `s[k] != "\\"`）
+#
+# 用 ANSI-C 分隔字 `<<$'ab\'cd'`（bash 對 `$'…'` 做 quote removal 並解 ANSI-C 逃脫，`\'`
+# 是逃脫出來的字面單引號，終止字解碼後是 `ab'cd`）。原版：`s[j]` 是 `$`，`s.startswith("$'"
+# , j)` 命中，`ansic=True`、`q="'"`、`k=j+2`（跳過 `$'`）；掃描到內部的 `\'` 時，
+# `s[k]=="\\"` 為真且 `(q!="'" or ansic)` 因 `ansic=True` 也為真，於是把反斜線＋引號當成
+# 逃脫一起跳過（`k+=2`），繼續往後找到真正的收尾引號，回傳正確位置。
+#
+# 突變體1／2（拿掉或關掉 `$'` 判定）：`$` 不再觸發 ANSI-C 分支，退回一般字元前進；下一格
+# 的 `'`（ANSI-C 字串本身的開引號）才被 `in (...)` 認成一般單引號起點，這時 `ansic=False`，
+# `q="'"`——逃脫判定變成 `(q!="'" or ansic)` = `(False or False)` = False，反斜線被當成
+# **字面字元**（單引號本來就該如此），於是掃到 `\'` 裡的那個 `'` 就被誤判成收尾，分隔字
+# 提早結束成 `ab\`；之後 `_skip_delim_word` 找不到第二個 `'` 收尾，回傳 `None`。
+#
+# 突變體3（`==`→`!=`）：即使 `ansic=True` 判定正確，`s[k]=="\\"` 反轉成 `s[k]!="\\"` 後，
+# 逃脫判定在**非反斜線**字元上反而成立、在**真正的反斜線**上反而不成立——同樣會在
+# `\'` 的位置提早把內部的 `'` 誤判成收尾，一樣提早結束、之後找不到真正的收尾引號、
+# 回傳 `None`。
+#
+# 三個突變體都讓分隔字對不齊，之後接的安全重導向目標 `>/tmp/out` 因此讀不到原文，
+# 被判定「目標看不到原文，不解析就不放行」＝規則誤擋。
+#
+# 原版為什麼是 pass：heredoc 本體只是把 PR 標題寫進 `/tmp/out`（不落在 `/dev`／
+# `/proc`），下一個 step 再讀出來餵給 neutralise.py，整個區塊沒有未過濾的外流路徑。
+#
+# bash 5.3.15 實測：`cat <<$'ab\'cd'` 的終止字確實解碼成 `ab'cd`，本體與該終止字都能
+# 正確收尾（`bash -c "cat <<\$'ab\\'cd'
+# hi
+# ab'cd"` 印出 `hi`）。
+#
+# EXPECT: pass
+name: t
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: heredoc terminator is an ANSI-C-quoted word with an escaped quote inside, target safe, later neutralised
+        run: |
+          cat <<$'ab\'cd' >/tmp/out
+          $PR_TITLE
+          ab'cd
+          cat /tmp/out | python3 scripts/neutralise.py

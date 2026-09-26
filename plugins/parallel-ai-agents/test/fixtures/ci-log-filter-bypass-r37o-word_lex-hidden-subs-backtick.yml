@@ -1,0 +1,18 @@
+# #33 verify R37 opsweep 補件（word_lex 群）：`drop-operand|_hidden_subs|if S.startswith("$(", k) or c == "`":|2`
+# （拿掉第二個運算元 `c == "`"`，只留 `if S.startswith("$(", k):`）。`_hidden_subs` 掃未引號 `${…}` 內容裡
+# 「會執行的命令替換」時，反引號與 `$(…)` 是並列的兩種形式；拿掉反引號判定後，掃描遇到反引號字元完全不特別
+# 處理，只是當成普通字元逐格跳過，裡面的 `` `echo leak >&2` `` 永遠不會被剖成詞元串——`_word`／`_Sh` 看不到
+# 那段內容裡的 `>&2`，回傳的 subs 少了這一條，就當它不存在。
+# bash 5.3 實測：`unset PR_TITLE; echo ${PR_TITLE:-\`echo leak >&2\`}` 印出 `leak`（來自反引號裡的 `>&2`）。
+# 神諭對帳（R37 移植 #61 時補）：被擋下的那個命令改成真的把 PR 文字印出去（原本印常數、或那一支不會執行），
+# 讓 lint 的紅是「一致」而不是「誤擋」；殺掉的突變體逐一重驗仍然殺。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: backtick-in-unquoted-brace
+        run: |
+          echo ${UNSET_Z:-`echo "$PR_TITLE" >&2`} 2>&1 | python3 scripts/neutralise.py

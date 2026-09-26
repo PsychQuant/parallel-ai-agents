@@ -1,0 +1,28 @@
+# #33 verify R37 opsweep 補件：殺 `startswith→F|_dq_parts|if body.startswith("${", i):` 存活突變體——雙引號
+# 內容裡辨認 `${…}` 的判斷被鎖死成 `False`。body 是 `${X}`：
+#   - 原版：認出 `${`，交給 `_brace_end` 找收尾、把 `literal` 設成 `False`──`_dq_parts` 回傳 `(None, "\0")`，
+#     代表這個詞的字面值**不可知**（依賴 `X` 執行時的值）。
+#   - 突變體：`${` 判斷永遠不成立，`$` 後面接的是 `{`──既不在 `_PARAM_RE` 的兩種允許形狀裡（
+#     `[A-Za-z_]…` 或 `[0-9@*#?$!-]`，`{` 都不屬於），也不是反引號或 `$(`──於是整段 `${X}` 逐字元落進
+#     預設分支被當成**純字面文字**照抄，`literal` 從頭到尾沒被關掉，`_dq_parts` 回傳 `("${X}", "${X}")`。
+# 這個（錯誤的）字面值餵給 `>&"${X}"` 這個 fd 複製重導向：
+#   - 原版 `t["lit"] is None`，命中 `_redir_hit` 的 `if op=="<&" or tl is None or …: return "…複製到看不出值
+#     的 fd"`──目標依賴執行期才決定的 `X`，本 lint 看不出來，fail-closed 印 RULE，正確。
+#   - 突變體 `t["lit"] == "${X}"`（把原始語法文字當成已經展開完的字面值），不是 `None`、不是數字、不是
+#     `"-"`，落到最後的一般檔案目標判定，`"${X}"` 不含 `/dev`／`/proc`，判定通過（pass）──把「執行期才能
+#     決定、可能是任意 fd 數字」的目標誤判成「已知、安全」的檔名，正是 R37 這一類缺陷要擋的方向。
+# bash 5.3 實測：`echo hi >&"${X}"`（`X` 未設）`bash -n` parse rc=0──合法語法，執行期 `X` 的值完全可以是
+# 任何字串（含數字），本 lint 在詞法階段本來就不該假裝知道。
+# 神諭對帳（R37 移植 #61 時補）：被擋下的那個命令改成真的把 PR 文字印出去（原本印常數、或那一支不會執行），
+# 讓 lint 的紅是「一致」而不是「誤擋」；殺掉的突變體逐一重驗仍然殺。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe
+        run: |
+          X=2
+          echo "$PR_TITLE" >&"${X}" 2>&1 | python3 scripts/neutralise.py

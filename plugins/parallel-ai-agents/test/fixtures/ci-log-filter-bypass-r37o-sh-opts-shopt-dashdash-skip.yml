@@ -1,0 +1,19 @@
+# #33 verify R37 opsweep 補件（sh-opts C）：`_Sh.shopt_cmd` 的旗標迴圈在 `a == "--"` 那支把 `i += 1`
+# 改成 `i += 2`，會多跳過一個字面詞。`shopt -so -- xtrace`：旗標迴圈先吃 `-so`（`flags="so"`），
+# 碰到 `--` 停止旗標讀取；原版只多走一格（i 指到 `xtrace`），選項名清單就是 `["xtrace"]`，
+# `"s" in flags` 且 `xtrace` 屬於 `_TRACE_OPTS` ⇒ hit；`i += 2` 會把 `xtrace` 整個跳過（清單變空），
+# 選項名迴圈不執行、完全漏掉這個 trace。bash 5.3 實測：`bash -c 'shopt -so -- xtrace; echo "$-"'`
+# 輸出含 `x`，確認 `shopt -so -- xtrace` 真的會開 trace（`--` 只結束旗標讀取，不吃掉後面的選項名）。
+# 神諭對帳（R37 移植 #61 時補）：被擋下的那個命令改成真的把 PR 文字印出去（原本印常數、或那一支不會執行），
+# 讓 lint 的紅是「一致」而不是「誤擋」；殺掉的突變體逐一重驗仍然殺。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        run: |
+          shopt -so -- xtrace
+          echo "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py

@@ -1,0 +1,26 @@
+# #33 verify R37 opsweep 補件：殺 drop-operand|shell_scan|if line.startswith("((", i) and (prev_sig == "$" or cmd_pos):|2|L1006。
+# 這行判斷 `((` 是不是算術**命令**（`$((` 算術展開由 `prev_sig == "$"` 直接認、`((` 命令必須在
+# 命令位置 `cmd_pos` 才算）。突變體拿掉整個 `(prev_sig == "$" or cmd_pos)`，只留
+# `if line.startswith("((", i):`，於是**任何位置**出現的 `((`（不論是不是命令位置、前面是不是
+# `$`）一律當成算術命令，把裡面的內容整段遮蔽掉。
+# 本例 `echo1((1 | python3 scripts/neutralise.py))`：`echo1` 是一個普通詞（不是保留字），逐字元
+# 掃完之後 `cmd_pos` 是 False、`prev_sig` 是 "1"（不是 "$"）。原版：兩個條件都不成立，`((` 不被
+# 承認成算術命令，兩個 `(` 各自落到裸括號計數（`bare_par`），中間「1 | python3
+# scripts/neutralise.py」當成真正會執行的 code 逐字元掃出來，管線乾淨接到 neutralise.py，
+# 後面兩個 `)` 剛好收平裸括號 → PASS。突變體無視位置，把 `((` 硬判成算術命令，內容整段被
+# 算術遮蔽機制吃成空白，管線消失不見，此步驟沒有任何可見管線、也沒有 LOG-FILTER 宣告 →
+# RULE:「既沒有經 neutralise.py」。
+# bash 5.3 實測：`echo1((1 | python3 -c pass))` 在字面上就是語法錯誤（`echo1(` 不是函式定義、
+# 也不在命令位置的算術上下文裡，bash 對這個位置的裸 `(` 報 `syntax error near unexpected token
+# '('`）——與本掃描器「詞法上看不出可達性」的一般限制一致，這裡驗證的是這一行本身的
+# 位置判定，不主張整段 bash 語法合法。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: bare-paren-mid-word-arith
+        run: |
+          echo1((1 | python3 scripts/neutralise.py))

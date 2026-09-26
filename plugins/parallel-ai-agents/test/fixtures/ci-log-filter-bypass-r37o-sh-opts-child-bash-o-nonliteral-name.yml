@@ -1,0 +1,19 @@
+# #33 verify R37 opsweep 補件（sh-opts I2）：`_Sh.shell_opts` 的
+# `if ch == "o" and on and (nm is None or nm in _TRACE_OPTS):` 內層 `nm is None or nm in _TRACE_OPTS`
+# 拿掉 `nm is None` 只剩 `(nm in _TRACE_OPTS)`。`nm is None` 是 fail-closed 的那一支：選項名不是字面
+# （像 `$X` 這種未加引號的變數展開，詞法層判不出字面值）時，原版**假設最壞情況**照樣觸發 hit——
+# 因為 runtime 真的可能是 `X=xtrace`。`None in _TRACE_OPTS`（一個 frozenset）求值是 `False`、不會
+# 丟例外，拿掉這個運算元後 `nm` 非字面時直接判定安全，等於把這條 fail-closed 的路徑整個拆掉。
+# 神諭對帳（R37 移植 #61 時補）：被擋下的那個命令改成真的把 PR 文字印出去（原本印常數、或那一支不會執行），
+# 讓 lint 的紅是「一致」而不是「誤擋」；殺掉的突變體逐一重驗仍然殺。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        run: |
+          X=xtrace
+          bash -o $X -c 'echo "$PR_TITLE"' | python3 scripts/neutralise.py

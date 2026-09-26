@@ -1,0 +1,29 @@
+# #33 verify R37 opsweep 補件：殺 drop-operand|shell_scan|if cases and cases[-1][0] == csub + cpar and cases[-1][1] == "cmd" and line.startswith((";;", ";&"), i):|2|L1030。
+# 這行負責在看到 `;;`／`;&` 時把 case 頂端狀態從 "cmd" 重設回 "pat"，同樣有深度守衛
+# `cases[-1][0] == csub + cpar`。突變體拿掉深度守衛，於是**不管目前深度**，只要頂端狀態是
+# "cmd" 就被任何位置出現的字面 `;;`／`;&` 重設。
+#
+# 本例 outer case 的命令子句裡巢狀開了一個命令替換 `$(echo hi;; b)`（合法，命令可以是
+# 任何指令），裡面剛好有字面 `;;`（給 `echo` 的普通文字，不是真的子句分隔），後面接一個
+# **真正的子殼層** `(echo sub more...`。原版：巢狀 `$(…)` 裡的字面 `;;` 出現時深度是 2，
+# 跟 outer 的 `cases[-1][0]=1` 對不上，不重設，outer 狀態保持 "cmd"；等巢狀 `$(…)` 正常
+# 收尾、回到深度 1 之後，那個真正的子殼層開括號因為 `cases[-1][1]` 是 "cmd"（不是 "pat"）
+# 而正確走 `cpar` 路線——但這個子殼層本身沒有配對的收尾括號（後面直接接 `;; esac)`，
+# 整段文字構造上就是語法錯誤），`csub` 最終沒能正確收尾 → PARSE。突變體無視深度，
+# 讓巢狀 `$(…)` 裡的字面 `;;` 提前把 outer 狀態誤重設成 "pat"；後面那個真正的子殼層開括號
+# 因此被誤判成「case 模式的前導括號」、不計 cpar，狀態演變與原版完全不同，最終讓整段
+# （原本站不住腳的）文字被判成乾淨、管線乾淨接到 neutralise.py → PASS，與原版的 PARSE
+# 方向相反。
+# bash 5.3 實測：
+#   bash -n -c 'x=$(case $a in p) cmd=$(echo hi;; b) (echo sub more;; esac) 2>&1 | python3 scripts/neutralise.py'
+#   → syntax error near unexpected token ';;'，原版判 PARSE 與 bash 判定方向一致。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: literal-double-semicolon-inside-nested-cmdsub-resets-outer
+        run: |
+          x=$(case $a in p) cmd=$(echo hi;; b) (echo sub more;; esac) 2>&1 | python3 scripts/neutralise.py

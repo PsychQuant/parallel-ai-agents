@@ -1,0 +1,27 @@
+# #33 verify R37 opsweep 補件：殺 `_case_head` 最後那個 return 式的 drop-operand 突變體第3個（拿掉
+# `line.startswith("in", k)`——`return w_end > j and k > w_end and line.startswith("in", k) and
+# line[k + 2:k + 3] in ("", " ", "\t", ";")` 少了第三個 and 子句）。
+# 原版：`case foo i; cmd) result;; esac)`——case 後面的詞是 `foo`，跳過空白後應該是字面 `in`，但實際是
+# `i;`。`line.startswith("in", k)` 比對 `line[k:k+2]` 是不是恰好 `"in"`——這裡是 `"i;"`，比對失敗，
+# `_case_head` 正確回 `False`；主掃描器判定這不是合法的 case 起頭，整個 `$(…)` 沒被承認開 case，
+# 之後的 `)` 找不到配對、run 區塊結尾時 `csub` 沒收尾，fail-closed（`PARSE:`）。bash 5.3 對 `case` 後面
+# 不是字面 `in` 一律語法錯誤，這裡的 `foo i` 不成立。
+# 突變體拿掉這個字面比對後，只剩「`foo` 後面跳過空白、再過兩個字元是不是 `;`／空白／tab／結尾」——
+# `i;` 後面剛好是空白，這個較弱的條件照樣成立，`_case_head` 誤回 `True`。主掃描器因此把
+# `cases.append([1, "pat"])` 收下，之後**任何**字元層級追蹤都不驗證這是不是真的 case 語法——第一個同層
+# `)`（`cmd)` 的那個）被當成模式收尾括號、`;;` 把階段撥回等模式、`esac` 在等模式下（不需要
+# `_at_command`）直接彈出這個假 case——整段 `$(…)` 因此完整收尾、run 區塊乾淨解析完（不是
+# parse-red），與原版的 fail-closed 判定不同，殺得掉。
+# EXPECT: parse-red
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: cmdsub-case-head-non-in-word-fake-pattern-close
+        shell: bash
+        run: |
+          x=$(case foo i; cmd) result;; esac)
+          echo "$x" 2>&1 | python3 scripts/neutralise.py

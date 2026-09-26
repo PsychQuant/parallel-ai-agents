@@ -1,0 +1,27 @@
+# #33 verify R37 opsweep 補件（word_lex 群）：殺兩個突變體，同一個構造：
+#   - `drop-operand|_lex|if stop == ")" and c == ")" and not depth and not cased:|1`（拿掉 `stop == ")"`）
+#   - `==↔!=|_lex|if stop == ")" and c == ")" and not depth and not cased:|1`（`stop == ")"` 反成 `!=`）
+# `_lex` 頂層（`stop=None`，`_analyse` 對整個 run 區塊只呼叫一次）用這個判定認「命令替換／process
+# substitution 的收尾 `)`」——正常只在 `stop==")"` 時才適用，頂層根本不該檢查它。兩個突變體都讓這個判定
+# 在**頂層**（`stop` 不是 `")"`）也對「深度 0、不在 case 模式裡的裸 `)`」成立：第一個直接拿掉 `stop==")"`
+# 這個守衛；第二個把它反過來，變成「`stop != ")"` 才觸發」——對頂層（`stop=None`）一樣恆真。
+# `case … in a) …` 這種 case 子句的模式括號在頂層本來就是裸 `)`（`_lex` 用 `cased` 計數器防的是**巢狀在
+# `$(…)` 裡**的 case，不覆蓋頂層——頂層的 case 括號由 `_Sh.parse_case` 自己認）。兩個突變體都讓 `_lex`
+# 在讀到 `a)` 的 `)` 那一刻**整個提早 return**，run 區塊後面所有還沒剖到的內容（`esac`、以及真正外流的
+# `echo leak >&2`）從此在詞元串裡完全不存在——`_Sh` 拿到的是被腰斬的樹，看不到後面的 `>&2`。
+# bash 5.3 實測：整段照跑，`case "$x" in a) : ;; esac` 正常收尾，接著 `echo leak >&2` 印出 `leak`。
+# 神諭對帳（R37 移植 #61 時補）：被擋下的那個命令改成真的把 PR 文字印出去（原本印常數、或那一支不會執行），
+# 讓 lint 的紅是「一致」而不是「誤擋」；殺掉的突變體逐一重驗仍然殺。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: case-paren-then-leak
+        run: |
+          case "$x" in
+            a) : ;;
+          esac
+          echo "$PR_TITLE" >&2 2>&1 | python3 scripts/neutralise.py

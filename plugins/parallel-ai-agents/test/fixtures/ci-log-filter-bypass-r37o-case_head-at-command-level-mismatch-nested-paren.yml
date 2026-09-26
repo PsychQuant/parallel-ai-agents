@@ -1,0 +1,27 @@
+# #33 verify R37 opsweep 補件：殺 `_at_command` 的 drop-operand 第3個突變體（拿掉 `cases[-1][0] == lvl`，
+# `if s.endswith(")") and cases and cases[-1][0] == lvl and cases[-1][1] == "cmd":` 的第三個 and 子句）。
+# 原版：主掃描器在遇到第二個 `case` 關鍵字時呼叫 `_at_command`，此時 code 桶是
+# `x=$(case a in a) $($(true)`（以 `)` 結尾，是内層 `$(true)` 的收尾），`cases` 是 `[[1, "cmd"]]`
+# （外層第一個 case，開在 lvl=1、模式已收），而**這次呼叫的 lvl=2**（多開了一層命令替換，還沒收）。
+# 原版：`cases[-1][0] == lvl` 是 `1 == 2`，False，整個 and 短路，落到 `AT_CMD_RE.search(s)`——`s` 結尾是
+# `)`，比對不到，回 False；`_at_command` 回 False。呼叫端因此判定第二個 `case` 不在命令起點，run 區塊
+# fail-closed（`PARSE:`）。
+# 突變體拿掉 `cases[-1][0] == lvl` 這個層級核對後，`s.endswith(")")` 真、`cases` 非空、`cases[-1][1] == "cmd"`
+# 真──三者都成立，`_at_command` 誤回 True。呼叫端接著呼叫 `_case_head` 核對「`case` 後面是不是 `WORD in`」，
+# 這裡的 `b in` 符合，於是把這個本來層級不對的 `case` 當成合法巢狀 case 收下（`cases.append([2, "pat"])`），
+# 整段字元被消費完（`CODE` 等於整行、`UNPARSED` 是 `None`）——與原版的 fail-closed 判定不同，殺得掉。
+# 本 fixture 只測本 lint 自己詞法層對 `cases[-1][0] == lvl` 這道層級守衛的依賴；`$(true)case` 中間沒有
+# 分隔字，bash 詞法上會讀成一個詞（不是保留字 `case`），這段命令本身在 bash 會是語法錯誤，不依賴它真的執行。
+# EXPECT: parse-red
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: cmdsub-case-level-mismatch-after-nested-paren
+        shell: bash
+        run: |
+          x=$(case a in a) $($(true)case b in b) c;;esac) ;; esac)
+          echo "$x" 2>&1 | python3 scripts/neutralise.py

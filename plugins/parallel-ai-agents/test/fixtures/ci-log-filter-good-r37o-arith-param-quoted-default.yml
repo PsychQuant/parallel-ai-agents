@@ -1,0 +1,16 @@
+# #33 verify R37 opsweep 補件：`_arith_end` 裡「`${…}`／`$(…)` 走各自的配對」那個條件，`--since 380e4a4`
+# 報兩個非預期存活（`startswith("${")` → False、拿掉 `or` 的前一個運算元）——既有 fixture 的算術裡都沒有
+# `${…}`，拿掉那個分支之後逐字掃描照樣走得完。這裡的 `${X:-"1"}` 帶引號：分支在，`_param_end` 整段吃掉、
+# 引號不算數；分支不在，逐字掃描撞到 `"` 就回 None，整條安全（已管線給 neutralise.py）的 pass 變 parse-red。
+# `$((` 放在 `${PR_TITLE:-…}` 裡，才會經 `_param_end` → `_cmdsub_end` → `_arith_end`（裸 `$((` 走主掃描器）。
+# bash 5.3：`echo ${PR_TITLE:-$(( ${X:-"1"} + 1 ))}` 印 2、`bash -n` rc=0。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: arith-param-quoted-default
+        run: |
+          echo ${PR_TITLE:-$(( ${X:-"1"} + 1 ))} 2>&1 | python3 scripts/neutralise.py

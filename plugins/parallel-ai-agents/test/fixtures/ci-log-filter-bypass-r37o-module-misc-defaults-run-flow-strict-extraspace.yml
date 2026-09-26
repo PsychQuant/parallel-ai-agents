@@ -1,0 +1,31 @@
+# #33 verify R37 opsweep 補件：殺
+# `strip→id|_flow_value|return _uncomment(KEY_RE.match(norm[l0]).group(3) or "").strip()[:1] in ("{", "[")|1`
+# ——把 `_flow_value()` 自己的 `.strip()` 拿掉，變成直接對**未去空白**的文字取 `[:1]`。
+# 這裡的 `run:` 冒號後面故意多打幾個空格再接 `{shell: bash}`（`run:    {shell: bash}`）：
+# `KEY_RE` 的 `(?:\s(.*))?` 只吃掉冒號後**一個**空白，剩下的空白留在 `group(3)` 裡，所以
+# 傳進 `_flow_value()` 的文字是 `"   {shell: bash}"`（前面帶空白）。
+# 原版：`.strip()` 把前導空白去掉，`[:1]` 讀到 `{`，`_flow_value(l2)` 正確判成 True；
+# `--strict` 底下這個 flow 形式的 `defaults.run` 讀不到 `shell:`，fail-closed 拒絕 → `parse-red`。
+# 突變體拿掉 `.strip()`，`[:1]` 讀到的是前導空白本身（`" "`），不在 `("{", "[")` 裡，
+# `_flow_value(l2)` 判成 False——**這一行的 flow 檢查完全失效**，多打幾個空格就繞過了
+# fail-closed。因為沒被拒絕，`_kids()` 在這個 flow 行裡也找不到獨立的 `shell:` 子鍵
+# （它是 inline 寫在同一行的 flow 內容，不是另一行的 KEY），`wf_shell` 維持 `None`；
+# 但這裡每個 step 都自己明寫 `shell: bash`，不依賴 `wf_shell`，所以突變體會判成乾淨的
+# `pass`——與原版的 `parse-red` 不同，這張 fixture 殺得掉它。
+# bash 5.3 實測：`echo hi 2>&1 | python3 -c "import sys; sys.stdin.read()"` rc=0，
+# `bash -n` parse 正常；本張 fixture 的爭點是 lint 對 YAML 結構的判定，不是 shell 語法本身。
+# R37 移植 #61 群組規則後管線改寫成群組形式（`--strict` 只收 `{ …; } 2>&1 | python3 …`）。
+# LINT-ARGS: --strict
+# EXPECT: parse-red
+name: t
+on: pull_request
+defaults:
+  run:    {shell: bash}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe
+        shell: bash
+        run: |
+          { echo hi; } 2>&1 | python3 scripts/neutralise.py
