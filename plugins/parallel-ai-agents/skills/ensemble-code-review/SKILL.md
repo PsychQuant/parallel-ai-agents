@@ -61,12 +61,19 @@ allowed-tools:
   FILE_OR_DIR — 檔案或目錄路徑（目錄 = 讀所有原始碼檔當審閱範圍）
 ```
 
-> **目錄模式的 Codex leg（#45）**：Codex 不逐檔讀目錄，而是由 `bin/pai-codex-bundle` 機械組成**一份有上限的 bundle**
-> 當 `--prompt-file`（bytes 不經 agent context，與 #37 的單一檔案 path-only 同一原則）。規則明文化在 script 開頭：
-> git 工作樹內只取 `git ls-files -co --exclude-standard`（尊重 `.gitignore`）；一律剪掉 `node_modules`／`dist`／`build`／
-> `target`／`.venv` 等 build/vendor 目錄；二進位、非 UTF-8、疑似祕密檔名（`.env*`／`*.pem`／`*.key`…）、symlink 只在
-> manifest 列原因不送內容；檔案依相對路徑位元組序；單檔 64 KiB、總量 512 KiB、檔案數 2000 上限。**超過上限時報告會有一條
-> INFO「cross-model coverage truncated」**——大目錄請改指更小的子目錄，或用 diff 模式。
+> **目錄模式的 Codex leg（#45）**：Codex 不逐檔讀目錄，而是由 `bin/pai-codex-bundle`（目錄部分交給同目錄的 python3 helper
+> `pai-codex-bundle-dir`）機械組成**一份有上限的 bundle** 當 `--prompt-file`（bytes 不經 agent context，與 #37 的單一檔案
+> path-only 同一原則）。完整規則在 `bin/pai-codex-bundle` 開頭，重點：
+> - **送什麼**：git 工作樹內只送**被追蹤**的檔（尊重 `.gitignore`）；未追蹤的檔只在 manifest 列出、不送（最可能是本機草稿或祕密）。
+>   root 底下完全沒有被追蹤的檔（新目錄、還沒 commit）→ 送 git 眼中未被 ignore 的檔；root 本身被 ignore → 當一般目錄。
+>   git 不會執行目標 repo 設定的 `core.fsmonitor` 等命令。非 git 目錄不進入 `node_modules`／`dist`／`build`／`target`／`.venv`
+>   等目錄，但**每個被剪掉的目錄都列在 manifest**；git 模式下被追蹤的檔不因目錄名剪掉。
+> - **不送內容、只列原因**：路徑上任何一段是 symlink、特殊檔、含 NUL、非合法 UTF-8、疑似憑證的檔名（`.env*`、`.envrc`、`*.pem`、
+>   `*.key`、`*.jks`、`*.tfstate`、`credentials`、`id_rsa*`、`.ssh/`／`.aws/`／`.docker/` 底下…）。**檔名 denylist 不是祕密偵測**：
+>   寫死在原始碼裡的金鑰照樣會送給外部模型——含祕密的目錄請先清理，或不要開 `--codex`。
+> - **順序與上限**：原始碼 → 測試 → 設定 → 文件 → fixture／lockfile；整份 bundle 512 KiB（含 manifest）、單檔 64 KiB、
+>   檔案數 2000。**只要有任何檔沒有完整送出（截斷、上限、排除規則），報告會有一條 INFO「cross-model coverage partial」**
+>   ——大目錄請改指更小的子目錄，或用 diff 模式。
 
 **B. diff**（審變更）— 擇一 flag：
 ```
@@ -162,6 +169,7 @@ esac
 
    - **path 模式傳 `file`、diff 模式傳 `diffFile`（擇一，不要兩個都傳）**。harness 的 `code` lens 用 file-read tool 讀 `diffFile` 並當 diff 審；Codex 以 path 直接收 `diffFile`（`--prompt-file`，#37）；`--replicas` 帶入時覆蓋預設 1。
    - **`file` 可以是目錄**（#45）：Codex leg 一律經 `pai-codex-bundle`（預設取 `codexCallPath` 同目錄；可用 `codexBundlePath` 覆蓋）——檔案逐 byte 直通、目錄組成有上限的 bundle。不需要也不應該自己先把目錄內容讀出來或串成暫存檔。
+   - **遷移（#45）**：`file` 模式現在依賴 `codexCallPath` 同目錄的 `pai-codex-bundle`（目錄還要 `pai-codex-bundle-dir` 與 python3）。從 `${CLAUDE_PLUGIN_ROOT}/bin/` 傳路徑就自動滿足；外部 consumer 若把 `codex-call` 複製到別處，要一起複製這兩支，或傳 `codexBundlePath`。
 
    - `codexEnabled: true` → Codex（gpt-5.x）作為 barrier 內第 4 個 agent，shell 出去呼 `codexCallPath`（**絕不** `codex exec`），fail-soft：timeout/error 只回 1 個 INFO finding（不阻擋 Claude-lens verdict）。
    - `replicas` 預設 1（3 Claude lens + Codex + DA = 5，與 legacy 等價）。調高即大量 fan-out；harness 封頂 `MAX_AGENTS=16`（建議 Codex replica ≤2，fast = 2.5× credit）。
@@ -313,14 +321,15 @@ Agent:
 #    檔案 → 原 path 直通當 --prompt-file；目錄 → 組成有上限的 bundle 當 --prompt-file，
 #    codex-call 讀完即刪。bytes 不進命令列、不進 agent context。bundler 自己補 --prompt-file，不要再寫。
 #    diff 模式（$ARTIFACT 是 $DIFF_FILE）也可以照用——單一檔案就是直通。
-"$CLAUDE_PLUGIN_ROOT/bin/pai-codex-bundle" "$ARTIFACT" -- \
+"$CLAUDE_PLUGIN_ROOT/bin/pai-codex-bundle" -- "$ARTIFACT" -- \
   "$CLAUDE_PLUGIN_ROOT/bin/codex-call" --detach \
   --model "$CODEX_MODEL" --effort "$CODEX_EFFORT" \
   --service-tier fast --max-time 600 \
   --instructions "你是嚴謹的審閱者，用繁體中文輸出。"
 # → 從這一次 tool call 的輸出讀 id，記在你自己的回覆文字裡。
-#   若輸出含 `PAI-BUNDLE-TRUNCATED: …`（目錄超過 bundle 上限），報告要加一條
-#   INFO「cross-model coverage truncated」並附該行——Codex 只看到部分目錄。
+#   若輸出含 `PAI-BUNDLE-TRUNCATED: …`（目錄有檔沒完整送出：上限或排除規則），報告要加一條
+#   INFO「cross-model coverage partial」並附該行——Codex 只看到部分目錄。這條與
+#   FAILED／TIMEOUT 時的失敗 finding 並存，不互相取代。
 #   每次 Bash 呼叫都是全新 shell，變數不會保留；不要寫 RUNDIR=$(...)——command
 #   substitution 會吃掉 stdout，你在 tool output 裡看不到 id。
 

@@ -407,7 +407,7 @@ test('#48 codexModel / codexEffort args 原樣進 codex-call 命令列，service
 
 test('#45 T1 path 模式（file）經 pai-codex-bundle 交給 codex-call，不再把目錄直接當 --prompt-file', async () => {
   const p = await codexPromptFor({ profile: 'code', file: '/repo/src' })
-  assert.ok(p.includes("'/bin/pai-codex-bundle' '/repo/src' -- '/bin/codex-call' --detach"),
+  assert.ok(p.includes("'/bin/pai-codex-bundle' -- '/repo/src' -- '/bin/codex-call' --detach"),
     'file 沒有經 pai-codex-bundle 組裝（目錄會被原樣當成 --prompt-file）')
   assert.ok(!p.includes("--prompt-file '/repo/src'"),
     'args.file 仍被直接當 --prompt-file —— 目錄時 codex-call 讀不了，這正是 #45')
@@ -434,10 +434,10 @@ test('#45 T3 diff 模式不變：diffFile 仍直接 --prompt-file，不經 bundl
   assert.ok(q.includes("--prompt-file '/tmp/d.diff'") && !q.includes('pai-codex-bundle'))
 })
 
-test('#45 T4 截斷要在報告裡明說：PAI-BUNDLE-TRUNCATED → INFO「cross-model coverage truncated」', async () => {
+test('#45 T4 覆蓋不完整要在報告裡明說：PAI-BUNDLE-TRUNCATED → INFO「cross-model coverage partial」', async () => {
   const p = await codexPromptFor({ profile: 'code', file: '/repo/src' })
   assert.ok(p.includes('PAI-BUNDLE-TRUNCATED:'), '沒有交代 bundler 的截斷訊號')
-  assert.ok(/cross-model coverage truncated/.test(p), '沒有指定截斷時的 INFO finding')
+  assert.ok(/cross-model coverage partial/.test(p), '沒有指定覆蓋不完整時的 INFO finding')
   // diff 模式不經 bundler，不該出現這段（避免 agent 找一個不會出現的訊號）
   const d = await codexPromptFor({ profile: 'code', diffFile: '/tmp/d.diff' })
   assert.ok(!d.includes('PAI-BUNDLE-TRUNCATED'))
@@ -445,26 +445,43 @@ test('#45 T4 截斷要在報告裡明說：PAI-BUNDLE-TRUNCATED → INFO「cross
 
 test('#45 T5 bundler 路徑：預設為 codexCallPath 的同目錄；codexBundlePath 可覆蓋；都經 shQuote', async () => {
   const p = await codexPromptFor({ profile: 'code', file: '/r', codexCallPath: "/opt/we'ird/bin/codex-call" })
-  assert.ok(p.includes("'/opt/we'\\''ird/bin/pai-codex-bundle' '/r' -- '/opt/we'\\''ird/bin/codex-call' --detach"),
+  assert.ok(p.includes("'/opt/we'\\''ird/bin/pai-codex-bundle' -- '/r' -- '/opt/we'\\''ird/bin/codex-call' --detach"),
     'bundler 沒有取 codexCallPath 的同目錄，或未正確單引號化')
   const q = await codexPromptFor({ profile: 'code', file: '/r', codexBundlePath: '/x/y/bundle' })
-  assert.ok(q.includes("'/x/y/bundle' '/r' -- '/bin/codex-call' --detach"), 'codexBundlePath 沒有被採用')
+  assert.ok(q.includes("'/x/y/bundle' -- '/r' -- '/bin/codex-call' --detach"), 'codexBundlePath 沒有被採用')
   // 沒給 codexCallPath → 兩者都退回裸名（PATH）
   const { seen, impl } = captureCodex()
   await runEnsemble({ profile: 'code', file: '/r', codexEnabled: true }, impl)
-  assert.ok(seen[0].includes("'pai-codex-bundle' '/r' -- 'codex-call' --detach"), '無 codexCallPath 時未退回裸名')
+  assert.ok(seen[0].includes("'pai-codex-bundle' -- '/r' -- 'codex-call' --detach"), '無 codexCallPath 時未退回裸名')
 })
 
 test('#45 T6 file path 以 POSIX 單引號傳給 bundler（$(...) 不展開）', async () => {
   const p = await codexPromptFor({ profile: 'code', file: EVIL })
   const expected = "'" + EVIL.replace(/'/g, "'\\''") + "'"
-  assert.ok(p.includes(`'/bin/pai-codex-bundle' ${expected} -- `), 'file path 未正確 POSIX 單引號化')
+  assert.ok(p.includes(`'/bin/pai-codex-bundle' -- ${expected} -- `), 'file path 未正確 POSIX 單引號化')
   assert.ok(!p.includes(`"${EVIL}"`))
 })
 
 test('#45 T7 只有 context 時不經 bundler（沒有 artifact 可組）', async () => {
   const p = await codexPromptFor({ profile: 'code', contextBlock: 'ctx' })
   assert.ok(!p.includes('pai-codex-bundle'))
+})
+
+test('#45 R8 以 - 開頭的 file 路徑：bundler 命令在 artifact 之前也有 --（不會被當成 bundler 的選項）', async () => {
+  const p = await codexPromptFor({ profile: 'code', file: '--max-bytes' })
+  assert.ok(p.includes("'/bin/pai-codex-bundle' -- '--max-bytes' -- '/bin/codex-call' --detach"),
+    'artifact 前沒有 --：以 - 開頭的路徑會被 bundler 當成選項')
+})
+
+test('#45 R12 覆蓋不完整的 INFO 與 FAILED／TIMEOUT 的「EXACTLY one」失敗 finding 可以並存（不互相矛盾）', async () => {
+  const p = await codexPromptFor({ profile: 'code', file: '/repo/src' })
+  assert.ok(!/return EXACTLY one finding/.test(p),
+    '「EXACTLY one finding」會與 PAI-BUNDLE-TRUNCATED 的 INFO 衝突（FAILED 時 agent 只能二選一）')
+  assert.ok(/coverage finding is ADDITIVE/.test(p), '沒有說明覆蓋 INFO 是附加的')
+  assert.ok(/"exactly one" counts failure findings only/.test(p), '沒有說明 exactly one 只算失敗 finding')
+  // diff 模式沒有 bundler，不該提 PAI-BUNDLE-TRUNCATED
+  const d = await codexPromptFor({ profile: 'code', diffFile: '/tmp/d.diff' })
+  assert.ok(!d.includes('PAI-BUNDLE-TRUNCATED'))
 })
 
 // ── runner ── 新案請加在這條線之上；迴圈之後註冊的 test() 不會執行。
