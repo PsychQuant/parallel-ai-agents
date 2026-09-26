@@ -39,7 +39,7 @@ Claude Code marketplace，散發 **平行多 AI agent 審閱** plugin。
 | `/ensemble-code-review` | 程式碼／技術文件審閱：architecture、correctness、security + devils-advocate + Codex 獨立審一遍，最後合成比較表 |
 | `/ensemble-academic-review` | 學術論文審閱：methodology、writing、reference verification（che-zotero-mcp 抓幻覺文獻）、number-verification（R/Python 重跑 ground-truth 抓幻覺數字）、devils-advocate。支援 independent／hybrid／mix N 三種模式 |
 | `/ensemble-lecture-review` | 教學講義審閱：內容正確性／可讀性／逐字稿覆蓋率（可帶 `--srt`） |
-| `/ensemble-minutes-review` | 會議記錄審閱：fidelity／completeness（一正一反）＋ attribution ＋ cross-document。⚠️ 目前**尚未**接上 lens 疊加，`minutes` 的層 ②③ lens 只在 `/ensemble-compose --base minutes` 生效（[#40](https://github.com/PsychQuant/parallel-ai-agents/issues/40)）|
+| `/ensemble-minutes-review` | 會議記錄審閱：fidelity／completeness（一正一反）＋ attribution ＋ cross-document（需 `--srt` 逐字稿）|
 | `/ensemble-compose` | 自由組合：跨 profile 挑 lens + 自訂 reviewer（`--include` / `--lens` / `--lens-file`）|
 | `/ensemble-eval` | **dev 工具**：對埋好缺陷的 fixture 跑 K 次真 ensemble，量偵測率 |
 
@@ -52,6 +52,8 @@ reviewer 的 lens 由三層疊出來，順序即優先序：
 | ① built-in | 主 plugin 的 `PROFILES`（harness 內） | 改 code + 發版 |
 | ② lens pack | `pai-lenses` 的 `lenses/<profile>.csv` | 改 CSV + bump 版本 |
 | ③ user | `~/.claude/pai-lenses/<profile>.csv` | 直接編，立即生效、不必發布 |
+
+層 ②③ 由各 skill 呼叫 `bin/pai-collect-lens-layers` 蒐集後送進 harness，因此只在**有接 collector** 的 skill 生效：四支 `ensemble-*-review`（code / academic / lecture / minutes），以及帶 `--base <profile>` 的 `/ensemble-compose`（`general` / `custom` 沒有專屬 skill，只走這條）；且僅限 `Workflow` backend。接線由 `test/skill-lens-wiring.bats` 守住。
 
 撞名時預設 first-wins，CSV 標了 `override` 才取代。寫在層 ③ 的 lens 目前**還沒有**回流上游的路徑（實作中，見 [#39](https://github.com/PsychQuant/parallel-ai-agents/issues/39)）。完整契約見
 [`references/lens-layers.md`](plugins/parallel-ai-agents/references/lens-layers.md)。

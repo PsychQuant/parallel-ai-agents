@@ -11,6 +11,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`/ensemble-minutes-review` 接上三層 lens 疊加的層 ②③**（#40）。先前它沒有呼叫
+  `bin/pai-collect-lens-layers`，`pai-lenses` 的 `lenses/minutes.csv` 與 `~/.claude/pai-lenses/minutes.csv`
+  在它的審閱裡**完全不生效，也沒有任何警告**。現在 Phase 2 比照其餘三支 review skill：
+  `pai-collect-lens-layers minutes` 的 `lenses` 原樣併入 `args.customLenses`、`profile` 維持 `"minutes"`，
+  Phase 3 在 findings 表之前印 provenance 行（沒裝 pack 也印）。minutes 只有 `Workflow` 一條派發路徑，
+  沒有 Backend B，故不需要那段「Backend B 吃不到層 ②③」的但書。
+- 移除 `CLAUDE.md` Skills 表與 root `README.md` 裡「minutes 尚未接線」的 ⚠️；root README 的三層段補上限定：
+  層 ②③ 只在有接 collector 的 skill（四支 `ensemble-*-review` 與帶 `--base` 的 `/ensemble-compose`）且走
+  `Workflow` backend 時生效。`references/lens-layers.md` 的 profile 列舉補上 `minutes`。
+  `plugins/pai-lenses/scripts/validate.py` 的接線警告改指向新閘門，不再說「追蹤於 #40」。
+
+### Added
+
+- `test/skill-lens-wiring.bats`：5 個 case（`grep -c "^@test" test/skill-lens-wiring.bats`），以
+  `skills/ensemble-*-review/` glob 列舉每一支專屬 review skill，斷言它以自己的 profile 呼叫
+  `pai-collect-lens-layers`（非註解行）、派發 args 帶 `customLenses`、`profile` 不改成 `custom`、報表提到
+  provenance 行；並釘住列舉至少 4 支且含 minutes（防 vacuous 綠燈）。修正前在本分支的 base 上 3 個 case 紅
+  （皆指向 `ensemble-minutes-review`），修正後全綠。新增第五支 review skill 時自動涵蓋。
+  `validate.py` 的 `collector_wiring` 只在該 profile 有 pack CSV 時才看、只印 warning 且自承啟發式，
+  這是主 plugin 這一側的硬閘門。
+
 ## [2.24.0] - 2026-09-10
 
 `pai-lenses` 從獨立 repo 併回本 repo 成為第二個 plugin，並把三層 lens 疊加的文件與 CI 閘門補齊。

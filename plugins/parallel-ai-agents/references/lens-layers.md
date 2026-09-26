@@ -1,6 +1,6 @@
 # 三層 lens 疊加（#29）
 
-所有 ensemble skill 的 lens 集合由**三層**疊出來。這份文件是四個 skill 共用的契約 ——
+所有 ensemble skill 的 lens 集合由**三層**疊出來。這份文件是五個 skill（四支 `ensemble-*-review` ＋ `ensemble-compose`）共用的契約 ——
 **要改行為就改這裡**，不要在個別 SKILL.md 裡各寫一份（三份文案會漂移，那正是 #29
 診斷時記下的風險）。同 `codex-governance.md` 的引用模式。
 
@@ -64,7 +64,7 @@
 python3 "${CLAUDE_PLUGIN_ROOT}/bin/pai-collect-lens-layers" <profile>
 ```
 
-`<profile>` = 該 skill 的 profile 名（`code` / `academic` / `lecture`；`ensemble-compose`
+`<profile>` = 該 skill 的 profile 名（`code` / `academic` / `lecture` / `minutes`；`ensemble-compose`
 用 `--base` 的值，預設不帶則跳過本步）。
 
 輸出：

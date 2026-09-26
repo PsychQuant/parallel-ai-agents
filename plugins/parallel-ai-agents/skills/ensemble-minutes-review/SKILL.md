@@ -69,11 +69,19 @@ DA 專門盯三種安靜的偏移：把個別發言寫成全體共識、把條�
 
 ### Phase 2：派發
 
+1. **蒐集 lens 層 ②③**（#29、#40）：`python3 "${CLAUDE_PLUGIN_ROOT}/bin/pai-collect-lens-layers" minutes`
+   → `lenses` **原樣**（含 `override` 與 `needsSrt` 欄）進 `args.customLenses`；`layers` / `warnings`
+   留給 Phase 3 的 provenance 行。完整契約見 [`references/lens-layers.md`](../../references/lens-layers.md)。
+   ⚠️ **`profile` 維持 `"minutes"`，不可改成 `"custom"`** —— 理由（`profile.title` 無 args 覆寫路徑）在該文件。
+   `lenses` 為空（沒裝 `pai-lenses`、也沒有 `~/.claude/pai-lenses/minutes.csv`）時省略 `customLenses`。
+2. 呼叫 Workflow：
+
 ```javascript
 Workflow({ name: "parallel-ai-agents:pai-ensemble", args: {
   profile: "minutes",
   file: "<會議記錄絕對路徑>",
   srtFile: "<逐字稿絕對路徑>",
+  customLenses: [ /* pai-collect-lens-layers 的 lenses 陣列，原樣（層 ②③）；空則整欄省略 */ ],
   contextBlock: "<Phase 1 組好的內容>",
   agentModel: "sonnet",
   replicas: 1,
@@ -84,6 +92,8 @@ Workflow({ name: "parallel-ai-agents:pai-ensemble", args: {
 > ⚠️ **`args` 是物件，不是字串。** 傳字串時 `profile` 解析為 `undefined`，harness 回
 > `unknown ensemble profile` 且 **0 個 agent 被派出**——workflow 會「成功」結束，
 > 只在 findings 裡留一條 harness 層級的 HIGH。看到 `agents: 0` 就是踩到這個。
+> `customLenses` 同理：放 collector 回的**陣列本身**，不是它的 JSON 字串 —— harness 對非陣列
+> 一律當成沒給（`Array.isArray` 為假即空），層 ②③ 會安靜消失，只有 provenance 行看得出來。
 >
 > ⚠️ **`agentModel` 一定要給。** 不給時 agent 繼承 session 的 main-loop model，
 > 高階 session 單輪 ensemble 曾燒掉 56–109 萬 token 並在 session limit 撞死 lens agent。
@@ -91,8 +101,14 @@ Workflow({ name: "parallel-ai-agents:pai-ensemble", args: {
 
 ### Phase 3：讀結果
 
-回傳 `{ findings, verdict, stats }`。`stats.agents` 應等於 lens 數 × replicas + DA；
+回傳 `{ findings, verdict, stats }`。`stats.agents` 應等於 lens 數 × replicas + DA
+（lens 數 = 四個 built-in + 層 ②③ 實際 `added` 的條數；`override` 是原位取代，不增加條數）；
 **明顯偏少就是有 agent 死掉或 profile 沒吃到**，先查 `journal.jsonl` 再解讀 findings。
+
+**findings 表之前先印 provenance 行**（#29、#40）：lens 來源一行 + `warnings` 逐條。資料來自
+Phase 2 collector 的 `layers` 與 harness 回傳的 `stats.lensProvenance`，格式見
+[`references/lens-layers.md`](../../references/lens-layers.md) §4–5。**沒裝 lens pack 時這行仍要印**
+（只顯示 built-in）—— 否則「層 ②③ 沒生效」與「沒裝」在輸出上無從分辨，#40 就是這樣安靜了一整版。
 
 ### Phase 4：處置
 
