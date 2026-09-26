@@ -24,11 +24,13 @@ pipeline 的每段狀態，長度 ≥2 就代表它真的是 pipeline。這是 b
 （幾乎就是 lint 規則的副本）回答：「正規式沒認出 fd 轉向／xtrace、且管線本身已經帶 `2>&1`（`NEUT_WITH_STDERR_RE` 命中）⟹ 已知類別 G；正規式認得 fd 轉向時反而不歸 G，改判一般的不一致：繞過」——凡是正規式
 以外的 fd 轉向（`>&02`、`>/dev/fd/2`、`exec 3>&1` 後 `>&3`、`shopt -so xtrace`…），lint 放行、神諭也把它收進已知 G、rc=0。
 現在**直接問 bash**：把含 `neutralise.py` 的那幾條邏輯行換成一個中性命令再跑一次，逐條比對外流的行（stdout／stderr 分開、
-計重數）。外流原封不動 ⟹ 另一條命令印的 ⟹ G；有一部分跟著消失 ⟹ **那條管線自己外流**，不是 G。
+計重數）。外流原封不動 ⟹ 另一條命令印的 ⟹ G（還要 `--strict` 真的擋下這個 step，否則是繞過，見下）；有一部分跟著消失
+⟹ **那條管線自己外流**，不是 G。
 換掉之後語法壞掉、neutralise 仍被呼叫、或出現原本沒有的外流 ⟹ 差分不可比 ⟹ **量不到**（寫明原因），絕不歸 G。
 S-2 的定義是「預設模式不要求 `2>&1`、`--strict` 要求」，所以判準就是那句話本身：管線自己只從 stderr 外流，
-**而且 `--strict` 的 `2>&1` 規則真的擋下這個 step**（跑一次 `--strict` 看它的 RULE）。`--strict` 也沒擋 ⟹ 不是預設模式
-獨有的缺口 ⟹ 不屬 S-2、是繞過。兩個判準都不含任何 lint 規則的正規式副本。
+**而且 `--strict` 的群組規則真的擋下這個 step**（跑一次 `--strict` 看它的 RULE）。`--strict` 也沒擋 ⟹ 不是預設模式
+獨有的缺口 ⟹ 不屬 S-2、是繞過。G 同理（#59／#60，R37 自 PR #61 移植）：`--strict` 對那個 step 印 pipefail 以外的 RULE 或 PARSE
+才算已知 G，否則判 `STRICT_MISS`（繞過）。兩個判準都不含任何 lint 規則的正規式副本。
 **類別閘門是雙向的**：被歸進類別 X 的 step 數必須**等於**檔頭 `# KNOWN-CLASS: X` 的行數——多了是「歸了類卻沒宣告」，
 少了是「KNOWN-CLASS 過期」，兩者都 rc=1。已知類別因此不再是免檢區：每一條都有人在檔頭簽名。
 **must-fail 探針**（`# ORACLE-MUST-FAIL: <理由子字串>`）：只在神諭**失敗**時才過的 fixture——上面那些分支只在 lint 有缺陷或
@@ -114,7 +116,22 @@ KNOWN_DISAGREE = {
     # **頂層 `case` 的模式 `|` 被預設模式讀成管線** ⇒ 繞過（R37 完整性審查缺陷 d，刻意保留的已知限制）：`--strict` 擋下它；
     # 預設模式要修得把 case 追蹤延伸到頂層，代價與理由見 lint 已知不涵蓋第三組第 5 條。修好之後這一列變一致，神諭 rc=1 逼人拿掉。
     ("ci-log-filter-known-r37t8-default-case-pattern-pipe.yml", "s"):
-        "頂層 case 模式的 `|` 是「或」，預設模式的 `PIPED_RE` 算它接了 neutralise；`--strict` 由規則層的 n_neut 擋下。",
+        "頂層 case 模式的 `|` 是「或」，預設模式的 `PIPED_RE` 算它接了 neutralise；`--strict` 由群組規則擋下（區塊不是 `{ …; } 2>&1 | python3 …` 群組）。",
+    # **`--strict` 群組規則只收恰好一對大括號**（#59／#60）⇒ 群組裡再包一個群組是誤擋。刻意保留：計深度要判斷每個
+    # `{`／`}` 在 bash 眼中是不是保留字，而 `case` 模式的 `{)` 會讓計數器以為群組還開著（`bypass-strict-group-case-pattern-brace`
+    # 實測外流）。代價只落在 `--strict`（真 workflow）：要短路改寫成 `if`，repo 自己的 workflow 沒有巢狀群組。
+    ("ci-log-filter-restrict-strict-group-nested.yml", "nested group"):
+        "群組規則只收恰好一對大括號（計深度會被 `case` 的 `{)` 騙過）；巢狀群組因此被連帶擋下，改寫成 `if` 即可。",
+    # **神諭的 python3 是 stub**：它不檢查路徑存不存在，所以真 python3 的「can't open file '<路徑>'」（路徑裡帶著展開後的
+    # PR 文字、寫在 python3 自己的 stderr）在這裡不會出現。lint 擋下是對的，神諭量不到——這是儀器的盲區，不是 lint 的誤擋。
+    ("ci-log-filter-bypass-strict-group-expansion-in-filter-path.yml", "expansion in the filter path"):
+        "stub python3 不報「can't open file」；真 python3 會把含 PR 文字的路徑印到群組外的 stderr。",
+    ("ci-log-filter-bypass-strict-group-variable-filter-path.yml", "variable in the filter path"):
+        "同上：路徑是 `$PR_TITLE/neutralise.py`，stub python3 不報「can't open file」。",
+    # **子殼層群組 `( … ) 2>&1 |` 被擋**（R37 移植 #61 群組規則）：安全，但 `(`／`)` 也出現在 `$(`、`$((`、陣列、`case` 模式裡，
+    # 「恰好一對」的論證對它不成立。改寫成 `{ …; }` 即可。
+    ("ci-log-filter-restrict-r37-strict-subshell-group.yml", "subshell group"):
+        "群組規則只收大括號群組；子殼層群組安全但被連帶擋下，改寫成 `{ …; }` 即可。",
 }
 
 # lint 自己的宣告正規式（與 `lint-ci-log-filter.sh` 的 `LOGFILTER_RE` 同形）。這裡只用它判**文字長相**；
@@ -129,30 +146,36 @@ PR_MARKER = "ORACLE-PR-TITLE-MARKER"
 # 判定表的**種類**（#33 verify R34 requirements F3）：每一列的判定都必須以其中之一開頭（`main()` 逐列 assert）。
 # CHANGELOG 的「判定表有 N 種」由 `lint-changelog-counts.sh` 讀這個常數驗——前一版那一句量的是 CHANGELOG 自己打的字面清單，
 # 永遠抓不到 CHANGELOG 與神諭分岔。「不一致」的兩種各自帶後綴（繞過／誤擋），所以這裡列的是完整前綴。
+# 形狀像已知類別、`--strict` 卻放行 ⇒ 不是已知，是真繞過（計入不一致、rc=1）。
+STRICT_MISS = "不一致：繞過（形狀像已知類別 %s，但 `--strict` 也放行——已知類別的定義是 CI 模式擋得下）"
 VERDICT_KINDS = ("一致", "不一致：繞過", "不一致：誤擋", "不可比", "量不到")
 # **已知類別的判定不含任何 lint 規則的正規式副本**（R37，#33 verify R36 第 1 列）。前一版在這裡放了
 # `STDERR_ROUTE_RE`（≈ lint 的 `FD_RE`）與 `NEUT_WITH_STDERR_RE`（≈ `STRICT_NEUT_RE`），分類「外流是誰印的」
 # 靠它們——於是正規式以外的 fd 轉向，lint 放行、神諭也收進已知 G。現在 G 由差分決定（`classify_piped_leak`），
-# S-2 由「`--strict` 真的擋下這個 step」決定（跑一次 lint 看它的 RULE）。
+# S-2 由「`--strict` 的群組規則真的擋下這個 step」決定（跑一次 lint 看它的 RULE）。
+# **兩個類別都要 `--strict` 擋得下才算已知**（#59／#60，R37 自 PR #61 移植）：G 與 S-2 的定義是「預設模式（量詞法）放行、
+# CI 用的 `--strict` 擋下」。前一版的 G 只看差分，於是「`--strict` 也放行的同形繞過」一樣被算成已知、不改 rc——
+# 現在那種判 `STRICT_MISS`（真繞過，rc=1）。
 #
 # 下面兩個是 lint 的**訊息**字面，不是規則：神諭用它們認出「這條 RULE 是哪一條規則」。lint 改了訊息而這裡沒跟上時，
-# pipefail 那條會被當成一般 RULE 對帳（→ 誤擋、rc=1），S-2 的「`--strict` 擋下了」查核會失敗（→ 繞過＋KNOWN-CLASS 過期、
-# rc=1）——兩個方向都是 fail-closed，不會靜默放行。
+# pipefail 那條會被當成一般 RULE 對帳（→ 誤擋、rc=1），S-2 的「`--strict` 的群組規則擋下了」查核會失敗（→ 繞過＋
+# KNOWN-CLASS 過期、rc=1）——兩個方向都是 fail-closed，不會靜默放行。R37 移植 #61 時，`--strict` 的 `2>&1` 規則
+# 換成群組規則，這裡的第二個字面跟著換。
 PIPEFAIL_RULE_MSG = "卻沒有跑在 pipefail 之下"
-STRICT_2TO1_RULE_MSG = "沒有把 stderr 併進管線"
+STRICT_GROUP_RULE_MSG = "不是整個包在一個群組裡"
 RULE_LINE_RE = re.compile(r":(\d+): RULE: ([^\n]*)")
 # **耦合檢查**（R37 合併時加）：上面兩個字面必須真的出現在 lint 裡。R37 合併 r37a 與 r37b 時，r37b 把 `2>&1` 那條的訊息
 # 改寫了、這裡沒跟上——上一段說那是 fail-closed，但它只會讓某張 fixture 碰巧變紅、不會說出原因。直接查字面，對不上就
 # 具名失敗。
 _LINT_SRC = LINT.read_text(encoding="utf-8", errors="replace") if LINT.is_file() else ""
-for _msg in (PIPEFAIL_RULE_MSG, STRICT_2TO1_RULE_MSG):
+for _msg in (PIPEFAIL_RULE_MSG, STRICT_GROUP_RULE_MSG):
     if _msg not in _LINT_SRC:
         sys.exit("✗ oracle.py 用來認 RULE 的字面「%s」不在 %s 裡——lint 改了訊息，這裡要同步改" % (_msg, LINT))
 # 已知類別在 repo 自己的 fixture 集（不給檔案參數）上的**確切**條數（R37，R36 第 2 列；同 selftest 門檻 R24 F9 的理由：
 # 寫成 `>=` 而實際更高時，那個差額沒有網——刪掉一張 G 範例 fixture 仍然綠）。must-fail 探針不算在內。
-FIXTURE_CLASS_TOTALS = {"G": 5, "S-2": 2}
+FIXTURE_CLASS_TOTALS = {"G": 5, "S-2": 3}
 # must-fail 探針的確切張數（同理：刪掉一張探針＝少一條負對照，必須立刻紅）。
-FIXTURE_MUSTFAIL_TOTAL = 6
+FIXTURE_MUSTFAIL_TOTAL = 7
 KNOWN_CLASS_RE = re.compile(r"^# KNOWN-CLASS: (\S+)", re.M)
 MUSTFAIL_RE = re.compile(r"^# ORACLE-MUST-FAIL: (.+?)\s*$", re.M)
 # 差分用的中性命令：單獨一行是合法的空操作（rc=0），接在懸空的 `|`／`|&` 後面則是**語法錯誤**——`!` 只能出現在
@@ -485,14 +508,23 @@ def check_file(f, text, bash, stub_bin):
     # 按行號扣掉 pipefail 那一行會把同一行的其他 RULE 一起扣掉（R37，#33 verify R36 第 18 列）。
     rules = [(int(ln), m) for ln, m in RULE_LINE_RE.findall(r.stderr)]
     parse_lines = {int(x) for x in re.findall(r":(\d+): PARSE: ", r.stderr)}
-    # S-2 的判準要看 `--strict` 的 RULE（見 `classify_piped_leak` 的呼叫處）。檔案本身就是 `--strict` 時就是 `r`；
+    # 已知類別的判準要看 `--strict` 的 RULE 與 PARSE（見 `classify_piped_leak` 的呼叫處）。檔案本身就是 `--strict` 時就是 `r`；
     # 否則要用時才跑一次（大多數檔永遠用不到）。rc=2 當成「沒擋」——量不到擋下就不給已知類別（fail-closed）。
     strict_cache = {}
-    def strict_rules():
+    def strict_out():
         if "v" not in strict_cache:
             rs = r if "--strict" in largs else run_lint(["--strict"] + largs, f)
-            strict_cache["v"] = [] if rs.returncode == 2 else [(int(ln), m) for ln, m in RULE_LINE_RE.findall(rs.stderr)]
+            strict_cache["v"] = (([], set()) if rs.returncode == 2 else
+                                 ([(int(ln), m) for ln, m in RULE_LINE_RE.findall(rs.stderr)],
+                                  {int(x) for x in re.findall(r":(\d+): PARSE: ", rs.stderr)}))
         return strict_cache["v"]
+    def strict_blocks(in_step):
+        """`--strict` 擋下這個 step：step 上有 pipefail 以外的 RULE（pipefail 管退出碼、不管外流），或 PARSE
+        （step 內，或落在所有 step 範圍外的結構性 PARSE）。逐則訊息判斷，不用行號相減：同一個 step 可以同時吃
+        pipefail 與群組兩條 RULE（行號相同）。"""
+        srules, sparse = strict_out()
+        return (any(in_step(ln) and PIPEFAIL_RULE_MSG not in m for ln, m in srules)
+                or any(in_step(x) or not any(lo <= x <= hi for lo, hi in ranges) for x in sparse))
     bodies = block_scalar_body_lines(text)
     ranges = [(a + 1, b + 1) for _j, _n, _r, (a, b), _sh, _e in steps]
     # **一次算完**：落在任何一個 step 範圍外的 PARSE 才是結構性的（整檔不可信）。
@@ -548,21 +580,25 @@ def check_file(f, text, bash, stub_bin):
                 elif kind == "G":
                     # 換掉接 neutralise 的邏輯行，外流原封不動 ⇒ 印它的是**另一條命令**——lint 明寫的「已知不涵蓋，第二組」第 2 條
                     # 「一條管線＝整個區塊已過濾」（Codex R32 第 4 條）。按類別記已知：整類在「什麼算已過濾」改掉的那一天一起翻。
-                    verdict = "不一致：繞過（已知類別 G：一條管線＝整個區塊已過濾——差分：換掉接 neutralise 的邏輯行後外流原封不動，限制第 2 條）"
-                    classes = ["G"]
+                    if strict_blocks(in_step):
+                        verdict = ("不一致：繞過（已知類別 G：一條管線＝整個區塊已過濾——差分：換掉接 neutralise 的邏輯行後外流原封不動，"
+                                   "限制第 2 條；`--strict` 的群組規則擋）")
+                        classes = ["G"]
+                    else:
+                        verdict = STRICT_MISS % "G"
                 else:
                     streams, g_part = detail
                     if "stdout" in streams:
                         verdict = "不一致：繞過（接 neutralise 的管線自己把 PR 文字印到 stdout——不是 G 也不是 S-2）"
-                    elif any(in_step(ln) and STRICT_2TO1_RULE_MSG in m for ln, m in strict_rules()):
-                        # S-2 的定義就是這句話本身：管線自己只從 stderr 外流，預設模式不要求 `2>&1`，而 `--strict`
+                    elif any(in_step(ln) and STRICT_GROUP_RULE_MSG in m for ln, m in strict_out()[0]):
+                        # S-2 的定義就是這句話本身：管線自己只從 stderr 外流，預設模式不要求 `2>&1`，而 `--strict` 的群組規則
                         # **真的**擋下這個 step。檔案本身是 `--strict` 時，這裡查的就是剛才放行它的同一次 lint ⇒ 結構上不可能
                         # 成立——所以不需要另外的「模式是不是 strict」判斷（那會是一條等價突變）。
                         verdict = ("不一致：繞過（已知類別 S-2%s：管線自己只從 stderr 外流、缺 `2>&1`——預設模式不要求，"
                                    "`--strict` 確實擋下這個 step）" % ("＋G（同一 step 另有別的命令也印）" if g_part else ""))
                         classes = ["S-2"] + (["G"] if g_part else [])
                     else:
-                        verdict = ("不一致：繞過（接 neutralise 的管線自己把 PR 文字印到 stderr，而 `--strict` 的 `2>&1` 規則"
+                        verdict = ("不一致：繞過（接 neutralise 的管線自己把 PR 文字印到 stderr，而 `--strict` 的群組規則"
                                    "沒有擋下這個 step——不是預設模式獨有的缺口，不是 S-2）")
         elif lint == "pass":
             decl = (yaml_declaration(text, a, b, bodies)

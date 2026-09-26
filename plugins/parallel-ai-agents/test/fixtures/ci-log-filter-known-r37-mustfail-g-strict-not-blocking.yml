@@ -1,0 +1,20 @@
+# R37（移植 PR #61 的「已知類別＝`--strict` 擋得下」）：**must-fail 探針**。G 的定義是「預設模式放行、`--strict` 的
+# 群組規則擋下」——神諭歸 G 之前要跑一次 `--strict`，看它是不是真的擋下這個 step。這一檔的 `# LOG-FILTER:` 宣告
+# （**刻意寫假的**）讓群組規則依設計不適用，所以 `--strict` 不擋 ⇒ 神諭必須判「形狀像已知類別 G，但 `--strict` 也放行」
+# 的繞過、檔頭的 G 宣告過期。把那個查核換成恆真，這一檔就被歸 G、宣告相符、不再失敗 ⇒ rc=1。
+# 它依賴的只有 lint 的兩個**設計**（預設模式不要求群組、宣告讓群組規則不適用），不依賴任何 lint 缺陷。
+# ORACLE-MUST-FAIL: 形狀像已知類別 G
+# KNOWN-CLASS: G
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: declared step where another command leaks
+        shell: bash
+        # LOG-FILTER: none — must-fail probe for the oracle; this declaration is deliberately false
+        run: |
+          echo "$PR_TITLE"
+          echo safe | python3 scripts/neutralise.py

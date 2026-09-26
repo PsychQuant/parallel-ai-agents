@@ -769,7 +769,7 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
   靶清單 155 → 161 個（R33 當時以 grep 計數；lint 形式的宣稱只留在最新一段）（7 個 EXPECTED_SURVIVE，
   **五條全部**由 `opsweep.py --verify-expected` 在 642 檔上逐檔跑出「全部相同」——R31 留了兩條沒驗，這次沒有）；
   lint fixture 156 → 173 個（70 正向／67 規則紅／36 解析紅；`ls test/fixtures/ci-log-filter-*.yml | wc -l`）；
-  CI run step 23 個（`grep -c "^        run:" ../../.github/workflows/test.yml`）。
+  CI run step 23 個（R33 當時以 grep 計數；lint 形式的宣稱只留在最新一段）。
   三軸（base `d8340a6`）：野外清單 1565 檔中本機今日可解析 1534（31 檔隨 plugin cache 換版消失——R34 requirements F8 更正：原寫 25，1565 − 1534 = 31；`threeaxis.py`
   對解不開的路徑 fail-loud、不印假 0）／分母 362：`RULE:` 8550 → 8550、`PARSE:` 1619 → 1619、`GREEN→RED` 0、
   `RED→GREEN` 0；合成 A 1222／分母 959 同（0／0）。**但這個 0 只對一個機制是證據**：用 `shapes.py` 量野外

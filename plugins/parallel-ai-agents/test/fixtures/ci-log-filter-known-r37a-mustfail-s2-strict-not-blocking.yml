@@ -1,9 +1,9 @@
 # #33 verify R37（R36 第 1 列：S-2 的判準不得是 lint 規則的正規式副本）：**must-fail 探針**。
 # S-2 的定義是「管線自己只從 stderr 外流、缺 `2>&1`——預設模式不要求，`--strict` 要求」，神諭現在直接查那句話的後半：
 # 跑一次 `--strict`，看它是不是真的擋下這個 step。這一檔的 `# LOG-FILTER:` 宣告（**刻意寫假的**）讓 `--strict` 的
-# `2>&1` 規則依設計不適用（`good-strict-declared-overrides-stderr-rules`），所以 `--strict` 不擋 ⇒ 神諭必須拒絕把它歸 S-2，
+# 群組規則（R37 移植 #61 前是 `2>&1` 規則）依設計不適用（`good-strict-declared-overrides-stderr-rules`），所以 `--strict` 不擋 ⇒ 神諭必須拒絕把它歸 S-2，
 # 判「不是 S-2」的繞過、檔頭的 S-2 宣告過期。把那個查核換成恆真，這一檔就被歸 S-2、宣告相符、不再失敗 ⇒ rc=1。
-# 它依賴的只有 lint 的兩個**設計**（預設模式不要求 `2>&1`、宣告讓 `--strict` 的 `2>&1` 規則不適用），不依賴任何 lint 缺陷。
+# 它依賴的只有 lint 的兩個**設計**（預設模式不要求 `2>&1`、宣告讓 `--strict` 的群組規則不適用），不依賴任何 lint 缺陷。
 # ORACLE-MUST-FAIL: 不是預設模式獨有的缺口，不是 S-2
 # KNOWN-CLASS: S-2
 # EXPECT: pass

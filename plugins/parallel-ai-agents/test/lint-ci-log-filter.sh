@@ -76,8 +76,8 @@ if [ "${1:-}" = "--selftest" ]; then
   done
   # R24 regression F9：門檻寫成 `>=` 而實際值更高時，那個差額**沒有網**——刪掉一個 fixture 仍然綠。
   # 三個門檻一律改成**等於實測值**：要加 fixture 就同步改這裡，讓「少了一個」立刻紅。
-  if [ "${n_pass}" -ne 163 ]; then
-    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 163（改動 fixture 請同步改這個數字）" >&2
+  if [ "${n_pass}" -ne 164 ]; then
+    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 164（改動 fixture 請同步改這個數字）" >&2
     fail=1
   fi
   if [ "${n_rule}" -ne 242 ]; then
@@ -791,20 +791,22 @@ def shell_scan(lines):
       * 續行重掃前還原 `pending` 快照：前一版只還原 quote／prev_sig，同一個 heredoc 被排兩次。
     **已知不涵蓋，第二組（這一組是封閉列舉，只有三條，不得依性質相似類推第四條；R32 抓到它們不在檔內）**：
       1. **stderr（預設模式）**：預設模式的 `PIPED_RE` 只要求管線存在，不要求 `2>&1`／`|&`（已知類別 S-2，範例
-         `known-stderr-cmd-error-missing-2to1`）。**`--strict` 要求它**——CI 與 run.sh 對真 workflow 用 `--strict`，
+         `known-stderr-cmd-error-missing-2to1`）。**`--strict` 的群組規則擋它**——CI 與 run.sh 對真 workflow 用 `--strict`，
          所以這一條只剩 fixture／產生語料（它們量的是詞法）。另：把輸出轉到 stderr 或開 xtrace 的寫法（`>&2`、
          `set -x`…）在**兩種模式**都是規則（R35；R33 的 S-2 範例用的正是 `>&2`，它不屬於這一條）。
-         **`--strict` 的逐段 `2>&1` 只涵蓋命令執行時寫出的 stderr**（R37 合併時協調者發現，bash 5.3 實測）：在該段
-         `2>&1` 生效**之前**就寫出的，兩種模式都看不到——(a) 展開期錯誤：`echo "${!PR_TITLE}" |& …` 印出
+         **逐段的 `2>&1` 只涵蓋命令執行時寫出的 stderr**（R37 合併時協調者發現，bash 5.3 實測；#60 第 2 類）：在該段
+         `2>&1` 生效**之前**就寫出的，預設模式看不到（範例 `known-expansion-error-before-2to1`）——(a) 展開期錯誤：`echo "${!PR_TITLE}" |& …` 印出
          「<原值>：無效的變數名稱」、`echo $(( PR_TITLE )) 2>&1 | …` 印出算術錯誤；(b) 寫在 `2>&1` 左邊的重導向本身出錯：
          `echo x > "$PR_TITLE" 2>&1 | …` 印出 `<原值>: No such file…`（`2>&1` 放左邊就走進管線）。命令執行時才產生的
-         錯誤（`[[ $PR_TITLE -eq 1 ]] 2>&1 | …`）會走管線、被過濾。群組 `{ …; } 2>&1 |`／子殼層 `( … ) 2>&1 |` 的重導向
-         在內部展開之前生效，兩種都涵蓋。本 lint 不為 (a)(b) 逐拼法列規則（那正是 R36 批評的形狀）；追蹤 #60。
+         錯誤（`[[ $PR_TITLE -eq 1 ]] 2>&1 | …`）會走管線、被過濾。群組 `{ …; } 2>&1 |` 的重導向在內部展開之前生效，
+         (a)(b) 一起關掉——`--strict` 要求整個區塊就是那個群組（R37 自 PR #61 移植；R36 的逐段 `2>&1` 規則看不到它們）。
+         本 lint 不為 (a)(b) 逐拼法列規則（那正是 R36 批評的形狀）。
          R34 更正：R33 這裡寫「repo 自己的 17 條管線全部已帶 `2>&1`／`|&`」——`--strict` 第一次跑就在 pack anchor
          那一步抓到一條 `… | tee | python3 …` 的最後一段沒帶（`tee` 的 stderr 沒有 PR 文字，但宣稱是假的）。
-      2. **顆粒度**：一個 run 區塊裡**任一條**邏輯行接了管線，整個區塊就算已過濾（Codex 第 4 條）。
-         `echo "$PR_TITLE"` ⏎ `echo safe | python3 …` 因此放行。這是宣告過的語意，不是漏洞的偽裝；
-         但它從來沒寫在這份清單裡，現在寫了。要關它得改「什麼算已過濾」，那是另一次 change——追蹤 #59。
+      2. **顆粒度（預設模式）**：一個 run 區塊裡**任一條**邏輯行接了管線，整個區塊就算已過濾（Codex 第 4 條）。
+         `echo "$PR_TITLE"` ⏎ `echo safe | python3 …` 因此放行（已知類別 G）。這是宣告過的語意，不是漏洞的偽裝。
+         **`--strict` 改了「什麼算已過濾」**（#59，R37 自 PR #61 移植）：整個區塊必須是一個 `{ …; } 2>&1 | python3 …`
+         群組（見 `strict_group_violation`），另一條命令不可能在群組外。
          同一條也涵蓋「管線不可達」：外流的行先執行、接管線的行因語法錯誤／`exit`／沒走到的分支不執行
          （R35 已把「引號開到區塊結尾」改成 fail-closed；R37 補齊同一族其餘未收尾構造——管線後面接
          `$(`、反引號、`; ((`、`; [[ -n x`、`$[`、`; (` 六種，以及掃描結束時 `csub`／`bt`／`arith`／`brk`／
