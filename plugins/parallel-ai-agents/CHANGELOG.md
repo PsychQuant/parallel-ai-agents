@@ -11,20 +11,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Documentation
+### Docs
 
-- **契約 §6 第 (5) 項補齊「寫得到 base」對 `meta.json`／`prompt.txt` 的全部傷害面（#54，round 10 S10-4）**：
+- **契約 §6 第 (5) 項補齊「寫得到 base」對 `meta.json`／`prompt.txt` 的全部傷害面（#54，round 10 S10-4；PR #62 verify 後修訂）**：
   R11-2 已把 (5) 擴到 `prompt.txt`／`instructions`，但只寫了 `output` 與送出 prompt 兩半。本次對
-  `bin/codex-call` 逐行核對後，把本工具從 meta 讀的**全部十三個欄位**逐欄寫明，並說明兩個檔都沒有
-  完整性驗證（§4 的 `O_NOFOLLOW`＋`fstat` 只套在 `lock`／`claim`；`prompt.txt` 的 symlink 照跟）：
-  **送出面**（用受害者 ChatGPT OAuth 送攻擊者的 prompt＋system instructions＝配額竊取；`max_time`
-  決定單一請求能燒多久；未知 `service_tier` 原樣送出）、**寫入面**（worker 以受害者身分把回應寫到
-  攻擊者選的 `output`）、**回報面**（`DONE <路徑>` 只要求該檔非空）、**期限面**（`started_at`／
-  `max_time`／`grace` 合法但被選定時，poll 可提早 kill 活 worker 或一直回 `RUNNING`）、**測試鉤子面**
-  （`selftest_*` 在 worker 端讀 meta 不讀旗標，正式 run 可被切成不發 HTTP 的 `SELFTEST`→`DONE`）；
-  並寫明送出／寫入面是 detach 到 worker 讀檔之間的競態，回報／期限面在 run 存活期間都可達。§5 的
-  fail-closed 句與 §7 的「隱藏旗標同 uid 皆可達」各補一句指回 (5)。§6 仍為六項（lint D 不變）；
-  不改任何行為、不宣稱防禦。
+  `bin/codex-call` 逐行核對後，列出本工具從 meta 讀的十三個欄位（手動清點，無 lint 守護）並逐欄寫明效果；
+  兩個檔沒有完整性驗證、內容只驗型別不驗值（§4 的 `O_NOFOLLOW`＋`fstat` 只套在 `lock`／`claim`；
+  `prompt.txt` 的 symlink 照跟）：**送出面**（用受害者 ChatGPT OAuth 送攻擊者的 prompt＋system
+  instructions＝配額竊取；`max_time` 決定單一請求能燒多久；未知 `service_tier` 原樣送出）、**回流**
+  （`prompt.txt` 指向受害者可讀的檔＋`instructions` 要求逐字複述＋`output` 指向攻擊者可讀處，0644
+  寫出——可外洩 `~/.codex/auth.json` 的 refresh token；`AUTH_FILE` 不隨 `$HOME`、base 隨 `$HOME`；
+  取決於模型是否照做）、**寫入面**（worker 以受害者身分、暫存檔＋rename 在攻擊者選的 `output` 放上新檔；
+  `selftest_sleep` 路徑是確定性的 `SELFTEST` 覆寫）、**回報面**（`DONE <路徑>` 只要求 status 為 `0`
+  且 `attributesOfItem` 量得非空——不跟 symlink，懸空 symlink 也算）、**期限面**（三種結果：提早 kill、
+  推遠期限而回 `RUNNING`〔worker 自己的 `max_time` 仍會終止它，除非一併改寫〕、極端值讓 poll 與 worker
+  溢位 trap、stdout 無 token）、**測試鉤子面**（四個 `selftest_*` 各自的效果與前置條件；`selftest_fail`
+  與 `selftest_ignore_term` 只在 `selftest_sleep` 生效時才讀）；時序分成 worker 端快照（meta 拿鎖前後各讀
+  一次、`prompt.txt` 一次——跨 uid 是競態，同 uid 可用 `SIGSTOP` 確定性達成）與 poll 端每次重讀。§5 的
+  期限 bullet 改寫成「期限都取自 `meta.json`，fail-closed 只保證損毀」（原句「不依賴可被竄改的 deadline 檔」
+  與後句矛盾），§7 的 `--_selftest-gc-age` 與「隱藏旗標同 uid 皆可達」各補一句指回 (5)。§6 仍為六項
+  （lint D 不變）；不改任何行為、不宣稱防禦。
 
 ## [2.23.0] - 2026-09-10
 
