@@ -332,9 +332,13 @@ TAG_BANG_DOC = (HEAD + '      - name: tag-bang\n        run: !!str "echo hi | '
 #      `cat "$PR_TITLE"`（它讀不到那個檔名會把 PR 文字印到 stderr）、其餘段落用不碰 `$PR_TITLE`、恆定
 #      無害的 `grep -v zzz`——只有「缺 2>&1 的那一段」才可能外流，其餘段落缺不缺 2>&1 對神諭都不可觀察，
 #      混進去只會製造誤擋雜訊。
+#      **R37 移植 #61 群組規則之後**：`--strict` 不再收逐段 `2>&1`（#60 第 2 類），`gap==0` 這兩檔從「該放行」變成保守擋下，
+#      記在 `oracle.py` 的 `KNOWN_DISAGREE`；`gap>=1` 仍是外流、判一致。維度 1 的三個 `shell value bash*` 基準同理。
 #   6. 子殼層包管線（WRAP_STYLES × WRAP_CONTENTS × 有沒有包）：`{ …; }`／`( … )` 收尾後緊接 `2>&1 |` 進
 #      neutralise，各自包三種本來會外流的構造（fd 轉向、xtrace、另存的 fd `exec 3>&1`），與同樣構造在
 #      **沒有**群組包裹時的對照——六個「有包」＋六個「沒包」＝ 12 檔，全部本機 bash 5.3 實測過。
+#      **R37 移植群組規則之後**：群組規則只收 `{ …; }`，`( … )` 那三個「有包」改成保守擋下（同 fixture
+#      `restrict-r37-strict-subshell-group`，記在 `KNOWN_DISAGREE`）；`{ … }` 那三個照樣放行。
 SHELL_TEMPLATES = [
     ("bash", "bash"), ("bash-dq", '"bash"'), ("bash-sq", "'bash'"),
     ("bash-brace", "bash {0}"), ("bash-e", "bash -e {0}"), ("bash-l", "bash -l {0}"),

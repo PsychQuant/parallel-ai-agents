@@ -161,6 +161,22 @@ KNOWN_DISAGREE = {
     # 「恰好一對」的論證對它不成立。改寫成 `{ …; }` 即可。
     ("ci-log-filter-restrict-r37-strict-subshell-group.yml", "subshell group"):
         "群組規則只收大括號群組；子殼層群組安全但被連帶擋下，改寫成 `{ …; }` 即可。",
+    # **產生語料 `--strict` 組（shellgen 維度 1／5／6）上的同兩種代價**（R37 移植 #61 群組規則後重跑產生語料神諭才量到——
+    # 移植當下只重跑了 fixture 神諭，而 CI 的產生語料 step 兩組都跑）。這一組是移植前按「逐段 `2>&1`」規則設計的，
+    # 它的「該放行」基準在群組規則下變成保守擋下；lint 行為是設計，不是回歸：
+    #   · 逐段 `2>&1`（5 檔）：群組規則刻意不收逐段形式——那一段的 `2>&1` 生效前的展開期／重導向錯誤不經過濾（#60 第 2 類）。
+    #     這幾個形狀剛好沒有這種錯誤，但規則不分辨哪一段會出錯。改寫成 `{ …; } 2>&1 | …` 即可。
+    #   · `( … )` 子殼層包裹（3 檔）：同上一條 `restrict-r37-strict-subshell-group`。`{ … }` 那三檔照樣放行、判一致。
+    ("gen-f-shell-bash.yml", "shell value bash"):
+        "群組規則不收逐段 `2>&1`（#60 第 2 類：那一段的 `2>&1` 生效前的錯誤不經過濾）；這個形狀剛好不出錯，規則不分辨。",
+    ("gen-f-shell-bash-dq.yml", "shell value bash-dq"): "同 `gen-f-shell-bash`：逐段 `2>&1`，群組規則保守擋下。",
+    ("gen-f-shell-bash-sq.yml", "shell value bash-sq"): "同 `gen-f-shell-bash`：逐段 `2>&1`，群組規則保守擋下。",
+    ("gen-f-pipeseg-2-gap0.yml", "pipeline of 2 segments, gap=0"): "同 `gen-f-shell-bash`：每段都帶 `2>&1`，仍不是群組形式。",
+    ("gen-f-pipeseg-3-gap0.yml", "pipeline of 3 segments, gap=0"): "同 `gen-f-shell-bash`：每段都帶 `2>&1`，仍不是群組形式。",
+    ("gen-f-wrap-subshell-fd-redirect-wrapped.yml", "subshell wrapped fd-redirect"):
+        "同 `restrict-r37-strict-subshell-group`：群組規則只收 `{ …; }`，子殼層包裹安全但被連帶擋下。",
+    ("gen-f-wrap-subshell-saved-fd-wrapped.yml", "subshell wrapped saved-fd"): "同上：子殼層包裹。",
+    ("gen-f-wrap-subshell-xtrace-wrapped.yml", "subshell wrapped xtrace"): "同上：子殼層包裹。",
 }
 
 # lint 自己的宣告正規式（與 `lint-ci-log-filter.sh` 的 `LOGFILTER_RE` 同形）。這裡只用它判**文字長相**；
