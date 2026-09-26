@@ -11,6 +11,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **「改 lens 必 bump」現在也守層 ①（#42）**。先前 `plugins/pai-lenses/scripts/validate.py` 的 `check_bumped`
+  只看 `<pack>/lenses/*.csv`：改 `workflows/ensemble-workflow.js` 的 `PROFILES` 而不 bump 主 plugin，**CI 全綠**、
+  使用者 `/plugin update` 收不到，沒有任何錯誤訊息——門檻最高的那一層反而沒有閘門，而 CI step 名稱宣稱
+  「改 lens 必 bump」。新閘門 `check_builtin_bumped`：`PROFILES` 相對比較基準有任何差異 → 主 plugin
+  （`plugins/parallel-ai-agents/.claude-plugin/plugin.json`）的版本必須增加；marketplace entry 那一側由
+  `check_marketplace_sync` 保證與 plugin.json 相等，所以不另外比。
+  - **怎麼判「PROFILES 變了」：比求值後的值，不比文字。** 兩側（HEAD 與比較基準）的 harness 都從 git 物件取出，
+    經 stdin 交給**同一支** `bin/pai-list-profiles --json` 求值——與 profile 名稱閘門同一個抽取法（Orchestration
+    分隔線之前的純定義區、真的 JS engine），輸出標準形 JSON（物件 key 排序、陣列保序、只收 JSON 原生型別；
+    函式／Map／class instance／非有限數值**直接失敗**，不讓 `JSON.stringify` 靜默丟掉）。
+    否決的兩個方向：(1)「`ensemble-workflow.js` 有沒有變」——那個檔絕大多數改動與 lens 無關，路徑判準的
+    假陽性會讓人把閘門拿掉；(2) #42 本文提的 `references/builtin-lenses.csv` diff——它**由 lens 產生**，
+    `daFocus`／`title`／`codexDefault`／`codexInstructions`／`codexMaxTime` 與 `lenses: []` 的 `custom` 在裡面
+    一列都沒有，改了看不見，且新鮮度要靠另一道 drift 檢查。
+    **沒有「harness 檔沒變就跳過」的捷徑**：第一版有，理由是「同一支 lister 對同一份 blob 必同輸出」——
+    那只對一般檔成立。harness 在 git 裡是 repo 內 symlink 時 blob 是連結文字，指向的檔改了 PROFILES 而 blob 不變，
+    捷徑印「無需 bump ✓」（而 check_csvs 在這個形狀下也是綠的）。拿掉之後兩側一律求值（連結文字求值必失敗
+    → fail-loud），由 `test_symlinked_harness_cannot_hide_a_profiles_change` 釘住——把捷徑加回去，它轉紅（實測）。
+  - **什麼算「lens 改了」（決定，寫在 `check_builtin_bumped` 的 docstring）**：`PROFILES` 標準形的**任何**差異——
+    新增／刪除 profile 或 lens、lens 的任何欄位、lens 在陣列中的順序、profile 級欄位（DA 與 Codex 讀的 prompt）。
+    **focus 的純錯字修正也算**：focus 是 reviewer 逐字讀的 prompt，閘門分不出錯字與語意，也不假裝分得出；
+    patch bump 的成本幾乎是零，沒有豁免旗標。不算：原始碼排版（字串拆行、`+` 串接、註解、物件 key 書寫順序）
+    與值相同的重構。`needsSrt: false` 顯式寫出 vs 省略**算**差異——保守方向的假陽性，罕見且 bump 即解。
+    `PROFILES` 以外的 harness 改動**不在範圍**（那是一般發版紀律，算進來就退化成被否決的路徑判準）。
+  - **兩道 bump 閘門共用一個比較基準**：`--base`／`--event` 的解析（no-base 的本機／dispatch／CI 分流、
+    ref 不存在、merge-base）從 `check_bumped` 開頭抽成 `resolve_cmp_base()`，main() 算一次、傳給兩道閘門——
+    第二道閘門若自己再解析，同一次執行就有兩份 base 規格（R5 修過的形狀），CI 拿不到 base 時還會印兩次
+    「沒有跑」。`resolve_cmp_base` 自己拋例外時，main() 點名「check_bumped 與 check_builtin_bumped 沒有跑」
+    （`gate()` 多了 `crashed=` 哨兵，與「已回報、不跑」的 None 分開——R14 L-3a 的同一條）。
+  - 失敗一律具名、不是「無需 bump」：兩側任一讀不到 harness、求值失敗（stderr 不進 annotation，同 READ-SITE 17）、
+    輸出不是非空 JSON 物件、lister 不在或在 repo 外、任一側沒有主 plugin.json、版本不是 semver。
+    未 commit 的 harness／主 plugin.json 改動印 warning（R6 H2 的同一條：只涵蓋已 commit 的內容）。
+    差異摘要（`minutes: ~lens fidelity`、`academic.codexMaxTime`、`+profile x`…）來自 lister 的 stdout（PR 可控），
+    一律經 `wc()`；taint 網與 READ_SITES（19 → 24）照舊由 AST 測試機械核對，`ALLOWED_IMPORTS` 未動。
+  - `bin/pai-list-profiles`：新增 `--json` 與 `PAI_HARNESS=-`（stdin）；未知參數改為 rc=2（先前任何參數都被忽略）。
+    `pai-list-profiles.bats` 11 個 case（`grep -c "^@test" test/pai-list-profiles.bats`）：標準形的兩個方向
+    （key 順序／字串串接不影響輸出；focus 一個字、lens 順序都改變輸出）、函式值 fail-loud、stdin 與讀檔逐字相同、用法錯。
+  - 測試 144 → 155 條（`grep -c "    def test_" ../pai-lenses/scripts/test_validate.py`）。新增的 11 條在**舊版**
+    `validate.py` 上逐一跑過：11 條全紅（核心那條在 push 與 pull_request 兩種事件語意下都是「預期報錯但 rc=0」）。
+  - `mutation_check.py`：新增守備單位 `lister`（`bin/pai-list-profiles` ↔ `pai-list-profiles.bats`）與 16 個靶
+    （層 ① 閘門 12、lister 4）；既有兩個靶因程式碼搬移而更新錨點（`bump 比較（tn <= tp）` 帶 `\n` 以與層 ① 那行區分；
+    `no-base fail-loud 整段` 的第二錨點改為 R4 的 rev-parse 註解——no-base 分流搬進 `resolve_cmp_base` 後，被替換的範圍
+    仍恰好是那一段）。靶清單 193 → 209 個（`python3 scripts/mutation_check.py --check-targets`）。
+    **本輪只對這 18 個（16 新 ＋ 2 改錨點）逐一套用、跑對應套件**：**18 殺 / 0 存活**，而且每一個都由靶名括號裡指名的那條測試（或 bats case）翻紅——不是被別的測試順手殺掉（`no-base fail-loud 整段` 仍由四條 no-base 測試殺掉，確認換錨點後替換範圍沒有變）。
+    完整一輪（209 靶）沒有重跑，`test_validate.py` 檔頭的 R35 數字對最終樹**不再成立**（靶數與測試數都變了）。
+
 ## [2.24.0] - 2026-09-10
 
 `pai-lenses` 從獨立 repo 併回本 repo 成為第二個 plugin，並把三層 lens 疊加的文件與 CI 閘門補齊。
@@ -856,7 +904,7 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
     處置是刪掉（同 `fold_block` 折疊條件那兩個運算元），不是寫進 `EXPECTED_SURVIVE`。
   三軸（base `d278e99`，野外 1565 檔／分母 369）：`GREEN→RED` **0**、`RED→GREEN` 0、`RULE:` 逐行相同
   （`PARSE:` 有 26 行是訊息文字改了：anchor／alias／merge key **／tag**）。
-  測試 143 → 144 條（`grep -c "    def test_" ../pai-lenses/scripts/test_validate.py`）；
+  測試 143 → 144 條（lint 形式的宣稱只留在最新一段——#42 起是 155）；
   靶清單 139 → 155 個（9 個 EXPECTED_SURVIVE；lint 形式的宣稱只留在最新一段——R33 起是 161）；
   lint fixture 109 → 156 個（61 正向／60 規則紅／35 解析紅；`ls test/fixtures/ci-log-filter-*.yml | wc -l`）；
   CI run step 22 個（R33 起 23：形狀普查閘門）；

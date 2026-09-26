@@ -58,6 +58,8 @@ TESTS = PACK / "scripts" / "test_validate.py"
 NEUTRALISE = PACK / "scripts" / "neutralise.py"
 PAI = PACK.parent / "parallel-ai-agents"
 LINT = PAI / "test" / "lint-ci-log-filter.sh"
+LISTER = PAI / "bin" / "pai-list-profiles"
+LISTER_BATS = PAI / "test" / "pai-list-profiles.bats"
 
 # ── 守備範圍（#33 verify R26 M6 / G-R27-6）───────────────────────────────────────────
 # 「新機制沒有 RED 驗證」在這個 PR **發作了七次**，而 R26 的 DA 把它診斷到方法層：
@@ -71,6 +73,9 @@ SUITES = {
     "validate":   (VALIDATE,   lambda: [sys.executable, str(TESTS)],          PACK),
     "lint":       (LINT,       lambda: ["bash", str(LINT), "--selftest"],     PAI),
     "neutralise": (NEUTRALISE, lambda: [sys.executable, str(TESTS)],          PACK),
+    # #42：層 ① bump 閘門比的是 `pai-list-profiles --json` 的輸出——標準化規則錯了，閘門就量錯東西。
+    # 它的網是 bats（驗「值相同 ⇔ 輸出相同」）與 test_validate.py（端到端）；這裡掛 bats 那一張。
+    "lister":     (LISTER,     lambda: ["bats", str(LISTER_BATS)],            PAI),
 }
 
 # (名稱, 要替換的字串, 替換成什麼)。每個 old 必須在 validate.py 中**恰好出現一次**。
@@ -142,7 +147,7 @@ MUTATIONS = [
      "    if False:"),
     ("pack 改名偵測", "    moved_pj = _find_pack_at(repo, cmp_base, pj_rel, pack_name)",
      "    moved_pj = None"),
-    ("bump 比較（tn <= tp）", "    elif tn <= tp:", "    elif False:"),
+    ("bump 比較（tn <= tp）", "    elif tn <= tp:\n", "    elif False:\n"),   # `\n`：#42 的層 ① 那一行後面帶註解，兩者才各自唯一
     ("entry name 缺席", "        if not ent_name:", "        if False:"),
     ("entry name 與 plugin.json 不符", "        elif pj_name and ent_name != pj_name:",
      "        elif False:"),
@@ -519,6 +524,46 @@ MUTATIONS += [
      '            if "\\n" in inline:\n                explicit_pad = 0', '            if False:\n                explicit_pad = 0', "lint"),
 ]
 
+# ── #42：層 ① 的 bump 閘門（`check_builtin_bumped`／`_profiles_at`）與它依賴的 `pai-list-profiles --json` ──
+# 每一條括號裡寫「關掉它，哪條測試翻色」；每一條都在本輪單獨套用、看過它翻色（見 CHANGELOG #42 段）。
+MUTATIONS += [
+    ("層 ①：版本沒有增加（→ test_builtin_lens_change_without_main_bump_is_error_and_with_bump_passes）",
+     "    elif tn <= tp:                               # 層 ①", "    elif False:                               # 層 ①"),
+    ("層 ①：求值後相同就不要求 bump——換成永遠相同（→ …_without_main_bump…）",
+     "    if new == old:", "    if True:"),
+    ("層 ①：兩側各從自己的 ref 取 harness（換成 HEAD＝兩側永遠相同 → …_without_main_bump…）",
+     'blob = subprocess.run(["git", "show", f"{ref}:{HARNESS_REL}"],',
+     'blob = subprocess.run(["git", "show", f"HEAD:{HARNESS_REL}"],'),
+    ("層 ①：PAI_HARNESS=- 顯式傳入（拿掉＝lister 兩側都求值工作目錄那份 → …_without_main_bump…）",
+     'env={**os.environ, "PAI_HARNESS": "-"})', "env={**os.environ})"),
+    ("層 ①：讀不到某側的 harness（→ test_builtin_gate_fails_loud_when_harness_missing_at_base）",
+     '    if blob.returncode != 0:\n        errs.append(f"::error::{label} 上讀不到',
+     '    if False:\n        errs.append(f"::error::{label} 上讀不到'),
+    ("層 ①：求值失敗（→ test_builtin_gate_fails_loud_when_base_profiles_cannot_be_evaluated）",
+     '    if r.returncode != 0:\n        errs.append(f"::error::無法求值 {label}',
+     '    if False:\n        errs.append(f"::error::無法求值 {label}'),
+    ("層 ①：lister 輸出不是非空物件（→ test_builtin_gate_fails_loud_when_evaluation_yields_no_profiles）",
+     "    if not isinstance(obj, dict) or not obj:", "    if False:"),
+    ("層 ①：lister 不存在／在 repo 外（→ test_builtin_gate_names_the_lister_when_it_cannot_run）",
+     "    if not lister.is_file() or not _inside(lister.resolve(), repo.resolve()):", "    if False:"),
+    ("層 ①：base 上沒有主 plugin.json（→ test_builtin_gate_fails_loud_when_main_manifest_missing_at_base）",
+     "    if cur.returncode != 0 or prv.returncode != 0:", "    if False:"),
+    ("層 ①：未 commit warning（→ test_builtin_gate_reads_committed_history_and_surfaces_uncommitted_edits）",
+     "    if wip.returncode == 0 and wip.stdout.strip():", "    if False:"),
+    ("層 ①：差異摘要經 wc() 進 annotation（→ taint 網 test_external_strings_in_annotations_are_always_wrapped）",
+     "::層 ① 的 PROFILES 改了（{wc(delta, 400)}）", "::層 ① 的 PROFILES 改了（{delta}）"),
+    ("resolve_cmp_base 例外要點名兩道 bump 閘門（→ test_resolve_cmp_base_crash_names_both_bump_gates）",
+     "    if cmp_base is crashed:", "    if False:"),
+    ("lister：--json 的物件 key 排序（→ bats「--json 是標準形」）",
+     "for (const k of Object.keys(v).sort()) {", "for (const k of Object.keys(v)) {", "lister"),
+    ("lister：--json 遇到函式要 fail-loud 而不是丟掉（→ bats「遇到 JSON 表達不了的值」）",
+     "    throw new Error('PROFILES 含無法標準化的值（' + typeof v + '）：' + at)", "    return null", "lister"),
+    ("lister：PAI_HARNESS=- 讀 stdin（→ bats「從 stdin 讀」）",
+     'if [ "$harness" = "-" ]; then', 'if false; then', "lister"),
+    ("lister：未知參數是用法錯（→ bats「未知參數是用法錯」）",
+     '- 表示 stdin）" >&2; exit 2 ;;', '- 表示 stdin）" >&2 ;;', "lister"),
+]
+
 EXPECTED_SURVIVE = {
     "lint: `<<<` 是 here-string 不是 heredoc（依構造等價，保留為意圖宣告）",
     "pack 內部改名不投票（依構造不可達，保留為防禦）",
@@ -554,7 +599,9 @@ def _apply(name, old, new, src):
     """回傳 mutate 後的原始碼。靶不唯一時 raise —— 不默默替換第一個（見模組 docstring）。"""
     if old == "__SPECIAL_NOBASE__":
         i = src.index("    if not base:\n")
-        j = src.index('    # #33 verify R6：先前寫死 "plugins/pai-lenses/…"')
+        # #42：no-base 分流搬進 resolve_cmp_base 之後，它後面緊接的是 R4 的 rev-parse 註解（R6 那句留在
+        # check_bumped）。錨點跟著換，被替換的範圍仍然恰好是 no-base 那一段。
+        j = src.index("    # #33 verify R4：先前只堵 returncode != 0。")
         return src[:i] + "    if not base:\n        return\n" + src[j:]
     n = src.count(old)
     if n != 1:
@@ -601,7 +648,7 @@ def check_targets_only():
             # 於是它印「全部恰好命中一次」時，另一個 anchor（一句**註解**）可能早就
             # 被改掉了。`_apply` 用 `index()` 找兩個 anchor，兩個都得在、都得唯一。
             for anchor in ("    if not base:\n",
-                           '    # #33 verify R6：先前寫死 "plugins/pai-lenses/…"'):
+                           "    # #33 verify R4：先前只堵 returncode != 0。"):
                 n = src.count(anchor)
                 if n != 1:
                     broken.append((name, f"special anchor {anchor!r:.40} 出現 {n} 次（需 1 次）"))

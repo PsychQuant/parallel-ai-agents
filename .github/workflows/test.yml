@@ -299,7 +299,7 @@ jobs:
 
       # 檢查的內容不寫進 workflow 而放在 scripts/validate.py：`run: |` 區塊裡的
       # heredoc 一旦把內容放在第 0 欄就會跳出 YAML block scalar，workflow 靜默停止解析。
-      - name: validate manifests + lens pack (每個 plugin 的版本／entry 雙向同步、改 lens 必 bump、profile 名稱、CSV 形狀與撞名)
+      - name: validate manifests + lens pack (每個 plugin 的版本／entry 雙向同步、改 lens 必 bump（層 ① PROFILES 與層 ② CSV）、profile 名稱、CSV 形狀與撞名)
         # --base 讓 validate 能判斷「改了 lenses/*.csv 卻沒 bump 版本」——
         # 只驗「兩處一致」守不住這個（#33 verify R2 H5/H10）。
         # base SHA 走 env 而非直接內插進 run（workflow-injection 的標準防護形狀）。

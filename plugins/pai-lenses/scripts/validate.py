@@ -52,7 +52,7 @@ OS_ARTIFACTS = (".DS_Store", ".gitkeep", ".gitignore", "Thumbs.db")
 # **這層守什麼／守不住什麼（明寫，不得依性質相似類推）**：
 #   守：symlink（檔案層與目錄層——`resolve()` 連父層一起解析）、絕對路徑、`..` 繞出去。
 #   守不住：hardlink（git 產生不了，不在 fork PR 的攻擊面）、bind mount、以及**被求值的程式碼自己去讀什麼**
-#   （harness 是 repo 內合法 JS 但 `import` repo 外的檔——路徑守衛擋不住求值；所以 READ-SITE 17 的 stderr
+#   （harness 是 repo 內合法 JS 但 `import` repo 外的檔——路徑守衛擋不住求值；所以 READ-SITE 17（與 #42 的 22）的 stderr
 #   一律不進 annotation；它的 **stdout**（profile 名）依構造是 PR 可控文字、仍是內容管道，只是經 wc() 截到 200 字——
 #   有上限，不是沒有管道，R15 security S-2）。containment 是佈局健檢，不是安全邊界；真正的邊界是
 #   `on: pull_request` + `contents: read` + 零 secrets（見 test.yml 的 job 級說明）。
@@ -77,8 +77,8 @@ READ_SITES = (
     ( 5, "_find_pack_at：git ls-tree",                     "git object"),
     ( 6, "_find_pack_at：git show（候選 plugin.json）",     "git object"),
     ( 7, "check_bumped：pack 自身 plugin.json（pack_name）", "_inside（R13 第九處；R14 requirements F3 補測試，不再列 EXPECTED_SURVIVE）"),
-    ( 8, "check_bumped：git rev-parse --verify base",       "git object"),
-    ( 9, "check_bumped：git merge-base",                    "git object；stderr 經 wc()（無共同祖先時 git 不印 stderr——此站點的 wc 無法被測試觸發，故不列靶；可觸發的同類是 base 字串本身，有靶）"),
+    ( 8, "resolve_cmp_base：git rev-parse --verify base（#42 前住在 check_bumped）", "git object"),
+    ( 9, "resolve_cmp_base：git merge-base（#42 前住在 check_bumped）",                    "git object；stderr 經 wc()（無共同祖先時 git 不印 stderr——此站點的 wc 無法被測試觸發，故不列靶；可觸發的同類是 base 字串本身，有靶）"),
     (10, "check_bumped：git status --porcelain",            "git object"),
     (11, "check_bumped：git diff --name-only",              "git object"),
     (12, "check_bumped：git show HEAD:plugin.json",         "git object"),
@@ -89,6 +89,14 @@ READ_SITES = (
     (17, "check_csvs：執行 bin/pai-list-profiles（求值 harness）", "_inside（lister 與 harness）+ PAI_HARNESS 顯式傳入 + stderr 不進 annotation"),
     (18, "check_csvs：lenses/<profile>.csv",                "站點 15 已拒 symlink；_inside 目錄層"),
     (19, "check_marketplace_sync：反向 glob plugins/*/.claude-plugin/plugin.json", "逐一 _inside（R11 第六處）；R15 前是表外站點"),
+    # ── #42：層 ① 的 bump 閘門 ──
+    (20, "check_builtin_bumped：git status --porcelain（harness、主 plugin.json）", "git object"),
+    (21, "_profiles_at：git show <ref>:ensemble-workflow.js",   "git object（兩側都不讀工作目錄的 harness）"),
+    (22, "_profiles_at：執行 bin/pai-list-profiles --json（stdin 餵 harness，求值 PROFILES）",
+         "lister 先 _inside；harness 是 git object 經 stdin（PAI_HARNESS=- 顯式傳入）；stderr 不進 annotation；"
+         "stdout（PR 可控）只經 json.loads → 差異摘要經 wc() 進 annotation"),
+    (23, "check_builtin_bumped：git show HEAD:主 plugin.json", "git object"),
+    (24, "check_builtin_bumped：git show base:主 plugin.json", "git object"),
 )
 # **外部字串進 annotation**（R15 S-2 → R16 → R17 logic L-3／L-4）：R16 寫「任何不是 validator 自己組的字串一律
 # wc()/prop()」——在本檔即為假（entry name、CSV 欄名等數十處沒包）。現在改成 **taint 網 + 封閉列舉**：
@@ -337,7 +345,7 @@ def load_obj(path_or_text, label, errs, *, is_text=False):
     裸 traceback、零 annotation），而 R6 的測試餵的是語法壞掉的 JSON，走的是另一條 except，
     所以抓不到。這是同一個缺陷的第二個站點。"""
     try:
-        raw = path_or_text if is_text else pathlib.Path(path_or_text).read_text(encoding="utf-8")   # READ-SITE 1/19
+        raw = path_or_text if is_text else pathlib.Path(path_or_text).read_text(encoding="utf-8")   # READ-SITE 1/24
         obj = json.loads(raw)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
         errs.append(f"::error file={prop(label)}::讀取失敗：{e}")
@@ -361,7 +369,8 @@ def repo_root(root):
     return cand if (cand / ".claude-plugin" / "marketplace.json").is_file() else None
 
 
-NO_REPO_GATES = ("check_marketplace_sync", "check_bumped", "lenses/ 目錄層 containment 的 repo 邊界",
+NO_REPO_GATES = ("check_marketplace_sync", "check_bumped", "check_builtin_bumped（層 ① PROFILES → 主 plugin 版本，#42）",
+                 "lenses/ 目錄層 containment 的 repo 邊界",
                  "撞名（builtin-lenses.csv）", "profile 名（pai-list-profiles）")
 
 
@@ -400,7 +409,7 @@ def collector_wiring(repo, profile):
     # #33 verify R14（logic L-2 第 11 處）：這裡讀的是 repo 內另一個 plugin 的檔，先前沒有 containment。
     if not _inside((d / "SKILL.md").resolve(), repo.resolve()):
         return d.name, "outside"
-    lines = (d / "SKILL.md").read_text(encoding="utf-8", errors="replace").splitlines()   # READ-SITE 2/19
+    lines = (d / "SKILL.md").read_text(encoding="utf-8", errors="replace").splitlines()   # READ-SITE 2/24
     wired = any("pai-collect-lens-layers" in ln and not ln.lstrip().startswith("#")
                 for ln in lines)
     return d.name, wired
@@ -681,7 +690,7 @@ def check_marketplace_sync(root, errs):
 
     # 反向：檔案系統 → marketplace entry。缺 entry 的 plugin 使用者根本裝不到，
     # 而正向迴圈**結構上**看不到它（它不在 plugins 陣列裡）。#33 verify R6。
-    for found in sorted(repo_abs.glob("plugins/*/.claude-plugin/plugin.json")):   # READ-SITE 19/19
+    for found in sorted(repo_abs.glob("plugins/*/.claude-plugin/plugin.json")):   # READ-SITE 19/24
         pdir = found.parent.parent
         # #33 verify R11 #12：`glob` 會跟隨 symlink —— 五處 `_inside` 硬化漏了這第六處，
         # `plugins/evil -> repo 外` 的 plugin.json 會被讀。與正向路徑同一判準：先判、再讀。
@@ -732,7 +741,7 @@ def _find_pack_at(repo, ref, pj_rel, name):
     # （改目錄通常也改 plugin 名），git 就把它判成 A+D 而非 R —— 但同一次改名裡
     # 其他檔案（README/LICENSE/scripts）仍是 R100。取多數決還原舊的 pack 根目錄。
     pack_rel = pj_rel[: -len("/.claude-plugin/plugin.json")]
-    # READ-SITE 3/19
+    # READ-SITE 3/24
     dt = subprocess.run(["git", "diff", "--name-status", "-M", ref, "HEAD"],
                         cwd=repo, capture_output=True, text=True, errors="replace")
     if dt.returncode == 0:
@@ -759,14 +768,14 @@ def _find_pack_at(repo, ref, pj_rel, name):
         if votes:
             old_pack = max(votes, key=votes.get)
             candidate = f"{old_pack}/.claude-plugin/plugin.json"
-            # READ-SITE 4/19
+            # READ-SITE 4/24
             if candidate != pj_rel and subprocess.run(
                     ["git", "cat-file", "-e", f"{ref}:{candidate}"],
                     cwd=repo, capture_output=True).returncode == 0:
                 return candidate
     if not name:
         return None
-    # READ-SITE 5/19
+    # READ-SITE 5/24
     ls = subprocess.run(["git", "ls-tree", "-r", "--name-only", ref],
                         cwd=repo, capture_output=True, text=True, errors="replace")
     if ls.returncode != 0:
@@ -774,7 +783,7 @@ def _find_pack_at(repo, ref, pj_rel, name):
     for path in ls.stdout.splitlines():
         if not path.endswith(".claude-plugin/plugin.json"):
             continue
-        # READ-SITE 6/19
+        # READ-SITE 6/24
         blob = subprocess.run(["git", "show", f"{ref}:{path}"],
                               cwd=repo, capture_output=True, text=True, errors="replace")
         if blob.returncode != 0:
@@ -791,8 +800,14 @@ def _find_pack_at(repo, ref, pj_rel, name):
     return None
 
 
-def check_bumped(root, errs, base, event=None):
-    """改了 `lenses/*.csv` 就**必須** bump 版本（相對 base 增加），不只是「兩處一致」。
+def resolve_cmp_base(root, errs, base, event=None):
+    """把 `--base`／`--event` 收斂成**兩道 bump 閘門共用的單一比較基準** cmp_base；拿不到回 None。
+
+    兩道閘門：層 ② 的 `check_bumped`（`lenses/*.csv` → pack 版本）與層 ① 的
+    `check_builtin_bumped`（`PROFILES` → 主 plugin 版本，#42）。#42 之前這段住在 `check_bumped`
+    開頭；抽出來是因為第二道閘門若自己再解析一次，同一次執行會有**兩份 base 規格**（正是下面 R5
+    修的形狀），而且 CI 拿不到 base 時會印兩次「沒有跑」。回 None 的每一條路徑都已在這裡回報
+    （error／notice／note），呼叫端對 None 一律靜默 return。
 
     #33 verify R5：先前變更清單用三點 `base...HEAD`（= merge-base(base,HEAD) → HEAD），
     版本卻用 `git show base:`（= base **本身**）—— **兩個不同的比較基準**。在分岔歷史下
@@ -836,31 +851,9 @@ def check_bumped(root, errs, base, event=None):
                 f"事件是 {event or '<unknown>'}，workflow 沒把 base 傳進來"
                 "（pull_request 用 base.sha、push 用 event.before）")
         return
-    # #33 verify R6：先前寫死 "plugins/pai-lenses/…"。`root` 與 `repo` 都已知，
-    # 導得出來卻選擇寫死 —— 實測 `git mv plugins/pai-lenses plugins/lens-pack` 之後，
-    # 下一個 commit 起每一次 lens 變更都印「無需 bump ✓」而完全不受守護。
-    # 位置耦合造成的假綠燈，正是本 PR 反覆在修的那一類。
-    pack_rel = root.resolve().relative_to(repo.resolve()).as_posix()
-    # #33 verify R13（security S1）：R12 說「反向 glob 是唯一沒走 load_obj 的 JSON 讀取點」——假的，
-    # 這裡的 except 少列 UnicodeDecodeError，非 UTF-8 的 plugin.json 讓整支 crash、零 annotation。
-    # 同一類的另一個站點是所有 `subprocess.run(text=True)`（git 輸出的解碼）—— 一律 errors="replace"。
-    # **這句不再只是散文**（R20 → R21）：`test_validate.py` 的
-    # `test_every_decoding_call_site_survives_undecodable_bytes` 對全檔做 AST 不變式——任何會解碼
-    # 外部位元組的呼叫，要嘛帶 `errors=`，要嘛包在接得住 `UnicodeDecodeError` 的 try 裡。11 個站點
-    # 逐一拆掉各自驗過會紅；零豁免清單，新站點自動涵蓋。
-    pack_name = None
-    _pj_path = root / ".claude-plugin" / "plugin.json"
-    if _inside(_pj_path.resolve(), repo.resolve()):          # R13 logic N1：第九處 containment
-        try:
-            _pk = json.loads(_pj_path.read_text(encoding="utf-8"))          # READ-SITE 7/19
-            pack_name = _pk.get("name") if isinstance(_pk, dict) else None
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-            pack_name = None
-    rel = f"{pack_rel}/lenses"
-    pj_rel = f"{pack_rel}/.claude-plugin/plugin.json"
     # #33 verify R4：先前只堵 returncode != 0。git 對「pathspec 指向 base 不存在的路徑」
     # 是成功 + 空輸出 —— 與「真的沒改」不可區分。先確認 base 這個 ref 本身存在。
-    # READ-SITE 8/19
+    # READ-SITE 8/24
     if subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"{base}^{{commit}}"],
                       cwd=repo, capture_output=True).returncode != 0:
         # #33 verify R6：先前訊息一律叫人「確認 checkout 帶 fetch-depth: 0」。但對
@@ -884,7 +877,7 @@ def check_bumped(root, errs, base, event=None):
     # （「這次 push 讓 main 變成什麼」）才是對的，而 CI 一律會傳 --event。
     cmp_base = base
     if event != "push":
-        # READ-SITE 9/19
+        # READ-SITE 9/24
         mb = subprocess.run(["git", "merge-base", base, "HEAD"],
                             cwd=repo, capture_output=True, text=True, errors="replace")
         if mb.returncode != 0 or not mb.stdout.strip():
@@ -896,6 +889,39 @@ def check_bumped(root, errs, base, event=None):
               f"（{event or '預設'}：問「這個分支引入了什麼」）")
     else:
         print(f"bump 檢查基準：{base[:12]} 本身（push：exact-tree）")
+    return cmp_base
+
+
+def check_bumped(root, errs, cmp_base):
+    """改了 `lenses/*.csv` 就**必須** bump pack 的版本（相對 cmp_base 增加），不只是「兩處一致」。
+
+    cmp_base 由 `resolve_cmp_base()` 在 main() 算一次、與層 ① 的 `check_builtin_bumped()` 共用（#42）——
+    兩道 bump 閘門對同一次執行只能有一個比較基準；拿不到基準時的回報也只在那裡印一次。"""
+    repo = repo_root(root)
+    if repo is None or cmp_base is None:
+        return                                   # 回報集中在 report_no_repo() / resolve_cmp_base()
+    # #33 verify R6：先前寫死 "plugins/pai-lenses/…"。`root` 與 `repo` 都已知，
+    # 導得出來卻選擇寫死 —— 實測 `git mv plugins/pai-lenses plugins/lens-pack` 之後，
+    # 下一個 commit 起每一次 lens 變更都印「無需 bump ✓」而完全不受守護。
+    # 位置耦合造成的假綠燈，正是本 PR 反覆在修的那一類。
+    pack_rel = root.resolve().relative_to(repo.resolve()).as_posix()
+    # #33 verify R13（security S1）：R12 說「反向 glob 是唯一沒走 load_obj 的 JSON 讀取點」——假的，
+    # 這裡的 except 少列 UnicodeDecodeError，非 UTF-8 的 plugin.json 讓整支 crash、零 annotation。
+    # 同一類的另一個站點是所有 `subprocess.run(text=True)`（git 輸出的解碼）—— 一律 errors="replace"。
+    # **這句不再只是散文**（R20 → R21）：`test_validate.py` 的
+    # `test_every_decoding_call_site_survives_undecodable_bytes` 對全檔做 AST 不變式——任何會解碼
+    # 外部位元組的呼叫，要嘛帶 `errors=`，要嘛包在接得住 `UnicodeDecodeError` 的 try 裡。11 個站點
+    # 逐一拆掉各自驗過會紅；零豁免清單，新站點自動涵蓋。
+    pack_name = None
+    _pj_path = root / ".claude-plugin" / "plugin.json"
+    if _inside(_pj_path.resolve(), repo.resolve()):          # R13 logic N1：第九處 containment
+        try:
+            _pk = json.loads(_pj_path.read_text(encoding="utf-8"))          # READ-SITE 7/24
+            pack_name = _pk.get("name") if isinstance(_pk, dict) else None
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            pack_name = None
+    rel = f"{pack_rel}/lenses"
+    pj_rel = f"{pack_rel}/.claude-plugin/plugin.json"
     # #33 verify R6：R5 把「變更清單」與「舊版本」統一到 cmp_base，但**漏了第三個讀取點**
     # —— `now` 當時是從工作目錄的 plugin.json 讀的。同一次執行裡 changed 看 committed
     # history、now 看 working tree，還是兩個基準。CI 裡兩者相同所以看不出來；但本檔自己
@@ -904,7 +930,7 @@ def check_bumped(root, errs, base, event=None):
     #   lenses/code.csv: 2 條 lens ✓                ← 同一次執行看到了那條新 lens
     # 現在三個讀取點全部取自 committed history，並且**先**把未 commit 的差異講出來 ——
     # 那句提示必須在「無變更」那條路徑上也印得到，否則假綠燈依舊。
-    # READ-SITE 10/19
+    # READ-SITE 10/24
     dirty = subprocess.run(["git", "status", "--porcelain", "--", rel, pj_rel],
                            cwd=repo, capture_output=True, text=True, errors="replace")
     if dirty.returncode == 0 and dirty.stdout.strip():
@@ -923,7 +949,7 @@ def check_bumped(root, errs, base, event=None):
     if moved_pj:
         old_lens = moved_pj[: -len("/.claude-plugin/plugin.json")] + "/lenses"
         pathspec = [old_lens, rel]
-    # READ-SITE 11/19
+    # READ-SITE 11/24
     changed = subprocess.run(
         ["git", "diff", "--name-status", "-M", cmp_base, "HEAD", "--", *pathspec],
         cwd=repo, capture_output=True, text=True, errors="replace")
@@ -950,7 +976,7 @@ def check_bumped(root, errs, base, event=None):
         print(msg)
         return
     pj = root / ".claude-plugin" / "plugin.json"
-    # READ-SITE 12/19
+    # READ-SITE 12/24
     cur = subprocess.run(["git", "show", f"HEAD:{pj_rel}"],
                          cwd=repo, capture_output=True, text=True, errors="replace")
     if cur.returncode != 0:
@@ -971,7 +997,7 @@ def check_bumped(root, errs, base, event=None):
     if now_obj is None:
         return
     now = now_obj.get("version", "")
-    # READ-SITE 13/19
+    # READ-SITE 13/24
     old = subprocess.run(
         ["git", "show", f"{cmp_base}:{pj_rel}"],
         cwd=repo, capture_output=True, text=True, errors="replace")
@@ -988,7 +1014,7 @@ def check_bumped(root, errs, base, event=None):
             # 靶」，那句對這裡與 `:836` 不成立（那正是本 PR 反覆失守的形狀的最小殘留版本）。
             print(f"note: pack 在 base 時位於 {wc(moved[: -len('/.claude-plugin/plugin.json')])}"
                   f"（本次改名為 {pack_rel}）—— 用舊路徑比對版本")
-            # READ-SITE 14/19
+            # READ-SITE 14/24
             old = subprocess.run(["git", "show", f"{cmp_base}:{moved}"],
                                  cwd=repo, capture_output=True, text=True, errors="replace")
             if old.returncode != 0:
@@ -1017,6 +1043,183 @@ def check_bumped(root, errs, base, event=None):
         print(f"lenses/ 有變更且已 bump：{wc(prev)} → {wc(now)} ✓")
 
 
+# 層 ① 的位置（#42）。與 check_csvs 的 lister／harness、builtin_lens_keys 的 catalog 同一種寫死：
+# 主 plugin 目錄一搬，這些站點全部 fail-loud（找不到 lister／HEAD 上沒有 harness），不會安靜變綠。
+MAIN_PLUGIN_REL = "plugins/parallel-ai-agents"
+HARNESS_REL = f"{MAIN_PLUGIN_REL}/workflows/ensemble-workflow.js"
+MAIN_PJ_REL = f"{MAIN_PLUGIN_REL}/.claude-plugin/plugin.json"
+
+
+def _profiles_at(repo, lister, ref, label, errs):
+    """回傳 `ref` 那一版 harness 的 PROFILES（**求值後**的標準形 JSON → dict）；拿不到回 None（已寫進 errs）。
+
+    harness 取自 git 物件（`git show <ref>:<harness>`），不取工作目錄——與 check_bumped 的 R6 同一條規則：
+    同一次執行的兩側都必須是 committed history。兩側都交給**同一支** lister（工作目錄的
+    `bin/pai-list-profiles --json`，經 stdin 餵 harness 原始碼）求值與標準化，所以抽取法與序列化規則
+    在兩側逐字相同；比對的是值，不是文字。
+
+    `label` 是 validator 自己組的字串（"HEAD" / "base"），進 annotation 不必 wc()；
+    lister 的 stderr 一律不進 annotation（理由同 READ-SITE 17：它求值的是 PR 可控的 JS）。"""
+    # READ-SITE 21/24
+    blob = subprocess.run(["git", "show", f"{ref}:{HARNESS_REL}"],
+                          cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if blob.returncode != 0:
+        errs.append(f"::error::{label} 上讀不到 {HARNESS_REL} —— 層 ① 的 bump 閘門沒有跑（不是「無需 bump」）。"
+                    "harness 若被搬走，validate.py 寫死的路徑也要一起改")
+        return None
+    # READ-SITE 22/24
+    r = subprocess.run(["bash", str(lister), "--json"], input=blob.stdout,
+                       capture_output=True, text=True, encoding="utf-8", errors="replace",
+                       env={**os.environ, "PAI_HARNESS": "-"})
+    if r.returncode != 0:
+        errs.append(f"::error::無法求值 {label} 那一版的 PROFILES（pai-list-profiles --json rc={r.returncode}；"
+                    "它求值的是 PR 可控的 JS，其 stderr 不進 annotation —— 本機執行 "
+                    "`git show <ref>:" + HARNESS_REL + " | PAI_HARNESS=- bin/pai-list-profiles --json` 看原因）。"
+                    "層 ① 的 bump 閘門沒有跑")
+        return None
+    try:
+        obj = json.loads(r.stdout)
+    except json.JSONDecodeError:
+        obj = None
+    if not isinstance(obj, dict) or not obj:
+        errs.append(f"::error::pai-list-profiles --json 對 {label} 沒有輸出非空的 JSON 物件 —— "
+                    "PROFILES 抽取壞了，層 ① 的 bump 閘門沒有跑")
+        return None
+    return obj
+
+
+def _profiles_delta(old, new):
+    """人讀的差異摘要（供訊息用）。**判定不看它**——判定是 `old != new`；這裡只負責把「哪裡變了」說出來。
+    值全部來自 lister 的 stdout（PR 可控），呼叫端必須經 wc()。"""
+    out = []
+    for p in sorted(set(old) | set(new), key=str):
+        if p not in old:
+            out.append(f"+profile {p}")
+            continue
+        if p not in new:
+            out.append(f"-profile {p}")
+            continue
+        a, b = old[p], new[p]
+        if a == b:
+            continue
+        if not (isinstance(a, dict) and isinstance(b, dict)):
+            out.append(f"{p}")
+            continue
+        for f in sorted(set(a) | set(b), key=str):
+            la, lb = a.get(f), b.get(f)
+            if la == lb:
+                continue
+            if f == "lenses" and isinstance(la, list) and isinstance(lb, list):
+                before = len(out)
+                ka = {str(x.get("key")): x for x in la if isinstance(x, dict)}
+                kb = {str(x.get("key")): x for x in lb if isinstance(x, dict)}
+                for k in sorted(set(ka) | set(kb)):
+                    if k not in ka:
+                        out.append(f"{p}: +lens {k}")
+                    elif k not in kb:
+                        out.append(f"{p}: -lens {k}")
+                    elif ka[k] != kb[k]:
+                        out.append(f"{p}: ~lens {k}")
+                if len(out) == before:
+                    out.append(f"{p}.lenses（順序或重複 key）")
+            else:
+                out.append(f"{p}.{f}")
+    return out
+
+
+def check_builtin_bumped(root, errs, cmp_base):
+    """層 ① 的 bump 閘門（#42）：`PROFILES` 相對 cmp_base 有變 → 主 plugin 的版本**必須**增加。
+
+    #42 之前「改 lens 必 bump」只守層 ②（`check_bumped` 看 `<pack>/lenses/*.csv`）。改層 ①——
+    `workflows/ensemble-workflow.js` 的 `PROFILES`——而不 bump 主 plugin，CI 全綠、使用者 `/plugin update`
+    收不到，沒有任何錯誤訊息。門檻最高的那一層反而沒有閘門。
+
+    **怎麼判「PROFILES 變了」：比較兩側求值後的值，不比文字。**
+      - 不用「ensemble-workflow.js 有沒有變」：那個檔絕大多數改動與 lens 無關（orchestration、Codex 治理、
+        dedup…）。路徑判準會製造大量假陽性，而假陽性的下場通常是有人把閘門拿掉。
+      - 不用 `references/builtin-lenses.csv` 的 diff（#42 提的方向 1）：它是**由 lens 產生**的投影——
+        `daFocus`／`title`／`codexDefault`／`codexInstructions`／`codexMaxTime` 與 `lenses: []` 的 profile
+        （`custom`）在裡面一列都沒有（與 READ_SITES 16／`pai-list-profiles` 檔頭同一個理由），改了看不見；
+        它的新鮮度還要靠另一道 drift 檢查。
+      - 用 `bin/pai-list-profiles --json`：與 profile 名稱閘門同一個抽取法（Orchestration 分隔線之前的純定義區、
+        真的 JS engine 求值），輸出**標準形 JSON**——物件 key 排序、陣列保序、只收 JSON 原生型別
+        （函式／Map／class instance 等**直接 fail-loud**，不讓 `JSON.stringify` 靜默丟掉）。
+        兩側用同一支 lister，所以抽取與序列化規則逐字相同。
+
+    **什麼算「lens 改了」（決定，不是遺漏）**：`PROFILES` 標準形的**任何**差異——
+      新增／刪除 profile 或 lens；lens 的 `key`／`focus`／`needsSrt` 或任何欄位；lens 在陣列中的**順序**
+      （派發與報表順序跟著變）；profile 級的 `title`／`daFocus`／`codexDefault`／`codexInstructions`／
+      `codexMaxTime`（CSV 描述不了、只能在層 ① 改的那些，也是 DA 與 Codex 讀的 prompt）。
+      **`focus` 的純錯字修正也算**：focus 是 reviewer 逐字讀的 prompt，lens 是量測儀器——閘門分不出「錯字」與
+      「語意」，也不該假裝分得出；而一個 patch bump 的成本幾乎是零。沒有豁免旗標。
+      明確不算：原始碼排版（字串拆行、`+` 串接、註解、空白、物件 key 的書寫順序）、以及值相同的重構
+      （把 focus 抽成常數）——求值後相同就是相同。`needsSrt: false` 顯式寫出 vs 省略**算**差異（標準形不同）；
+      那是保守方向的假陽性，罕見且 bump 即解。
+      **不在範圍**：`PROFILES` 以外的 harness 改動（orchestration 等）——那是一般的發版紀律，不是 lens 閘門；
+      把它們也算進來就退化成上面第一個被否決的路徑判準。
+
+    版本比對：主 plugin 的 `plugin.json`，HEAD 與 cmp_base 兩側都從 git 物件讀（與 check_bumped 同理）。
+    marketplace entry 那一側不在這裡比：`check_marketplace_sync` 已保證 HEAD 上兩處相等，所以 plugin.json
+    有增加 ⇔ entry 有增加。"""
+    repo = repo_root(root)
+    if repo is None or cmp_base is None:
+        return                                   # 回報集中在 report_no_repo() / resolve_cmp_base()
+    # 未 commit 的變更先講出來（R6 H2 的同一個理由：「無變更 ✓」那條路徑上也要看得到）。
+    # READ-SITE 20/24
+    wip = subprocess.run(["git", "status", "--porcelain", "--", HARNESS_REL, MAIN_PJ_REL],
+                         cwd=repo, capture_output=True, text=True, errors="replace")
+    if wip.returncode == 0 and wip.stdout.strip():
+        paths = [ln[3:] for ln in wip.stdout.splitlines() if len(ln) > 3]
+        emit("::warning::工作目錄有未 commit 的變更，層 ① 的 bump 檢查**只涵蓋已 commit 的內容**："
+             + wc(", ".join(paths)))
+    # **沒有「harness 檔沒變就跳過」的捷徑**（刻意）：第一版有一個 `git diff --quiet cmp_base HEAD -- <harness>`
+    # 的捷徑，理由是「同一支 lister 對同一份 blob 必同輸出」。那只對一般檔成立——harness 若在 git 裡是
+    # symlink（mode 120000），blob 是連結文字，指向的 repo 內檔案改了 PROFILES 而 blob 兩側相同，捷徑就印
+    # 「無需 bump ✓」。拿掉捷徑後兩側一律求值：symlink 的連結文字求值必失敗 → fail-loud。代價是每次多兩次
+    # node 求值（百毫秒級），換掉一段要靠推理才守得住的程式碼。
+    lister = repo / MAIN_PLUGIN_REL / "bin" / "pai-list-profiles"
+    if not lister.is_file() or not _inside(lister.resolve(), repo.resolve()):
+        errs.append(f"::error::{MAIN_PLUGIN_REL}/bin/pai-list-profiles 不存在或解析後落在 repo 外 —— "
+                    "拒絕執行。層 ① 的 bump 閘門沒有跑（無法判斷 PROFILES 有沒有變）")
+        return
+    new = _profiles_at(repo, lister, "HEAD", "HEAD", errs)
+    old = _profiles_at(repo, lister, cmp_base, "base", errs)
+    if new is None or old is None:
+        return
+    if new == old:
+        print("層 ① PROFILES：求值後的 PROFILES 與 base 相同（已 commit 的部分）—— 主 plugin 無需 bump ✓")
+        return
+    delta = "、".join(_profiles_delta(old, new))
+    # READ-SITE 23/24
+    cur = subprocess.run(["git", "show", f"HEAD:{MAIN_PJ_REL}"],
+                         cwd=repo, capture_output=True, text=True, errors="replace")
+    # READ-SITE 24/24
+    prv = subprocess.run(["git", "show", f"{cmp_base}:{MAIN_PJ_REL}"],
+                         cwd=repo, capture_output=True, text=True, errors="replace")
+    if cur.returncode != 0 or prv.returncode != 0:
+        errs.append(f"::error file={prop(MAIN_PJ_REL)}::PROFILES 改了（{wc(delta, 400)}），但 "
+                    f"{'HEAD' if cur.returncode != 0 else 'base'} 上沒有 {MAIN_PJ_REL} —— 無法比較版本。"
+                    "這不是「無需 bump」")
+        return
+    now_obj = load_obj(cur.stdout, MAIN_PJ_REL, errs, is_text=True)
+    prev_obj = load_obj(prv.stdout, MAIN_PJ_REL, errs, is_text=True)
+    if now_obj is None or prev_obj is None:
+        return
+    now, prev = now_obj.get("version", ""), prev_obj.get("version", "")
+    tn, tp = version_tuple(now), version_tuple(prev)
+    if tn is None or tp is None:
+        errs.append(f"::error file={prop(MAIN_PJ_REL)}::主 plugin 版本字串不是 semver"
+                    f"（base={wc(repr(prev))}、現在={wc(repr(now))}），層 ① 的 bump 無法比較")
+    elif tn <= tp:                               # 層 ①：PROFILES 變了而主 plugin 版本沒有增加
+        errs.append(
+            f"::error file={prop(MAIN_PJ_REL)}::層 ① 的 PROFILES 改了（{wc(delta, 400)}）"
+            f"但 parallel-ai-agents 的版本沒有增加（base={wc(prev)} → 現在={wc(now)}）。"
+            "版本沒變時使用者 /plugin update 收不到這些 lens，而且不會有任何錯誤訊息。"
+            "bump plugin.json 與 marketplace.json 的 entry（兩處必須一致）")
+    else:
+        print(f"層 ① PROFILES 有變更（{wc(delta, 400)}）且主 plugin 已 bump：{wc(prev)} → {wc(now)} ✓")
+
+
 def check_lens_dir_shape(root, errs):
     """`lenses/` 下只能有單層、小寫 `.csv`，檔名即 profile。
 
@@ -1038,7 +1241,7 @@ def check_lens_dir_shape(root, errs):
         errs.append(f"::error::找不到 {d} —— 空的 pack 不貢獻任何東西")
         return []
     good = []
-    for p in sorted(d.iterdir()):                                        # READ-SITE 15/19
+    for p in sorted(d.iterdir()):                                        # READ-SITE 15/24
         rel = ann_path(p, root)
         # #33 verify R6：先前用 `p.suffix != ".csv"` 判定，而 pathlib 對 dotfile 回傳空
         # suffix（`Path(".DS_Store").suffix == ""`）→ 一個 .DS_Store 就讓整支 exit 1，
@@ -1115,7 +1318,7 @@ def builtin_lens_keys(repo, errs):
         return None
     out = {}
     try:
-        with cat.open(newline="", encoding="utf-8-sig") as fh:             # READ-SITE 16/19
+        with cat.open(newline="", encoding="utf-8-sig") as fh:             # READ-SITE 16/24
             reader = csv.DictReader(fh)
             fields = list(reader.fieldnames or [])
             if "profile" not in fields or "key" not in fields:
@@ -1168,7 +1371,7 @@ def check_csvs(root, errs, files):
             # #33 verify R14（regression E-2 / logic L-7）：lister 讀 `PAI_HARNESS`，先前繼承整個環境——
             # 「檢查的路徑」與「求值的路徑」是兩份規格（逐字是 R6 在 check_marketplace_sync 修過的缺陷）。
             # 顯式傳入被 containment 過的那一個。
-            # READ-SITE 17/19
+            # READ-SITE 17/24
             r = subprocess.run(["bash", str(lister)], capture_output=True, text=True, errors="replace",
                                env={**os.environ, "PAI_HARNESS": str(harness)})
             if r.returncode != 0:
@@ -1194,7 +1397,7 @@ def check_csvs(root, errs, files):
         # #33 verify R4：header 要看 reader.fieldnames，不能從 rows[0].keys() 反推 ——
         # 反推看不出重複欄位（DictReader 會覆蓋），也看不出多餘欄位（跑進 restkey）。
         try:
-            with path.open(newline="", encoding="utf-8-sig") as fh:        # READ-SITE 18/19
+            with path.open(newline="", encoding="utf-8-sig") as fh:        # READ-SITE 18/24
                 reader = csv.DictReader(fh, restkey="__extra__", restval=None)
                 fieldnames = list(reader.fieldnames or [])
                 rows = list(reader)
@@ -1379,18 +1582,28 @@ def main():
     # #33 verify R13 DA-1：所有 annotation 留到最後才印，任何一道閘門拋例外就讓已累積的 errs 全部消失、
     # 後面的閘門整段不跑——R6／R9／R10／R12 #3／R13 S1 是同一個結構的第五次發作，每次的修法都是
     # 「再加一個 except」。現在每道閘門各自隔離：例外變成一條具名的 ::error，其餘閘門照跑。
-    def gate(name, fn, *args):
+    def gate(name, fn, *args, crashed=None):
         try:
             return fn(*args)
         except Exception as e:                      # noqa: BLE001 —— 這裡就是要接住一切
             errs.append(f"::error::validator 內部錯誤（閘門 {name} 未跑完）：{wc(repr(e))}。"
                         "這不是「該閘門通過」—— 是它沒跑完；其餘閘門各自回報")
-            return None
+            return crashed
     if repo_root(root) is None:
-        report_no_repo(errs)                        # R14 L-1：五道閘門的缺席一次說清楚，CI 裡是 error
+        report_no_repo(errs)                        # R14 L-1：NO_REPO_GATES 的缺席一次說清楚，CI 裡是 error
     gate("check_version", check_version, root, errs)
     gate("check_marketplace_sync", check_marketplace_sync, root, errs)
-    gate("check_bumped", check_bumped, root, errs, base, event)
+    # #42：兩道 bump 閘門共用一個 cmp_base。resolve_cmp_base 回 None ＝「已回報、閘門不跑」（無 base 的
+    # 本機／dispatch 分流、ref 不存在…）；它自己**拋例外**時要與那個 None 分開（R14 L-3a：閘門之間的相依
+    # 也要具名），否則兩道 bump 閘門安靜地什麼都不說。
+    crashed = object()
+    cmp_base = gate("resolve_cmp_base", resolve_cmp_base, root, errs, base, event, crashed=crashed)
+    if cmp_base is crashed:
+        errs.append("::error::check_bumped 與 check_builtin_bumped 沒有跑（前一步 resolve_cmp_base 未跑完，"
+                    "拿不到比較基準）—— 層 ① 與層 ② 的「改 lens 必 bump」都沒有檢查")
+    else:
+        gate("check_bumped", check_bumped, root, errs, cmp_base)
+        gate("check_builtin_bumped", check_builtin_bumped, root, errs, cmp_base)
     files = gate("check_lens_dir_shape", check_lens_dir_shape, root, errs)
     if files:
         gate("check_csvs", check_csvs, root, errs, files)
