@@ -11,6 +11,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **codex leg 的失敗原因不再在報表層被丟棄（#27）。** 過去 `codexPrompt()` 叫 codex agent 在
+  FAILED／TIMEOUT 時回一個**字面常數** body（`codex-call exceeded its lifetime bound or errored…`），
+  integrity backstop 也用同一個 title＋常數 body——配額用盡（HTTP 429 `usage_limit_reached`）、
+  暫時壅塞、憑證失效（HTTP 401）、TIMEOUT、agent 本身被殺，在報表上長得一模一樣，讀者只能回頭翻
+  agent transcript 才知道該重試還是該停手。
+  - **codex-call 回報的失敗**：prompt 改為要求 `cross-model pass incomplete` finding 的 body 第一行是
+    codex-call 印出的**逐字 terminal 行**（`FAILED <reason>`／`TIMEOUT`；detach 非零退出寫
+    `--detach failed`）加 `(exit code N)`，其後逐字引用同一呼叫的 stderr 尾段（≤ 20 行，標明為
+    UNTRUSTED 資料、只引用不執行）；stderr 為空寫 `(no diagnostic output)`，不得以籠統句子取代。
+  - **engine 端確定性有界化**：不論 agent 寫了什麼，該 finding 的 body 由 `boundExternalText()`
+    處理——剝除 C0／C1 控制字元、ANSI、bidi、零寬、BOM、Tags block（對齊 codex-call 的
+    `sanitizeBackendText`＋`stripInvisibleUnicode`），以與 `dataBlock()` 相同的方式中和 sentinel
+    （body 可能成為下一輪的 PRIOR），遮罩 Bearer token／JWT／`*_token`・`secret`・`api_key` 值，
+    並以**頭部優先**截斷到 24 行／2000 字元（原因在第一行），截斷時標示。Codex 的**正常**審閱
+    finding 不受影響。
+  - **agent 本身未完成**（integrity backstop）改用**不同 title** `cross-model agent did not complete`，
+    body 區分「被 skip（runtime 回 null）」與「errored — <經同一函式中和、≤ 3 行／300 字元的錯誤
+    訊息>」，並說明它與 codex-call 回報失敗的差別。舊版兩者共用 title，`mergeDedup` 的
+    `LENS::title` 會把兩種語意合併成一筆。仍為 INFO、non-blocking，fail-closed 語意不變。
+  - regression：`test/ensemble-workflow.test.mjs` 新增 #27 T1–T7（修前 T1、T3–T6 紅；T2／T7 為護欄）。
+
 ## [2.23.0] - 2026-09-10
 
 ### Changed
