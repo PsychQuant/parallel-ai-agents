@@ -38,7 +38,7 @@ ensemble-* 的程式表面看似都是「LLM 驅動的編排」，不可測。�
 
 `pai-build-diff.bats` 涵蓋：5 種模式（`--diff`/`--base`/`--since`/`--commits`/`--pr`）、退出碼契約（0 有 diff／3 無變更／1 錯誤）、ref/N 驗證（injection、dashed-ref、0/leading-zero、位數溢位）、untracked 安全（symlink no-follow、FIFO no-hang、換行檔名 C-quote）、empty-tree base、未知 mode 的多位元組 regression。
 
-`ensemble-workflow.test.mjs` 涵蓋 harness 的 **fail-closed 不變式**：unknown profile、空 lens 組合、core lens 被 skip（null）/ error（throw）/ devil's-advocate 缺席 → 一律 HIGH integrity（不可假 PASS）、codex 缺席 → INFO 非阻塞（#27：codex-call 回報的失敗原因——title 是標準 title 加至多一個括號限定語才算、強制 INFO、多筆合成一筆；以該片語開頭的真實 finding 原樣通過——經 `boundExternalText()` 剝字元／遮罩憑證／頭部優先截斷，組成「inline code 單行摘要＋一律 fence 框起來的 UNTRUSTED 引用」，sentinel 中和最後做；agent 本身未完成用不同 title 並區分 skip／errored）、mergeDedup 對 malformed severity 穩健。把「null-skip fail-open」的修正鎖死成 regression。（純 node，無框架；把 workflow script body 包成可 import 的 async 函式、注入 mock globals 實跑。）
+`ensemble-workflow.test.mjs` 涵蓋 harness 的 **fail-closed 不變式**：unknown profile、空 lens 組合、core lens 被 skip（null）/ error（throw）/ devil's-advocate 缺席 → 一律 HIGH integrity（不可假 PASS）、codex 缺席 → INFO 非阻塞（#27：codex-call 回報的失敗原因——title 是標準 title 加至多一個括號限定語、且 file 為 null 或本來就是 INFO 才捕獲：強制 INFO、多筆合成一筆且各自有界、只帶標準欄位；title 以該片語開頭的其他 finding 保留自己的嚴重度／file，但 body 一樣受保護——經 `boundExternalText()` 剝字元／遮罩憑證（整段文字上的 PEM 與跨行引號值、再逐行；全數字值只有 token 計數欄位保留）／反引號串與 sentinel 先處理再頭部優先截斷，組成「inline code 單行摘要＋一律 fence 框起來的 UNTRUSTED 引用」、整段 ≤ 3000 code point，sentinel 中和最後再做一次；對抗輸入下的線性時間；agent 本身未完成用不同 title 並區分 skip／errored，錯誤訊息 ≤ 3 行／300 code point）、mergeDedup 對 malformed severity 穩健。把「null-skip fail-open」的修正鎖死成 regression。（純 node，無框架；把 workflow script body 包成可 import 的 async 函式、注入 mock globals 實跑。）
 
 ## 跑法
 
