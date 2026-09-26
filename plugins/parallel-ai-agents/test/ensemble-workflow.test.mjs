@@ -398,6 +398,75 @@ test('#48 codexModel / codexEffort args 原樣進 codex-call 命令列，service
     'engine 用了治理 snapshot 而非 caller 傳入的值（#23：snapshot 只服務不傳參的 legacy caller）')
 })
 
+// ── #45 目錄模式：Codex leg 不得把整棵原始碼樹讀進 context ─────────────────
+// #37 只把「單一檔案」改成 path-only（--prompt-file <path>）。路徑模式允許傳目錄，而
+// engine 看不到檔案系統、分不出 args.file 是檔案還是目錄 —— 於是目錄被原樣塞給
+// --prompt-file（codex-call 讀不了目錄 → leg 失敗），或 agent 被逼回舊的「先讀再寫」。
+// 修法：args.file 一律經 bin/pai-codex-bundle：檔案 → 原 path 直通；目錄 → 機械組裝
+// 有上限的 bundle（manifest + 排除規則 + 位元組序 + 截斷標注），bytes 仍不經 agent。
+
+test('#45 T1 path 模式（file）經 pai-codex-bundle 交給 codex-call，不再把目錄直接當 --prompt-file', async () => {
+  const p = await codexPromptFor({ profile: 'code', file: '/repo/src' })
+  assert.ok(p.includes("'/bin/pai-codex-bundle' '/repo/src' -- '/bin/codex-call' --detach"),
+    'file 沒有經 pai-codex-bundle 組裝（目錄會被原樣當成 --prompt-file）')
+  assert.ok(!p.includes("--prompt-file '/repo/src'"),
+    'args.file 仍被直接當 --prompt-file —— 目錄時 codex-call 讀不了，這正是 #45')
+})
+
+test('#45 T2 path 模式仍不叫 agent 讀 artifact／組 shell（#37 不變式延伸到目錄）', async () => {
+  const p = await codexPromptFor({ profile: 'code', file: '/repo/src' })
+  for (const phrase of ['read it fully with your file-read tool', 'to get the content under review', 'read every source file']) {
+    assert.ok(!p.includes(phrase), `codex prompt 仍要求讀 artifact 進 context（命中 "${phrase}"）`)
+  }
+  for (const verb of ['cat ', 'heredoc', "<< 'EOF'", 'mktemp', 'find ', 'printf ', 'nohup ']) {
+    assert.ok(!p.includes(verb), `prompt 含要 agent 自己組的 shell 構造（命中 "${verb}"）`)
+  }
+  assert.ok(/never open it, and its bytes never enter your context/.test(p), '沒有明說 artifact 不經 agent context')
+})
+
+test('#45 T3 diff 模式不變：diffFile 仍直接 --prompt-file，不經 bundler', async () => {
+  const p = await codexPromptFor({ profile: 'code', diffFile: '/tmp/d.diff' })
+  assert.ok(p.includes("'/bin/codex-call' --detach"), 'diff 模式的命令不再以 codex-call 開頭')
+  assert.ok(p.includes("--prompt-file '/tmp/d.diff'"))
+  assert.ok(!p.includes('pai-codex-bundle'), 'diff 是單一 regular file，不該多繞一層 bundler')
+  // file + diffFile 同時給：diffFile 優先（與 #37 相同），不經 bundler
+  const q = await codexPromptFor({ profile: 'code', file: '/repo', diffFile: '/tmp/d.diff' })
+  assert.ok(q.includes("--prompt-file '/tmp/d.diff'") && !q.includes('pai-codex-bundle'))
+})
+
+test('#45 T4 截斷要在報告裡明說：PAI-BUNDLE-TRUNCATED → INFO「cross-model coverage truncated」', async () => {
+  const p = await codexPromptFor({ profile: 'code', file: '/repo/src' })
+  assert.ok(p.includes('PAI-BUNDLE-TRUNCATED:'), '沒有交代 bundler 的截斷訊號')
+  assert.ok(/cross-model coverage truncated/.test(p), '沒有指定截斷時的 INFO finding')
+  // diff 模式不經 bundler，不該出現這段（避免 agent 找一個不會出現的訊號）
+  const d = await codexPromptFor({ profile: 'code', diffFile: '/tmp/d.diff' })
+  assert.ok(!d.includes('PAI-BUNDLE-TRUNCATED'))
+})
+
+test('#45 T5 bundler 路徑：預設為 codexCallPath 的同目錄；codexBundlePath 可覆蓋；都經 shQuote', async () => {
+  const p = await codexPromptFor({ profile: 'code', file: '/r', codexCallPath: "/opt/we'ird/bin/codex-call" })
+  assert.ok(p.includes("'/opt/we'\\''ird/bin/pai-codex-bundle' '/r' -- '/opt/we'\\''ird/bin/codex-call' --detach"),
+    'bundler 沒有取 codexCallPath 的同目錄，或未正確單引號化')
+  const q = await codexPromptFor({ profile: 'code', file: '/r', codexBundlePath: '/x/y/bundle' })
+  assert.ok(q.includes("'/x/y/bundle' '/r' -- '/bin/codex-call' --detach"), 'codexBundlePath 沒有被採用')
+  // 沒給 codexCallPath → 兩者都退回裸名（PATH）
+  const { seen, impl } = captureCodex()
+  await runEnsemble({ profile: 'code', file: '/r', codexEnabled: true }, impl)
+  assert.ok(seen[0].includes("'pai-codex-bundle' '/r' -- 'codex-call' --detach"), '無 codexCallPath 時未退回裸名')
+})
+
+test('#45 T6 file path 以 POSIX 單引號傳給 bundler（$(...) 不展開）', async () => {
+  const p = await codexPromptFor({ profile: 'code', file: EVIL })
+  const expected = "'" + EVIL.replace(/'/g, "'\\''") + "'"
+  assert.ok(p.includes(`'/bin/pai-codex-bundle' ${expected} -- `), 'file path 未正確 POSIX 單引號化')
+  assert.ok(!p.includes(`"${EVIL}"`))
+})
+
+test('#45 T7 只有 context 時不經 bundler（沒有 artifact 可組）', async () => {
+  const p = await codexPromptFor({ profile: 'code', contextBlock: 'ctx' })
+  assert.ok(!p.includes('pai-codex-bundle'))
+})
+
 // ── runner ── 新案請加在這條線之上；迴圈之後註冊的 test() 不會執行。
 let pass = 0
 let fail = 0

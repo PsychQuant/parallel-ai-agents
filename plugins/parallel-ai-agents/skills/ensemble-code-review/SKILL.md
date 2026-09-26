@@ -61,6 +61,13 @@ allowed-tools:
   FILE_OR_DIR — 檔案或目錄路徑（目錄 = 讀所有原始碼檔當審閱範圍）
 ```
 
+> **目錄模式的 Codex leg（#45）**：Codex 不逐檔讀目錄，而是由 `bin/pai-codex-bundle` 機械組成**一份有上限的 bundle**
+> 當 `--prompt-file`（bytes 不經 agent context，與 #37 的單一檔案 path-only 同一原則）。規則明文化在 script 開頭：
+> git 工作樹內只取 `git ls-files -co --exclude-standard`（尊重 `.gitignore`）；一律剪掉 `node_modules`／`dist`／`build`／
+> `target`／`.venv` 等 build/vendor 目錄；二進位、非 UTF-8、疑似祕密檔名（`.env*`／`*.pem`／`*.key`…）、symlink 只在
+> manifest 列原因不送內容；檔案依相對路徑位元組序；單檔 64 KiB、總量 512 KiB、檔案數 2000 上限。**超過上限時報告會有一條
+> INFO「cross-model coverage truncated」**——大目錄請改指更小的子目錄，或用 diff 模式。
+
 **B. diff**（審變更）— 擇一 flag：
 ```
   --diff           審 uncommitted 變更        → git diff HEAD
@@ -83,7 +90,7 @@ allowed-tools:
 
 ### Phase 1: 取得審閱內容 + 準備 context
 
-**路徑模式**：讀取目標（目錄則列所有原始碼檔路徑 + 內容摘要）。
+**路徑模式**：讀取目標（目錄則列所有原始碼檔路徑 + 內容摘要）。這份摘要是給主 session 判斷內容類型用的，**不要**把它或目錄內容傳給 Codex leg——Codex 由 `pai-codex-bundle` 以 path 自行組裝（見 Phase 0 的 #45 註）。
 
 **diff 模式**：依 Phase 0 的來源取 diff，**寫到 temp 檔**（大 diff 不塞 inline args —— Workflow 會把 args JSON-stringify；reviewer 用 file-read tool 讀，避開 escape 地獄 + prompt 膨脹）：
 
@@ -153,7 +160,8 @@ esac
    }
    ```
 
-   - **path 模式傳 `file`、diff 模式傳 `diffFile`（擇一，不要兩個都傳）**。harness 的 `code` lens 與 Codex 都會用 file-read tool 讀 `diffFile` 並當 diff 審；`--replicas` 帶入時覆蓋預設 1。
+   - **path 模式傳 `file`、diff 模式傳 `diffFile`（擇一，不要兩個都傳）**。harness 的 `code` lens 用 file-read tool 讀 `diffFile` 並當 diff 審；Codex 以 path 直接收 `diffFile`（`--prompt-file`，#37）；`--replicas` 帶入時覆蓋預設 1。
+   - **`file` 可以是目錄**（#45）：Codex leg 一律經 `pai-codex-bundle`（預設取 `codexCallPath` 同目錄；可用 `codexBundlePath` 覆蓋）——檔案逐 byte 直通、目錄組成有上限的 bundle。不需要也不應該自己先把目錄內容讀出來或串成暫存檔。
 
    - `codexEnabled: true` → Codex（gpt-5.x）作為 barrier 內第 4 個 agent，shell 出去呼 `codexCallPath`（**絕不** `codex exec`），fail-soft：timeout/error 只回 1 個 INFO finding（不阻擋 Claude-lens verdict）。
    - `replicas` 預設 1（3 Claude lens + Codex + DA = 5，與 legacy 等價）。調高即大量 fan-out；harness 封頂 `MAX_AGENTS=16`（建議 Codex replica ≤2，fast = 2.5× credit）。
@@ -301,14 +309,18 @@ Agent:
 # agent 執行四條命令：下面兩條由 engine 逐值單引號化生成；第三條是讀完後的 rm -f '<path>'，
 # 唯一可變部分是 DONE 印出的路徑（逐字、單引號；含單引號就不刪、改在 finding 裡回報）；
 # 第四條是早停（context 快耗盡）時的 --abort '<id>'。
-# 1) 啟動 —— 立即返回，印出一行 32 字元 run id。artifact 直接以 path 當 prompt-file，
-#    bytes 不進命令列、不進 agent context。
-"$CLAUDE_PLUGIN_ROOT/bin/codex-call" --detach \
+# 1) 啟動 —— 立即返回，印出一行 32 字元 run id。artifact 以 path 交給 pai-codex-bundle（#45）：
+#    檔案 → 原 path 直通當 --prompt-file；目錄 → 組成有上限的 bundle 當 --prompt-file，
+#    codex-call 讀完即刪。bytes 不進命令列、不進 agent context。bundler 自己補 --prompt-file，不要再寫。
+#    diff 模式（$ARTIFACT 是 $DIFF_FILE）也可以照用——單一檔案就是直通。
+"$CLAUDE_PLUGIN_ROOT/bin/pai-codex-bundle" "$ARTIFACT" -- \
+  "$CLAUDE_PLUGIN_ROOT/bin/codex-call" --detach \
   --model "$CODEX_MODEL" --effort "$CODEX_EFFORT" \
   --service-tier fast --max-time 600 \
-  --instructions "你是嚴謹的審閱者，用繁體中文輸出。" \
-  --prompt-file "$ARTIFACT"
+  --instructions "你是嚴謹的審閱者，用繁體中文輸出。"
 # → 從這一次 tool call 的輸出讀 id，記在你自己的回覆文字裡。
+#   若輸出含 `PAI-BUNDLE-TRUNCATED: …`（目錄超過 bundle 上限），報告要加一條
+#   INFO「cross-model coverage truncated」並附該行——Codex 只看到部分目錄。
 #   每次 Bash 呼叫都是全新 shell，變數不會保留；不要寫 RUNDIR=$(...)——command
 #   substitution 會吃掉 stdout，你在 tool output 裡看不到 id。
 

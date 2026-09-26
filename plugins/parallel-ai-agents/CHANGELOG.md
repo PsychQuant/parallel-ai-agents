@@ -11,6 +11,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **目錄模式的 Codex leg 不再把整棵原始碼樹經過 agent context（#45）。** #37 把 Codex leg 改成
+  path-only（`--prompt-file <path>`），但只涵蓋單一 regular file；`ensemble-code-review` 的路徑模式允許傳
+  **目錄**，而 engine 無法 stat、分不出 `args.file` 是檔案還是目錄——目錄被原樣塞進 `--prompt-file`
+  （`codex-call` 讀不了目錄 → leg 失敗），或 agent 退回「先讀進 context 再寫回暫存檔」的舊路徑（#37 的成因）。
+
+  修法比照 `bin/pai-build-diff` 的單一真相源：新增 **`bin/pai-codex-bundle`**，engine 的 `args.file`
+  一律經它交給 `codex-call --detach`（`'<bundle>' '<file>' -- '<codex-call>' --detach …`，逐值 `shQuote()`）：
+  - **單一檔案** → `exec` 原 path 當 `--prompt-file`，逐 byte 同 #37，不複製不包裝
+  - **目錄** → 機械組成 bundle（manifest + 隨機邊界 token 的逐檔內容）寫進暫存檔，`codex-call` 同步讀完
+    prompt 後即刪；stdout 只屬於 `codex-call`（run id 不被污染），exit code 照傳
+
+  #37 PR 的 Decision Point D3 列的三件事，明文化在 script 開頭：
+  - **排除**：git 工作樹內只取 `git ls-files -co --exclude-standard`（尊重 `.gitignore`）；一律剪掉
+    `node_modules`／`dist`／`build`／`target`／`.venv` 等 build/vendor 目錄；二進位（含 NUL）、非合法 UTF-8
+    （`codex-call` 以 UTF-8 讀 prompt，一個壞 byte 就讓整份失敗）、疑似祕密檔名（`.env*`／`*.pem`／`*.key`…，
+    不送給外部模型）、symlink（不 follow）只在 manifest 列原因
+  - **順序**：相對路徑 `LC_ALL=C` 位元組序，manifest 在最前
+  - **大小**：單檔 64 KiB（同 `pai-build-diff`）、內容總量 512 KiB；超過的檔截斷或標 `omitted: total cap`，
+    截斷不切壞多位元組字元。另有檔案數上限 2000（依排序取前 N 個檢查，其餘只計數）——每檔檢查要數次 fork，
+    這個指令跑在 agent 的一次 tool call 裡，上萬個檔會慢到逼近 runtime 的 no-progress 門檻（#37 的另一半成因）。有任何截斷／省略 → bundle 開頭寫 NOTE、stderr 印一行只含數字的
+    `PAI-BUNDLE-TRUNCATED: …`，engine 要求 agent 據此回一條 INFO「cross-model coverage truncated」——
+    **報告明說 Codex 沒看完整個目錄**，不靜默
+
+  `diffFile` 永遠是 `pai-build-diff` 產的單一檔案，維持直接 `--prompt-file`（不多繞一層）。新增可選 arg
+  `codexBundlePath`（預設取 `codexCallPath` 同目錄），既有 arg 與回傳形狀不變。
+  Claude lens 讀目錄的那一半屬 #44，本版不動。
+
+  測試：`test/pai-codex-bundle.bats` 新增 23 個 case（`grep -c "^@test" test/pai-codex-bundle.bats`）；
+  `test/ensemble-workflow.test.mjs` 新增 7 個 #45 case（其中 4 個在修法前 RED）。`ensemble-code-review`
+  SKILL.md 的目錄模式說明與 Backend B 的 Codex 啟動命令同步改走 bundler。
+
 ## [2.23.0] - 2026-09-10
 
 ### Changed
