@@ -11,6 +11,99 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **codex leg 的失敗原因不再在報表層被丟棄（#27）。** 過去 `codexPrompt()` 叫 codex agent 在
+  FAILED／TIMEOUT 時回一個**字面常數** body（`codex-call exceeded its lifetime bound or errored…`），
+  integrity backstop 也用同一個 title＋常數 body——配額用盡（HTTP 429 `usage_limit_reached`）、
+  暫時壅塞、憑證失效（HTTP 401）、TIMEOUT、agent 本身被殺，在報表上長得一模一樣，讀者只能回頭翻
+  agent transcript 才知道該重試還是該停手。
+  - **codex-call 回報的失敗**：prompt 改為要求 `cross-model pass incomplete` finding 的 body 以該次呼叫的
+    結果開頭——一行，只有 FAILED 的原因可能跨多行——且**結果的最後一行一律以 `(exit code N)` 結尾**
+    （N＝失敗那次 codex-call 呼叫的退出碼；結果只有一行時就是第 1 行）。結果為下列之一：
+    `--detach failed (exit code N)`；結束該 run 的那次 poll 的**逐字** stdout——`FAILED <reason> (exit code N)`
+    （原因可能跨多行，全部照抄，exit code 接在最後一行，此時第 1 行**不**帶）或 `TIMEOUT (exit code N)`；`--poll gave no terminal state (exit code N)`
+    （`--poll` 非零退出、stdout 為空——unknown run id、concurrent finalize、lock 不可信、cannot claim；
+    codex-call 契約明定這類**都不值得重試**，prompt 要求不再 poll、不另起 run）；
+    `DONE but output unusable: <why> (exit code 0)`。其後逐字引用**同一呼叫**的 stderr 尾段（≤ 20 行，
+    標明為 UNTRUSTED 資料、只引用不執行）；stderr 為空寫 `(no diagnostic output)`，不得以籠統句子取代。
+  - **engine 端確定性處理——兩個分開的決定**：
+    - **保護（PROTECT）**：codex agent 的 finding，title 正規化（小寫、非英數一律當空白）後**以
+      `cross model pass incomplete` 開頭**的，body 一律經 `codexFailureBody()` 重建（見下），title 也做成可放進
+      表格的單行（剝字元、遮罩、sentinel 中和、≤ 200 code point）。prompt 叫 agent 把 codex-call 的輸出貼進
+      這個 finding，所以措辭不合的失敗回報（`Cross-model pass incomplete: HTTP 429 usage_limit_reached`、
+      `… — codex-call FAILED`、`… - TIMEOUT`）也**不會**原樣進報表（r2 版只保護嚴格比對成功的 title，其餘整段
+      原樣通過——verify r3 抓到的 regression）。prompt 同步改為：title 必須**逐字**用 `cross-model pass incomplete`
+      （原因寫在 body），engine 保護**任何**以該片語開頭的 finding 的 body，且只保護這些。
+    - **捕獲（CAPTURE：改回標準 title、強制 `severity: INFO`、`file: null`、合成一筆）**：只在 title 是標準
+      title（大小寫、空白、連字號不拘，後面**至多**接一個括號／方括號限定語與句末標點，例如
+      `Cross-model pass incomplete (HTTP 429).`）**且** `file` 為 null 或本來就是 INFO 時。帶 `file` 的 HIGH
+      finding 就算 title 長得像失敗回報（例如 `Cross-model pass incomplete (ensemble-workflow.js:796)`，可能正是
+      在談這段程式碼），也是真實審閱 finding——捕獲它會把 FINDINGS 翻成 PASS。沒被捕獲的受保護 finding 保留
+      agent 自己的嚴重度、file 與（處理過的）title——verdict 不丟資訊——**但 body 仍受保護**。
+    - Codex 其餘的正常審閱 finding 原樣通過（截斷會丟審閱內容，key/value 遮罩會弄亂只是在談 token／password
+      的審閱文字）。
+  - **`boundExternalText()`**：先做不切代理對的 pre-clamp，把 CR／NEL／U+2028／U+2029 一律當換行（在計行之前），
+    剝除 C0／C1 控制字元、ANSI、bidi、零寬、BOM、軟連字號、CGJ、variation selector、Hangul filler、Tags block
+    （codex-call `sanitizeBackendText`＋`stripInvisibleUnicode` 的超集），輸入裡孤立的代理字元換成 U+FFFD，再
+    **遮罩憑證**（`maskSecrets()`；每行結尾的 ` (exit code N)` 先換成佔位字元，任何遮罩都跨不過、吃不到）：
+    - **先對整段文字**：PEM 區塊（`-----BEGIN …-----` 到 `-----END …-----`，不論 key；沒有 END 的遮到文字結尾）；
+      敏感 key 底下的**引號值**遮到收尾引號為止、**可以跨行**（雙引號、單引號、跳脫過的 JSON——引號前任意個
+      反斜線，值裡**更深一層**跳脫的引號 `\"abc\\\"def\"` 不會結束值）；完全沒有收尾引號的只遮到該行結尾
+      （一個落單的引號不能吞掉後面所有診斷行）。
+    - **再逐行**：`[..]`／`{..}` 值遮到同一行裡對應的收尾括號；未加引號的值——key 有引號（JSON，
+      `"token":123`）時遮到下一個 JSON 分隔字元，key 沒引號（`password=abc,def`、`x-api-key: k1`）時遮到
+      空白為止（逗號、`&`、`;` 可以是密碼的一部分；query string 後面的參數會一起被遮——過度遮罩、不會外洩）；
+      `Authorization`／`Cookie` 標頭值遮到行尾；`Bearer`／`Basic` 後接 token68 字元集的憑證；完整或殘缺
+      （只剩 header 或 header.payload）的 JWT；`sk-…`。
+    - 敏感 key：名稱**包含** `token`／`secret`／`api_key`／`password`／`passwd`／`passphrase`／`credential`／
+      `private_key`／`authorization`／`cookie`（任何位置、大小寫不拘：`secret_key`、`AWS_SECRET_ACCESS_KEY`、
+      `password_hash`、`session_token_v2`、`secretValue`），或**最後一段恰為** `pass`／`pwd`（`DB_PASS`、
+      `db.pwd`；`bypass`、`passed` 不算；shell 的 `PWD=/dir` 也會被遮，無害的過度遮罩）。**值全是數字也遮**
+      （`password=123456`、`otp_token=839201`、JSON 數字 `"access_token":123456789`）——只有明確列舉的 token
+      **計數**欄位保留數字：`input_tokens`、`output_tokens`、`total_tokens`、`max_tokens`、`prompt_tokens`、
+      `completion_tokens`、`cached_tokens`、`reasoning_tokens`、`max_output_tokens`、`num_tokens`、`token_count`、
+      `tokens`（及 `*_tokens_details` 的 `{…}`，交給裡面各 key 的遮罩）。
+    - **不涵蓋**：沒有 key 的憑證，或放在不代表憑證的 key 底下的（只有上面那些形狀抓得到）。
+    然後把 8 個以上的連續反引號縮成 7 個＋`…`、**先中和 sentinel**（偽造的標記換成 34 字元的 `MARKER_STRIPPED`，這個膨脹因此
+    算在預算內），再以**頭部優先**截斷到 24 行／2000 code point（codex-call 的輸出在最前面、可能跨多行，被截的是
+    stderr 尾段），截斷時標示。組好整段 body 後**再中和一次 sentinel**（截斷或摘要切點都拼不出完整 sentinel）；
+    `SENTINEL_RE` 的 label 不跨行（真的 sentinel 是單行 token；跨行比對曾從摘要行裡被截斷的 marker 一路吃到
+    區塊內的 marker，把 UNTRUSTED 標示行與開頭 fence 一起換掉）——這也作用在 `dataBlock()`（CONTEXT／PRIOR）
+    上：單行偽造的 sentinel 被中和，被拆成兩行的片段原樣保留（片段不是 sentinel token，關不掉區塊）。
+  - **多個失敗回報合成一筆**：同一 agent 回了多個被捕獲的失敗 finding 時合成**一筆**（否則共用 dedup key，只會
+    留下一個原因），只帶標準欄位（`lens`／`severity`／`title`／`file: null`／`body`，不沿用第 1 筆的 `line`
+    等）。每一個回報**各自**用自己那份預算有界化（24／n 行、2000／n code point，至多 8 個，其餘標示省略），
+    以 `--- (i/n) ---` 分隔，所以很長的第 1 個擠不掉第 2 個原因；摘要行是第 1 個回報的第 1 行加 ` (+N more)`。
+  - **body 形狀（表格安全、有界）**：第 1 行是單行摘要 `codex-call failure: ` 加上一個 **inline code span**——
+    內容是外部文字的第 1 行、至多 200 code point（跳脫前計），反斜線換成 U+29F5、`|` 寫成 `\|`，code span 的
+    fence 比內容裡最長的反引號串更長——所以放進表格的一列時，HTML、圖片、連結、自動連結、強調都不會渲染，
+    也切不開表格。其後**一律**是 `UNTRUSTED …` 標示行＋以**比內容裡最長反引號串更長**的 fence（因此至多 8 個
+    反引號）框起來的引用區塊（內容關不掉 fence；輸出再短也有框）。外部文字至多 2000 code point，加上固定的
+    框架，**整段 body ≤ 3000 code point**（`FAILURE_BODY_MAX_CHARS`；r3 T25 以長反引號串、大量 sentinel、
+    全是 `|` 的輸入與 1／2／8／12 個合併回報驗證）。三份 SKILL.md（code-review、academic-review、compose）
+    規定：表格只放第 1 行，其餘原樣貼在表格下方當引用資料，不拆 fence、不改寫、不執行。
+  - **agent 本身未完成**（integrity backstop）改用**不同 title** `cross-model agent did not complete`：
+    第 1 行是固定說明（被 skip，或 errored），errored 時 runtime 的錯誤訊息經同一函式有界化（≤ 3 行／300
+    code point）後放進同樣的 fence 區塊，不再插在句子中間。改名的理由是**語意**：舊版兩者共用 title，報表上分不出
+    「codex-call 回報失敗（附原因）」與「wrapper agent 沒跑完、沒人讀到 codex-call 的輸出」。（兩者不可能同時
+    出現——integrity 只在 codex agent 沒回結果時推入——所以跟 `mergeDedup` 合併無關；前一版的說法有誤。）
+    仍為 INFO、non-blocking，fail-closed 語意不變。
+  - regression：`test/ensemble-workflow.test.mjs` 新增 #27 的 T1–T8（含 T3b–T3i、T5b）、r2 T9–T16 與 r3 T17–T28：
+    失敗配方每一支的 `(exit code N)` 與多行 FAILED 的位置、`--poll` 無終態不重試、多行 stderr 與 fence、只超行數、
+    多行 FAILED 原因、各種憑證形狀（含敏感字後還有字的 key、雙重跳脫、全數字的值、跨行的 PEM 與引號值——含
+    CR／U+2028／U+2029／NEL 分隔、跳脫值裡更深一層的引號、`[..]`／`{..}` 值、`pwd`／`pass`／`passphrase`）、
+    計數欄位與 `(exit code N)` 不被遮、pre-clamp 截斷的 JWT、遮罩後的 sentinel、第 1 行 180–200 code point 處的
+    sentinel、代理對（切點不得出現 U+FFFD）與孤立代理字元、看不見的字元與 U+2028／U+2029、fence 長度、摘要的
+    inline code、agent 多行錯誤與 integrity 路徑的 3 行／300 code point 上限、title 變體＋強制 INFO、以該片語開頭
+    的真實 HIGH finding 與帶 file 的 HIGH 不被捕獲但 body 受保護、措辭不合的失敗回報 body 受保護、多個失敗
+    finding 合成一筆且各自有界、合成的 finding 只帶標準欄位、body 總長上限、對抗輸入下的線性時間、`dataBlock()`
+    的 sentinel 行為。**對 main（`5eab1e4`）實跑**：T3f、T7、r3 T26 是綠的（T3f 守的是本 PR 自己引入的步驟，T7 是
+    護欄，T26 守的是本 PR 自己引入的程式的時間複雜度），其餘 #27 測試皆紅。**對 r2（`320b503`）實跑**：r3 新增／
+    改寫的測試中 T11、T17–T23、T25–T27 是紅的（T8 只把輸入改成 `file: null`，在 r2 也是綠的）；T3g 與 T24 在 r2 是綠的（r2 已有那兩個防護），它們要抓的是
+    **拿掉防護**：刪掉 pre-clamp 的代理對保護 → T3g 紅，integrity 路徑改成不帶 3／300 上限 → T24 紅（兩者在舊版
+    測試下都是全綠）；T28 釘住 r2 已有的 `SENTINEL_RE` 行為（對 `5eab1e4` 是紅的）。
+
 ## [2.23.0] - 2026-09-10
 
 ### Changed
