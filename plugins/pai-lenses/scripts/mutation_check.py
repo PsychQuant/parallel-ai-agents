@@ -334,12 +334,12 @@ MUTATIONS += [
      "            if probe == delim and not body_continued:", "            if False:", "lint"),
     ("lint: heredoc 佇列接續（R26 M3：`pending[0]` 不是 FIFO）",
      '                heredoc = pending.pop(0) if pending else None\n                body_continued = False\n            elif in_sub', '                heredoc = None\n                body_continued = False\n            elif in_sub', "lint"),
-    # **這一條列入 EXPECTED_SURVIVE，而且理由要能被檢查**：把它關掉之後，`<<<` 會落到下面的
-    # `<<` 分支，但那裡的分隔字解析從第三個 `<` 開始讀，而 `<` 本身就在 `SHELL_WORD_BREAK` 裡，
-    # 於是 delim 為空、`if delim:` 不成立、不會產生 heredoc —— **行為等價**。
-    # 保留這個分支是為了把意圖寫成程式碼（here-string 不是 heredoc），不是因為它在擋東西。
-    # R26 說它是 off-by-one 的那個版本是 `db0c0f2` 的舊結構，本輪重寫後不再成立。
-    ("lint: `<<<` 是 here-string 不是 heredoc（依構造等價，保留為意圖宣告）",
+    # R27 把這一條列入 EXPECTED_SURVIVE，理由是：關掉之後 `<<<` 落到下面的 `<<` 分支，分隔字從第三個 `<`
+    # 讀起、`<` 在 `SHELL_WORD_BREAK` 裡 ⇒ delim 為空、不產生 heredoc ⇒ 行為等價。**那個論證只看了第一個 `<<`，
+    # 是錯的**（#33 verify R37 全輪 mutation 抓到）：`<<<<<EOF` 拿掉這個分支後，掃描器往後還會讀到一個真正的
+    # `<<EOF`，對齊結果就不同——`bypass-r37t8-misaligned-herestring-heredoc` 從 rule-red 變成 pass（繞過方向）。
+    # 已從 EXPECTED_SURVIVE 移除，靶名也拿掉「依構造等價」。
+    ("lint: `<<<` 是 here-string 不是 heredoc",
      '            if line.startswith("<<<", i):', "            if False:", "lint"),
     ("lint: `$((` 深度內不判 heredoc（R26 M3）",
      '            if arith or brk or cond:', '            if brk or cond:', "lint"),
@@ -1172,7 +1172,6 @@ MUTATIONS += [
 ]
 
 EXPECTED_SURVIVE = {
-    "lint: `<<<` 是 here-string 不是 heredoc（依構造等價，保留為意圖宣告）",
     "pack 內部改名不投票（依構造不可達，保留為防禦）",
     "純改名偵測 git 分支（依構造不可達，保留為防禦）",
     # R12 修法後 LineSanitiser 對**每一段**獨立判 `lstrip().startswith("::")`、不再靠行首旗標——

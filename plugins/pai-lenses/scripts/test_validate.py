@@ -15,20 +15,21 @@
 mutation」。**那三句話會讓下一個維護者以為改動 `validate.py` 有測試網接著。**
 
 現在用 `scripts/mutation_check.py` 量：跑一次就知道哪些閘門沒有測試網。
-**最近一次完整量測（R35，於 `git archive d135f13` 副本上跑）：193 個靶 → 189 殺 / 0 存活 / 4 預期存活 / 0 靶壞**，
-實測 **146.8 分鐘 / 193 靶 = 每靶 45.6 s**（lint 靶跑的是 selftest、neutralise 靶跑的是含串流測試的整套，兩者都比純
-python 套件重；CHANGELOG 記錄過的每靶秒數從 27.8 s 到 62.6 s，跨輪差異先來自守備範圍與靶的組成——R27 起多了較重的
-lint／neutralise 套件——同一守備範圍下才主要是同機負載——**它不是效能指標，只是「這一輪真的跑了多久」**）。
-那一輪之後只再加了兩個 lint fixture（`opsweep` 存活者的網）：`validate.py`／`neutralise.py` 沒動，`lint-ci-log-filter.sh`
-只改了 selftest 門檻四行（107→108、61→62 與它們的訊息），不在任何靶的錨點內，所以這組數字對最終樹仍然成立；
-`--check-targets` 秒級可確認靶還對得上。
-**靶清單本輪 161 → 193。零存活本身不是新的**——R27 的 125 靶就是 121 殺 / 0 存活 / 4 預期存活，守備範圍當時
+**最近一次完整量測（R37，於 `git archive 5367d9a` 副本上跑）：390 個靶 → 387 殺 / 0 存活 / 3 預期存活 / 0 靶壞**，
+實測 **265.8 分鐘 / 390 靶 = 每靶 40.9 s**（開跑時同機負載很高，一分鐘平均 34.1、十五分鐘平均 448.7；lint 靶跑的是 selftest、
+neutralise 靶跑的是含串流測試的整套、神諭靶跑的是 `test/oracle.py` 全集，都比純 python 套件重——**它不是效能指標，只是
+「這一輪真的跑了多久」**）。當時列在 `EXPECTED_SURVIVE` 的 4 條裡，lint 的 `<<<` here-string 那一條**被殺掉了**——
+它的「依構造等價」論證是錯的（見 `mutation_check.py` 那個靶旁邊的更正），已從集合移除，所以現在是 3 條。
+之後的改動只有：移除那一條、靶名拿掉「依構造等價」、以及 lint 的 selftest 門檻（新增 opsweep 補件 fixture 時跟著改）——
+都不在任何靶的錨點內；`--check-targets` 秒級可確認靶還對得上。
+**上一次（R35，`git archive d135f13`）**：193 個靶 → 189 殺 / 0 存活 / 4 預期存活 / 0 靶壞，146.8 分鐘 / 193 靶 = 每靶 45.6 s。
+**靶清單 R35 161 → 193、R37 193 → 390。零存活本身不是新的**——R27 的 125 靶就是 121 殺 / 0 存活 / 4 預期存活，守備範圍當時
 已經是三個檔（見 CHANGELOG 的 R27 段）；變的是靶的密度，不是「第一次做到」。**寫這一段時我自己寫錯過四次**
 （宣稱「第一次三檔零存活」、把 62.6 s 記成別輪的數字——這兩次當場回原文核到；每靶秒數的低端寫成 29.4 s——那個數只出現在
 被這一段取代的舊檔頭、從沒進過 CHANGELOG；「被 mutate 的三個檔一行都沒動」——lint 的門檻改了四行。後兩次是發 commit 前的
 對抗式宣稱查核抓到的），四次都是憑印象或憑殘文寫——**歷史數字一律回 CHANGELOG
 原文核，不要從這個檔頭的殘文推斷。**
-**守備範圍從 R27 起是三個檔**（`validate.py`／`lint-ci-log-filter.sh`／`neutralise.py`）——
+**守備範圍從 R27 起是三個檔**（`validate.py`／`lint-ci-log-filter.sh`／`neutralise.py`），**R37 起加上 `test/oracle.py`**（守備單位 `oracle` 與 `oracle-inverted`）——
 R25 之前的「0 存活」對 lint 與 neutralise **結構上沒說任何事**（當時它們不在範圍內），
 這是 R26 DA 診斷到方法層的那一條：「新機制沒有 RED 驗證」發作七次，根因是守備範圍寫死一個檔。
 單一副本上的完整一輪，副本用 `git archive` 取（**不是 `cp -R`**：R20 有 agent 在共用 checkout 裡變異 tracked 檔，
@@ -40,10 +41,10 @@ R25 之前的「0 存活」對 lint 與 neutralise **結構上沒說任何事**�
 R18 抽樣三個粗靶，三個都藏著細顆粒缺口；R19 拆了三處，R20 的 DA 又在 `errors="replace"` 找到第四處
 （11 個呼叫點 1 個靶）。R21 把它改成**機械不變式**而不是再手寫 9 個靶——見
 `test_every_decoding_call_site_survives_undecodable_bytes`。看到「0 存活」請先問：有沒有哪個靶蓋住了兩個實作？
-`EXPECTED_SURVIVE` 4 個：`_find_pack_at` git 分支的兩個守衛依構造不可達（R12 logic L3 / DA-6，保留為防禦）、
-「換回 splitlines()」（LineSanitiser 對每一段獨立判定，過度切段只會過度消毒）、lint 的 `<<<` here-string 分支（關掉後落到 `<<`
-分支而 delim 為空——依構造等價，R27 進來時這裡寫成 3 個，R29 G-R29-7 抓到與檔頭的 4 不一致）。
-**注意這四個是 `mutation_check.py` 的具名靶集合**；`test/opsweep.py`（作者無關的運算子掃描）另有自己的
+`EXPECTED_SURVIVE` 3 個：`_find_pack_at` git 分支的兩個守衛依構造不可達（R12 logic L3 / DA-6，保留為防禦）、
+「換回 splitlines()」（LineSanitiser 對每一段獨立判定，過度切段只會過度消毒）。R27 到 R35 另有 lint 的 `<<<` here-string 分支
+（理由是「關掉後落到 `<<` 分支而 delim 為空」）——R37 全輪 mutation 殺掉它：`<<<<<EOF` 裡還有一個真正的 `<<EOF`，那個論證是錯的。
+**注意這三個是 `mutation_check.py` 的具名靶集合**；`test/opsweep.py`（作者無關的運算子掃描）另有自己的
 `EXPECTED_SURVIVE`（R33：7 條——R32 DA-2 把 `fold_block` 的四條全部撤掉，理由本身就是那個 bug），兩者是不同的集合、不同的判準，不要混著數。R31 起 opsweep 那一組的
 「依構造等價」由 `--verify-expected` 在 468 檔產生語料上逐檔跑出來，不是散文。規則明寫在 mutation_check.py：每一條
 進來的靶都要能回答「關掉它，哪一行輸出會變」（R14 把「pack_name 讀取的 containment」放進去的理由是假的——
