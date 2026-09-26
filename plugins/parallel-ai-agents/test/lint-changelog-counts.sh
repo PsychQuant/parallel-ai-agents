@@ -82,7 +82,7 @@ import os, re, subprocess, sys
 # 靶數在測試數的同一句話裡照樣手打）：
 #   N 個 case（`grep -c "^@test" <file>`）
 #   N 條（`grep -c "<pattern>" <file>`）        ← pattern 逐字取自宣稱，lint 只是真的去跑它
-#   N 個（`grep -c "<pattern>" <file>`）        ← 靶數：MUTATIONS 的每個 tuple 恰以 `    ("` 起頭
+#   N 個（`grep -c "<pattern>" <file>`）        ← 靶數：MUTATIONS 的每個 tuple 以 `    ("` 或 `    ('` 起頭（R37 起兩種都有，只數前者會少算）
 CLAIM = re.compile(r'(\d+)\s*(?:個\s*case|條|個)[^（(]*[（(]`grep -c "((?:[^"\\]|\\.)+)" ([^`]+)`[）)]')
 
 # **第四種宣稱形式**（#33 verify R30 MB-14 / G-R31-13）：「只解這 N 種」「列舉有 N 條」這一類

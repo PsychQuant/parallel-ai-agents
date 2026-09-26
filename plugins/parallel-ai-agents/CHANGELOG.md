@@ -696,10 +696,9 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
   另有 15 條挑戰者意見分歧，我回原始資料判定採納 12 條（多數同屬「量測樹」這一個根因）、駁回 3 條。
   數字（selftest、fixture 神諭、opsweep、run.sh 在 R35 最終樹上實跑；產生語料、`--verify-expected`、三軸、全輪 mutation 在 `d135f13`
   上實跑——兩者之間只加了兩個 fixture、lint 只改 selftest 門檻四行，這四項的輸入與被量的程式碼都沒變。這裡原本寫成「全部在
-  最終樹上實跑」，是對外文字的第二輪查核抓到的）：lint fixture 173 → 268 個（`python3 -c "import pathlib;print(len(list(pathlib.Path('test/fixtures').glob('ci-log-filter-*.yml'))))"`）——
-  108 個正向（`python3 -c "import pathlib;print(sum(1 for f in pathlib.Path('test/fixtures').glob('ci-log-filter-*.yml') if '# EXPECT: pass' in f.read_text().splitlines()))"`）、98 條規則紅（`python3 -c "import pathlib;print(sum(1 for f in pathlib.Path('test/fixtures').glob('ci-log-filter-*.yml') if '# EXPECT: rule-red' in f.read_text().splitlines()))"`）、62 條解析紅（`python3 -c "import pathlib;print(sum(1 for f in pathlib.Path('test/fixtures').glob('ci-log-filter-*.yml') if '# EXPECT: parse-red' in f.read_text().splitlines()))"`）；
-  **四個數字都改成帶指令的宣稱**（`lint-changelog-counts.sh` 會實際執行它們）——先前這一行的 fixture 計數
-  只是散文，而 selftest 的門檻與它之間沒有任何機械連結，抄錯不會有人叫。靶清單 161 → 193 個
+  最終樹上實跑」，是對外文字的第二輪查核抓到的）：lint fixture 173 → 268 個——108 個正向、98 條規則紅、62 條解析紅；
+  **R35 時這四個數字寫成帶指令的宣稱**（`lint-changelog-counts.sh` 會實際執行它們）——先前這一行的 fixture 計數
+  只是散文，而 selftest 的門檻與它之間沒有任何機械連結，抄錯不會有人叫。（歷史數字；帶指令的現況宣稱只留在最新一段，R37 起移到上面。）靶清單 161 → 193 個
   （`grep -c "^    (\"" ../pai-lenses/scripts/mutation_check.py`）；CI run step 23 個（`grep -c "^        run:" ../../.github/workflows/test.yml`）；
   fixture 神諭 356 個 step：一致 282、不一致 3（**全部已知**：G 2、S-2 1——三張都是刻意寫成已知類別的 `known-*` fixture）、不可比 71、量不到 0；產生語料 624 檔：一致 524、不一致 62（**全部已知**：S-2 60、G 1、`!!str` 1）、不可比 38、
   量不到 0；`opsweep --since 6cf6864` 252 個突變體 → 249 殺（其中當掉 26）／3 存活（**非預期 0**、預期 3）；第二道判準（產生語料抓到而 selftest 沒抓到）0；`--verify-expected` 的 7 條在 624 檔上逐檔相同；
