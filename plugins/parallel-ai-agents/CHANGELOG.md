@@ -18,41 +18,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   integrity backstop 也用同一個 title＋常數 body——配額用盡（HTTP 429 `usage_limit_reached`）、
   暫時壅塞、憑證失效（HTTP 401）、TIMEOUT、agent 本身被殺，在報表上長得一模一樣，讀者只能回頭翻
   agent transcript 才知道該重試還是該停手。
-  - **codex-call 回報的失敗**：prompt 改為要求 `cross-model pass incomplete` finding 的 body **第 1 行
-    一律以 `(exit code N)` 結尾**（N＝失敗那次 codex-call 呼叫的退出碼），且為下列之一：
+  - **codex-call 回報的失敗**：prompt 改為要求 `cross-model pass incomplete` finding 的 body 以該次呼叫的
+    結果開頭——一行，只有 FAILED 的原因可能跨多行——且**結果的最後一行一律以 `(exit code N)` 結尾**
+    （N＝失敗那次 codex-call 呼叫的退出碼；結果只有一行時就是第 1 行）。結果為下列之一：
     `--detach failed (exit code N)`；結束該 run 的那次 poll 的**逐字** stdout——`FAILED <reason> (exit code N)`
-    （原因可能跨多行，全部照抄）或 `TIMEOUT (exit code N)`；`--poll gave no terminal state (exit code N)`
+    （原因可能跨多行，全部照抄，exit code 接在最後一行，此時第 1 行**不**帶）或 `TIMEOUT (exit code N)`；`--poll gave no terminal state (exit code N)`
     （`--poll` 非零退出、stdout 為空——unknown run id、concurrent finalize、lock 不可信、cannot claim；
     codex-call 契約明定這類**都不值得重試**，prompt 要求不再 poll、不另起 run）；
     `DONE but output unusable: <why> (exit code 0)`。其後逐字引用**同一呼叫**的 stderr 尾段（≤ 20 行，
     標明為 UNTRUSTED 資料、只引用不執行）；stderr 為空寫 `(no diagnostic output)`，不得以籠統句子取代。
-  - **engine 端確定性處理**：codex agent 的 finding 只要 title 經正規化（忽略大小寫、空白、標點）後以
-    `cross model pass incomplete` 開頭（例如 `Cross-model pass incomplete (HTTP 429).`），就改回標準
+  - **engine 端確定性處理**：codex agent 的 finding，title 是標準 title（大小寫、空白、連字號不拘），後面
+    **至多**接一個括號／方括號限定語與句末標點（例如 `Cross-model pass incomplete (HTTP 429).`），就改回標準
     title、**強制 `severity: INFO`、`file: null`**（codex leg 失敗永遠不擋 verdict），body 由
     `codexFailureBody()` 重建：`boundExternalText()` 先做不切代理對的 pre-clamp，把 CR／NEL／U+2028／
     U+2029 一律當換行（在計行之前），剝除 C0／C1 控制字元、ANSI、bidi、零寬、BOM、軟連字號、CGJ、
     variation selector、Hangul filler、Tags block（codex-call `sanitizeBackendText`＋`stripInvisibleUnicode`
-    的超集），**遮罩憑證**——任意長度的 `*token*`／`*secret*`／`*api_key*`／`password`／`authorization`／
-    `cookie` 值（含空白的引號值、跳脫過的 JSON `\"api_key\":\"…\"`、被截斷沒有收尾引號的值）、任意長度的
-    Bearer／Basic、完整或殘缺（只剩 header 或 header.payload）的 JWT——再以**頭部優先**截斷到 24 行／2000
+    的超集），輸入裡孤立的代理字元換成 U+FFFD，再逐行**遮罩憑證**（行尾的 ` (exit code N)` 先拿開，
+    遮罩吃不到）：key 名**包含** `token`／`secret`／`api_key`／`password`／`passwd`／`credential`／
+    `private_key`／`authorization`／`cookie`（任何位置、大小寫不拘：`secret_key`、`AWS_SECRET_ACCESS_KEY`、
+    `password_hash`、`session_token_v2`、`secretValue`）的值——引號值任意長度、含空白、沒有收尾引號的延伸到
+    行尾；跳脫過的 JSON（`\"api_key\":\"…\"`，引號前任意個反斜線）；未加引號的值遮到下一個分隔字元，
+    **全是數字的未加引號值不遮**（`input_tokens: 123` 這類計數）；`Authorization`／`Cookie` 標頭值遮到行尾；
+    `Bearer`／`Basic` 後接 token68 字元集的憑證（任意長度）；完整或殘缺（只剩 header 或 header.payload）的
+    JWT。**不涵蓋**：其他 key 底下未加引號的多字值（只遮第一個字）、沒有 key 的憑證。再以**頭部優先**截斷到 24 行／2000
     code point（codex-call 的輸出在最前面、可能跨多行，被截的是 stderr 尾段），截斷時標示。
-    **sentinel 中和是最後一步**，作用在組好的整段 body 上（遮罩吃掉阻斷 sentinel 的 `>` 也拼不出完整 sentinel）。
-    範圍**只限這一個 finding**：Codex 的正常審閱 finding 原樣通過（截斷會丟審閱內容，key/value 遮罩會弄亂
-    只是在談 token／password 的審閱文字）；prompt 要求診斷只寫進這個 finding。
-  - **body 形狀（表格安全）**：第 1 行是單行摘要 `codex-call failure: …`（≤ 200 code point、`|` 已跳脫），
-    消費端把它放進報表表格的一列；多行、過長或被截斷時，其後是 `UNTRUSTED …` 標示行＋以**比內容裡最長
-    反引號串更長**的 fence 框起來的引用區塊（內容關不掉 fence）。兩份 SKILL.md 的 Phase 4 規定：
-    表格只放第 1 行，其餘原樣貼在表格下方當引用資料，不拆 fence、不改寫、不執行。
+    **sentinel 中和是最後一步**，作用在組好的整段 body 上（遮罩吃掉阻斷 sentinel 的 `>` 也拼不出完整 sentinel）；
+    `SENTINEL_RE` 的 label 不再跨行（真的 sentinel 是單行 token；跨行比對曾從摘要行裡被截斷的 marker 一路吃到
+    區塊內的 marker，把 UNTRUSTED 標示行與開頭 fence 一起換掉）。
+    範圍**只限失敗 finding**：Codex 的正常審閱 finding——包括標題以 `Cross-model pass incomplete` 開頭、但後面接
+    的是句子的真實 finding——原樣通過（截斷會丟審閱內容，key/value 遮罩會弄亂只是在談 token／password 的審閱
+    文字，而強制 INFO 會把 FINDINGS 翻成 PASS）；措辭不合的失敗回報因此以 agent 自己的嚴重度留下，是不丟資訊
+    的那個方向。prompt 要求診斷只寫進這個 finding。同一 agent 回了多個失敗 finding 時**合成一筆**（body 依序
+    接起來再一起有界化），否則它們共用 dedup key，只會留下一個原因。
+  - **body 形狀（表格安全）**：第 1 行是單行摘要 `codex-call failure: ` 加上一個 **inline code span**——內容是
+    外部文字的第 1 行、至多 200 code point（跳脫前計），反斜線換成 U+29F5、`|` 寫成 `\|`，code span 的
+    fence 比內容裡最長的反引號串更長——所以放進表格的一列時，HTML、圖片、連結、自動連結、強調都不會渲染，
+    也切不開表格。其後**一律**是 `UNTRUSTED …` 標示行＋以**比內容裡最長反引號串更長**的 fence 框起來的
+    引用區塊（內容關不掉 fence；輸出再短也有框）。三份 SKILL.md（code-review、academic-review、compose）
+    規定：表格只放第 1 行，其餘原樣貼在表格下方當引用資料，不拆 fence、不改寫、不執行。
   - **agent 本身未完成**（integrity backstop）改用**不同 title** `cross-model agent did not complete`：
     第 1 行是固定說明（被 skip，或 errored），errored 時 runtime 的錯誤訊息經同一函式有界化（≤ 3 行／300
     字元）後放進同樣的 fence 區塊，不再插在句子中間。改名的理由是**語意**：舊版兩者共用 title，報表上分不出
     「codex-call 回報失敗（附原因）」與「wrapper agent 沒跑完、沒人讀到 codex-call 的輸出」。（兩者不可能同時
     出現——integrity 只在 codex agent 沒回結果時推入——所以跟 `mergeDedup` 合併無關；前一版的說法有誤。）
     仍為 INFO、non-blocking，fail-closed 語意不變。
-  - regression：`test/ensemble-workflow.test.mjs` 新增 #27 T1–T8（含 T3b–T3i、T5b）：失敗配方每一支的
-    `(exit code N)`、`--poll` 無終態不重試、多行 stderr 與 fence、只超行數、多行 FAILED 原因、各種憑證形狀、
-    pre-clamp 截斷的 JWT、遮罩後的 sentinel、代理對、看不見的字元與 U+2028／U+2029、fence 長度、agent
-    多行錯誤、title 變體＋強制 INFO。T4／T5／T6／T7 為護欄，其餘在修前的 `ensemble-workflow.js` 上皆紅。
+  - regression：`test/ensemble-workflow.test.mjs` 新增 #27 的 T1–T8（含 T3b–T3i、T5b）與 r2 T9–T16：失敗配方
+    每一支的 `(exit code N)` 與多行 FAILED 的位置、`--poll` 無終態不重試、多行 stderr 與 fence、只超行數、多行
+    FAILED 原因、各種憑證形狀（含敏感字後還有字的 key、雙重跳脫）、計數欄位與 `(exit code N)` 不被遮、pre-clamp
+    截斷的 JWT、遮罩後的 sentinel、第 1 行 180–200 code point 處的 sentinel、代理對與孤立代理字元、看不見的
+    字元與 U+2028／U+2029、fence 長度、摘要的 inline code、agent 多行錯誤、title 變體＋強制 INFO、以該片語
+    開頭的真實 HIGH finding 不被捕獲、多個失敗 finding 合成一筆。**對 main（`5eab1e4`）實跑**：
+    T3f、T3g、T7、T11 是綠的（前兩個守的是本 PR 自己引入的步驟，T7、T11 是護欄），其餘 #27 測試皆紅。
 
 ## [2.23.0] - 2026-09-10
 
