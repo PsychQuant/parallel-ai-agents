@@ -6,12 +6,14 @@ cd "$(dirname "$0")/.."
 
 echo "── shellcheck (enumerated shell scripts — #30) ──"
 # 受檢清單由 test/shellcheck-all.sh 列舉（git ls-files + shebang／副檔名），與 CI 的 shellcheck step 同一支；
-# 先前這裡與 test.yml 是兩份寫死清單（#33 verify R11：互不為超集）。新增的 script commit 後自動涵蓋。
+# 先前這裡與 test.yml 是兩份寫死清單（#33 verify R11：互不為超集）。新增的 script `git add` 後自動涵蓋。
+# 本檔若不被外層 repo 追蹤（plugin 被 vendor 進別的 repo）或不在 git 裡，退回 find 掃 plugin 目錄並明說。
 bash test/shellcheck-all.sh --selftest
 bash test/shellcheck-all.sh
 
-echo "── py_compile (python scripts) ──"
-python3 -m py_compile bin/pai-parse-lens-csv bin/pai-collect-lens-layers
+echo "── py_compile (enumerated python scripts — #30 verify R1 row 5) ──"
+# 與 shellcheck 同一個列舉（--python），取代先前寫死的兩支；bytecode 寫進暫存目錄，不留 __pycache__。
+bash test/shellcheck-all.sh --python
 
 echo "── lint-bats (bare ! assertions are no-ops under bats errexit — round 6 RC11) ──"
 bash test/lint-bats.sh --selftest

@@ -13,18 +13,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **shellcheck 受檢清單改成列舉（#30）**：`.github/workflows/test.yml` 的 shellcheck step 與 `test/run.sh`
-  原本各有一份寫死清單——新增的 script 預設不被檢查、CI 照樣全綠（#33 verify R11 還抓到兩份互不為超集）。
-  現在兩處都呼叫新的 `test/shellcheck-all.sh`，列舉只有一份實作：
-  - **來源**：repo 頂層的 `git ls-files`（repo 級，不是 plugin 級——`plugins/pai-lenses/` 將來的 shell script 也涵蓋；
-    只看 tracked 檔）。不在 git worktree 裡時退回 `find` 掃 plugin 目錄並明說。
-  - **收入**：`*.sh`／`*.bash`，或 shebang 直譯器是 sh／bash／dash／ksh（直接寫或經 `env`／`env -S`）。
-  - **排除**：`*.bats`（`lint-bats.sh` 專責；納入 shellcheck 會帶出一批既有警告，是另一個決定）、
-    路徑含 `fixtures/` 者（故意寫壞的輸入）、symlink、其他 shebang（swift／python3／node）。
-  - **護欄**：列舉結果逐行印出；列舉為空 → 紅（vacuous green）；列舉裡找不到它自己 → 紅（偵測器壞了）。
-    `--selftest` 驗分類規則、tracked-only、兩道護欄與 shellcheck 非零的傳遞，CI 與 `run.sh` 都先跑它。
-  - 在本 base 上列舉結果 = 舊清單 + `test/shellcheck-all.sh` 自己；issue 當時漏掉的兩支
-    （`references/regen-builtin-lenses.sh`、`test/run.sh`）已在 #33 期間手動補進清單，無新暴露的警告。
+- **shellcheck 與 py_compile 的受檢清單改成列舉（#30）**：`.github/workflows/test.yml` 與 `test/run.sh`
+  原本各有一份寫死的 shellcheck 清單與一份寫死的 py_compile 清單（`bin/pai-parse-lens-csv`、`bin/pai-collect-lens-layers`；
+  #34 把後者延後到這裡）——新增的 script 預設不被檢查、CI 照樣全綠（#33 verify R11 還抓到兩份 shellcheck 清單互不為超集）。
+  現在四處都呼叫新的 `test/shellcheck-all.sh`（shell：預設模式；python：`--python`），列舉與分類只有一份實作：
+  - **來源**：本檔被它所在的 git repo 追蹤時，用該 repo 頂層的 `git ls-files`（repo 級，只看 tracked 檔）；
+    不在 git 裡、或本檔**不被外層 repo 追蹤**（plugin 目錄被 vendor 進別的 repo）時，退回 `find` 掃 plugin 目錄並明說。
+    來源指令的輸出先落檔並檢查退出碼，失敗就紅（不拿部分清單繼續）。
+  - **收入**：shell = `*.sh`／`*.bash`，或 shebang 直譯器是 sh／bash／dash／ksh；python = `*.py`，或直譯器是
+    python／python3／python3.N。經 `env` 時跳過 env 的選項（含吃參數的 `-u`／`--unset`／`-C`／`--chdir`／`-a`／`-P`、
+    `-S` 與黏寫形式、`--`）與 `NAME=VALUE` 指派。python 以 `python3 -m py_compile` 編譯，bytecode 寫進暫存目錄
+    （`PYTHONPYCACHEPREFIX`），不在工作樹留 `__pycache__`。
+  - **排除（逐行印出、附理由）**：`*.bats`（`lint-bats.sh` 專責）、**直接位於 `test/`／`tests/`／`eval/` 底下的
+    `fixtures/`** 裡的 script（本 repo 放故意寫壞輸入的慣例位置；其他叫 `fixtures` 的目錄照常檢查）、symlink、
+    tracked 但已刪除的檔、其他直譯器（swift／node／bats…，列出來讓「沒被任何人檢查」可見）。
+  - **護欄**：列舉為空 → 紅；副檔名規則或 shebang 規則任一零命中 → 紅（#30 自己的故障形狀：來源若只列 `*.sh`，
+    extensionless 的 `bin/` script 全數消失而清單仍非空）；shell 模式下本檔不在列舉裡、或自我路徑是空字串 → 紅。
+  - **`--selftest`**（CI 與 `run.sh` 都先跑）驗：分類規則與 git 來源的**完整集合逐字比對**（含 extensionless shebang、
+    tracked symlink、bats、fixture、已刪除檔、untracked 不列）；env 選項／指派與 ksh／dash／sh／python 直譯器；
+    呼叫者的 `GIT_INDEX_FILE` 不被自測改寫（自測開頭清掉 `git rev-parse --local-env-vars` 列出的變數）；
+    三道護欄各自以**自己的訊息**紅；本 checkout 的來源判定給出非空的自我路徑、它出現在真實列舉與 `--list` 輸出裡；
+    假的 `find`／`git` 印出部分結果後 exit 1 → 紅；shellcheck 與 py_compile 的非零都傳出來、且不留 `__pycache__`；
+    vendored 副本（外層 repo 不追蹤本檔）退回 find 且不掃外層、被追蹤時改用外層 git 來源、沒有 repo 時退回 find。
+  - **鑑別力用 mutation 量，不靠宣稱**：`../pai-lenses/scripts/mutation_check.py` 新增守備單位 `shellcheck-all`，
+    22 個（`grep -c "shellcheck-all.),$" ../pai-lenses/scripts/mutation_check.py`）靶，每個對應 #30 verify R1 的一列。
+    R1 報告的三個存活突變體（來源只列 `*.sh`、空列舉護欄關掉、自我路徑變空）在上一版的 selftest 下全綠，現在各自轉紅。
+  - shell 的列舉結果與上一版相同；python 的列舉比舊的寫死清單多出 pack 的 `scripts/*.py` 與 `test/` 底下的 `*.py`，
+    全部可編譯。pack job 自己的 `py_compile scripts/*.py`（glob）不動。
   - 仍不涵蓋：workflow `run:` 區塊裡的 inline bash（需 actionlint 之類，另一個決定）。
 
 ## [2.24.0] - 2026-09-10

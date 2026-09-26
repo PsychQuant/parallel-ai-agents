@@ -58,6 +58,7 @@ TESTS = PACK / "scripts" / "test_validate.py"
 NEUTRALISE = PACK / "scripts" / "neutralise.py"
 PAI = PACK.parent / "parallel-ai-agents"
 LINT = PAI / "test" / "lint-ci-log-filter.sh"
+SHELLCHECK_ALL = PAI / "test" / "shellcheck-all.sh"
 
 # ── 守備範圍（#33 verify R26 M6 / G-R27-6）───────────────────────────────────────────
 # 「新機制沒有 RED 驗證」在這個 PR **發作了七次**，而 R26 的 DA 把它診斷到方法層：
@@ -71,6 +72,8 @@ SUITES = {
     "validate":   (VALIDATE,   lambda: [sys.executable, str(TESTS)],          PACK),
     "lint":       (LINT,       lambda: ["bash", str(LINT), "--selftest"],     PAI),
     "neutralise": (NEUTRALISE, lambda: [sys.executable, str(TESTS)],          PACK),
+    # #30 verify R1：列舉器（shellcheck／py_compile 的受檢清單）的 selftest。需要 shellcheck 在 PATH。
+    "shellcheck-all": (SHELLCHECK_ALL, lambda: ["bash", str(SHELLCHECK_ALL), "--selftest"], PAI),
 }
 
 # (名稱, 要替換的字串, 替換成什麼)。每個 old 必須在 validate.py 中**恰好出現一次**。
@@ -517,6 +520,56 @@ MUTATIONS += [
      '        run_lines = inline.split("\\n") + [raw[k] for k in range(r + 1, s["end"] + 1)', '        run_lines = [inline] + [raw[k] for k in range(r + 1, s["end"] + 1)', "lint"),
     ("lint: 切出來的行不 dedent（R35 → bypass-quoted-scalar-indented-lines-no-dedent）",
      '            if "\\n" in inline:\n                explicit_pad = 0', '            if False:\n                explicit_pad = 0', "lint"),
+]
+
+# ── #30 verify R1：列舉器 test/shellcheck-all.sh ─────────────────────────────────────────────
+# R1 的 owner 報告實測：列舉來源改成只列 `*.sh`、刪掉空列舉護欄、讓自我路徑變空——三個突變體 selftest 全綠，
+# 而 CHANGELOG／檔頭／成功訊息都宣稱它驗了這些。每個靶對應報告的一列（row 編號寫在名稱裡）。
+MUTATIONS += [
+    ("shellcheck-all: 來源只列 *.sh（row 1(a)：extensionless bin/ 消失）",
+     'git) (cd "$root" && git ls-files -z) > "$paths"', 'git) (cd "$root" && git ls-files -z -- "*.sh") > "$paths"', "shellcheck-all"),
+    ("shellcheck-all: 空列舉護欄（row 1(b)）",
+     '  if [ "${#files[@]}" -eq 0 ]; then', '  if false; then', "shellcheck-all"),
+    ("shellcheck-all: 單一規則零命中護欄",
+     '  if [ "$n_ext" -eq 0 ] || [ "$n_sb" -eq 0 ]; then', '  if false; then', "shellcheck-all"),
+    ("shellcheck-all: plan 給出空的自我路徑（row 1(c)）",
+     'PLAN_SELF="${prefix}${SELF_NAME}"', 'PLAN_SELF=""', "shellcheck-all"),
+    ("shellcheck-all: 自我路徑為空不得略過護欄（row 1(c)）",
+     '    if [ -z "$must" ]; then', '    if false; then', "shellcheck-all"),
+    ("shellcheck-all: dispatch 把自我路徑接進 run_check（row 1(c)）",
+     'run_check "$PLAN_ROOT" "$PLAN_SRC" "$lang" "$action" "$PLAN_SELF"', 'run_check "$PLAN_ROOT" "$PLAN_SRC" "$lang" "$action" ""', "shellcheck-all"),
+    ("shellcheck-all: env 的 NAME=VALUE 指派（row 2）",
+     '      *=*) opts=0; i=$((i + 1)); continue ;;', '      *=*) ;;', "shellcheck-all"),
+    ("shellcheck-all: env 短選項吃參數 -u／-C（row 2）",
+     'u | C | a | P) [ $((j + 1)) -lt "${#t}" ] || take=1; break ;;', 'u | C | a | P) break ;;', "shellcheck-all"),
+    ("shellcheck-all: env 長選項吃參數 --unset／--chdir（row 2）",
+     '--unset | --chdir | --argv0) i=$((i + 2)); continue ;;', '--unset | --chdir | --argv0) i=$((i + 1)); continue ;;', "shellcheck-all"),
+    ("shellcheck-all: env -S 黏寫（row 2）",
+     '              S) rest="${t:j+1}"; break ;;', '              S) break ;;', "shellcheck-all"),
+    ("shellcheck-all: ksh 是 shell（row 2）",
+     '            sh | bash | dash | ksh) KIND=sh:shebang ;;', '            sh | bash | dash) KIND=sh:shebang ;;', "shellcheck-all"),
+    ("shellcheck-all: 來源指令失敗必紅（row 3）",
+     '  if [ "$rc" -ne 0 ]; then\n    echo "shellcheck-all: 列舉來源失敗', '  if false; then\n    echo "shellcheck-all: 列舉來源失敗', "shellcheck-all"),
+    ("shellcheck-all: 自測清掉呼叫者的 GIT_*（row 4）",
+     '  mapfile -t names <<< "$vars"', '  names=()', "shellcheck-all"),
+    ("shellcheck-all: python 的 py_compile 非零傳出（row 5）",
+     'python3 -m py_compile "${files[@]/#/./}") || rc=$?', 'python3 -m py_compile "${files[@]/#/./}") || true', "shellcheck-all"),
+    ("shellcheck-all: py_compile 不在工作樹留 __pycache__（row 5）",
+     'PYTHONPYCACHEPREFIX="${WORK}/pycache" python3', 'python3', "shellcheck-all"),
+    ("shellcheck-all: python shebang 分類（row 5）",
+     '            python | python[0-9] | python[0-9].[0-9]*) KIND=py:shebang ;;', '', "shellcheck-all"),
+    ("shellcheck-all: symlink 排除（row 6）",
+     '  if [ -L "$f" ]; then KIND=skip:symlink', '  if false; then KIND=skip:symlink', "shellcheck-all"),
+    ("shellcheck-all: *.bats 排除（row 6）",
+     '      *.bats) KIND=skip:bats ;;\n', '', "shellcheck-all"),
+    ("shellcheck-all: fixture 排除只限 test|tests|eval/fixtures（row 6：放寬回任意 fixtures/）",
+     '    */test/fixtures/* | */tests/fixtures/* | */eval/fixtures/*) return 0 ;;', '    */fixtures/*) return 0 ;;', "shellcheck-all"),
+    ("shellcheck-all: fixture 排除本身（row 6）",
+     'if in_fixture_dir "$f"; then KIND=skip:fixture; fi', ':', "shellcheck-all"),
+    ("shellcheck-all: vendored 副本退回 find（row 7）",
+     '    if git -C "$top" ls-files --error-unmatch', '    if true || git -C "$top" ls-files --error-unmatch', "shellcheck-all"),
+    ("shellcheck-all: shellcheck 的非零傳出",
+     'shellcheck -- "${files[@]/#/./}") || rc=$?', 'shellcheck -- "${files[@]/#/./}") || true', "shellcheck-all"),
 ]
 
 EXPECTED_SURVIVE = {
