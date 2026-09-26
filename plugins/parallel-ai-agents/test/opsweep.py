@@ -262,6 +262,33 @@ def _tags(stderr):
     return tuple(t for line in stderr.split("\n") for t in ("RULE", "PARSE") if (": %s: " % t) in line)
 
 
+# 突變體可能讓 lint 進無窮迴圈（R37 實測：有一個一邊迴圈一邊配置記憶體，38 分鐘吃到 22 GB）。沒有逾時，掃描會永遠
+# 停在那裡——`--jobs` 照順序輸出，一個卡住就整批不動。逾時由 main() 依未突變 selftest 的實測耗時設定。
+MUTANT_TIMEOUT = 1800
+
+
+class _Timeout(Exception):
+    pass
+
+
+def _run(args, cwd):
+    """跑一個子行程；逾時殺掉**整個行程群組**（lint 是 bash 包 python，只殺 bash 會留下還在跑的 python 孫行程），
+    stdin 接 /dev/null（避免某個突變體改成等 stdin 而 0% CPU 卡住）。"""
+    import signal
+    pr = subprocess.Popen(args, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          text=True, start_new_session=True)
+    try:
+        out, err = pr.communicate(timeout=MUTANT_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(pr.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        pr.communicate()
+        raise _Timeout()
+    return subprocess.CompletedProcess(args, pr.returncode, out, err)
+
+
 def run_mutant(src, py, py_off, m, work, fixtures, sample):
     """把突變後的 lint 放進臨時 plugin 樹，跑 selftest。fixtures 是**開跑時的快照**（copy，不是 symlink）：
     R29 第一輪掃到一半時作者又加了三個 fixture，之後每個突變體都因「數量與門檻不符」被判殺——整輪後半段作廢。
@@ -281,7 +308,7 @@ def run_mutant(src, py, py_off, m, work, fixtures, sample):
         p = pathlib.Path(d) / "test" / "lint-ci-log-filter.sh"
         p.write_text(mutated, encoding="utf-8")
         os.symlink(fixtures, pathlib.Path(d) / "test" / "fixtures")
-        r = subprocess.run(["bash", str(p), "--selftest"], cwd=d, capture_output=True, text=True)
+        r = _run(["bash", str(p), "--selftest"], d)
         out = r.stdout + r.stderr
         if r.returncode != 0 and "SyntaxError" in out:
             return "BROKEN"                 # 運算子產出不合法的程式碼：是這支的缺陷，不是套件的功勞
@@ -291,14 +318,16 @@ def run_mutant(src, py, py_off, m, work, fixtures, sample):
             return "KILLED"
         # selftest 沒抓到 → 再問**不是作者挑的**那份語料（形狀完整的小樣本）。
         for f in sample:
-            a = subprocess.run(["bash", str(LINT), str(f)], cwd=PLUGIN, capture_output=True, text=True)
-            b = subprocess.run(["bash", str(p), str(f)], cwd=d, capture_output=True, text=True)
+            a = _run(["bash", str(LINT), str(f)], PLUGIN)
+            b = _run(["bash", str(p), str(f)], d)
             # **比 (rc, 紅的來源標記)，不只比 rc**（#33 verify R32：Codex 第 8 條）。
             # 本輪特別在意的 `RULE:` ⇄ `PARSE:` 轉換兩邊 rc 都是 1，只比 rc 的網對它完全不靈敏——
             # 而那正是「fail-closed 改判」這一類修法唯一會動到的東西。
             if (a.returncode, _tags(a.stderr)) != (b.returncode, _tags(b.stderr)):
                 return "KILLED-BY-CORPUS"
         return "SURVIVED"
+    except _Timeout:
+        return "TIMEOUT"                    # 突變體讓 lint 跑不完：CI 會逾時失敗，算抓到，但與「判錯」分開報
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
@@ -399,6 +428,10 @@ def main():
     pre = subprocess.run(["bash", str(LINT), "--selftest"], cwd=PLUGIN, capture_output=True, text=True)
     if pre.returncode != 0:
         print("✗ 未突變的 selftest 就紅——先修綠再掃，否則每個突變體都會被誤判為殺掉。\n" + (pre.stdout + pre.stderr)[-1500:]); return 1
+    global MUTANT_TIMEOUT
+    base_s = time.monotonic() - t0
+    MUTANT_TIMEOUT = max(600, 10 * base_s)   # 未突變的一次 × 10，下限 10 分鐘（並行時每個會慢）
+    print("   每個突變體的逾時：%.0f s（未突變 selftest 實測 %.0f s × 10，下限 600）" % (MUTANT_TIMEOUT, base_s), flush=True)
     results = {}
     with tempfile.TemporaryDirectory(prefix="opsweep-") as work:
         fixtures = pathlib.Path(work) / "fixtures"
@@ -428,9 +461,10 @@ def main():
     print("\n耗時 %.1f 分 / %d 突變體（--jobs %d）= 每個 %.1f s 牆鐘" % (elapsed / 60, len(ms), args.jobs, elapsed / max(1, len(ms))))
     crashed = [i for i, st in results.items() if st == "CRASHED"]
     by_corpus = [i for i, st in results.items() if st == "KILLED-BY-CORPUS"]
-    print("殺掉 %d（其中當掉 %d、**產生語料抓到而 selftest 沒抓到的 %d**）/ 存活 %d（非預期 %d、預期 %d）/ 壞掉（語法）%d"
-          % (sum(1 for st in results.values() if st in ("KILLED", "CRASHED", "KILLED-BY-CORPUS")), len(crashed),
-             len(by_corpus), len(survived), len(unexpected), len(expected), len(broken)))
+    timeout = [i for i, st in results.items() if st == "TIMEOUT"]
+    print("殺掉 %d（其中當掉 %d、逾時 %d、**產生語料抓到而 selftest 沒抓到的 %d**）/ 存活 %d（非預期 %d、預期 %d）/ 壞掉（語法）%d"
+          % (sum(1 for st in results.values() if st in ("KILLED", "CRASHED", "TIMEOUT", "KILLED-BY-CORPUS")), len(crashed),
+             len(timeout), len(by_corpus), len(survived), len(unexpected), len(expected), len(broken)))
     if by_corpus:
         print("\n這些突變體 **selftest 沒抓到、產生語料抓到了** —— 每一個都代表 fixture 集缺一個形狀：")
         for i in by_corpus: print("  -", i)
