@@ -11,6 +11,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **shellcheck 受檢清單改成列舉（#30）**：`.github/workflows/test.yml` 的 shellcheck step 與 `test/run.sh`
+  原本各有一份寫死清單——新增的 script 預設不被檢查、CI 照樣全綠（#33 verify R11 還抓到兩份互不為超集）。
+  現在兩處都呼叫新的 `test/shellcheck-all.sh`，列舉只有一份實作：
+  - **來源**：repo 頂層的 `git ls-files`（repo 級，不是 plugin 級——`plugins/pai-lenses/` 將來的 shell script 也涵蓋；
+    只看 tracked 檔）。不在 git worktree 裡時退回 `find` 掃 plugin 目錄並明說。
+  - **收入**：`*.sh`／`*.bash`，或 shebang 直譯器是 sh／bash／dash／ksh（直接寫或經 `env`／`env -S`）。
+  - **排除**：`*.bats`（`lint-bats.sh` 專責；納入 shellcheck 會帶出一批既有警告，是另一個決定）、
+    路徑含 `fixtures/` 者（故意寫壞的輸入）、symlink、其他 shebang（swift／python3／node）。
+  - **護欄**：列舉結果逐行印出；列舉為空 → 紅（vacuous green）；列舉裡找不到它自己 → 紅（偵測器壞了）。
+    `--selftest` 驗分類規則、tracked-only、兩道護欄與 shellcheck 非零的傳遞，CI 與 `run.sh` 都先跑它。
+  - 在本 base 上列舉結果 = 舊清單 + `test/shellcheck-all.sh` 自己；issue 當時漏掉的兩支
+    （`references/regen-builtin-lenses.sh`、`test/run.sh`）已在 #33 期間手動補進清單，無新暴露的警告。
+  - 仍不涵蓋：workflow `run:` 區塊裡的 inline bash（需 actionlint 之類，另一個決定）。
+
 ## [2.24.0] - 2026-09-10
 
 `pai-lenses` 從獨立 repo 併回本 repo 成為第二個 plugin，並把三層 lens 疊加的文件與 CI 閘門補齊。

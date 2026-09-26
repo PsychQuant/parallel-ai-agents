@@ -56,7 +56,7 @@ brew install bats-core shellcheck
 ./test/run.sh
 
 # 或分開
-shellcheck bin/pai-build-diff
+bash test/shellcheck-all.sh        # repo 內每一支 tracked shell script（列舉規則見檔頭；--list 只印清單）
 bats test/
 ```
 

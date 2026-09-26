@@ -4,10 +4,11 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-echo "── shellcheck (bash scripts) ──"
-# 這份清單與 .github/workflows/test.yml 的 shellcheck step 是兩份寫死的規格（#30 追蹤自動列舉）；
-# #33 verify R11 抓到兩邊互相都不是對方的超集 —— 改其中一邊時請一併改另一邊。
-shellcheck bin/pai-build-diff bin/pai-parse-verdict bin/pai-iter-commit bin/pai-list-profiles references/regen-builtin-lenses.sh test/run.sh test/assert-tap-complete.sh test/lint-bats.sh test/lint-changelog-counts.sh test/lint-contract-enumerations.sh test/lint-ci-log-filter.sh
+echo "── shellcheck (enumerated shell scripts — #30) ──"
+# 受檢清單由 test/shellcheck-all.sh 列舉（git ls-files + shebang／副檔名），與 CI 的 shellcheck step 同一支；
+# 先前這裡與 test.yml 是兩份寫死清單（#33 verify R11：互不為超集）。新增的 script commit 後自動涵蓋。
+bash test/shellcheck-all.sh --selftest
+bash test/shellcheck-all.sh
 
 echo "── py_compile (python scripts) ──"
 python3 -m py_compile bin/pai-parse-lens-csv bin/pai-collect-lens-layers
