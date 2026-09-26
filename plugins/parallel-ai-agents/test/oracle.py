@@ -120,6 +120,30 @@ KNOWN_DISAGREE = {
     # `step-env-inline-expression` 同一種兩邊資訊量不同的設計差異。GitHub 本身也不接受非 mapping 的 `env`。
     ("ci-log-filter-bypass-r37o-module-misc-root-env-nonflow-colon-value.yml", "probe"):
         "根層級 `env:` 是純量、看不到鍵名，lint fail-closed；神諭沒有鍵可設，量不到它可能帶進的 SHELLOPTS。",
+    # **R37 最終 lint 的 opsweep 補件裡的限制型 fixture**（`restrict-r37p-*`）：突變體把保守的拒絕放寬，這些 fixture 釘住拒絕本身。
+    # 輸入實際都不外流，神諭因此判誤擋——那是刻意的 fail-closed，不是 lint 的缺陷。
+    ('ci-log-filter-restrict-r37p-fdflow-analyse-amp-trail-drop.yml', 'group has its own trailer plus |& connector'):
+        '群組豁免只收收尾後恰好接 `2>&1 |` 或 `|&`（沒有別的 trailer）的群組；這個形狀實際不外流，但豁免不涵蓋它。',
+    ('ci-log-filter-restrict-r37p-fdflow-analyse-pipe-conn-drop.yml', 'exact 2>&1 trailer combined with |& connector'):
+        '群組豁免只收收尾後恰好接 `2>&1 |` 或 `|&`（沒有別的 trailer）的群組；這個形狀實際不外流，但豁免不涵蓋它。',
+    ('ci-log-filter-restrict-r37p-fdflow-is2to1-lit-drop.yml', 'group trailer closes fd2, does not dup to fd1'):
+        '群組豁免要求收尾恰好是 `2>&1`（fd 2 複製到 fd 1）；`2>&-`、`2>1` 這類實際不外流，但不是豁免的形狀。',
+    ('ci-log-filter-restrict-r37p-fdflow-is2to1-op-drop.yml', 'group trailer redirects to a file literally named 1, not fd dup'):
+        '群組豁免要求收尾恰好是 `2>&1`（fd 2 複製到 fd 1）；`2>&-`、`2>1` 這類實際不外流，但不是豁免的形狀。',
+    ('ci-log-filter-restrict-r37p-fdflow-redirhit-1740-op-drop.yml', 'input-direction fd dup treated same as output-direction'):
+        '輸入方向的 fd 複製（`<&`）一律當成 fd 流向命中（fail-closed）；這個形狀實際不外流。',
+    ('ci-log-filter-restrict-r37p-fdflow-redirhit-1743-op-drop.yml', 'input-direction fd dup to a literal non-digit word'):
+        '輸入方向的 fd 複製（`<&`）一律當成 fd 流向命中（fail-closed）；這個形狀實際不外流。',
+    ('ci-log-filter-restrict-r37p-parse-command-neut-wrong-filename.yml', 'group piped through python3 running the wrong script'):
+        '管線的過濾端不是 `python3 <路徑>/neutralise.py`，照規則拒絕；實際執行會報錯、不把 stdin 印出來，神諭量不到外流。',
+    ('ci-log-filter-restrict-r37p-parse-command-neut-wrong-interpreter.yml', 'group piped through a same-named script under the wrong interpreter'):
+        '管線的過濾端不是 `python3 <路徑>/neutralise.py`，照規則拒絕；實際執行會報錯、不把 stdin 印出來，神諭量不到外流。',
+    ('ci-log-filter-restrict-r37p-strict-set-prefix-badname.yml', 'set -o with an unrecognised option name is not accepted as a group prefix line'):
+        '群組規則的 `set` 前綴只收 `-e`／`-u`／`-o pipefail|errexit|nounset`；bash 對壞選項報錯，這一步實際不外流，被擋是限制。',
+    ('ci-log-filter-restrict-r37p-strict-set-prefix-eu-skip.yml', 'set -e followed by a bad token is not accepted as a group prefix line'):
+        '群組規則的 `set` 前綴只收 `-e`／`-u`／`-o pipefail|errexit|nounset`；bash 對壞選項報錯，這一步實際不外流，被擋是限制。',
+    ('ci-log-filter-restrict-r37p-strict-set-prefix-o-skip.yml', 'set -o pipefail followed by a bad token is not accepted as a group prefix line'):
+        '群組規則的 `set` 前綴只收 `-e`／`-u`／`-o pipefail|errexit|nounset`；bash 對壞選項報錯，這一步實際不外流，被擋是限制。',
     ("ci-log-filter-known-r37t8-default-case-pattern-pipe.yml", "s"):
         "頂層 case 模式的 `|` 是「或」，預設模式的 `PIPED_RE` 算它接了 neutralise；`--strict` 由群組規則擋下（區塊不是 `{ …; } 2>&1 | python3 …` 群組）。",
     # **`--strict` 群組規則只收恰好一對大括號**（#59／#60）⇒ 群組裡再包一個群組是誤擋。刻意保留：計深度要判斷每個
@@ -178,7 +202,7 @@ for _msg in (PIPEFAIL_RULE_MSG, STRICT_GROUP_RULE_MSG):
         sys.exit("✗ oracle.py 用來認 RULE 的字面「%s」不在 %s 裡——lint 改了訊息，這裡要同步改" % (_msg, LINT))
 # 已知類別在 repo 自己的 fixture 集（不給檔案參數）上的**確切**條數（R37，R36 第 2 列；同 selftest 門檻 R24 F9 的理由：
 # 寫成 `>=` 而實際更高時，那個差額沒有網——刪掉一張 G 範例 fixture 仍然綠）。must-fail 探針不算在內。
-FIXTURE_CLASS_TOTALS = {"G": 5, "S-2": 3}
+FIXTURE_CLASS_TOTALS = {"G": 6, "S-2": 3}
 # must-fail 探針的確切張數（同理：刪掉一張探針＝少一條負對照，必須立刻紅）。
 FIXTURE_MUSTFAIL_TOTAL = 7
 KNOWN_CLASS_RE = re.compile(r"^# KNOWN-CLASS: (\S+)", re.M)

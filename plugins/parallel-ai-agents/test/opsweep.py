@@ -55,9 +55,10 @@ EXPECTED_SURVIVE = {   # id → 理由（依構造等價）。每一條都要能
     # `dedent_block` 現在對**每一行**剝（YAML 就是這樣），這一條從 EXPECTED_SURVIVE 移除，
     # 並由 `good-whitespace-heredoc-delimiter` fixture 釘住。留這段註解當紀錄：
     # **「依構造等價」若沒有一條會翻色的指令在守，它就只是一句散文**（R30 §六 擴寫後的第 8 類）。
-    # `<<<` 分支關掉後落到 `<<` 分支，分隔字從第三個 `<` 起讀、而 `<` 在 SHELL_WORD_BREAK 裡 → delim 空 →
-    # 不排 heredoc。依構造等價；分支保留是把「here-string 不是 heredoc」寫成程式碼（mutation_check 同一條理由）。
-    "startswith→F|shell_scan|if line.startswith(\"<<<\", i):|1": "落到 `<<` 分支後 delim 為空，不排 heredoc",
+    # R27 在這裡列過 `shell_scan` 的 `startswith("<<<")`，理由是關掉之後落到 `<<` 分支、分隔字從第三個 `<` 讀起、
+    # delim 為空、不排 heredoc。**那個論證只看了第一個 `<<`，是錯的**（#33 verify R37：全輪 mutation 與最終 lint 的
+    # `--since 380e4a4` 掃描都殺掉了它）：`<<<<<EOF` 拿掉這個分支後，掃描器會在後面的 `<<` 登記 heredoc、對齊跟著錯位，
+    # `bypass-r37t8-misaligned-herestring-heredoc` 從 rule-red 變成 pass。已移除（mutation_check 同一條靶也已更正）。
     # **R32 DA-2 之後，`fold_block` 在這裡只剩一條。** R31 列了四條，只有一條理由明白點名「佔位的空字串讓
     # 下一行不再折」（另外兩條說的是 `more`／`prev_more` 已擋住折疊，第四條說的是折進去的只差行尾空白）——那句話描述的就是那個缺陷本身（兩兩折而非遞移折）。等價論證的根據是 bug，
     # 論證就隨 bug 一起作廢，**不得改寫後沿用**。R32 重寫了 `fold_block`（遞移）；**「對 PyYAML

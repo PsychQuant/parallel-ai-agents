@@ -1,0 +1,28 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺 drop-operand|parse_command|if self.op(self.tok(), "(") and self.op(self.tok(1), ")"):|2。
+# 同一格「是不是空括號」的檢查，這次拿掉第二個 operand（`self.op(self.tok(1), ")")`），
+# 只留 `self.op(self.tok(), "(")`——完全不管**下一格**是什麼，只要當下這格是 `(` 就成立。
+# `function f (>&2) { : ; }`：名字 `f` 消耗後，`self.tok()` 是 `(`、`self.tok(1)` 是 `>&2`
+# （重導向，不是 `)`）。原版：兩個條件都要成立，第二個不成立，不觸發跳格；`skip_nl()`；
+# 遞迴呼叫 `parse_command`，這次 `(` 被正確辨識成子殼層群組開頭，其內容 `>&2)` 裡的 `>&2`
+# 被子殼層自己的收詞迴圈吃掉、呼叫 `self.redir()`、記一筆 hit。
+#
+# 突變體只看當下這格是不是 `(`，`(` 滿足，`self.i += 2` 盲目跳過 `(` 和 `>&2` 兩格
+# （不是跳過「`(` 和 `)`」——這正是拿掉第二個 operand 的後果：它不再檢查第二格真的是 `)`），
+# `>&2` 永遠沒被 `self.redir()` 看到；落到 `)`，之後 `skip_nl()`、遞迴呼叫 `parse_command`
+# 把剩下的 `) { : ; }` 落回一般收詞／群組解析，跟這個 hit 是否曾被看到無關。
+#
+# 接了 `true | python3 scripts/neutralise.py` 讓 `ok=True`，逼 lint 走到 fd 檢查那一支。
+# bash 5.3 實測：`bash -n -c 'function f (>&2) { :; }'` → `syntax error near unexpected
+# token '>&'`——本來就不是合法語法（函式定義的 `()` 必須是空括號）；原版判 RULE 是對讀不懂
+# 的殘骸 fail-closed。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: function name, open-paren glued to a redirect inside
+        run: |
+          function f (>&2) { : ; }
+          true | python3 scripts/neutralise.py

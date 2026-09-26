@@ -1,0 +1,40 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺一個 wave3-strict 存活突變體：
+#   drop-operand|_bash_template|trace = trace or on|1
+#
+# `shell: "/bin/bash -x +o xtrace {0}"`——先用短選項 `-x` 開 xtrace，再用長選項 `+o xtrace`
+# 把它關掉。原版兩處都執行同一行 `trace = trace or on`（一次在 `elif ch in "xv":` 分支、
+# 一次在 `elif nm in _TRACE_OPTS:` 分支，本檔案命中的是後者）：處理 `-x` 時
+# `trace = False or True = True`；處理 `+o xtrace` 時 `on=False`（`+` 是關），
+# `trace = True or False = True`——**只要曾經在樣板任何位置開過 xtrace，`trace` 就永遠是
+# True**，不因為後面又關掉而重置。這是刻意保守的設計：模板執行期間 xtrace 曾經生效過，
+# 已經有機會把展開後的指令印到 stderr，之後關掉也救不回已經印出去的內容。原版
+# `tmpl["trace"]` 為真，呼叫端 PARSE-red 拒絕。
+#
+# 拿掉 `trace` 這個運算元（只剩 `trace = on`）後，`elif nm in _TRACE_OPTS:` 那次執行變成
+# **覆寫**而非**保留**：處理 `+o xtrace` 時直接 `trace = on = False`，把前面 `-x` 設出來的
+# True 蓋掉。最終 `trace` 變成 False，樣板被誤判成「不含 trace」，回
+# `{"pipefail": False, "trace": False}`。
+#
+# `shell:` 的值是樣板字串，不是要交給 `bash -c`／`bash -n` 執行的腳本；已用抽出的同一份
+# 原始碼直接呼叫驗證：`_bash_template("/bin/bash -x +o xtrace {0}")` 原版回
+# `{"pipefail": False, "trace": True}`，拿掉這個運算元後回
+# `{"pipefail": False, "trace": False}`。
+#
+# 神諭對帳：另類 shell 樣板神諭判「不可比」（已知類別）；run 區塊本身有正常接
+# neutralise 的管線，不是靠「安全但被擋」的輸入殺——`-x` 生效那段期間 `set -x` 印出的
+# 展開後指令（若含 `$PR_TITLE`）走 shell 自己的 stderr，在群組的 `2>&1` 之前就已經寫出，
+# 不受後面過濾管線保護，這正是白名單要擋的情況。
+# LINT-ARGS: --strict
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: bash template that turns on xtrace then later turns off -o xtrace still flags it
+        shell: "/bin/bash -x +o xtrace {0}"
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$PR_TITLE" | python3 scripts/neutralise.py

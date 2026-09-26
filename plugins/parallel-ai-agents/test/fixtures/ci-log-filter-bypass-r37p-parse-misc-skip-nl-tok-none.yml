@@ -1,0 +1,29 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺 `drop-operand|skip_nl|while self.tok() is not None and
+# self.tok()["k"] == "NL":|1`（parse-misc 組，去掉 `|L行號`）。
+#
+# `skip_nl` 是 `while self.tok() is not None and self.tok()["k"] == "NL": self.i += 1`；拿掉
+# `self.tok() is not None` 只剩 `self.tok()["k"] == "NL"`。`skip_nl` 只在兩處被呼叫，都是「剛吃掉一個
+# 管線接頭（`|`／`|&`）或 and-or 接頭（`&&`／`||`）之後，跳過緊接著的換行」——`parse_pipeline` 消耗 `|`
+# 之後就呼叫它。當那個管線接頭是**整段內嵌 Python 剖析到的最後一個詞元**（後面連換行都沒有）時，
+# `self.tok()` 讀到 `None`；原版 `is not None` 讓迴圈乾淨結束，突變體對 `None["k"]` 取值直接 `TypeError`，
+# 沒被下面 `except (IndexError, KeyError, ValueError, RecursionError)` 接住，整支 lint 連 traceback 一起
+# 炸掉（非 0 退出碼、訊息裡沒有 `: RULE: `）。
+#
+# 這個 step 的整個 run 區塊只有一行、以裸 `|` 收尾（沒有接 neutralise.py、也沒有 `# LOG-FILTER:`），落在
+# `ok = via_pipe or declared` 兩者都假的分支——但這個檢查（`if not ok: ...`）在 `_analyse()` **之後**才做，
+# 所以原版仍會先完整跑一次剖析（安全結束、不 crash），再印出「既沒有經 neutralise.py，也沒有
+# # LOG-FILTER: 註解」判 RULE-red；突變體在 `_analyse()` 內部就先 `TypeError` 炸掉，訊息裡完全沒有
+# `: RULE: ` 字樣，判定不再是 rule-red。bash 5.3 實測（`printf 'echo hi |\n' > t.sh`）：`bash -n t.sh`
+# rc=2、`line 2: syntax error: unexpected end of file`——這本來就是不合法的 bash（沒有回頭去接任何指令），
+# 神諭因此把它歸類成 `not-invoked`（neutralise.py 從沒被呼叫），與 lint 的 RULE-red 判定一致，不需要
+# `# KNOWN-CLASS:`。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: dangling pipe is the last token, nothing after it
+        run: |
+          echo hi |

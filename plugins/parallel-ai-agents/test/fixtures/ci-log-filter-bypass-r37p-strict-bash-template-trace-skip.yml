@@ -1,0 +1,41 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺一個 wave3-strict 存活突變體：
+#   ±1→±2|_bash_template|i += 1|2
+#
+# `shell: "/bin/bash -o pipefail -x {0}"`——`-o pipefail` 之後緊接著一個獨立的 `-x`（xtrace）。
+# 原版：處理完 `-o pipefail` 這對 token 後，內層 `i += 1`（讀完選項名 `pipefail` 後把游標移過它）
+# 加上外層固定的 `i += 1`，游標剛好落在下一個未處理的 `-x` 上，迴圈繼續處理它，
+# `ch in "xv"` 命中，`trace = trace or on = True`——樣板被判定含 xtrace，
+# `tmpl["trace"]` 為真，呼叫端在 run 區塊解析之前就 PARSE-red 拒絕（訊息：
+# 「本 lint 的詞法是 bash 的，只接受 bash 樣板……不得開 xtrace 或 verbose」）。
+#
+# 把這個內層 `i += 1` 改成 `i += 2` 後，讀完 `pipefail`的游標多跳一格，直接越過緊接在後的
+# `-x`，迴圈的下一輪從 `-x` 之後的位置開始（此例剛好是樣板結尾），`-x` 從未被檢查、
+# `trace` 保持 False；樣板被誤判成「認得且不含 trace」，回
+# `{"pipefail": True, "trace": False}`。run 區塊 `echo "$PR_TITLE" | python3 scripts/neutralise.py`
+# 確實有接管線，樣板一旦被誤判為安全，這一步的其餘規則（fd／env／pipefail）都不會再攔下它，
+# 使得本應該被擋下的「shell 帶 xtrace」情況變成通過或退化成別的紅——`mutcheck.py` 實測突變體
+# 判定不等於宣告的 `parse-red`（KILL）。
+#
+# `shell:` 的值是樣板字串，不是要交給 `bash -c`／`bash -n` 執行的腳本；已用抽出的同一份
+# 原始碼直接呼叫驗證：`_bash_template("/bin/bash -o pipefail -x {0}")` 原版回
+# `{"pipefail": True, "trace": True}`，把內層 `i += 1` 改成 `i += 2` 後回
+# `{"pipefail": True, "trace": False}`——`-x` 從未被檢查到。
+#
+# 神諭對帳：這個另類 shell 樣板神諭只會用 bash 跑，判「不可比」（已知類別）；run 區塊本身有
+# 正常接 neutralise 的管線，PR 文字經過過濾，不是靠「安全但被擋」的輸入殺——若 xtrace 真的
+# 生效，`set -x` 會把展開後的指令（含 `$PR_TITLE`）印到 shell 自己的 stderr，那條 stderr 不會
+# 經過 `2>&1` 之前的管線接住（本 lint 就是為了擋這個才要求白名單）。
+# LINT-ARGS: --strict
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: bash template with -o pipefail followed by -x still flags xtrace, does not skip the trailing option
+        shell: "/bin/bash -o pipefail -x {0}"
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$PR_TITLE" | python3 scripts/neutralise.py

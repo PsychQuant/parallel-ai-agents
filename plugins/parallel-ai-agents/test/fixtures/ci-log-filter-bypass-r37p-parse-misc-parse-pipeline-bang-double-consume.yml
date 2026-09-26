@@ -1,0 +1,25 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺 `±1→±2|parse_pipeline|self.i += 1|1`（parse-misc 組，
+# 去掉 `|L行號`）。
+#
+# `parse_pipeline` 開頭 `while self.word(self.tok(), "!", "time"): self.i += 1`——吃掉命令前導的
+# `!`（否定）或 `time` 保留字。這裡把 `1` 換成 `2` 會在吃掉 `!`／`time` 的同時多吃一個詞元，跟 fixC／fixD
+# 同一族：緊接著的指令名被一起吞掉，那條指令從第二個詞開始被剖，指令名對不上就分析不到。
+#
+# 這個 step 第一行安全管線讓 `ok` 成立，第二行 `! bash -x -c '...'`：原版吃掉開頭的 `!` 之後從 `bash`
+# 開始剖成簡單指令，`shell_opts` 抓到 `-x` 記一筆 fd 外流命中，判 RULE-red；突變體把 `!` 和 `bash` 一起
+# 吃掉，指令從 `-x` 開始剖，`simple()` 掃不到任何 shell 名稱，命中消失，判定變成 pass。bash 5.3 實測
+# （`printf 'echo hi | true\n! bash -x -c '"'"'echo "$PR_TITLE"'"'"'\n' > t.sh`）：`bash -n t.sh` rc=0
+# （合法語法，`!` 否定接下來那條 pipeline 的退出碼，不影響它是否執行）；`bash t.sh` 的 xtrace 輸出裡
+# 確實看得到 `+ echo ''`（`$PR_TITLE` 被展開後印出）。神諭把這個 step 歸成 `piped`（第一行的管線），與
+# lint 的 RULE-red 一致，不落在已知類別，不需要 `# KNOWN-CLASS:`。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: leading bang before an xtrace bash call
+        run: |
+          echo hi | python3 scripts/neutralise.py
+          ! bash -x -c 'echo "$PR_TITLE"'

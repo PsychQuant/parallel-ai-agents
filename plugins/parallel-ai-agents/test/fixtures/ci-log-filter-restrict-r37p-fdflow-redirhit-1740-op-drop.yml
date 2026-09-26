@@ -1,0 +1,22 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺 drop-operand|_redir_hit|if op == ">&" and tl == "1" and
+# pre in ("", "1", "2"):|1（拿掉 `op == ">&"`）。
+# `echo "$PR_TITLE" 2<&1` 後接管線：`2<&1` 只動 fd2（把 fd1 複製到 fd2 讀取端），echo 本身只寫 fd1，
+# 從沒經過 fd2——bash 實測（`bash -c 'echo SECRET 2<&1 | cat'`）SECRET 正常經 cat 印出，PR_TITLE 不會
+# 因為這個重導向多流到任何地方，屬 fail-closed、無外流：原版對「數字對數字」的 fd 複製一律保守判為
+# 可疑（只有精準等於 `>&1`／`1>&1`／`2>&1` 才放行），`2<&1` 的 `op` 是 `<&` 不是 `>&`，正確地不放行，
+# 落到 `return "…複製 fd…"` 判命中 → RULE 紅。
+# 突變體拿掉 `op == ">&"` 這個 guard 後，只要 `tl == "1"` 且 `pre` 落在 `("", "1", "2")`，不論 `op` 是
+# `>&` 還是 `<&`，都被誤判成「數字對到 1，安全」→ `_redir_hit` 直接回 `None`（不判命中）→ 突變體放行。
+# **不是繞過，是限制**（fail-closed；神諭記在 KNOWN_DISAGREE）：這個輸入 bash 實際跑起來不會外流 PR 文字，lint 依設計保守地拒絕它；
+# 這張 fixture 釘住的是那個拒絕（突變體放寬後會放行）。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: input-direction fd dup treated same as output-direction
+        shell: bash
+        run: |
+          echo "$PR_TITLE" 2<&1 | python3 scripts/neutralise.py

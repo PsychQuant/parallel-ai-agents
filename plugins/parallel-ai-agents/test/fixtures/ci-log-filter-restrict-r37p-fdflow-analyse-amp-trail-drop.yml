@@ -1,0 +1,27 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺 drop-operand|_analyse|(conns[k] == "|&" and not
+# segs[k]["trail"])|3（拿掉 `not segs[k]["trail"]`，只剩 `conns[k] == "|&"`）。
+# 群組收尾帶一個不會自己判命中的重導向 `2>1`（把 fd2 寫進磁碟上字面叫 `1` 的檔案，`_redir_hit`
+# 對純檔名目標不判定命中），再用 `|&` 接 `neutralise.py`。bash 實測（`bash -c '{ echo SECRET >&2; }
+# 2>1 |& sed "s/^/PIPE:/"'`；另檢查磁碟檔案 `1`）：印出 `PIPE:SECRET`、檔案 `1` 是空的——`|&`
+# 等同在群組自己的重導向之後再補一個 `2>&1`（bash manual：`|&` is shorthand for `2>&1 |`），這個
+# 補上的 `2>&1` 蓋掉了群組自己較早的 `2>1`，實際上 fd2 還是跟著 fd1 進了管線，真的有經過濾（安全）。
+# 原版：`conns[k] == "|&"` 為真，但 `not segs[k]["trail"]`（收尾必須是空的）為假（收尾有 `2>1` 這一條）
+# → 群組不豁免（fail-closed，把「群組自己也帶收尾重導向」一律當危險，不去推導 `|&` 蓋過它的語意）
+# → 群組內 `>&2` 的命中留在 `an["fd"]` → RULE 紅（EXPECT: rule-red，但依 bash 實測其實安全、無外流，
+# 屬 fail-closed、無外流；原版對「`|&` 之前群組自己還有收尾重導向」這個形狀本來就保守放棄豁免）。
+# 突變體拿掉 `not segs[k]["trail"]` 這個 guard 後，只要連接子是 `|&`（不管收尾有沒有重導向）就豁免
+# → 群組內 `>&2` 的命中被吞掉 → 突變體放行（剛好與 bash 實測一致，但方向不重要——重點是可與原版
+# 機械區分）。
+# **不是繞過，是限制**（fail-closed；神諭記在 KNOWN_DISAGREE）：這個輸入 bash 實際跑起來不會外流 PR 文字，lint 依設計保守地拒絕它；
+# 這張 fixture 釘住的是那個拒絕（突變體放寬後會放行）。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: group has its own trailer plus |& connector
+        shell: bash
+        run: |
+          { echo "$PR_TITLE" >&2; } 2>1 |& python3 scripts/neutralise.py

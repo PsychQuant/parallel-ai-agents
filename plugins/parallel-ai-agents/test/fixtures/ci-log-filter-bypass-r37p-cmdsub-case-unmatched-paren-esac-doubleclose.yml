@@ -1,0 +1,33 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺
+# `drop-operand|_cmdsub_end_case|elif cases and cases[-1][0] == depth and (cases[-1][1] == "pat" or at_cmd):|2`（L560）與
+# `drop-operand|_cmdsub_end_case|if not (cases and cases[-1][0] == depth and cases[-1][1] == "pat"):|3`（L577）。
+#
+# 這份 fixture 的雙引號命令替換裡藏了一個真的 bash 語法錯誤：`case x in a) … foo( esac))`——`a)` 進入子句命令、
+# `foo(` 開了一個沒有配對的括號（子殼層／函式定義的開頭都需要它），但子句命令部分沒有任何東西把它收掉就直接
+# 碰上 `esac`。原版 `_cmdsub_end_case` 對這個構造的判定是 None（不解析）：`esac` 出現時 `cases[-1][0]`（case 起點的
+# 括號深度）跟目前的 `depth`（已經被 `foo(` 多墊高一層）對不上，L560 的 `elif` 不成立，`esac` 只被當成普通文字
+# 吃掉、`cases` 沒有被清空；後面兩個 `)` 分別把 `foo(` 那層收掉、再把 case 起點那層試著收掉，但 `cases[-1][1]`
+# 仍是子句命令的 `"cmd"` 狀態——命中「子句命令之後同一層的單獨 `)`：bash 語法錯誤」（L580-582，未受本次突變影響）
+# 直接 return None。呼叫端（`shell_scan` 同一物理行、`_hidden_subs` 對 `S` 的重掃）都拿不到收尾，整個雙引號到
+# run 區塊結尾都沒收，lint 判 PARSE（fail-closed，方向正確——`bash -n` 對這段話本身就報語法錯誤，不會執行）。
+#
+# 兩個突變體各自拿掉 L560／L577 的深度守衛之後，在 `esac` 或緊跟其後的 `(` 遇到「cases 非空但深度對不上」時，
+# 不再依原本的規則 fail-closed，而是把這個對不上的位置**硬套成合法的 case 收尾／pattern 前導括號**，於是括號
+# 計數湊巧收斂、`_cmdsub_end_case` 回一個**看似合法**的收尾位置（分別是 L560 突變體算到「…foo( esac)」後那個
+# `)`、L577 突變體因為不再要求深度相符，把「(esac)」的 `(` 當成 pattern 前導括號、緊跟的 `)` 當成 pattern
+# 收尾，一路算到最後一個 `)`）。這段被錯誤收尾的內容因此被規則層當「已解析、不透明」的命令替換重新掃過，掃到
+# 裡面真的存在的 `>&2` 複製 fd，判定從原版的 PARSE 變成 RULE——與宣告的 EXPECT 不同，構成殺點。
+#
+# bash 5.3 實測（直接對這段內容跑 `bash -n`）：`bash: ... syntax error near unexpected token '(' while looking
+# for matching ')'`——確認這整段對 bash 而言就是語法錯誤，不會執行、不會有任何輸出，lint 判 PARSE（fail-closed）
+# 是對的方向；PARSE 型判定不要求神諭比對「真的有沒有外流」（本身就不會執行）。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: unmatched-paren-esac-doubleclose
+        run: |
+          echo "pre$(case x in a) echo "$PR_TITLE" >&2 foo( esac))post" 2>&1 | python3 scripts/neutralise.py
