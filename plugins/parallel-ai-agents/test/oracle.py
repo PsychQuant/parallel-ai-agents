@@ -21,7 +21,7 @@ pipeline 的每段狀態，長度 ≥2 就代表它真的是 pipeline。這是 b
 
 ## 已知類別用**差分**判定（R37，#33 verify R36 第 1、2 列）
 「lint 放行 ∧ bash 建了接 neutralise 的管線 ∧ PR 文字仍然外流」時，要回答的是**外流是誰印的**。前一版用兩條正規式
-（幾乎就是 lint 規則的副本）回答：「正規式沒認出 fd 轉向／xtrace ⟹ 只能是另一條命令印的 ⟹ 已知類別 G」——凡是正規式
+（幾乎就是 lint 規則的副本）回答：「正規式沒認出 fd 轉向／xtrace、且管線本身已經帶 `2>&1`（`NEUT_WITH_STDERR_RE` 命中）⟹ 已知類別 G；正規式認得 fd 轉向時反而不歸 G，改判一般的不一致：繞過」——凡是正規式
 以外的 fd 轉向（`>&02`、`>/dev/fd/2`、`exec 3>&1` 後 `>&3`、`shopt -so xtrace`…），lint 放行、神諭也把它收進已知 G、rc=0。
 現在**直接問 bash**：把含 `neutralise.py` 的那幾條邏輯行換成一個中性命令再跑一次，逐條比對外流的行（stdout／stderr 分開、
 計重數）。外流原封不動 ⟹ 另一條命令印的 ⟹ G；有一部分跟著消失 ⟹ **那條管線自己外流**，不是 G。
@@ -42,15 +42,15 @@ S-2 的定義是「預設模式不要求 `2>&1`、`--strict` 要求」，所以�
   lint RULE-red ∧ piped ∧ 外流                  → 一致（擋下是對的，R35）
   lint RULE-red ∧ piped ∧ 無外流                → **不一致：誤擋**
   step 唯一的 RULE 是 `[--strict]` pipefail      → 不可比（量的是退出碼遮蔽；同 step 另有 RULE 時照常對帳，R37）
-  lint pass     ∧ 非 piped ∧ 無宣告             → **不一致：繞過**
+  lint pass     ∧ 非 piped ∧ 無宣告 ∧ 有外流    → **不一致：繞過**；無外流時是**量不到**
   lint PARSE    ∧ piped ∧ PyYAML 解析成功        → **不一致：誤擋（PARSE）**，除非該檔自己宣告 `# EXPECT: parse-red`
   timeout／stub 沒被呼叫到但腳本逾時             → **量不到**（不是繞過，也不算一致；逐項具名）
 
 **適用邊界**：lint 依設計不判可達性（`if false; then … | python3 …; fi` 它算「有管線」），神諭是真的跑——
-這類差異是**設計上的**，列在 `KNOWN_DISAGREE` 並寫理由。神諭不用 `-e`：runner 用 `bash -e`，但這裡要問的是
+這類差異多數落在「量不到」，根本不會走到「不一致」（用不到 `KNOWN_DISAGREE`）；只有真的判成「不一致」的設計性分歧，才會列在 `KNOWN_DISAGREE` 並寫理由（可達性本身目前沒有對應條目）。神諭不用 `-e`：runner 用 `bash -e`，但這裡要問的是
 「管線有沒有被建立」，前面的指令失敗屬於可達性、不屬於本題。
 
-**盲區（明寫）**：YAML 層用 PyYAML 解析，而 GitHub 的解析器**不同**——R28 探針實測 tab 分隔的引號 key
+**盲區（明寫）**：YAML 層用 PyYAML 解析，而 GitHub 的解析器**不同**——R25 探針實測（R26 verify 獨立覆核為真）tab 分隔的引號 key
 PyYAML 拒絕、GitHub 照樣執行；R29 探針實測整份縮排的文件 PyYAML 接受、GitHub 也執行。所以 `YAML-FAIL`
 那一格是神諭**看不到**的地方，不是「runner 也不會跑」的保證。神諭對帳的是 shell 層，YAML 層的真值要靠探針。
 
@@ -66,7 +66,7 @@ stdin `/dev/null`、逾時 5 秒。但那不是沙箱——fixture 寫絕對路�
 用法：test/oracle.py [FILE…]   不給檔案 → 全部 test/fixtures/ci-log-filter-*.yml
       環境變數 `ORACLE_LINT=<path>` 換掉被對帳的 lint（只給突變測試用：量「神諭抓不抓得到某個 lint 突變」）。
 退出碼：有 `KNOWN_DISAGREE` 之外的不一致 → 1；`KNOWN_DISAGREE` 裡的項目變成一致（理由不再成立）→ 1；
-已知類別的歸類數與檔頭宣告數不相等（任一方向）→ 1；must-fail 探針沒有以宣告的理由失敗 → 1；否則 0。
+已知類別的歸類數與檔頭宣告數不相等（任一方向）→ 1；must-fail 探針沒有以宣告的理由失敗 → 1；不給檔案參數執行整個 fixture 集時，已知類別總數／must-fail 探針總數與寫死常數 `FIXTURE_CLASS_TOTALS`／`FIXTURE_MUSTFAIL_TOTAL` 不符 → 1；否則 0。
 「量不到」不改變退出碼，但一定逐項印出來。
 """
 import collections
@@ -103,7 +103,7 @@ KNOWN_DISAGREE = {
     # **已知類別（G、S-2）不在這裡逐檔列**：它們按類別處理——`classify_piped_leak` 用差分判定外流是誰印的、
     # S-2 另外要 `--strict` 真的擋下那個 step，歸了類的 step 由所在檔頭的 `# KNOWN-CLASS:` 逐條簽名（雙向閘門，R37）。
     # 逐檔列會讓產生語料上的幾十條各佔一行、沒人讀；類別讓規則改掉的那一天，整類一起翻並被逼重判。
-    ("gen-d-yaml-tag-bang.yml", "tag-bang"):
+    ("gen-d-yaml-tag-bang.yml", "tag-bang"):  # 這個檔名只在 shellgen.py 產生語料時動態產生（R31-5 tag 值 shape），repo 內沒有這個靜態 fixture 檔案
         "YAML tag 一律 fail-closed（R30 MB-8 堵 `jobs: !!map` 隱形 job）；`!!str` 因此被連帶擋下。"
         "野外 0/1565，不值得為它動那條守著真洞的路徑。",
     # **`env:` 整張來自 runner 運算式** ⇒ 誤擋（R37 完整性審查補的 fixture）。lint 看不到鍵名，記成 `?` 並 fail-closed：
@@ -338,7 +338,7 @@ def classify_piped_leak(run, bash, stub_bin, yaml_env, base_mlines):
 
 
 def _env_of(node):
-    """mapping 節點的 `env:`（純量值才收；含 `${{` 的值只有 runner 知道，不設）。R37，R36 第 8 列。"""
+    """mapping 節點的 `env:`（純量值才收；鍵非空、鍵不含 `=`、鍵值合併不含 NUL byte；含 `${{` 的值只有 runner 知道，不設）。R37，R36 第 8 列。"""
     if not isinstance(node, yaml.MappingNode):
         return {}
     e = {kk.value: vv for kk, vv in node.value if isinstance(kk, yaml.ScalarNode)}.get("env")
@@ -463,7 +463,8 @@ def run_lint(largs, f):
 
 def check_file(f, text, bash, stub_bin):
     """一個 workflow 檔的逐 step 對帳。回傳 dict：rows、disagree、stale、unmeasured、seen（歸類的 Counter）、
-    failures（這個檔讓神諭 rc=1 的每一個理由，一句一條——must-fail 探針拿它比對宣告的理由）。"""
+    failures（這個檔讓神諭 rc=1 的每一個理由，一句一條——must-fail 探針拿它比對宣告的理由）、
+    cls_stale、cls_undeclared（已知類別檔頭宣告與神諭實際歸類的落差，見下方類別閘門）。"""
     res = {"rows": [], "disagree": [], "stale": [], "unmeasured": [], "seen": collections.Counter(), "failures": [],
            "cls_stale": [], "cls_undeclared": []}
     rows = res["rows"]
@@ -545,7 +546,7 @@ def check_file(f, text, bash, stub_bin):
                     verdict = "量不到（%s）" % detail
                     res["unmeasured"].append(key)
                 elif kind == "G":
-                    # 換掉接 neutralise 的邏輯行，外流原封不動 ⇒ 印它的是**另一條命令**——lint 明寫的限制第 2 條
+                    # 換掉接 neutralise 的邏輯行，外流原封不動 ⇒ 印它的是**另一條命令**——lint 明寫的「已知不涵蓋，第二組」第 2 條
                     # 「一條管線＝整個區塊已過濾」（Codex R32 第 4 條）。按類別記已知：整類在「什麼算已過濾」改掉的那一天一起翻。
                     verdict = "不一致：繞過（已知類別 G：一條管線＝整個區塊已過濾——差分：換掉接 neutralise 的邏輯行後外流原封不動，限制第 2 條）"
                     classes = ["G"]
@@ -695,8 +696,7 @@ def main(argv):
         rc = 1
         print("\n✗ must-fail 探針沒有以宣告的理由失敗（它要量的那個分支沒被走到，或神諭在那裡放行了）：")
         for fn in mf_bad: print("  - %s" % fn)
-    # **類別與探針的數量釘死**（R37，R36 第 2 列；同 selftest 門檻 R24 F9）：已知類別依設計不改 rc，所以「類別路徑整個
-    # 壞掉」或「刪掉一張範例 fixture」在 rc 上看不出來。只在跑 repo 自己的 fixture 集（沒有給檔案參數）時檢查。
+    # **類別與探針的數量釘死**（R37，R36 第 2 列；同 selftest 門檻 R24 F9）：已知類別依設計不改 rc，但只有「某類別所有宣告它的 fixture 都被刪除」在 rc 上看不出來（「類別路徑整個壞掉」只要還有 fixture 宣告該類別且被掃描到，就會被 `cls_stale`／`cls_undeclared` 逐檔攔下、使 rc=1）。只在跑 repo 自己的 fixture 集（沒有給檔案參數）時檢查。
     if not argv:
         for c in sorted(set(FIXTURE_CLASS_TOTALS) | set(cls_count)):
             if cls_count[c] != FIXTURE_CLASS_TOTALS.get(c, 0):

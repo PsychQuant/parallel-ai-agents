@@ -1,4 +1,4 @@
-# #33 verify R37（R36 logic HIGH-3／R35 回歸）：`_ansic_decode` 把八進位逃脫 `\377`（255）解成
+# #33 verify R37（R36 第 5 列 (b)（logic）／R35 回歸）：`_ansic_decode` 把八進位逃脫 `\377`（255）解成
 # `chr(0xff)`（單一 Unicode 碼位），但 bash 產生的是原始位元組 0xFF——UTF-8 檔案裡永遠不會有一行
 # 剛好是那個碼位的字。heredoc 的終止字因此對不上，bash 讀到檔尾才收（吞掉後面的真管線）。
 # 6cf6864 rc=1（fail-closed）→ 380e4a4 rc=0（兩種模式）。bash 5.3 對帳：heredoc 吃到檔尾，

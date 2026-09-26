@@ -10,7 +10,7 @@
 
 1. heredoc 分隔字的引號擺法（12）：`EOF` `'EOF'` `"EOF"` `"EO"F` `E"OF"` `'EOF'x` `""EOF` `'E'OF`
    `\\EOF` `E\\OF` `'E\\OF'` `' '`
-   —— bash 對整個**詞**做 quote removal，所以這十二種的終止字只有三個相異值；任何一種被讀錯，
+   —— bash 對整個**詞**做 quote removal，所以這十二種的終止字只有四個相異值（EOF、EOFx、E\\OF、空白）；任何一種被讀錯，
    heredoc 不是提早終止（資料變 code）就是永不終止（吞掉後面的真管線）。
 2. 引號種類（4）：無／`'…'`／`"…"`／`$'…\\'…'`（ANSI-C，含 `\\'`）
 3. `#` 的位置（6）：行首／空白後／字母後／`${VAR#…}` 內／反引號內／`$( )` 內
@@ -21,12 +21,12 @@
 
 **維度不是全域取積**（12×4×6×8×3×2 = 13824 檔，一輪 oracle 要跑一小時以上，沒有人會在 CI 跑它）。
 改成**三組**各自取積，每一組把會互相影響的維度放在一起——分組本身也是封閉列舉：
-  A：1 × 4 × 6      （heredoc 的分隔字 × block 形式 × 內文縮排）×2 個方向 = 384
+  A：1 × 4 × 6      （heredoc 的分隔字 × block 形式 × 內文縮排）×2 個方向 = 512（R33 把分隔字從 12 個加到 16 個後，384 已是舊值）
   B：2 × 3 × 5      （引號種類 × 管線位置 × `#` 位置的前五種）              = 60
   C：3 × 4          （`#` 的六個位置 × block 形式）                          = 48
 每個檔產生前先用 PyYAML 驗一次；不合法的丟掉並在結尾報數（**不靜默跳過**）。
 
-**已知類別由構造決定、寫進檔頭**（R37，#33 verify R36 第 2 列）：神諭的類別閘門是雙向的——被歸進已知類別 X 的 step
+**已知類別由構造決定、寫進檔頭**（R37；R36 第 2 列要求神諭的類別閘門雙向，這裡讓它在產生語料上也量得到）：神諭的類別閘門是雙向的——被歸進已知類別 X 的 step
 數必須等於檔頭 `# KNOWN-CLASS: X` 的行數。這一支知道每個檔的每個維度，所以**由構造**判定哪些檔該落進哪一類並寫出宣告，
 不是事後照神諭的輸出補（那樣宣告只是神諭的影子，雙向閘門就量不到東西）。封閉列舉，**只有兩種**，不得依相似類推第三種：
   S-2 —— A 組、方向 real、折疊 block（`>` 開頭）、內文確實被折成一行、終止字非空白：
@@ -124,7 +124,7 @@ def _folds_to_one_line(shdr, extra, dterm):
     if not shdr.startswith(">"):
         return False                       # literal：換行保留
     if any(ch.isdigit() for ch in shdr.split("#")[0]) and extra:
-        return False                       # 明寫縮排 2、內文多縮一格 ⇒ 每一行都是 more-indented，YAML 不折
+        return False                       # 明寫縮排 2、內文多縮一格 ⇒ 多數行是 more-indented（終止字非空白的分隔字下四行皆是；終止字為空白／空字串的三個分隔字下，該行渲染後是空白行，不算 more-indented，其餘三行已足以阻止折疊），YAML 不折
     return bool(dterm.strip())             # 終止字空白 ⇒ 那一行是 YAML 空行，折疊會留下換行
 
 
@@ -181,7 +181,7 @@ def group_c():
         yield "c-%s-%s" % (hn, sn), body, shdr
 
 
-# ── D 組的維度（R33 新增；每一條對應 R31／R32 的一個機制，且 `shapes.py` 各有一列）──
+# ── D 組的維度（R33 新增；大多對應 R31／R32 的一個機制——plain／quoted-brace 兩個是基準案例，R32-3、R32-4 落在 A 組的 DELIMS）──
 # 維度 7：參數展開的內部構造（5）——決定「展開在哪裡結束」，是 `${…}` 消費器的實際觸發條件
 # 第三欄：bash 是不是在**核心裡面**就結束這個展開（R37：由構造決定已知類別 G，見 docstring）。只有字面的 `{b}`——
 # bash 不為字面 `{` 配對，第一個未引用、未逃脫的 `}` 就收尾；`${SEP}` 的 `}` 收的是內層展開，外層繼續。
@@ -206,8 +206,8 @@ YAML_SHAPES = ["tag-bang", "ghexpr-plain", "ghexpr-brace-in-quote", "ghexpr-fold
 def group_d():
     """R31／R32 機制的構造維度。
 
-    為什麼要這一組（#33 verify R32 DA-9）：`shapes.py` 對 R31 的每一個機制都報 0 檔——語料**沒有**
-    那些形狀，而 CHANGELOG 仍然拿那份語料當「不一致 0」的證據。**分母裡沒有的形狀，量到的 0 不是證據。**
+    為什麼要這一組（#33 verify R32 第 7 列）：`shapes.py` 對 R31 的每一個機制都報 0 檔——語料**沒有**
+    那些形狀，而 CHANGELOG 當時拿那份語料當「不一致 0」的證據（本輪已在同一個 commit 改述）。**分母裡沒有的形狀，量到的 0 不是證據。**
     """
     for (cn, core, closes_early), place in itertools.product(PARAMEXP_CORES, ("in", "out")):
         if place == "in":      # 管線文字在展開**裡面** ⇒ 提早結束展開的 lint 會看到假管線
@@ -240,12 +240,12 @@ def group_d():
 
 
 def group_e():
-    """R34 找到、R35 修掉的機制——每一個都有「讀錯就繞過」（data）與「讀錯就誤擋」（real）兩個方向。
+    """R34 找到、R35 修掉的機制——大多數有「讀錯就繞過」（data）與「讀錯就誤擋」（real）兩個方向，少數只有一個方向。
 
     為什麼要這一組（#33 verify R34 中心發現）：四個語意不同的最小修法，在**量過的每一張網上**都得到同一組數字
     （前兩條四軸全量；後兩條只量了 selftest 與／或 642 檔語料，神諭與三軸那幾格沒有量——R35 CHANGELOG 已更正，
     R37 補改這一句，R36 第 24 列）——網只對作者點名的輸入有鑑別力。這一組把 R34 的探針形狀做成構造維度，讓語料本身也看得見它們。
-    lint fail-closed（PARSE）的形狀自宣告 `parse-red`（同 D 組的 `$(…)` 分隔字）。
+    大部分自宣告 `parse-red` 的形狀確實讓 lint 走 PARSE，但 `paramexp-backtick-in` 與 `paramexp-cmdsubst-in` 目前實測是 RULE-red，不是 PARSE（同 A 組的 `$(…)` 分隔字（DELIMS 裡的 cmdsubst 條目；D 組的 DELIM_WORDS 沒有 `$(...)` 分隔字））。
     """
     P = 'echo "$PR_TITLE"'
     Z = ["cat <<'Z'"]
@@ -304,15 +304,15 @@ TAG_BANG_DOC = (HEAD + '      - name: tag-bang\n        run: !!str "echo hi | '
 # 讓 `oracle.py` 用 strict 模式對帳（機制見 oracle.py R35 段：`# LINT-ARGS:` 已經是既有機制，這裡只是餵它）。
 #
 # 六個封閉列舉的維度（**只有這六個，不得在別處「順便」擴充**——改動這份清單是另一次 change）：
-#   1. shell 值（SHELL_TEMPLATES，18）：`--strict` 只接受字面 `bash`（含引號）；樣板（`bash -e {0}`…）與非 bash
-#      shell（`sh`／`pwsh`／`python {0}`）過去被 pipefail／shell 值兩條規則的字面清單漏掉（R36 第 4 列）。
-#   2. env 鍵（ENV_KEYS）：**只有 `SHELLOPTS`**，值 `xtrace`／`verbose`，三層（workflow／job／step）各一檔。
+#   1. shell 值（SHELL_TEMPLATES，18）：`--strict` 接受 `bash`／`/bin/bash`／`/usr/bin/bash` 加白名單選項的整個樣板家族（不含 xtrace/verbose 以外的選項一律拒）；樣板（`bash -e {0}`…）與非 bash
+#      shell（`sh`／`pwsh`／`python {0}`）本來就不接受。R36 第 4 列點名的是 pipefail 規則的 `is_bash` 旗標漏掉 `bash {0}`／`bash -e {0}`／`bash -l {0}`／`bash -el {0}`／`bash --noprofile --norc -e {0}` 五種**仍是 bash** 的樣板，不是非 bash shell 或另一條規則的字面清單問題。
+#   2. env 鍵（ENV_KEYS）：**只有 `SHELLOPTS`**，值只有 `xtrace`（`verbose` 被 `ENV_VALUES` 排除，理由見下），三層（workflow／job／step）各一檔，共 3 檔。
 #      lint 的 `ENV_TRACE_KEYS` 封閉列舉其實有五個（另加 `BASHOPTS`／`BASH_ENV`／`ENV`／`BASH_XTRACEFD`），但
 #      **這裡刻意只放 `SHELLOPTS`**：本機 bash 5.3 實測（`/opt/homebrew/bin/bash`）——`BASHOPTS=xtrace` 不是合法
 #      shopt 名稱、沒有任何可觀察效果；`BASH_XTRACEFD=1` 單獨存在（沒有真的開 xtrace）也沒有可觀察效果；
 #      `BASH_ENV`／`ENV` 指向的檔案在神諭的臨時 HOME 裡必然不存在（`oracle.py` 自己的檔頭盲區）。放這四個鍵會讓
 #      神諭判「RULE-red ∧ piped ∧ 無外流」＝**不一致：誤擋**——那是神諭沙箱的真實盲區，不是 lint 的缺陷，不該
-#      灌進「不一致」欄位假裝是證據。`SHELLOPTS=xtrace／verbose` 是唯一在這個沙箱裡有真實、可觀察效果的鍵。
+#      灌進「不一致」欄位假裝是證據。`SHELLOPTS=xtrace` 是唯一在這個沙箱裡有可觀察外流效果的值；`verbose` 沒有可觀察效果（實測其迴響是未展開的原始碼行，不含 PR_TITLE 的值），這也是 `ENV_VALUES` 排除 verbose 的理由。
 #   3. fd 轉向拼法（FD_SPELLINGS，6）：`>&2`／`>&02`／`>&"2"`／`>/dev/stderr`／`>"/dev/stderr"`／`>/dev/fd/2`。
 #      **不含 `/proc/self/fd/2`**：`oracle.py` 檔頭明寫這是它自己的盲區（macOS 沒有 `/proc`），本機實測
 #      `bash: /proc/self/fd/2: No such file or directory`——生成這個會製造假的「量不到」／「誤擋」雜訊，
@@ -430,9 +430,7 @@ def group_strict():
                 "env SHELLOPTS=%s at %s" % (val, layer), body, **kw)
 
     # 維度 3：fd 轉向拼法 —— 每種拼法都在同一條命令上，緊接 `2>&1`（構造本身仍然外流，見檔頭）。固定
-    # `shell: bash`：理由同維度 5／6——不寫 shell 時，缺 pipefail 讓某些拼法（`>&2`／`>&02`／`>&"2"`）
-    # 落到「不可比 RULE-pipefail」的早退分支，連 fd 規則本身有沒有抓到都驗不到（對 mutation 負對照下實測到：
-    # 拿掉「dup 規則」後這三個拼法從「一致」直接消失變成「不可比」，而不是正確地翻成「不一致：繞過」）。
+    # `shell: bash`：理由同維度 5／6：不寫 shell 時，這六個拼法一律同時觸發 fd RULE 與 pipefail RULE（實測驗證，不限於三個拼法），所以其實從不會落進「唯一 RULE 是 pipefail」的不可比早退分支——固定 `shell: bash` 對這個維度不是必要的，維度 5（gap==0 基準情境）與維度 6（wrapped 情境）才會真的遇到這個早退分支。
     for slug, spelling in FD_SPELLINGS:
         body = ['printf \'%%s\\n\' "$PR_TITLE" %s 2>&1 | %s' % (spelling, NEUT)]
         yield "f-fd-%s" % slug, LA + _strict_doc("fd spelling %s" % slug, body, step_shell="bash")
@@ -471,10 +469,10 @@ def main():
     ap.add_argument("--count", action="store_true", help="只印檔數，不寫檔")
     ap.add_argument("--strict", action="store_true",
                      help="產生 `--strict` 組（shell 值／env 鍵／fd 轉向拼法／xtrace 拼法／多段管線／子殼層包管線）"
-                          "，取代預設的 A-E 組——不與預設模式混寫同一次呼叫，保證預設模式的輸出不受這個分支影響")
+                          "，取代預設的 A-E 組——不與預設模式混寫同一次呼叫，這個分支不寫任何共用狀態")
     a = ap.parse_args()
-    # **`--strict` 是完全獨立的分支**：預設模式（下面）的程式碼一個字元都不因為這個分支的存在而改變，
-    # 保證 `shellgen.py --out DIR` 的輸出對任何版本的這份檔案都逐位元組不變（見 R37 放行條件第 6 條第 1 款）。
+    # **`--strict` 是完全獨立的分支**：預設模式（下面）的執行路徑不因為這個分支的存在而改變（R37 另外在 A、D 組加了 `# KNOWN-CLASS:` 檔頭，那是獨立的改動），
+    # 不代表預設模式的輸出逐位元組不變：R37 在 A、D 組加了 `# KNOWN-CLASS:` 檔頭（61 檔多一行），內容行不變。
     if a.strict:
         cases = list(group_strict())
         if a.count:

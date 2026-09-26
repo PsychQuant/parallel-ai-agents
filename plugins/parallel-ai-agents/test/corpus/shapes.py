@@ -229,17 +229,17 @@ SHAPES = [
     ("R35-12 折疊區塊以空行開頭（`prev_flush_content` 的 EXPECTED_SURVIVE 到得了的唯一情形）",
      lambda text, runs: _folded_leading_blank(text)),
     ("R35-13 折疊內容行帶行尾空白（`strip→id` 的 EXPECTED_SURVIVE 的觸發條件）",
-     # 不能用 `raw()`：它只看結構行，行尾空白在 block scalar **內文**裡（第一版如此，閘門當場報 0 檔）。
+     # 不能用 `raw()`：它只看結構行，行尾空白在 block scalar **內文**裡——`raw()` 依設計看不到內文，套在這個形狀上必然報 0 檔。
      lambda text, runs: any(b.strip() and b != b.rstrip() for body in _folded_blocks(text) for b in body)),
     # ── R37 的機制各自一列（#33 verify R36 master 第 3–17、21、22 列，以及合併時修的反引號註解）。
     # 命名沿用既有慣例：`R37-N <一句話說明觸發條件>`。列的分母是 `--require-nonzero R3`（前綴比對，R37 也吃得到）；
-    # `shellgen.py --strict` 組是這些列的主要非零來源——預設 A-E 組沒有 `shell:`／`env:`／`defaults:` 維度，
-    # 這些列在純預設語料上大多是 0（見 R36 第 19 列：「--strict 沒有任何作者無關的網」正是這裡要補的分母）；
-    # 少數（R37-6、R37-9）恰好也被既有 A-E 組的其他維度覆蓋，一併算數。
+    # `shellgen.py --strict` 組是 R37-1、2、4、5、6、7、8 這七列的主要非零來源（R37-3、9、10 全部來自既有 A-E 組，見下）——預設 A-E 組沒有 `shell:`／`env:`／`defaults:` 維度，
+    # R37-1、2、4、5、6、7、8 這七列在純預設語料上是 0（見 R36 第 19 列：「--strict 沒有任何作者無關的網」正是這裡要補的分母）；R37-9、R37-10 反而完全靠預設語料量到；
+    # 少數（R37-3、R37-9、R37-10）恰好也被既有 A-E 組的其他維度覆蓋，一併算數——這三列在純預設語料上反而是它們唯一的非零來源。
     #
     # **只收「本工作包（R36 放行條件第 6 條：--strict 語料）驗過非零」的機制**——這是刻意的收斂，不是遺漏：
-    # 下面 13 個 R37 機制對應 master 第 5(a)(b)(c)、7、10、13、14、15、16、18、17（第二段）、19、21、22 列，
-    # 全部屬於**另外三個修法包**（r37c 雙引號詞法／r37d 命令位置詞法與未收尾構造／r37e decode+dedent+fold）
+    # 下面 13 個 R37 機制對應 master 第 5(a)(b)(c)、7、10、13、14、15、16、17（第二段）、21、22 列，
+    # 其中第 13 列（defaults 根層級 flow 形式）其實屬於 r37b（已有既有 fixture）；其餘屬於**另外三個修法包**（r37c 雙引號詞法／r37d 命令位置詞法與未收尾構造／r37e decode+dedent+fold）
     # 的觸發形狀，不是 `--strict` 六個維度（shell 值／env 鍵／fd 轉向拼法／xtrace 拼法／多段管線／子殼層包管線）
     # 的產物。**寫成列會是空頭支票**：`shellgen.py` 目前沒有任何維度會產生這些形狀，加了列只會讓
     # `--require-nonzero R3` 這個 CI 硬閘門在合併後對著注定是 0 的分母紅——除非那三個修法包各自也把
@@ -274,7 +274,7 @@ SHAPES = [
     # 這一列**刻意不用 `hollow()`**：`hollow()` 會把引號內容挖成空白，`>&"2"` 的 `2` 正是要偵測的目標，挖掉就
     # 測不到。改用「逐一找 `>&` 後面的數字，只要有任何一個不是單獨的 `1`」——比對排除 `2>&1`（strict 要求的
     # 合規收尾）本身這個常見的假警報（第一版用整行排除 `>&1\b`，而每個合規檔都帶 `2>&1`，整行排除把三個
-    # 拼法全部誤判成 0；改成逐一比對後才量到 3 檔）。
+    # 拼法全部誤判成 0；改成逐一比對後才量到非零檔數——目前在 `--strict` 語料上實測是 11 檔，不是 3 檔）。
     ("R37-4 fd 複製到非 1/2、或加引號／前導零的拼法（`>&02`／`>&\"2\"`）",
      lambda text, runs: any(re.search(r'>&"?0*[02-9]"?(?!\d)', l) for run in runs for l in run.split("\n"))),
     ("R37-5 重導向目標落在 /dev 或 /proc（fd 流向白名單以外）",
@@ -331,10 +331,10 @@ def _folded_run_three_plus(text):
     觸發條件是**折疊鏈長度 ≥ 3**，形狀就要照那個條件寫。"""
     lines = text.split("\n")
     for i, l in enumerate(lines):
-        # **key 限定 `run`**（#33 verify R34 regression M-1；文字更正見 #33 verify R37 第 24 列）：前一版收
-        # 任何 key 的 `>`，野外綠分母那 13 檔裡**最多的是 `if:`（6 檔）**，`stale-issue-message:` 只有 2 檔——
-        # 折疊的 run 區塊是 0 檔，而 CHANGELOG 據此說「野外 0/0 對 R32-6 是證據」（這句本身不受影響，只是
-        # 前一句「全部是 stale-issue-message: > 之類」的舉例不準，兩輪對外宣稱查核都只看過散文、沒看這裡）。
+        # **key 限定 `run`**（#33 verify R34 regression M-1；文字更正見 #33 verify R36 第 24 列）：前一版收
+        # 任何 key 的 `>`，野外綠分母那 13 檔裡**最多的是 `if:`（6 檔）**，`stale-issue-message:` 只有 2 檔（其餘 5 檔散在別的 key，未逐一列出）——
+        # 折疊的 run 區塊是 0 檔，而 CHANGELOG 據此說「野外 0/0 對本輪任何一個機制都不是證據」（這句話正是這次 key 限定修法（regression M-1）的直接產物（分母從 13 塌縮到 0），不是不受影響；不受影響的只是
+        # 前一句「全部是 stale-issue-message: > 之類」的舉例本身仍不準，兩輪對外宣稱查核都只看過散文、沒看這裡）。
         m = re.match(r"^(\s*)(?:- )?run:\s*>[+-]?\d?[+-]?\s*(?:#.*)?$", l)
         if not m:
             continue

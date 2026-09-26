@@ -58,9 +58,9 @@ EXPECTED_SURVIVE = {   # id → 理由（依構造等價）。每一條都要能
     # `<<<` 分支關掉後落到 `<<` 分支，分隔字從第三個 `<` 起讀、而 `<` 在 SHELL_WORD_BREAK 裡 → delim 空 →
     # 不排 heredoc。依構造等價；分支保留是把「here-string 不是 heredoc」寫成程式碼（mutation_check 同一條理由）。
     "startswith→F|shell_scan|if line.startswith(\"<<<\", i):|1": "落到 `<<` 分支後 delim 為空，不排 heredoc",
-    # **R32 DA-2 之後，`fold_block` 在這裡只剩一條。** R31 列了四條，理由全部建立在「佔位的空字串讓
-    # 下一行不再折」——那句話描述的就是那個缺陷本身（兩兩折而非遞移折）。等價論證的根據是 bug，
-    # 論證就隨 bug 一起作廢，**不得改寫後沿用**。R33 重寫了 `fold_block`（遞移）；**「對 PyYAML
+    # **R32 DA-2 之後，`fold_block` 在這裡只剩一條。** R31 列了四條，只有一條理由明白點名「佔位的空字串讓
+    # 下一行不再折」（另外兩條說的是 `more`／`prev_more` 已擋住折疊，第四條說的是折進去的只差行尾空白）——那句話描述的就是那個缺陷本身（兩兩折而非遞移折）。等價論證的根據是 bug，
+    # 論證就隨 bug 一起作廢，**不得改寫後沿用**。R32 重寫了 `fold_block`（遞移）；**「對 PyYAML
     # 逐行相符」這句話 R37 改成有範圍、可重跑的量測**（#33 verify R36 requirements 第 20 列）：
     # `test/corpus/foldcheck.py` 窮舉「10 空白基準縮排 ＋ 7 種前導（含 tab）× 3 種內容（空、`x`、帶行尾空白的
     # `x `）＋ 真正的空行」這 22 種行的所有組合，`run: |` 與 `run: >` 各比一次整字串與內容承載行。

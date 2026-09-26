@@ -1,4 +1,4 @@
-# #33 verify R37（R36 logic HIGH-3 附帶 LOW，codex 第 2 條）：`\U7fffffff` 的碼位遠超 Unicode 範圍
+# #33 verify R37（R36 第 5 列 (b) 附帶的第 21 列 LOW，Codex 第 2 條）：`\U7fffffff` 的碼位遠超 Unicode 範圍
 # （>0x10FFFF），前一版在呼叫 `chr()` 之前沒有檢查範圍——`chr(0x7fffffff)` 丟 `ValueError`，
 # lint 直接 traceback、rc=1 但不是走 fail-closed 那條路（後面排在它之後的檔案也不再檢查，
 # 不是可歸因的「這個輸入被擋下」）。現在任何 `\U` 解出的值只要 ≥0x80 就先回 None，

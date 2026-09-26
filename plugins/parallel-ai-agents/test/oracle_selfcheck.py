@@ -8,8 +8,9 @@ fixture 集裡的 must-fail 探針（`# ORACLE-MUST-FAIL:`）驗的是「神諭�
   2. **oracle↔lint 的 RULE 字面耦合檢查**：`ORACLE_LINT` 指到不含那兩句訊息的 lint，未突變的神諭必須在讀
      fixture 之前具名退出（`oracle-probes/lint-without-rule-messages.sh`）。
 這支把兩者寫成「期待失敗」：每一項斷言神諭的 rc 與輸出裡的一句話，全部成立 rc=0。`mutation_check.py` 的
-`oracle-inverted` 守備單位跑它，所以拿掉那兩道檢查的突變會讓這裡紅——R37 的神諭工作包原本把第 2 項列為
-「harness 結構上測不到」的預期存活，理由是「未突變＝綠」的前提；把期待寫成失敗就滿足了那個前提。
+`oracle-inverted` 守備單位跑它，所以拿掉那兩道檢查的突變會讓這裡紅——R37 的神諭工作包原本把第 1 項（must-fail 理由比對）列為
+「harness 結構上測不到」的預期存活；第 2 項（RULE 字面耦合檢查）是合併時才加的。「未突變＝綠」的前提對兩項都成立，
+把期待寫成失敗就滿足了它。
 
 封閉列舉，只有這兩項，不得依性質相似類推。
 

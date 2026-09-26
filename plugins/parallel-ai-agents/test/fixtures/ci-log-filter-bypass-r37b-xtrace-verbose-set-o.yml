@@ -1,5 +1,5 @@
 # #33 verify R36 第 8 列 → R37：xtrace 的各種拼法（set 的捆綁選項、shopt -o、非字面參數、經由 env 帶進子行程）。
-# verbose 當 xtrace 處理（R36 第 23 列）：`set -o verbose` 把讀到的每一行印到 stderr，run 裡直接內插 `${{ … }}` 時那就是 PR 文字。神諭量不到這一條（它只在互動 shell／配合 xtrace 時生效，神諭的 bash 看不到外流）：step 用帶 `-o pipefail` 的 bash 樣板，神諭只跑字面 `bash`、判不可比——這裡驗的只有 lint 的規則，不宣稱對帳過 runner。
+# verbose 當 xtrace 處理（R36 第 23 列）：`set -o verbose` 把讀到的每一行印到 stderr，run 裡直接內插 `${{ … }}` 時那就是 PR 文字。神諭量不到這一條（原因不是互動 shell 或搭配 xtrace 才生效——非互動的 script-file 執行下 `set -o verbose` 單獨就會把讀到的源碼行印到 stderr，已實測確認；量不到的真正原因是這步用了非字面 `bash` 的 shell 樣板，神諭的 shell-effective 檢查判「不可比」）：step 用帶 `-o pipefail` 的 bash 樣板，神諭只跑字面 `bash`、判不可比——這裡驗的只有 lint 的規則，不宣稱對帳過 runner。
 # LINT-ARGS: --strict
 # EXPECT: rule-red
 name: t

@@ -1,6 +1,6 @@
-# #33 verify R36 第 5 列 (c)（regression F1，DA 重現）：R35 把 `_param_end` 的兩個 `$[` 分支當死碼刪掉，理由是
+# #33 verify R36 第 5 列 (c)（regression，DA 重現）：R35 把 `_param_end` 的兩個 `$[` 分支當死碼刪掉，理由是
 # 「`$[…]` 裡不可能出現 `}`」——錯的。bash 5.3 把 `${…}` 裡的 `$[ … ]` 當巢狀結構配對，`}` 放在裡面照樣過 `bash -n`；
-# 整串是一個詞、管線沒有建立、PR 文字裸印（42e0e4a PARSE → 380e4a4 兩種模式 rc=0）。還原成 fail-closed。
+# 整串是一個詞、管線沒有建立、PR 文字裸印（42e0e4a 兩種模式皆 PARSE → 380e4a4 預設模式 rc=0（`$[` 繞過放行），`--strict` 模式 rc=1（但那是缺 pipefail 的無關規則命中，不是擋到這個 `$[` 繞過））。還原成 fail-closed。
 # EXPECT: parse-red
 name: t
 on: pull_request

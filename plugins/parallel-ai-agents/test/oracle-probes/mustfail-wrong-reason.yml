@@ -2,7 +2,7 @@
 # run 區塊沿用 known-r37a-mustfail-s2-strict-not-blocking（神諭真的會對它失敗），但宣告的理由是一個
 # 不會出現在任何失敗訊息裡的字串。未突變的神諭要求理由字面出現才算探針成立 ⇒ rc=1；把理由比對拿掉
 # （只看「有沒有失敗」）⇒ rc=0。放進 fixture 集會讓未突變的神諭本來就紅，所以放在這裡。
-# ORACLE-MUST-FAIL: 這串文字不會出現在任何判定或失敗訊息裡
+# ORACLE-MUST-FAIL: 這串文字不會出現在任何判定或 failures 條目裡（神諭事後把宣告的理由原樣印回診斷行，不算在內）
 # KNOWN-CLASS: S-2
 name: t
 on: pull_request

@@ -1,4 +1,4 @@
-# #33 verify R37（R36 logic HIGH-3／R35 回歸，同一機制的 `\x` 版本）：`\xe9`（233）解成 `chr(0xe9)`
+# #33 verify R37（R36 第 5 列 (b)（logic）／R35 回歸，同一機制的 `\x` 版本）：`\xe9`（233）解成 `chr(0xe9)`
 # ＝ Unicode `é`，bash 卻是原始位元組 0xE9——同一個「lint 解 Unicode 碼位、bash 是原始位元組」錯配。
 # 6cf6864 rc=1 → 380e4a4 rc=0（兩種模式）。
 # EXPECT: parse-red

@@ -1,4 +1,4 @@
-# #33 verify R36 第 7 列（logic HIGH-4 p14）：同一行收尾的 `${X:-$(cat <<EOF)}`——bash 5.3 從下一行讀 heredoc 內文
+# #33 verify R36 第 7 列（logic 與 Codex 第 1 條）：同一行收尾的 `${X:-$(cat <<EOF)}`——bash 5.3 從下一行讀 heredoc 內文
 # （警告 unterminated here-document，內文變成命令替換的輸出），`_cmdsub_end` 完全沒登記它 ⇒ 內文裡的假管線變 code ⇒
 # 380e4a4 放行。命令替換裡的 heredoc 在 `${…}` 裡本 lint 不解析 ⇒ fail-closed。
 # EXPECT: parse-red

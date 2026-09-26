@@ -1,4 +1,4 @@
-# #33 verify R37（R36 協調者 c2 探針；R36 logic HIGH-3 的兩位元組變體）：兩個 `\x` 逃脫湊出 `é` 的
+# #33 verify R37（R36 協調者的探針；R36 第 5 列 (b) 的兩位元組變體）：兩個 `\x` 逃脫湊出 `é` 的
 # UTF-8 編碼（`\xc3\xa9`）。`_ansic_decode` 逐個解成兩個 Unicode 碼位串接，bash 是兩個原始位元組
 # （剛好也是同一個字的 UTF-8 編碼，但 lint 的字串物件與 bash 的位元組序列不是同一種東西，delim
 # 比對必須 fail-closed，不能靠巧合）。bash 5.3 對帳：heredoc 以檔案最後一行單一的 `é` 收尾，

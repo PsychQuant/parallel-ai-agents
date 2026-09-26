@@ -1,5 +1,5 @@
 # #33 verify R36 第 8、9 列 → R37：群組 `{ …; }`／`( … )` 收尾後緊接 `2>&1 |`（或 `|&`）進 neutralise，群組裡的 fd 2 就是管線——不算外流。
-# 負對照（兩種模式都該放行）：R36 點名的 `{ printf … >&2; } 2>&1 | …`；跨行群組、子殼層裡另存 fd、群組裡開 xtrace、`|&`；
+# 負對照（預設模式應放行；`--strict` 因本檔所有 step 都未宣告 `shell: bash`、pipefail 因此判非成立，目前仍紅、屬未修的已知缺口，不宣稱兩種模式都放行）：R36 點名的 `{ printf … >&2; } 2>&1 | …`；跨行群組、子殼層裡另存 fd、群組裡開 xtrace、`|&`；
 # 不會把 stdout 帶離管線的重導向（`>/dev/null 2>&1`、`2>/dev/null`、`&>/dev/null`、`>&1`、`2>&-`、寫檔、heredoc 接寫檔、`exec 2>&1`）；
 # `set -euo pipefail`／`set +x`／`set -- -x`（位置參數）；以及名字相近、但不是那五個的 env 鍵。
 # EXPECT: pass

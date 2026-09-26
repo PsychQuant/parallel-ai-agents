@@ -80,7 +80,7 @@ jobs:
 
       # #33 verify R30 §六「第 14 類：網的投餵」：上一個 step 餵給神諭的是**作者寫的** fixture，
       # 而同一支神諭在別人產生的語料上會報出一堆。這個 step 把投餵也拿掉——`shellgen.py` 按封閉的
-      # 構造維度取笛卡兒積產生語料，神諭對它必須零不一致。R31 寫在這裡的「新 lint 0」是**儀器失能**（哨兵被
+      # 構造維度取笛卡兒積產生語料，神諭對它不得有未知的不一致（已知類別與 `KNOWN_DISAGREE` 以外）。R31 寫在這裡的「新 lint 0」是**儀器失能**（哨兵被
       # heredoc 吞掉，同一份語料報「量不到 60」）；R33 修哨兵後同一份是「不一致 55」、再修 fold_block 後才是 0（見 CHANGELOG R32 段）。
       # `--strict` 組寫進**同一個** `$RUNNER_TEMP/gen` 目錄（檔名互不相碰：預設組 `gen-a-*.yml`…`gen-e-*.yml`，
       # `--strict` 組 `gen-f-*.yml`）——下一行 `oracle.py "$RUNNER_TEMP"/gen/*.yml` 因此一次對帳兩組；

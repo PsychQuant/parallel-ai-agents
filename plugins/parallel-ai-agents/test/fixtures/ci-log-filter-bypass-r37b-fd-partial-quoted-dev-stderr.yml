@@ -1,5 +1,5 @@
 # #33 verify R36 第 8 列 → R37：fd 流向規則按流向判——重導向目標看去引號後的字、任何 fd 複製（`2>&1`／no-op `>&1` 除外）、xtrace 的各種拼法。
-# 只有一段加引號 `>/dev/"stderr"`（R36 點名）
+# 只有一段加引號 `>/dev/"stderr"`（相鄰輸入，R36 沒點名——R36／Codex 第 3 條點名的是全引號 `>"/dev/stderr"`，見 fd-dquoted-dev-stderr.yml）
 # EXPECT: rule-red
 name: t
 on: pull_request

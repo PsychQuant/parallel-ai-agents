@@ -2,7 +2,7 @@
 # 前一版用固定的 env 跑，`SHELLOPTS: xtrace` 這類從 env 帶進的 xtrace 神諭量不到。這一檔不靠任何 lint 缺陷：
 # 三層的值都到了、而且 step 蓋過 job、job 蓋過 workflow，第一行才不會印 PR 文字——少帶一層、或覆蓋順序錯，
 # 那一行就印出 PR 文字，神諭（照 lint 限制第 2 條）把它歸進已知類別 G，而這一檔**沒有**宣告 KNOWN-CLASS ⇒ rc=1。
-# 相鄰輸入（R36 點名的是 SHELLOPTS 等五個鍵）：這裡量的是「所有純量值、三層、覆蓋順序」，不是那五個鍵名。
+# 相鄰輸入（R36 第 8 列點名的是 `SHELLOPTS: xtrace` 與 `BASH_ENV`）：這裡量的是「所有純量值、三層、覆蓋順序」，不是那幾個鍵名。
 # EXPECT: pass
 name: t
 on: pull_request

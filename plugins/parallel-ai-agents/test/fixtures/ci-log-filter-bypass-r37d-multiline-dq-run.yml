@@ -1,4 +1,4 @@
-# #33 verify R36 第 21 列 LOW（logic／R35 三軸順帶找到、6cf6864 就有的繞過）：`run:` 的值是**跨 YAML 實體行**
+# #33 verify R36 第 21 列 LOW（logic）：`run:` 的值是**跨 YAML 實體行**
 # 的雙引號純量——`"echo hi` 開在第一行、`| python3 …neutralise.py"` 收在第二行，這是合法 YAML（PyYAML 解出
 # `echo hi | python3 …neutralise.py`，runner 真的執行帶管線的那條命令，本來會被過濾）。前一版
 # `yaml_decode_scalar` 對「開頭是引號但沒在同一行收尾」的字串不回 `None`（只有 `v[0]==v[-1]=='"'` 才判定，

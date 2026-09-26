@@ -73,11 +73,11 @@ SUITES = {
     "lint":       (LINT,       lambda: ["bash", str(LINT), "--selftest"],     PAI),
     "neutralise": (NEUTRALISE, lambda: [sys.executable, str(TESTS)],          PACK),
     # R37（#33 verify R36 條件 7）：神諭（`test/oracle.py`）進入突變範圍。**不帶參數**執行——只有
-    # 不帶參數，`test/oracle.py` 才會掃 `test/fixtures/ci-log-filter-*.yml` 全集並檢查
-    # `FIXTURE_CLASS_TOTALS`／`FIXTURE_MUSTFAIL_TOTAL`／must-fail 探針；帶檔案參數會跳過這些釘死的
-    # 總數檢查（見 `oracle.py` 的 `if not argv:`），量到的網會變窄。`oracle.py` 自己從 `__file__`
+    # 不帶參數，`test/oracle.py` 才會掃 `test/fixtures/ci-log-filter-*.yml` 全集並額外檢查
+    # `FIXTURE_CLASS_TOTALS`／`FIXTURE_MUSTFAIL_TOTAL` 這兩個釘死總數；must-fail 探針本身的理由比對不受此限，帶檔案參數一樣會跑；帶檔案參數只會跳過 `FIXTURE_CLASS_TOTALS`／`FIXTURE_MUSTFAIL_TOTAL` 這兩個釘死的
+    # 總數檢查（見 `oracle.py` 的 `if not argv:`），must-fail 探針本身的理由比對不在此限，量到的網會變窄。`oracle.py` 自己從 `__file__`
     # 解析 `lint-ci-log-filter.sh` 與 `fixtures/`（`HERE = pathlib.Path(__file__).resolve().parent`），
-    # 跟 mutation_check 執行時的 cwd 無關，所以不需要像 `scratch-copy/mutcheck.py` 那樣另外 symlink。
+    # 跟 mutation_check 執行時的 cwd 無關，所以不需要另外 symlink。
     "oracle":     (ORACLE,     lambda: [sys.executable, "test/oracle.py"],    PAI),
     # 神諭的**反向探針**：只有未突變的神諭**失敗**時才成立的兩項檢查（must-fail 探針的理由比對、oracle↔lint 的
     # RULE 字面耦合），寫成「期待失敗」的斷言放在 `test/oracle_selfcheck.py`——未突變時它 rc=0，滿足
@@ -358,9 +358,9 @@ MUTATIONS += [
     ("lint: jobs 子樹的 flow 值 fail-closed（R26 M1(b)）",
      '        if (":" in code_val and top_key == "jobs") or not balanced:',
      "        if False:", "lint"),
-    # ── R30 H-1…H-6／MB-1…MB-12（G-R31-1）：本輪每個新機制一個靶 ──
+    # ── R30 H-1…H-6 與 MB-1、7、8、9、11、12（G-R31-1）：lint 裡的新機制各一個靶；其餘 MB 項的修法在神諭與語料工具裡 ──
     # 每一條的括號裡寫「關掉它，哪個 fixture 翻色」——答不出來的不該進來。
-    ("lint: heredoc 分隔字做整詞 quote removal（R30 H-1 → bypass-heredoc-delim-quote-infix/-suffix/-empty-quotes/-split）",
+    ("lint: heredoc 分隔字做整詞 quote removal（R30 H-1 → good-dq-delim-dollar-literal、bypass-heredoc-in-dq-cmdsubst 等 20 張）",
      '                    if c in ("\'", \'"\'):\n                        saw_word = True',
      "                    if False:\n                        saw_word = True", "lint"),
     ("lint: `$\'…\'` 的 `\\\'` 是逃脫不是收尾（R30 H-2 → 由產生語料的 ansic 維度守）",
@@ -369,7 +369,7 @@ MUTATIONS += [
      '\n            if line.startswith("${", i):\n                # **只有巢狀的', '\n            if False:\n                # **只有巢狀的', "lint"),
     ("lint: 反引號是詞界（R30 H-4 → bypass-backtick-hash）",
      'SHELL_WORD_BREAK = " \\t;&|()<>`"', 'SHELL_WORD_BREAK = " \\t;&|()<>"', "lint"),
-    ('lint: 折疊 block scalar 先折再掃（R30 H-5 → bypass-folded-scalar-comment）',
+    ('lint: 折疊 block scalar 先折再掃（R30 H-5 → bypass-folded-comment-eats-next-line、-folded-three-content-lines 等 5 張）',
      'scan_in = fold_block(dedent_block(run_lines, explicit_pad), block_folded)',
      'scan_in = dedent_block(run_lines, explicit_pad)', "lint"),
     ('lint: 管線左邊必須有東西（R30 H-6 → bypass-leading-pipe-literal）',
@@ -387,11 +387,11 @@ MUTATIONS += [
      '                code.append("\'" if ch == "\'" else " ")', '                code.append(" ")', "lint"),
     ("lint: 雙引號字元留在 code 裡（R30 MB-12 → good-empty-quotes-before-neutralise）",
      '                code.append(\'"\' if ch == \'"\' else " ")', '                code.append(" ")', "lint"),
-    ("lint: root_indent 由解析器認定的 key 行決定（R30 MB-7 → bypass-shallow-continuation-root-indent）",
+    ("lint: root_indent 由解析器認定的 key 行決定（R30 MB-7 → bypass-shallow-continuation-flow-mapping）",
      "    root_indent = min((ind for _i, ind, _k in key_lines), default=0)",
      "    root_indent = min((len(m.group(1)) for i in range(len(raw)) for m in [KEY_RE.match(norm[i])] if m), default=0)",
      "lint"),
-    ("lint: tag 也 fail-closed（R30 MB-8 → bypass-tag-flow-mapping）",
+    ("lint: tag 也 fail-closed（R30 MB-8 → bypass-tag-value-nested）",
      '            if val.startswith(("&", "*", "<<", "!")):', '            if val.startswith(("&", "*", "<<")):', "lint"),
     ("lint: 引號 key 先解碼再比對、解不出來就當可能是 run（R30 MB-9 → bypass-hexkey-tab-run）",
      '            if dec == "run" or dec is None:', '            if dec == "run":', "lint"),
@@ -480,9 +480,9 @@ MUTATIONS += [
     ('lint: 雙引號裡的命令替換開 heredoc fail-closed（R35 → bypass-heredoc-in-dq-cmdsubst）',
      '                    quote = None; code.append(line[i:i + w]); i += w; prev_sig = "`" if w == 1 else "("\n                    cmd_pos = True           # 命令替換裡的第一個詞是新命令（合併 r37c×r37d：c 的雙引號分支原本不知道 cmd_pos）\n                    continue\n',
      '                    code.append(" "); i += 1; prev_sig = ch\n                    continue\n', "lint"),
-    ("lint: `$'…'` 跨行 fail-closed（R34 logic F3 r2 → bypass-ansic-quote-multiline）",
+    ("lint: `$'…'` 跨行 fail-closed（R34 logic F3 r2 → bypass-ansi-c-quote-unterminated）",
      '                if j >= n:\n                    # 跨行的 ANSI-C 字串', '                if False:\n                    # 跨行的 ANSI-C 字串', "lint"),
-    ("lint: 命令替換裡的 heredoc 遇「以終止字開頭」的行 fail-closed（R34 logic F3 r1 → bypass-heredoc-in-cmdsubst-prefix-terminator）",
+    ("lint: 命令替換裡的 heredoc 遇「以終止字開頭」的行 fail-closed（R34 logic F3 r1 → bypass-heredoc-in-dq-cmdsubst-prefix-terminator、bypass-heredoc-in-cmdsubst-after-inner-parens）",
      '            elif in_sub and delim and probe.startswith(delim)', '            elif False', "lint"),
     ("lint: 反引號深度（R35 → bypass-heredoc-in-backticks-prefix-terminator）",
      '                bt = not bt\n', '                pass\n', "lint"),
@@ -510,14 +510,14 @@ MUTATIONS += [
 
 # ── R35（#33 verify R34 的 shell／stderr／--strict 規則：每一條都在 test/ 複本上單獨還原、看過它翻色）──
 MUTATIONS += [
-    ('lint: step 的 shell 不是字面 bash ⇒ PARSE（R34 security S-3 → bypass-shell-python、-sh、-bash-xtrace-template）',
+    ('lint: step 的 shell 不是字面 bash ⇒ PARSE（R34 security S-3 → bypass-shell-python、-bash-xtrace-template）',
      '        if STRICT and eff_shell is not None and (tmpl is None or tmpl["trace"]):',
      '        if False:', "lint"),
     ("lint: shell 從 workflow defaults 繼承（R34 security S-3 → bypass-shell-python-from-defaults）",
      '            or (job["shell"] if job else None) or wf_shell', '            or (job["shell"] if job else None)', "lint"),
     ("lint: shell 從 job defaults 繼承（R35 → good-shell-bash-explicit、good-strict-pipefail-forms）",
      '            or (job["shell"] if job else None) or wf_shell', '            or wf_shell', "lint"),
-    ("lint: container／Windows runner 沒寫 shell ⇒ PARSE（R34 DA n4／n4b → bypass-shell-container-default、-windows-default）",
+    ("lint: container／Windows runner 沒寫 shell ⇒ PARSE（R34 DA n4／n4b → bypass-strict-container-runner-clean、-windows-runner-clean）",
      '        if STRICT and eff_shell is None and job and (job["container"] or job["windows"]):', '        if False:', "lint"),
     ('lint: 靠管線過濾的 step 不得轉到 stderr 或開 xtrace（R34 security S-2／DA G-B → bypass-stderr-redirect-*、bypass-xtrace-set-x）',
      '        elif not declared and an["fd"]:',
@@ -547,7 +547,7 @@ MUTATIONS += [
 # 逐 hunk 走 380e4a4..e50c303 的 lint diff 補的靶。每一條都在合併後的樹上看過殺得掉。**不登記的**（等價、死碼、寫不出會翻色的
 # fixture）逐條列在下面——那是判斷，不是遺漏；哪天有人寫得出會翻色的 fixture，就把它加回來：
 #   · 區塊結尾：雙引號裡的命令替換沒收 ⇒ fail-closed（R37）——等價：dq_ret 非空蘊含 csub>0 或 bt（構造證明：csub 降到 0 的那一步同時把 dq_ret 彈空），只換 PARSE 訊息
-#   · `((` 的 cmd_pos 閘門拿掉（非命令位置的 `((` 也當算術）——等價：非命令位置的 `((` 在 bash 一律是語法錯誤（窮舉五種寫法實測）
+#   · `((` 的 cmd_pos 閘門拿掉（非命令位置的 `((` 也當算術）——等價：非命令位置的 `((` 在 bash 一律是語法錯誤（窮舉五種寫法實測，其中一種「`! ((1))`」經 bash -n 覆核其實仍是命令位置、不是有效反例，構造成立的是另外四種）
 #   · cmd_pos：雙引號分支開命令替換時未設 True（合併 r37c×r37d，entry 側）——未找到會翻色的 fixture，也未證明等價
 #   · 區塊結尾 elif 鏈順序：dq_ret 與 arith-family 對調——等價：dq_ret 蘊含 arith-family 條件，對調只換訊息
 #   · selftest 正向門檻的條件改回 108（R37 合併 H2 → 門檻行本身）——量的是 selftest 門檻本身，不是 lint 的行為
@@ -758,7 +758,7 @@ MUTATIONS += [
     ('_arith_end：引號／反斜線 fail-closed',
      '        if c in "\\\\\'\\"`":\n            return None\n',
      '', "lint"),
-    ("[守 codex 第 8 條不做] `_param_end` 的 `'` 當引號（→ bypass-r37c-dq-param-apostrophe-is-quote）",
+    ("[守 codex 第 8 條不做] `_param_end` 的 `'` 當引號（→ bypass-param-expansion-dq-escaped-quote、-dq-nested-param-quote）",
      '        if c == \'"\':\n            e = _dq_end(line, j)',
      '        if False:', "lint"),
     ('_cmdsub_end：`$((` 交給 _arith_end（R36 第 16 列）',
@@ -782,7 +782,7 @@ MUTATIONS += [
     ('`[[` 的判定退回「前一字元是詞界」而非 cmd_pos（R37 d 包 R36 第 5(a) 列 → bypass-r37d-cond-arg-position、-cond-second-arg）',
      'if (line.startswith("[[", i) and line[i + 2:i + 3] in (" ", "\\t", "")\n                    and cmd_pos):',
      'if (line.startswith("[[", i) and line[i + 2:i + 3] in (" ", "\\t", "")\n                    and prev_sig in SHELL_WORD_BREAK):', "lint"),
-    ('算術裡未配對的單獨 `)` 不再 fail-closed（R37 d 包 R36 第 5(a) 列 → bypass-r37d-dparen-nested-subshell、-dparen-unpaired-plain）',
+    ('算術裡未配對的單獨 `)` 不再 fail-closed（R37 d 包 R36 第 5(a) 列 → bypass-r37d-dparen-nested-subshell）',
      '                        unparsed = "`((…))` 裡出現未配對的單獨 `)`——可能是巢狀 subshell `((cmd) )` 不是算術，本 lint 不猜"\n                        break\n',
      '                        pass\n', "lint"),
     ('區塊結尾的未收尾構造檢查整支拿掉（R37 d 包 R36 第 15 列 → bypass-r37d-unterm-*）',
