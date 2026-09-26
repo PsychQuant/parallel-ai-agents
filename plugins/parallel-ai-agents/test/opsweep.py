@@ -387,50 +387,77 @@ def base_id(mid):
     return mid.rsplit("|L", 1)[0]
 
 
-def verify_expected(src, py, py_off, ms):
+def verify_expected(src, py, py_off, ms, jobs=1):
     """把每一條 `EXPECTED_SURVIVE` 的「依構造等價」**真的跑一次**（R30 MB-11／G-R31-8）。
 
     為什麼：「依構造等價」四個字在 R29 是散文，沒有任何會翻色的指令在守它——而其中一條是**假的**
     （`dedent_block` 的純空白行：引號 heredoc 的分隔字可以是空白）。散文擋不住這種事，差分可以。
     做法：用 `shellgen.py` 產生一份**獨立於 fixture** 的語料（作者挑不動它的形狀），對每一條
     EXPECTED_SURVIVE 逐檔比對「原碼」與「突變體」的 `(rc, stderr)`；任何一檔不同 ⟹ 不等價 ⟹ rc=1。
+
+    **R37 補兩件**（#33 verify R37 量測時發現）：
+      · 語料加入 `shellgen.py --strict` 組，並照每檔第一行的 `# LINT-ARGS:` 帶旗標跑 lint。前一版只產生預設組、
+        也不帶 `--strict`，所以只在 `--strict` 下才有差別的突變體在這裡**永遠**「全部相同」——實測把
+        `elif STRICT and not declared and group_why:` 拿掉 `group_why`（明顯不等價）冒充成預期存活，前一版回報
+        「624 檔全部相同」、rc=0。
+      · 原碼的結果每檔只算一次（它不依賴突變體），各條 EXPECTED_SURVIVE 依 `--jobs` 平行跑；判定與前一版相同。
     """
     import shutil as _sh
-    gen = pathlib.Path(tempfile.mkdtemp(prefix="opsweep-exp-")) / "gen"
-    r = subprocess.run([sys.executable, str(HERE / "corpus" / "shellgen.py"), "--out", str(gen)],
-                       capture_output=True, text=True)
-    if r.returncode != 0:
-        print("✗ 產生語料失敗：\n" + r.stdout + r.stderr); return 2
-    files = sorted(gen.glob("*.yml"))
-    print("對 %d 檔產生語料驗證 %d 條 EXPECTED_SURVIVE 的等價論證" % (len(files), len(EXPECTED_SURVIVE)), flush=True)
+    from concurrent.futures import ThreadPoolExecutor
+    root = pathlib.Path(tempfile.mkdtemp(prefix="opsweep-exp-"))
+    for sub, extra in (("gen", []), ("gen-strict", ["--strict"])):
+        r = subprocess.run([sys.executable, str(HERE / "corpus" / "shellgen.py")] + extra + ["--out", str(root / sub)],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            print("✗ 產生語料失敗（%s）：\n" % sub + r.stdout + r.stderr); return 2
+    files = sorted(root.glob("gen*/*.yml"))
+
+    def lint_args(f):
+        first = f.read_text(encoding="utf-8").split("\n", 1)[0]
+        return first[len("# LINT-ARGS:"):].split() if first.startswith("# LINT-ARGS:") else []
+
+    fargs = {f: lint_args(f) for f in files}
+    print("對 %d 檔產生語料（其中 --strict 組 %d 檔）驗證 %d 條 EXPECTED_SURVIVE 的等價論證"
+          % (len(files), sum(1 for f in files if fargs[f]), len(EXPECTED_SURVIVE)), flush=True)
     by_id = {base_id(m[0]): m for m in ms}
+
+    def run(lint, cwd, f):
+        o = subprocess.run(["bash", str(lint)] + fargs[f] + [str(f)], cwd=cwd, capture_output=True, text=True)
+        return o.returncode, o.stderr.replace(str(lint), "L")
+
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
+        base = dict(zip(files, pool.map(lambda f: run(LINT, PLUGIN, f), files)))
     rc = 0
     with tempfile.TemporaryDirectory(prefix="opsweep-exp-run-") as work:
         fixtures = pathlib.Path(work) / "fixtures"
         _sh.copytree(HERE / "fixtures", fixtures)
-        for mid, why in sorted(EXPECTED_SURVIVE.items()):
+
+        def check(item):
+            mid, why = item
             m = by_id.get(mid)
             if m is None:
-                print("  ✗ %s —— 這個突變體不在本次掃描範圍內，無法驗證" % mid); rc = 1; continue
+                return mid, why, None
             _i, a, b, new = m
             mutated = src[:py_off] + py[:a] + new + py[b:] + src[py_off + len(py):]
             d = pathlib.Path(tempfile.mkdtemp(dir=work)); (d / "test").mkdir()
             mp = d / "test" / "lint-ci-log-filter.sh"; mp.write_text(mutated, encoding="utf-8")
             os.symlink(fixtures, d / "test" / "fixtures")
-            diffs = []
-            for f in files:
-                o1 = subprocess.run(["bash", str(LINT), str(f)], cwd=PLUGIN, capture_output=True, text=True)
-                o2 = subprocess.run(["bash", str(mp), str(f)], cwd=d, capture_output=True, text=True)
-                if (o1.returncode, o1.stderr.replace(str(LINT), "L")) != (o2.returncode, o2.stderr.replace(str(mp), "L")):
-                    diffs.append(f.name)
+            diffs = [f.relative_to(root).as_posix() for f in files if run(mp, d, f) != base[f]]
             _sh.rmtree(d, ignore_errors=True)
-            if diffs:
-                rc = 1
-                print("  ✗ %s\n     理由寫的是「%s」，但這 %d 檔上原碼與突變體給出不同答案（前三：%s）"
-                      % (mid, why, len(diffs), ", ".join(diffs[:3])))
-            else:
-                print("  ✓ %s（%d 檔全部相同）" % (mid, len(files)))
-    _sh.rmtree(gen.parent, ignore_errors=True)
+            return mid, why, diffs
+
+        with ThreadPoolExecutor(max_workers=jobs) as pool:
+            results = list(pool.map(check, sorted(EXPECTED_SURVIVE.items())))
+    for mid, why, diffs in results:
+        if diffs is None:
+            print("  ✗ %s —— 這個突變體不在本次掃描範圍內，無法驗證" % mid); rc = 1
+        elif diffs:
+            rc = 1
+            print("  ✗ %s\n     理由寫的是「%s」，但這 %d 檔上原碼與突變體給出不同答案（前三：%s）"
+                  % (mid, why, len(diffs), ", ".join(diffs[:3])))
+        else:
+            print("  ✓ %s（%d 檔全部相同）" % (mid, len(files)))
+    _sh.rmtree(root, ignore_errors=True)
     return rc
 
 
@@ -473,7 +500,7 @@ def main():
         for m in ms: print("  ", m[0])
         return 0
     if args.verify_expected:
-        return verify_expected(src, py, py_off, ms)
+        return verify_expected(src, py, py_off, ms, args.jobs)
     t0 = time.monotonic()
     pre = subprocess.run(["bash", str(LINT), "--selftest"], cwd=PLUGIN, capture_output=True, text=True)
     if pre.returncode != 0:
