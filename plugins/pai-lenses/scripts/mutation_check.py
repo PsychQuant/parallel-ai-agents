@@ -530,7 +530,7 @@ MUTATIONS += [
     ("層 ①：版本沒有增加（→ test_builtin_lens_change_without_main_bump_is_error_and_with_bump_passes）",
      "    elif tn <= tp:                               # 層 ①", "    elif False:                               # 層 ①"),
     ("層 ①：求值後相同就不要求 bump——換成永遠相同（→ …_without_main_bump…）",
-     "    if new == old:", "    if True:"),
+     "    if new_text == old_text:", "    if True:"),
     ("層 ①：兩側各從自己的 ref 取 harness（換成 HEAD＝兩側永遠相同 → …_without_main_bump…）",
      'blob = subprocess.run(["git", "show", f"{ref}:{HARNESS_REL}"],',
      'blob = subprocess.run(["git", "show", f"HEAD:{HARNESS_REL}"],'),
@@ -562,6 +562,35 @@ MUTATIONS += [
      'if [ "$harness" = "-" ]; then', 'if false; then', "lister"),
     ("lister：未知參數是用法錯（→ bats「未知參數是用法錯」）",
      '- 表示 stdin）" >&2; exit 2 ;;', '- 表示 stdin）" >&2 ;;', "lister"),
+]
+
+# ── #42 verify R1 的 in-scope 修正：每一條都在本輪單獨套用、看過括號裡那條測試翻紅 ──
+MUTATIONS += [
+    ("lister：輸出容器是 null-prototype（{} 會讓 own key __proto__ 被原型 setter 吃掉 → bats「保留名為 __proto__ 的 own key」）",
+     "const o = Object.create(null)", "const o = {}", "lister"),
+    ("lister：非有限數值 fail-loud（→ bats「非有限數值」）",
+     "if (!Number.isFinite(v)) throw", "if (false) throw", "lister"),
+    ("lister：只收 plain／null-prototype 物件（放寬成任何 object → bats「Map 或 class instance」）",
+     "if (proto === Object.prototype || proto === null) {", "if (typeof v === 'object') {", "lister"),
+    ("lister：null-prototype 輸入與 plain object 同形（→ bats「undefined 視同不存在；null-prototype」）",
+     "proto === Object.prototype || proto === null", "proto === Object.prototype", "lister"),
+    ("lister：值為 undefined 的屬性視同不存在（→ bats「undefined 視同不存在」）",
+     "if (v[k] !== undefined) o[k] =", "o[k] =", "lister"),
+    ("層 ①：判定比標準形文字，不比 Python 值（→ test_builtin_gate_compares_canonical_text_not_python_values）",
+     "    if new_text == old_text:", "    if new == old:"),
+    ("層 ①：差異摘要以 JSON 序列化判等（false≠0 → test_builtin_gate_compares_canonical_text_not_python_values）",
+     "    return json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)", "    return a == b"),
+    ("層 ①：base 側求值失敗點出「契約變更拆兩步」（→ test_lister_harness_contract_change_is_red_even_with_bump_and_says_split_it）",
+     'if label == "base" else "")', 'if False else "")'),
+    ("層 ①：git status 也看 lister（→ test_builtin_gate_warns_that_an_uncommitted_lister_is_what_evaluates）",
+     "HARNESS_REL, MAIN_PJ_REL, LISTER_REL],", "HARNESS_REL, MAIN_PJ_REL],"),
+    ("層 ①：未 commit 的 lister 有自己的 warning（→ …_uncommitted_lister_is_what_evaluates）",
+     "        if len(committed_only) != len(paths):", "        if False:"),
+    ("層 ①：「只涵蓋已 commit」不含 lister（那句對 lister 是反話 → …_uncommitted_lister_is_what_evaluates）",
+     "committed_only = [x for x in paths if x != LISTER_REL]", "committed_only = paths"),
+    ("pull_request 的比較基準是 merge-base 不是 base 本身（→ …_without_main_bump… 的分岔 pull_request subTest、"
+     "test_event_semantics_differ_between_push_and_default）",
+     "        cmp_base = mb.stdout.strip()\n", "        cmp_base = base\n"),
 ]
 
 EXPECTED_SURVIVE = {

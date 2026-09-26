@@ -53,8 +53,9 @@ OS_ARTIFACTS = (".DS_Store", ".gitkeep", ".gitignore", "Thumbs.db")
 #   守：symlink（檔案層與目錄層——`resolve()` 連父層一起解析）、絕對路徑、`..` 繞出去。
 #   守不住：hardlink（git 產生不了，不在 fork PR 的攻擊面）、bind mount、以及**被求值的程式碼自己去讀什麼**
 #   （harness 是 repo 內合法 JS 但 `import` repo 外的檔——路徑守衛擋不住求值；所以 READ-SITE 17（與 #42 的 22）的 stderr
-#   一律不進 annotation；它的 **stdout**（profile 名）依構造是 PR 可控文字、仍是內容管道，只是經 wc() 截到 200 字——
-#   有上限，不是沒有管道，R15 security S-2）。containment 是佈局健檢，不是安全邊界；真正的邊界是
+#   一律不進 annotation；它們的 **stdout** 依構造是 PR 可控文字、仍是內容管道，只是有上限——站點 17 的 profile 名
+#   經 wc() 截到 200 字；站點 22 的差異摘要（profile 名、欄位名、**lens key**，全部來自 PR 可控的 PROFILES）
+#   經 wc(delta, 400) 截到 400 字。有上限，不是沒有管道，R15 security S-2）。containment 是佈局健檢，不是安全邊界；真正的邊界是
 #   `on: pull_request` + `contents: read` + 零 secrets（見 test.yml 的 job 級說明）。
 # 「git object」欄：對 `git show`/`ls-tree`/`diff` 讀到的是 **repo 自己的物件庫**，路徑由 validator 組、
 # 不經檔案系統 symlink，依構造在 repo 內。
@@ -94,7 +95,7 @@ READ_SITES = (
     (21, "_profiles_at：git show <ref>:ensemble-workflow.js",   "git object（兩側都不讀工作目錄的 harness）"),
     (22, "_profiles_at：執行 bin/pai-list-profiles --json（stdin 餵 harness，求值 PROFILES）",
          "lister 先 _inside；harness 是 git object 經 stdin（PAI_HARNESS=- 顯式傳入）；stderr 不進 annotation；"
-         "stdout（PR 可控）只經 json.loads → 差異摘要經 wc() 進 annotation"),
+         "stdout（PR 可控）strip 後逐字比對（判定）；json.loads 只做非空檢查與差異摘要 → 經 wc() 進 annotation"),
     (23, "check_builtin_bumped：git show HEAD:主 plugin.json", "git object"),
     (24, "check_builtin_bumped：git show base:主 plugin.json", "git object"),
 )
@@ -1048,15 +1049,28 @@ def check_bumped(root, errs, cmp_base):
 MAIN_PLUGIN_REL = "plugins/parallel-ai-agents"
 HARNESS_REL = f"{MAIN_PLUGIN_REL}/workflows/ensemble-workflow.js"
 MAIN_PJ_REL = f"{MAIN_PLUGIN_REL}/.claude-plugin/plugin.json"
+LISTER_REL = f"{MAIN_PLUGIN_REL}/bin/pai-list-profiles"
 
 
 def _profiles_at(repo, lister, ref, label, errs):
-    """回傳 `ref` 那一版 harness 的 PROFILES（**求值後**的標準形 JSON → dict）；拿不到回 None（已寫進 errs）。
+    """回傳 `ref` 那一版 harness 的 PROFILES：`(標準形 JSON 文字, 其 json.loads 結果)`；拿不到回 None（已寫進 errs）。
 
     harness 取自 git 物件（`git show <ref>:<harness>`），不取工作目錄——與 check_bumped 的 R6 同一條規則：
     同一次執行的兩側都必須是 committed history。兩側都交給**同一支** lister（工作目錄的
     `bin/pai-list-profiles --json`，經 stdin 餵 harness 原始碼）求值與標準化，所以抽取法與序列化規則
-    在兩側逐字相同；比對的是值，不是文字。
+    在兩側逐字相同；比對的是**求值後的值**，不是原始碼文字。
+
+    **判定用文字，不用 json.loads 的 Python 值**（#42 verify R2）：Python 的 `False == 0`、`True == 1`、
+    `1 == 1.0`，所以 `codexDefault: false` → `0` 在 dict 比較下「相同」，而 JS 端（harness 的消費者）看到的是
+    不同型別。標準形 JSON 文字已經是 lister 定義的「值」（key 排序、型別保留），逐字比對才是那個定義；
+    json.loads 只用於「非空物件」檢查與人讀的差異摘要。
+
+    **已知限制：base 那一側也用 HEAD 的 lister 求值**（#42 verify R3）。lister 與 harness 之間有契約
+    （Orchestration 分隔線、`meta` export 的形狀、純定義區不得引用 runtime globals）；一個 PR 若同時改了
+    契約兩端（例如把分隔線改名、lister 跟著改），base 的 harness 用新 lister 抽不出 PROFILES → 這道閘門
+    對該 PR **永遠紅**，bump 也救不了。這類契約變更必須拆成兩步：先讓 lister 同時接受新舊形狀（或先改
+    harness 而 lister 兩者皆容），合併後再移除舊形狀。用 base 自己的 lister 求值 base 側可以避開，但那樣
+    兩側的標準化規則就不再保證相同（lister 的序列化一改，每個 PR 都變成「PROFILES 改了」）——選擇前者。
 
     `label` 是 validator 自己組的字串（"HEAD" / "base"），進 annotation 不必 wc()；
     lister 的 stderr 一律不進 annotation（理由同 READ-SITE 17：它求值的是 PR 可控的 JS）。"""
@@ -1071,26 +1085,38 @@ def _profiles_at(repo, lister, ref, label, errs):
     r = subprocess.run(["bash", str(lister), "--json"], input=blob.stdout,
                        capture_output=True, text=True, encoding="utf-8", errors="replace",
                        env={**os.environ, "PAI_HARNESS": "-"})
+    # 只有 base 側會撞上「lister↔harness 契約在本 PR 被改」（見 docstring 的已知限制）；HEAD 側求值失敗就是 HEAD 壞了。
+    split_hint = ("若本 PR 改了 lister 與 harness 之間的契約（Orchestration 分隔線、meta export 形狀…），"
+                  "base 那一版是用 HEAD 的 lister 求值的，會一直紅、bump 也救不了——"
+                  "這類契約變更必須拆成兩個 PR／兩步：先讓 lister 新舊形狀皆容、合併後再改 harness。"
+                  if label == "base" else "")
     if r.returncode != 0:
         errs.append(f"::error::無法求值 {label} 那一版的 PROFILES（pai-list-profiles --json rc={r.returncode}；"
                     "它求值的是 PR 可控的 JS，其 stderr 不進 annotation —— 本機執行 "
                     "`git show <ref>:" + HARNESS_REL + " | PAI_HARNESS=- bin/pai-list-profiles --json` 看原因）。"
-                    "層 ① 的 bump 閘門沒有跑")
+                    "層 ① 的 bump 閘門沒有跑。" + split_hint)
         return None
+    text = r.stdout.strip()
     try:
-        obj = json.loads(r.stdout)
+        obj = json.loads(text)
     except json.JSONDecodeError:
         obj = None
     if not isinstance(obj, dict) or not obj:
         errs.append(f"::error::pai-list-profiles --json 對 {label} 沒有輸出非空的 JSON 物件 —— "
-                    "PROFILES 抽取壞了，層 ① 的 bump 閘門沒有跑")
+                    "PROFILES 抽取壞了，層 ① 的 bump 閘門沒有跑。" + split_hint)
         return None
-    return obj
+    return text, obj
+
+
+def _same(a, b):
+    """差異摘要用的相等：以 JSON 序列化比較，所以 `false` 與 `0`、`true` 與 `1` **不**相等（#42 verify R2——
+    Python 的 `==` 把它們當同一個值，摘要會漏掉判定看得到的差異）。"""
+    return json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
 
 
 def _profiles_delta(old, new):
-    """人讀的差異摘要（供訊息用）。**判定不看它**——判定是 `old != new`；這裡只負責把「哪裡變了」說出來。
-    值全部來自 lister 的 stdout（PR 可控），呼叫端必須經 wc()。"""
+    """人讀的差異摘要（供訊息用）。**判定不看它**——判定是兩側標準形文字是否逐字相同；這裡只負責把「哪裡變了」
+    說出來。值全部來自 lister 的 stdout（PR 可控），呼叫端必須經 wc()。"""
     out = []
     for p in sorted(set(old) | set(new), key=str):
         if p not in old:
@@ -1100,14 +1126,14 @@ def _profiles_delta(old, new):
             out.append(f"-profile {p}")
             continue
         a, b = old[p], new[p]
-        if a == b:
+        if _same(a, b):
             continue
         if not (isinstance(a, dict) and isinstance(b, dict)):
             out.append(f"{p}")
             continue
         for f in sorted(set(a) | set(b), key=str):
             la, lb = a.get(f), b.get(f)
-            if la == lb:
+            if _same(la, lb):
                 continue
             if f == "lenses" and isinstance(la, list) and isinstance(lb, list):
                 before = len(out)
@@ -1118,13 +1144,13 @@ def _profiles_delta(old, new):
                         out.append(f"{p}: +lens {k}")
                     elif k not in kb:
                         out.append(f"{p}: -lens {k}")
-                    elif ka[k] != kb[k]:
+                    elif not _same(ka[k], kb[k]):
                         out.append(f"{p}: ~lens {k}")
                 if len(out) == before:
                     out.append(f"{p}.lenses（順序或重複 key）")
             else:
                 out.append(f"{p}.{f}")
-    return out
+    return out or ["標準形 JSON 文字不同（摘要定位不到欄位）"]
 
 
 def check_builtin_bumped(root, errs, cmp_base):
@@ -1144,7 +1170,9 @@ def check_builtin_bumped(root, errs, cmp_base):
       - 用 `bin/pai-list-profiles --json`：與 profile 名稱閘門同一個抽取法（Orchestration 分隔線之前的純定義區、
         真的 JS engine 求值），輸出**標準形 JSON**——物件 key 排序、陣列保序、只收 JSON 原生型別
         （函式／Map／class instance 等**直接 fail-loud**，不讓 `JSON.stringify` 靜默丟掉）。
-        兩側用同一支 lister，所以抽取與序列化規則逐字相同。
+        兩側用同一支 lister，所以抽取與序列化規則逐字相同；判定是兩側標準形 JSON **文字**逐字相同與否
+        （不是 json.loads 後的 Python 值——那會讓 `false`／`0` 相等，#42 verify R2）。
+        代價：base 側也用 HEAD 的 lister 求值，lister↔harness 的契約變更必須拆兩步（見 `_profiles_at`，R3）。
 
     **什麼算「lens 改了」（決定，不是遺漏）**：`PROFILES` 標準形的**任何**差異——
       新增／刪除 profile 或 lens；lens 的 `key`／`focus`／`needsSrt` 或任何欄位；lens 在陣列中的**順序**
@@ -1165,28 +1193,40 @@ def check_builtin_bumped(root, errs, cmp_base):
     if repo is None or cmp_base is None:
         return                                   # 回報集中在 report_no_repo() / resolve_cmp_base()
     # 未 commit 的變更先講出來（R6 H2 的同一個理由：「無變更 ✓」那條路徑上也要看得到）。
+    # lister 的方向相反（#42 verify R7）：harness／plugin.json 取自 git 物件、未 commit 的改動**不被**看見；
+    # lister 取自工作目錄、未 commit 的改動**會被**用上。兩種都要講，但講法不同。
     # READ-SITE 20/24
-    wip = subprocess.run(["git", "status", "--porcelain", "--", HARNESS_REL, MAIN_PJ_REL],
+    wip = subprocess.run(["git", "status", "--porcelain", "--", HARNESS_REL, MAIN_PJ_REL, LISTER_REL],
                          cwd=repo, capture_output=True, text=True, errors="replace")
     if wip.returncode == 0 and wip.stdout.strip():
         paths = [ln[3:] for ln in wip.stdout.splitlines() if len(ln) > 3]
-        emit("::warning::工作目錄有未 commit 的變更，層 ① 的 bump 檢查**只涵蓋已 commit 的內容**："
-             + wc(", ".join(paths)))
+        committed_only = [x for x in paths if x != LISTER_REL]
+        if committed_only:
+            emit("::warning::工作目錄有未 commit 的變更，層 ① 的 bump 檢查**只涵蓋已 commit 的內容**："
+                 + wc(", ".join(committed_only)))
+        if len(committed_only) != len(paths):
+            emit(f"::warning::{LISTER_REL} 有未 commit 的修改 —— 層 ① 的 bump 檢查兩側都用**工作目錄**那份"
+                 "（不是 HEAD 的）求值，這次的判定反映的是未 commit 的 lister")
     # **沒有「harness 檔沒變就跳過」的捷徑**（刻意）：第一版有一個 `git diff --quiet cmp_base HEAD -- <harness>`
     # 的捷徑，理由是「同一支 lister 對同一份 blob 必同輸出」。那只對一般檔成立——harness 若在 git 裡是
     # symlink（mode 120000），blob 是連結文字，指向的 repo 內檔案改了 PROFILES 而 blob 兩側相同，捷徑就印
-    # 「無需 bump ✓」。拿掉捷徑後兩側一律求值：symlink 的連結文字求值必失敗 → fail-loud。代價是每次多兩次
-    # node 求值（百毫秒級），換掉一段要靠推理才守得住的程式碼。
-    lister = repo / MAIN_PLUGIN_REL / "bin" / "pai-list-profiles"
+    # 「無需 bump ✓」。拿掉捷徑後兩側一律求值：**對非惡意的 symlink**，連結文字（一個路徑）當 JS 求值會失敗
+    # → fail-loud。這不是「必失敗」（#42 verify R5）：連結文字是任意位元組（可含換行），刻意寫成合法 JS——
+    # 例如兩側都是同一段 `const PROFILES = {…}` 而真正的檔改了——就能讓兩側相同。威脅模型：能構造 git 裡的
+    # 連結文字的只有 PR 作者本人，而同一個 CI job 本來就跑**該 PR 自己的** validate.py（作者可以直接刪掉這道
+    # 閘門）。所以這道閘門防的是意外，不是對手；對手的邊界見檔頭（`on: pull_request` + 零 secrets）與人工 review。
+    # 代價是每次多兩次 node 求值（百毫秒級），換掉一段要靠推理才守得住的程式碼。
+    lister = repo / LISTER_REL
     if not lister.is_file() or not _inside(lister.resolve(), repo.resolve()):
         errs.append(f"::error::{MAIN_PLUGIN_REL}/bin/pai-list-profiles 不存在或解析後落在 repo 外 —— "
                     "拒絕執行。層 ① 的 bump 閘門沒有跑（無法判斷 PROFILES 有沒有變）")
         return
-    new = _profiles_at(repo, lister, "HEAD", "HEAD", errs)
-    old = _profiles_at(repo, lister, cmp_base, "base", errs)
-    if new is None or old is None:
+    head_side = _profiles_at(repo, lister, "HEAD", "HEAD", errs)
+    base_side = _profiles_at(repo, lister, cmp_base, "base", errs)
+    if head_side is None or base_side is None:
         return
-    if new == old:
+    (new_text, new), (old_text, old) = head_side, base_side
+    if new_text == old_text:                     # 判定：標準形文字逐字相同（#42 verify R2：不比 Python 值）
         print("層 ① PROFILES：求值後的 PROFILES 與 base 相同（已 commit 的部分）—— 主 plugin 無需 bump ✓")
         return
     delta = "、".join(_profiles_delta(old, new))

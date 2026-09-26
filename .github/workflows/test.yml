@@ -246,8 +246,9 @@ jobs:
     # 落在 plugins/pai-lenses/.github/ —— GitHub 只執行 repo root 的 .github/workflows/，
     # 所以它形同失效。改掛成本 repo 的獨立 job。
     # 隱含相依（#33 verify R11）：validate.py → bash bin/pai-list-profiles → `node` 求值主 plugin
-    # 的 PROFILES。ubuntu-latest 內建 node，所以沒有 setup-node；缺了會 fail-loud
-    # （「無法取得 PROFILES 清單」），不會靜默。換 runner image 時要記得這一條。
+    # 的 PROFILES —— profile 名稱閘門求值工作目錄那份一次，層 ① bump 閘門（#42，`--json`）再對
+    # HEAD 與 base 的 git 物件各求值一次。ubuntu-latest 內建 node，所以沒有 setup-node；缺了兩道都
+    # fail-loud（「無法取得 PROFILES 清單」／「無法求值 … 那一版的 PROFILES」），不會靜默。換 runner image 時要記得這一條。
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -300,7 +301,8 @@ jobs:
       # 檢查的內容不寫進 workflow 而放在 scripts/validate.py：`run: |` 區塊裡的
       # heredoc 一旦把內容放在第 0 欄就會跳出 YAML block scalar，workflow 靜默停止解析。
       - name: validate manifests + lens pack (每個 plugin 的版本／entry 雙向同步、改 lens 必 bump（層 ① PROFILES 與層 ② CSV）、profile 名稱、CSV 形狀與撞名)
-        # --base 讓 validate 能判斷「改了 lenses/*.csv 卻沒 bump 版本」——
+        # --base 讓 validate 能判斷「改了 lens 卻沒 bump 版本」—— 兩道閘門共用這一個 base：
+        # 層 ② 的 lenses/*.csv → pack 版本，層 ① 的 PROFILES（求值後比較）→ 主 plugin 版本（#42）。
         # 只驗「兩處一致」守不住這個（#33 verify R2 H5/H10）。
         # base SHA 走 env 而非直接內插進 run（workflow-injection 的標準防護形狀）。
         # push 事件沒有 pull_request.base.sha —— 先前那條路會讓 validate 不帶 --base，

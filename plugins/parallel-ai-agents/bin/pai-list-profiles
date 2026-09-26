@@ -67,7 +67,11 @@ if ('${mode}' === 'keys') {
     if (Array.isArray(v)) return Array.from(v, (x, i) => canon(x, at + '[' + i + ']'))
     const proto = (typeof v === 'object') ? Object.getPrototypeOf(v) : undefined
     if (proto === Object.prototype || proto === null) {
-      const o = {}
+      // 輸出容器用 null-prototype（#42 verify R1）：先前是 {}，而對 {} 賦值 o['__proto__'] 會命中
+      // Object.prototype 上的 setter（改原型、不建 own key）——名為 __proto__ 的 own key 連同它的值被
+      // 靜默丟掉，兩側只差在那裡時輸出逐字相同。null-prototype 物件沒有那個 setter，賦值就是 own key，
+      // JSON.stringify 照常輸出。
+      const o = Object.create(null)
       for (const k of Object.keys(v).sort()) {
         if (v[k] !== undefined) o[k] = canon(v[k], at + '.' + k)
       }

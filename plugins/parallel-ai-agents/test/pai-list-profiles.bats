@@ -139,3 +139,55 @@ mini() {  # $1 = PROFILES 的 JS 字面值；寫成一份最小 harness（分隔
   run bash "$BIN" --json extra
   [ "$status" -eq 2 ]
 }
+
+# ── #42 verify R1：標準化的型別守衛與 own key `__proto__` ─────────────────────────────
+# 下面四條先前沒有測試：把任一條守衛拿掉，上面六條照樣全綠（mutation 存活）。
+
+@test "--json 保留名為 __proto__ 的 own key（兩側只差在它的值時輸出必須不同）" {
+  # `['__proto__']` 是計算屬性名 —— 建立 own key，不改原型（與非計算的 `__proto__:` 不同）。
+  # 先前輸出容器是 {}，`o['__proto__'] = …` 命中原型 setter，這個 key 連同值一起消失，兩份輸出逐字相同。
+  mini "{ a: { ['__proto__']: { focus: 'before' }, lenses: [] } }" > "$BATS_TEST_TMPDIR/h1.js"
+  mini "{ a: { ['__proto__']: { focus: 'after' }, lenses: [] } }" > "$BATS_TEST_TMPDIR/h2.js"
+  a=$(PAI_HARNESS="$BATS_TEST_TMPDIR/h1.js" bash "$BIN" --json)
+  b=$(PAI_HARNESS="$BATS_TEST_TMPDIR/h2.js" bash "$BIN" --json)
+  [ "$a" = '{"a":{"__proto__":{"focus":"before"},"lenses":[]}}' ]
+  [ "$a" != "$b" ]
+}
+
+@test "--json 遇到非有限數值（NaN／±Infinity）fail-loud——JSON.stringify 會把它們印成 null" {
+  for v in NaN '1/0' '-1/0'; do
+    mini "{ a: { lenses: [], n: $v } }" > "$BATS_TEST_TMPDIR/h.js"
+    PAI_HARNESS="$BATS_TEST_TMPDIR/h.js" run bash "$BIN" --json
+    [ "$status" -ne 0 ]
+  done
+  # 對照組：有限數值照常輸出——紅的原因是「非有限」，不是「有數字」
+  mini "{ a: { lenses: [], n: 900 } }" > "$BATS_TEST_TMPDIR/h.js"
+  PAI_HARNESS="$BATS_TEST_TMPDIR/h.js" run bash "$BIN" --json
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"a":{"lenses":[],"n":900}}' ]
+}
+
+@test "--json 遇到 Map 或 class instance fail-loud——Object.keys 看不到它們的內容" {
+  mini "{ a: { lenses: [], m: new Map([['k', 'v']]) } }" > "$BATS_TEST_TMPDIR/h1.js"
+  mini "(() => { class C { constructor () { this.k = 'v' } }; return { a: { lenses: [], c: new C() } } })()" > "$BATS_TEST_TMPDIR/h2.js"
+  for h in h1 h2; do
+    PAI_HARNESS="$BATS_TEST_TMPDIR/$h.js" run bash "$BIN" --json
+    [ "$status" -ne 0 ]
+    PAI_HARNESS="$BATS_TEST_TMPDIR/$h.js" run bash "$BIN"     # keys 模式仍可用：紅的原因是型別
+    [ "$status" -eq 0 ]
+    [ "$output" = "a" ]
+  done
+}
+
+@test "--json：值為 undefined 的屬性視同不存在；null-prototype 物件與 plain object 同形" {
+  mini "{ a: { lenses: [] } }" > "$BATS_TEST_TMPDIR/h0.js"
+  mini "{ a: { lenses: [], x: undefined } }" > "$BATS_TEST_TMPDIR/h1.js"
+  mini "{ a: Object.assign(Object.create(null), { lenses: [] }) }" > "$BATS_TEST_TMPDIR/h2.js"
+  ref=$(PAI_HARNESS="$BATS_TEST_TMPDIR/h0.js" bash "$BIN" --json)
+  [ "$ref" = '{"a":{"lenses":[]}}' ]
+  for h in h1 h2; do
+    PAI_HARNESS="$BATS_TEST_TMPDIR/$h.js" run bash "$BIN" --json
+    [ "$status" -eq 0 ]
+    [ "$output" = "$ref" ]
+  done
+}
