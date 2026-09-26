@@ -126,9 +126,14 @@ Lens 來源：built-in <n> 條 · pack <version> +<a>/⊕<b> · user +<c>/⊕<d>
 | `empty` | 檔案在、卻解析出 0 條（多半 header 打錯） | ✅ |
 | `corrupt` | 解析器非零退出 | ✅ |
 | `unversioned` | 裝了 `pai-lenses` 但無 semver 目錄（`plugin.json` 缺 `version`） | ✅ |
+| `ambiguous` | 最高 semver 有兩個以上目錄同序（只差 build metadata，或跨 marketplace 同版本）→ 本層略過（#56） | ✅ |
 
 `empty` 與 `unversioned` 是刻意加的防安靜失敗：前者會讓一個存在的檔案什麼都不貢獻，
 後者會讓「裝了但定位不到」看起來像「沒裝」。
+`ambiguous` 則是不讓 readdir／glob 排序替使用者決定載入哪一份 pack。
+
+版本目錄以 semver 2.0.0 **整串**比對（`9.9.9.bak`、`01.0.0` 不是版本），排序依 §11（`0.3.0-rc.1` < `0.3.0`、
+`rc.9` < `rc.10`），與 `pai-lenses` 的 `scripts/validate.py` 同一套；`layers[].version` 回報的是**實際目錄名**。
 
 ## Lens pack 的 CSV 格式
 

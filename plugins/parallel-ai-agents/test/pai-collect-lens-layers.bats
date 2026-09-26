@@ -192,6 +192,195 @@ assert v=='${VER}', (v, '${VER}')
 " "$output"
 }
 
+# ── #56：semver 與 <profile> 參數對齊 validator ──────────────────────────────────────────
+# 先前 `SEMVER = ^(\d+)\.(\d+)\.(\d+)` 是 prefix match、`_semver_key` 丟掉 prerelease：
+# 不是 semver 的目錄名能勝出、prerelease 之間打平由 readdir 順序決定、回報的 version 是
+# 由 key 重組的字串（可能不存在）。以下每條都在修法前實測為紅（見 CHANGELOG #56 段）。
+
+# 便利：取 pack 層
+pack_layer='
+import json,sys
+d=json.loads(sys.argv[1])
+P=[l for l in d["layers"] if l["name"]=="pack"][0]
+'
+
+@test "#56 prefix match：非 semver 的 '9.9.9.bak' 不得勝過合法的 1.0.0" {
+  mkpack psychquant 1.0.0
+  printf 'key,focus\ngood,合法版本\n' > "${PACK}/lenses/code.csv"
+  mkpack psychquant 9.9.9.bak
+  printf 'key,focus\nevil,前綴比對撈到的\n' > "${PACK}/lenses/code.csv"
+  mkpack psychquant 01.0.0
+  printf 'key,focus\nlz,前導零\n' > "${PACK}/lenses/code.csv"
+  run "$BIN" code
+  [ "$status" -eq 0 ]
+  jq_py "$pack_layer"'
+assert [x["key"] for x in d["lenses"]]==["good"], d["lenses"]
+assert P["version"]=="1.0.0", P
+assert P["status"]=="ok", P
+' "$output"
+}
+
+@test "#56 只有非 semver 目錄（如 1.0.0.bak）→ unversioned，不是 ok" {
+  mkpack psychquant 1.0.0.bak
+  printf 'key,focus\nx,fx\n' > "${PACK}/lenses/code.csv"
+  run "$BIN" code
+  [ "$status" -eq 0 ]
+  jq_py "$pack_layer"'
+assert P["status"]=="unversioned", P
+assert d["lenses"]==[], d["lenses"]
+assert P["version"] is None, P
+' "$output"
+}
+
+@test "#56 prerelease 依 semver §11 排序（rc.2 > rc.1；rc.10 > rc.9），回報實際目錄名" {
+  mkpack psychquant 0.4.0-rc.1
+  printf 'key,focus\nrc1,fx\n' > "${PACK}/lenses/code.csv"
+  mkpack psychquant 0.4.0-rc.10
+  printf 'key,focus\nrc10,fx\n' > "${PACK}/lenses/code.csv"
+  mkpack psychquant 0.4.0-rc.9
+  printf 'key,focus\nrc9,fx\n' > "${PACK}/lenses/code.csv"
+  run "$BIN" code
+  [ "$status" -eq 0 ]
+  jq_py "$pack_layer"'
+assert [x["key"] for x in d["lenses"]]==["rc10"], d["lenses"]
+assert P["version"]=="0.4.0-rc.10", P
+' "$output"
+}
+
+@test "#56 正式版高於同 core 的 prerelease（0.3.0 > 0.3.0-rc1），不靠 readdir" {
+  mkpack psychquant 0.3.0-rc1
+  printf 'key,focus\nrc,fx\n' > "${PACK}/lenses/code.csv"
+  mkpack psychquant 0.3.0
+  printf 'key,focus\nrel,fx\n' > "${PACK}/lenses/code.csv"
+  mkpack psychquant 0.3.0-zzz
+  printf 'key,focus\nzzz,fx\n' > "${PACK}/lenses/code.csv"
+  run "$BIN" code
+  [ "$status" -eq 0 ]
+  jq_py "$pack_layer"'
+assert [x["key"] for x in d["lenses"]]==["rel"], d["lenses"]
+assert P["version"]=="0.3.0", P
+' "$output"
+}
+
+@test "#56 回報的 version 是實際目錄名（build metadata 不被 key 重組吃掉）" {
+  mkpack psychquant 1.2.3+build.7
+  printf 'key,focus\nb,fb\n' > "${PACK}/lenses/code.csv"
+  run "$BIN" code
+  [ "$status" -eq 0 ]
+  jq_py "$pack_layer"'
+assert P["version"]=="1.2.3+build.7", P
+assert P["path"].endswith("/1.2.3+build.7/lenses/code.csv"), P
+' "$output"
+}
+
+@test "#56 版本打平（只差 build metadata）→ ambiguous + 警告，不靠 readdir 挑一個" {
+  mkpack psychquant 1.0.0+a
+  printf 'key,focus\na,fa\n' > "${PACK}/lenses/code.csv"
+  mkpack psychquant 1.0.0+b
+  printf 'key,focus\nb,fb\n' > "${PACK}/lenses/code.csv"
+  run "$BIN" code
+  [ "$status" -eq 0 ]
+  jq_py "$pack_layer"'
+assert P["status"]=="ambiguous", P
+assert P["version"] is None and P["path"] is None, P
+assert d["lenses"]==[], d["lenses"]
+w=" ".join(d["warnings"])
+assert "1.0.0+a" in w and "1.0.0+b" in w, d["warnings"]
+' "$output"
+}
+
+@test "#56 跨 marketplace 同版本 → ambiguous（不靠 glob 排序挑一個）" {
+  mkpack alpha 2.0.0
+  printf 'key,focus\na,fa\n' > "${PACK}/lenses/code.csv"
+  mkpack beta 2.0.0
+  printf 'key,focus\nb,fb\n' > "${PACK}/lenses/code.csv"
+  run "$BIN" code
+  [ "$status" -eq 0 ]
+  jq_py "$pack_layer"'
+assert P["status"]=="ambiguous", P
+assert d["lenses"]==[], d["lenses"]
+assert any("alpha" in w and "beta" in w for w in d["warnings"]), d["warnings"]
+' "$output"
+}
+
+@test "#56 打平只在最高版本才算：較低版本的打平不影響選出唯一最高者" {
+  mkpack alpha 1.0.0
+  printf 'key,focus\nold,fa\n' > "${PACK}/lenses/code.csv"
+  mkpack beta 1.0.0
+  printf 'key,focus\nold2,fb\n' > "${PACK}/lenses/code.csv"
+  mkpack beta 1.1.0
+  printf 'key,focus\nnew,fb\n' > "${PACK}/lenses/code.csv"
+  run "$BIN" code
+  [ "$status" -eq 0 ]
+  jq_py "$pack_layer"'
+assert P["status"]=="ok", P
+assert [x["key"] for x in d["lenses"]]==["new"], d["lenses"]
+assert P["version"]=="1.1.0", P
+' "$output"
+}
+
+@test "#56 semver 比較與 validate.py 的 version_tuple 逐對同序（兩份規格的機械對帳）" {
+  VALIDATOR="${BATS_TEST_DIRNAME}/../../pai-lenses/scripts/validate.py"
+  [ -f "$VALIDATOR" ] || skip "找不到 $VALIDATOR（pai-lenses 未併入本 repo）"
+  run python3 - "$BIN" "$VALIDATOR" <<'PY'
+import importlib.machinery, importlib.util, itertools, sys
+sys.dont_write_bytecode = True        # 不在 bin/ 與 pai-lenses/scripts/ 留 __pycache__
+def load(name, path):
+    loader = importlib.machinery.SourceFileLoader(name, path)
+    spec = importlib.util.spec_from_loader(name, loader)
+    m = importlib.util.module_from_spec(spec); loader.exec_module(m); return m
+c = load("collector", sys.argv[1]); v = load("validator", sys.argv[2])
+key = getattr(c, "version_key", None) or getattr(c, "_semver_key")
+corpus = ["0.0.0", "1.0.0", "1.0.1", "1.1.0", "2.0.0", "1.10.0", "1.9.0",
+          "1.0.0-alpha", "1.0.0-alpha.1", "1.0.0-alpha.beta", "1.0.0-beta", "1.0.0-beta.2",
+          "1.0.0-beta.11", "1.0.0-rc.1", "1.0.0-rc1", "1.0.0-rc10", "1.0.0-rc9", "1.0.0-0",
+          "1.0.0-1", "1.0.0-01", "1.0.0-a-b", "1.0.0-x.7.z.92", "1.0.0+build", "1.0.0-rc.1+b.2",
+          "01.0.0", "1.0", "1.0.0.bak", "1.0.0-", "1.0.0+", "1.0.0\n", " 1.0.0", "v1.0.0",
+          "9.9.9_x", "1.0.0-rc..1", "1.0.0-é", "unknown", "abc1234", ""]
+bad = []
+for s in corpus:
+    if (key(s) is None) != (v.version_tuple(s) is None):
+        bad.append(("validity", s, key(s), v.version_tuple(s)))
+ok = [s for s in corpus if v.version_tuple(s) is not None]
+for a, b in itertools.product(ok, ok):
+    ka, kb, va, vb = key(a), key(b), v.version_tuple(a), v.version_tuple(b)
+    if ka is None or kb is None:
+        continue
+    if ((ka > kb) - (ka < kb)) != ((va > vb) - (va < vb)):
+        bad.append(("order", a, b))
+print(bad[:10]); sys.exit(1 if bad else 0)
+PY
+  echo "$output"
+  [ "$status" -eq 0 ]
+}
+
+@test "#56 <profile> 路徑逃逸（../、絕對路徑、子目錄）→ exit 2，且不讀任何檔" {
+  mkdir -p "$USERDIR" "${BATS_TEST_TMPDIR}/elsewhere"
+  printf 'key,focus\nevil,逃出 user 目錄\n' > "${BATS_TEST_TMPDIR}/elsewhere/evil.csv"
+  mkdir -p "${USERDIR}/sub"
+  printf 'key,focus\nsub,子目錄\n' > "${USERDIR}/sub/x.csv"
+  for p in '../elsewhere/evil' "${BATS_TEST_TMPDIR}/elsewhere/evil" 'sub/x' './code' '..' '.' \
+           'code/../../elsewhere/evil' '..\evil'; do
+    run "$BIN" "$p"
+    echo "profile=$p status=$status output=$output"
+    [ "$status" -eq 2 ]
+    [ "${output#*\"lenses\"}" = "$output" ]      # 沒有吐出任何 JSON（逃逸路徑沒被讀）
+  done
+}
+
+@test "#56 <profile> 字元集與 validator 端的 profile 名一致：[a-z0-9][a-z0-9-]*，其餘 exit 2" {
+  for p in 'Code' '-code' 'code_x' '_code' 'code.x' 'cöde' 'code x' $'code\nx'; do
+    run "$BIN" "$p"
+    echo "profile=$p status=$status"
+    [ "$status" -eq 2 ]
+  done
+  # 合法名照常（這組是 bin/pai-list-profiles 目前印出的全部 key + 含 `-` 的形狀）
+  for p in minutes lecture code academic general custom my-profile 2x; do
+    run "$BIN" "$p"
+    [ "$status" -eq 0 ]
+  done
+}
+
 @test "無參數 → exit 2（用法）" {
   run "$BIN"
   [ "$status" -eq 2 ]

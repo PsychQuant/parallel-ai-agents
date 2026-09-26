@@ -27,6 +27,11 @@ status 語意（對應 spec D5「缺席與損壞分開處理」）：
   corrupt      解析器非零退出（讀不到 / 編碼壞）→ 警告
   unversioned  裝了 pai-lenses 卻沒有 semver 目錄（plugin.json 缺 version）→ 警告。
                「裝了但不可用」不是「沒裝」，不可靜默
+  ambiguous    最高 semver 有兩個以上目錄同序（只差 build metadata，或跨 marketplace
+               同版本）→ 警告、本層略過。挑哪一個不能交給 readdir 順序（#56）
+
+version 是被選中的**實際目錄名**（含 prerelease／build 後綴），不是重組字串（#56）。
+版本目錄名以 semver 2.0.0 **整串**比對，排序依 §11 —— 與 pai-lenses 的 validate.py 同一套。
 
 環境變數（測試注入用；預設值即正式路徑）：
   PAI_LENS_CACHE_ROOT  預設 ~/.claude/plugins/cache
@@ -42,18 +47,59 @@ import sys
 from pathlib import Path
 
 PACK_PLUGIN = "pai-lenses"
-SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)")
 PARSER = Path(__file__).resolve().parent / "pai-parse-lens-csv"
 
+# ── semver：與 `plugins/pai-lenses/scripts/validate.py` 的 `SEMVER` + `version_tuple` **逐字同義**（#56）──
+# 先前這裡是 `^(\d+)\.(\d+)\.(\d+)` + `match()`（prefix match）、key 只取 core（丟掉 prerelease）：
+#   - `1.0.0` 與 `9.9.9.bak` 並存 → 後者被判成 (9,9,9) 勝出，載入的是一個不是版本的目錄；
+#   - `0.4.0-rc1` / `0.4.0-rc2` / `0.4.0` key 全是 (0,4,0)，`max()` 取第一個 → **勝者由 readdir 順序決定**；
+#   - 回報的 version 由 key 重組成 `"0.4.0"` —— 可能是 cache 裡**不存在**的版本字串。
+# 守門者（validator，層 ② 的 CI 閘門）說「這是合法版本」的字串，consumer 必須以同一套文法認得、
+# 以同一套 §11 語意排序；兩份規格分岔正是 validate.py `_truthy` 註解說的「兩份不會一起改的規格」。
+#
+# **為什麼是複製而不是共用一份**：validate.py 屬於另一個 plugin（pai-lenses），而且是 CI-only 工具；
+# 使用者機器上 pai-lenses 可能沒裝、裝在任意 marketplace 的 cache 下、或版本與本 plugin 不同步 ——
+# runtime 去 import 它等於讓層 ② 的定位邏輯依賴層 ② 本身（沒裝就連「沒裝」都判斷不了）。反過來讓
+# validator import 這支 runtime 腳本，則是 CI 閘門依賴一個無副檔名的 bin 檔的內部函式名。所以兩邊
+# 各留一份，**分岔由機械對帳擋**：`test/pai-collect-lens-layers.bats` 的「逐對同序」測試直接載入兩邊，
+# 對一組 corpus 比對「是否合法」與每一對的比較結果。改任何一邊而不改另一邊 → 那條測試紅。
+SEMVER = re.compile(
+    r"(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)"
+    r"(?:-(?P<pre>(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)"
+    r"(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?"
+    r"(?:\+(?P<build>[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?")
 
-def _semver_key(name):
-    m = SEMVER.match(name)
-    return tuple(int(g) for g in m.groups()) if m else None
+# profile 名：與 harness `PROFILES` 的 key 形狀一致（`bin/pai-list-profiles` 目前印出的全部 key 都符合）。
+# 它會被接成 `<dir>/<profile>.csv`，所以是封閉字元集，不是黑名單：`/`、`.`、`\`、`_`、大寫、非 ASCII
+# 全部出局（#56；R23 版多放行了 `_`，而 validator 端以 PROFILES 成員資格判定，沒有任何 key 含 `_`）。
+PROFILE_NAME = re.compile(r"[a-z0-9][a-z0-9-]*")
+
+
+def version_key(v):
+    """semver → 可比較的 tuple；不是 semver（**整串** fullmatch）→ None。
+
+    與 validate.py `version_tuple` 同義：build 後綴不參與比較；prerelease 依 semver §11
+    逐 identifier 比較（數字段按整數、非數字段按 ASCII、數字段低於非數字段、identifier 較少者較低），
+    且低於同 core 的正式版。"""
+    m = SEMVER.fullmatch(str(v or ""))
+    if not m:
+        return None
+    core = (int(m["major"]), int(m["minor"]), int(m["patch"]))
+    if m["pre"] is None:
+        return core + (1,)                       # 正式版高於任何同 core 的 prerelease
+    ids = []
+    for part in m["pre"].split("."):
+        ids.append((0, int(part), "") if part.isdigit() else (1, 0, part))
+    return core + (0, tuple(ids))
 
 
 def find_pack_dir(cache_root):
-    """回傳 (dir, version, status)。跨 marketplace glob —— lens pack 註冊在哪個
-    marketplace 是使用者端的事，不該寫死在這裡。"""
+    """回傳 (dir, version, status, detail)。跨 marketplace glob —— lens pack 註冊在哪個
+    marketplace 是使用者端的事，不該寫死在這裡。
+
+    version 一律是**實際的目錄名**（#56），不是由比較 key 重組的字串。最高版本若有兩個以上
+    目錄同序（只差 build metadata，或不同 marketplace 裝了同一版）→ status `ambiguous`、
+    detail 列出它們，本層略過 —— 挑哪一個不能交給 readdir／glob 排序決定。"""
     candidates = []
     homes = sorted(Path(cache_root).glob(f"*/{PACK_PLUGIN}")) if cache_root.exists() else []
     for home in homes:
@@ -62,16 +108,19 @@ def find_pack_dir(cache_root):
         for child in home.iterdir():
             if not child.is_dir():
                 continue
-            key = _semver_key(child.name)
+            key = version_key(child.name)
             if key is not None:
                 candidates.append((key, child))
     if candidates:
-        key, path = max(candidates, key=lambda kv: kv[0])
-        return path, ".".join(str(n) for n in key), "ok"
+        top = max(key for key, _ in candidates)
+        winners = sorted(path for key, path in candidates if key == top)
+        if len(winners) > 1:
+            return None, None, "ambiguous", winners
+        return winners[0], winners[0].name, "ok", None
     # 有 pai-lenses 目錄卻挑不出 semver 版本 = 裝了但不可用，不是沒裝
     if homes:
-        return None, None, "unversioned"
-    return None, None, "absent"
+        return None, None, "unversioned", None
+    return None, None, "absent", None
 
 
 def parse_csv(path):
@@ -105,9 +154,9 @@ def main():
     # `<dir>/<profile>.csv`，沒有任何驗證——`..` 與絕對路徑都逃得出去，而 pack README 說那個檔
     # 的內容會變成**未經 sentinel 包裹的 role 級 reviewer 指令**。今天不是 fork 面（呼叫端都傳
     # 字面值，只有 `ensemble-compose` 會傳使用者自己的 `--base`），但「今天沒有呼叫端把不可信
-    # 的字串傳進來」不是機制，是巧合。profile 名就是一個檔名，封閉字元集足矣。
-    if profile and not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", profile):
-        print("profile 名只能是小寫英數與 `_` `-`（收到 %r）—— 它會被接成檔名，"
+    # 的字串傳進來」不是機制，是巧合。profile 名就是一個檔名，封閉字元集足矣（字元集見 PROFILE_NAME）。
+    if profile and not PROFILE_NAME.fullmatch(profile):
+        print("profile 名只能是小寫英數與 `-`、且以英數開頭（收到 %r）—— 它會被接成檔名，"
               "`..`／絕對路徑會讀到預期外的檔" % profile, file=sys.stderr)
         return 2
     if not profile:
@@ -122,9 +171,15 @@ def main():
     lenses, layers, warnings = [], [], []
 
     # ── 層 ②：lens pack ──
-    pack_dir, pack_version, pack_status = find_pack_dir(cache_root)
+    pack_dir, pack_version, pack_status, tied = find_pack_dir(cache_root)
     pack_csv = pack_dir / "lenses" / f"{profile}.csv" if pack_dir else None
-    if pack_status == "unversioned":
+    if pack_status == "ambiguous":
+        warnings.append(
+            f"{PACK_PLUGIN} 的最高版本有 {len(tied)} 個目錄同序（semver 比較相等：只差 build metadata，"
+            f"或不同 marketplace 裝了同一版）：{', '.join(str(p) for p in tied)} —— "
+            "無法決定載入哪一個，本層已略過。請移除多餘的安裝。"
+        )
+    elif pack_status == "unversioned":
         warnings.append(
             f"{PACK_PLUGIN} 已安裝但找不到 semver 版本目錄（{cache_root}）—— "
             "lens pack 的 plugin.json 必須有 version 欄位 —— 缺了的話 cache 目錄名會退回 "
