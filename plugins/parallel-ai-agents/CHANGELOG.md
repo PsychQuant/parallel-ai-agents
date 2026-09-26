@@ -11,6 +11,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- **契約 §6 第 (5) 項補齊「寫得到 base」對 `meta.json`／`prompt.txt` 的全部傷害面（#54，round 10 S10-4）**：
+  R11-2 已把 (5) 擴到 `prompt.txt`／`instructions`，但只寫了 `output` 與送出 prompt 兩半。本次對
+  `bin/codex-call` 逐行核對後，把本工具從 meta 讀的**全部十三個欄位**逐欄寫明，並說明兩個檔都沒有
+  完整性驗證（§4 的 `O_NOFOLLOW`＋`fstat` 只套在 `lock`／`claim`；`prompt.txt` 的 symlink 照跟）：
+  **送出面**（用受害者 ChatGPT OAuth 送攻擊者的 prompt＋system instructions＝配額竊取；`max_time`
+  決定單一請求能燒多久；未知 `service_tier` 原樣送出）、**寫入面**（worker 以受害者身分把回應寫到
+  攻擊者選的 `output`）、**回報面**（`DONE <路徑>` 只要求該檔非空）、**期限面**（`started_at`／
+  `max_time`／`grace` 合法但被選定時，poll 可提早 kill 活 worker 或一直回 `RUNNING`）、**測試鉤子面**
+  （`selftest_*` 在 worker 端讀 meta 不讀旗標，正式 run 可被切成不發 HTTP 的 `SELFTEST`→`DONE`）；
+  並寫明送出／寫入面是 detach 到 worker 讀檔之間的競態，回報／期限面在 run 存活期間都可達。§5 的
+  fail-closed 句與 §7 的「隱藏旗標同 uid 皆可達」各補一句指回 (5)。§6 仍為六項（lint D 不變）；
+  不改任何行為、不宣稱防禦。
+
 ## [2.23.0] - 2026-09-10
 
 ### Changed
