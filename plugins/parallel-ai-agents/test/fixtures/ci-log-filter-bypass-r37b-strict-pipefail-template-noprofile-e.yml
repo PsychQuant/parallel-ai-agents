@@ -1,5 +1,6 @@
 # #33 verify R36 第 4 列 → R37：GitHub 只對**關鍵字** `shell: bash` 加 `-o pipefail`；自訂樣板照字面跑。前一版把「是 bash」當成「有 pipefail」。
 # `bash --noprofile --norc -e {0}`：與關鍵字只差 `-o pipefail`（R36 點名）
+# R37 移植 #61 群組規則後寫成合規的群組形式：只剩 pipefail 規則會擋它（否則群組規則也紅，拿掉 pipefail 規則這一檔照樣紅）。
 # LINT-ARGS: --strict
 # EXPECT: rule-red
 name: t
@@ -11,4 +12,4 @@ jobs:
       - name: pipe without pipefail
         shell: bash --noprofile --norc -e {0}
         run: |
-          false 2>&1 | python3 scripts/neutralise.py
+          { false; } 2>&1 | python3 scripts/neutralise.py

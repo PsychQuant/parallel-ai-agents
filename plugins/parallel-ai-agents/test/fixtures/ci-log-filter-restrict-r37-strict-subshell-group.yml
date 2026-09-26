@@ -1,0 +1,15 @@
+# **不是繞過，是限制**（fail-closed；神諭記在 KNOWN_DISAGREE）：R37 移植 #61 群組規則後，`--strict` 只收大括號群組。
+# 子殼層 `( … ) 2>&1 |` 本身是安全的（整段的 fd 1、fd 2 都進管線），但 `(`／`)` 也出現在 `$(`、`$((`、陣列、`case` 模式裡，
+# 「恰好一對」的論證對它不成立。R36 的負對照 `good-r37b-strict-2to1-per-segment-forms` 曾把它釘成 pass。改寫成 `{ …; }` 即可。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: subshell group
+        shell: bash
+        run: |
+          ( cat "$PR_TITLE" | grep x ) 2>&1 | python3 scripts/neutralise.py

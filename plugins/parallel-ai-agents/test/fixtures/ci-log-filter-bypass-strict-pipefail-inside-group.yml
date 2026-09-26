@@ -1,0 +1,16 @@
+# 群組在管線裡是子殼層：群組**內**的 `set -o pipefail` 管不到外層 `{ … } | python3 …` 那條管線。預設 shell
+# 沒有 pipefail ⇒ pipefail 必須寫在群組前的 `set` 前綴裡。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: pipefail set inside the group only
+        run: |
+          {
+            set -o pipefail
+            python3 test/corpus/shapes.py --require-nonzero R3 list.txt
+          } 2>&1 | python3 scripts/neutralise.py

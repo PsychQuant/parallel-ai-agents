@@ -1,0 +1,14 @@
+# 群組的 `}` 之後必須**直接**接 neutralise：多一段 `tee` 就多一個不經 `2>&1` 的 stderr（它的錯誤訊息）。
+# 這裡 tee 開不了檔、錯誤訊息帶著 PR 文字直接進 log。要 tee 就把它放進群組裡。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: tee between the group and the filter
+        shell: bash
+        run: |
+          { echo safe; } 2>&1 | tee "/nonexistent/$PR_TITLE" | python3 scripts/neutralise.py

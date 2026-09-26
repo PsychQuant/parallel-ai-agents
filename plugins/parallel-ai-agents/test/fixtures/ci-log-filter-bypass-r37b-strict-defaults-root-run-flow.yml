@@ -1,5 +1,6 @@
 # #33 verify R36 第 13 列 → R37：workflow 根層級 flow 形式的 `defaults`（`--strict`）與 `env`（兩種模式）讀不到內容 ⇒ fail-closed PARSE。
 # `defaults:` 底下 `run: {shell: sh}`（R36 logic 的 defaults-run-flow）。
+# R37 移植 #61 群組規則後管線改寫成群組形式：只剩 PARSE 會擋它。
 # LINT-ARGS: --strict
 # EXPECT: parse-red
 name: t
@@ -13,4 +14,4 @@ jobs:
       - name: step under a flow root run
         run: |
           set -o pipefail
-          printf 'ok\n' 2>&1 | python3 scripts/neutralise.py
+          { printf 'ok\n'; } 2>&1 | python3 scripts/neutralise.py

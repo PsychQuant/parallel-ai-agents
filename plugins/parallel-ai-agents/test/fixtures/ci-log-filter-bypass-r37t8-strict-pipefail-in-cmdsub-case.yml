@@ -1,4 +1,6 @@
 # R37 完整性審查（`_lex`：命令替換裡 `case` 的模式 `)` 不是命令替換的收尾）：`$(case a in a) set -o pipefail ;; esac)` 整段都在命令替換的子殼層裡、不改變外層的 pipefail；在 `case` 的模式 `)` 就收掉命令替換時 `set -o pipefail` 被讀成頂層、`--strict` 的 pipefail 規則被滿足而放行（樣板 `bash -e {0}` 本身不帶 pipefail）。
+# R37 移植 #61 群組規則後：這個形狀寫不成群組（群組外只收 `set -e／-u／-o` 前綴），於是 step 宣告 `# LOG-FILTER:`——
+# 宣告的 step 不受群組規則約束，pipefail 規則照樣適用，這一檔只剩它會擋。
 # EXPECT: rule-red
 # LINT-ARGS: --strict
 name: t
@@ -12,5 +14,6 @@ jobs:
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
+          # LOG-FILTER: none — fixture 只測 pipefail 的模擬（宣告的 step 不受群組規則約束）
           x=$(case a in a) set -o pipefail ;; esac)
           echo "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py

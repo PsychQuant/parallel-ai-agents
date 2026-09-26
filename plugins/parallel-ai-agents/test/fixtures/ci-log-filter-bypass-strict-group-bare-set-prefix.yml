@@ -1,0 +1,14 @@
+# 群組規則的 `set` 前綴：**裸 `set`** 把所有 shell 變數（含 PR 可控的 env）印到群組外的 stdout——前綴必須帶選項。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: bare set before the group
+        shell: bash
+        run: |
+          set
+          { echo safe; } 2>&1 | python3 scripts/neutralise.py

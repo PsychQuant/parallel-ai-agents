@@ -1,5 +1,6 @@
 # #33 verify R36 第 22 列 → R37：`--strict` 的兩個誤擋——`runs-on` 行尾註解裡的 windows、`case … in a|b)` 的模式 `|`。
 # R36 點名的兩個，加相鄰輸入：跨行的 case、block 清單形式的 runs-on 帶註解。
+# R37 移植 #61 群組規則後：`--strict` 只收 `{ …; } 2>&1 | python3 …neutralise.py` 群組，管線改寫成群組形式。
 # LINT-ARGS: --strict
 # EXPECT: pass
 name: t
@@ -11,7 +12,7 @@ jobs:
       - name: pipeline on a runner whose comment mentions windows
         run: |
           set -o pipefail
-          printf 'ok\n' 2>&1 | python3 scripts/neutralise.py
+          { printf 'ok\n'; } 2>&1 | python3 scripts/neutralise.py
       - name: case alternation is not a pipe
         # LOG-FILTER: none — prints a constant
         run: |
@@ -32,4 +33,4 @@ jobs:
       - name: block runs-on list with a comment
         run: |
           set -o pipefail
-          printf 'ok\n' 2>&1 | python3 scripts/neutralise.py
+          { printf 'ok\n'; } 2>&1 | python3 scripts/neutralise.py

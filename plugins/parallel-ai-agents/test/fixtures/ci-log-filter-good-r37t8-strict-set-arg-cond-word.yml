@@ -1,4 +1,5 @@
 # #33 verify R37 完整性審查（缺陷 e，誤擋）：引數位置的 `[[ -n x ]]` 是 `set` 的位置參數（bash 5.3 實測 `set -o pipefail [[ -n x ]]` 設了 pipefail、$1 是 `[[`），不是條件式；規則層前一版一看到 `[[` 開頭就當成不透明詞，於是判「set 的參數不是字面」。
+# R37 移植 #61 群組規則後：這個 `set` 不是合規的群組前綴，step 改成宣告 `# LOG-FILTER:`——pipefail 規則照樣讀它。
 # LINT-ARGS: --strict
 # EXPECT: pass
 name: t
@@ -12,5 +13,6 @@ jobs:
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
+          # LOG-FILTER: none — fixture 只測 pipefail 的模擬（寫不成群組：前綴只收 `set -e／-u／-o 選項`）
           set -o pipefail [[ -n x ]]
           echo "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py

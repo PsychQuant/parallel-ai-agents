@@ -1,5 +1,6 @@
 # #33 verify R36 第 12 列 → R37：`_scalar` 只用 `yaml_split_comment()` 找註解起點，解碼對**原文**做（前一版先挖空引號再解碼，值變成一串空白）。
 # `shell: "bash"`、`shell: 'bash'`（R36 點名）與 `defaults.run.shell: "bash"`、帶行尾註解的 `shell: "bash"  # …`（相鄰輸入）都是關鍵字 bash。
+# R37 移植 #61 群組規則後：`--strict` 只收 `{ …; } 2>&1 | python3 …neutralise.py` 群組，管線改寫成群組形式。
 # LINT-ARGS: --strict
 # EXPECT: pass
 name: t
@@ -11,15 +12,15 @@ jobs:
       - name: double-quoted
         shell: "bash"
         run: |
-          false 2>&1 | python3 scripts/neutralise.py || true
+          { echo ok; } 2>&1 | python3 scripts/neutralise.py
       - name: single-quoted
         shell: 'bash'
         run: |
-          false 2>&1 | python3 scripts/neutralise.py || true
+          { echo ok; } 2>&1 | python3 scripts/neutralise.py
       - name: quoted with a trailing comment
         shell: "bash"  # the keyword, quoted
         run: |
-          false 2>&1 | python3 scripts/neutralise.py || true
+          { echo ok; } 2>&1 | python3 scripts/neutralise.py
   k:
     runs-on: ubuntu-latest
     defaults:
@@ -28,4 +29,4 @@ jobs:
     steps:
       - name: quoted defaults
         run: |
-          false 2>&1 | python3 scripts/neutralise.py || true
+          { echo ok; } 2>&1 | python3 scripts/neutralise.py

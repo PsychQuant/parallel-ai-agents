@@ -1,0 +1,16 @@
+# R37（移植 #61 群組規則時查到）：群組在管線裡是子殼層，裡面的 `set +o pipefail`／`shopt -uo pipefail` 管不到外層那條
+# `{ … } 2>&1 | python3 …` 管線，卻**會**關掉群組內之後的管線——`false | true` 的失敗被吞掉，群組的 rc 是 0，
+# 外層 pipefail 也救不回來（bash 5.3 實測外層 rc=0，不關的對照組 rc=1）。前一版把管線段裡的 pf 事件整個忽略，
+# 於是這兩步在關鍵字 `bash`（有 pipefail）下放行。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: set +o pipefail inside the group
+        shell: bash
+        run: |
+          { set +o pipefail; false | true; } 2>&1 | python3 scripts/neutralise.py

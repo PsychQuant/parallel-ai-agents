@@ -1,5 +1,7 @@
 # #33 verify R36 第 3 列 → R37：`--strict` 的 `2>&1` 規則改成逐條管線、每一段都要涵蓋（前一版比兩條正規式的總數）。
-# 負對照：群組 `{ …; } 2>&1 |`／`( … ) 2>&1 |`、每一段各帶 `2>&1`、整條 `|&`、`2>&1` 之後還有別的（非 fd 2）重導向——都放行。
+# 負對照（R36 版）：群組 `{ …; } 2>&1 |`／`( … ) 2>&1 |`、每一段各帶 `2>&1`、整條 `|&`、`2>&1` 之後還有別的（非 fd 2）重導向——都放行。
+# R37 移植 #61 群組規則後：`--strict` 只收大括號群組（收尾 `2>&1 |` 或 `|&`），這一檔只留那兩種；其餘改由群組規則擋——
+# 子殼層群組是安全的，被擋是限制（`restrict-r37-strict-subshell-group`），其他三種不是群組。
 # LINT-ARGS: --strict
 # EXPECT: pass
 name: t
@@ -12,19 +14,7 @@ jobs:
         shell: bash
         run: |
           { cat "$PR_TITLE" | grep x; } 2>&1 | python3 scripts/neutralise.py
-      - name: subshell group
+      - name: brace group with pipe-amp
         shell: bash
         run: |
-          ( cat "$PR_TITLE" | grep x ) 2>&1 | python3 scripts/neutralise.py
-      - name: every segment
-        shell: bash
-        run: |
-          cat "$PR_TITLE" 2>&1 | grep x 2>&1 | python3 scripts/neutralise.py
-      - name: pipe-amp chain
-        shell: bash
-        run: |
-          cat "$PR_TITLE" |& grep x |& python3 scripts/neutralise.py
-      - name: 2>&1 then an input redirect
-        shell: bash
-        run: |
-          cat "$PR_TITLE" 2>&1 </dev/null | python3 scripts/neutralise.py
+          { cat "$PR_TITLE" | grep x; } |& python3 scripts/neutralise.py

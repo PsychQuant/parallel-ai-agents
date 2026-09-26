@@ -1,4 +1,6 @@
 # R37 完整性審查（`_Sh.parse_command`：`function f { …; }` 的本體要呼叫才執行——子脈絡）：沒呼叫的函式裡的 `set -o pipefail` 不作用在外層；本體不當子脈絡時它被讀成頂層、`--strict` 的 pipefail 規則被滿足而放行（`f() {…}` 那種寫法由 bypass-r37b-strict-pipefail-set-in-function 守，`function` 關鍵字這種沒有）。
+# R37 移植 #61 群組規則後：這個形狀寫不成群組（群組外只收 `set -e／-u／-o` 前綴），於是 step 宣告 `# LOG-FILTER:`——
+# 宣告的 step 不受群組規則約束，pipefail 規則照樣適用，這一檔只剩它會擋。
 # EXPECT: rule-red
 # LINT-ARGS: --strict
 name: t
@@ -12,5 +14,6 @@ jobs:
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
+          # LOG-FILTER: none — fixture 只測 pipefail 的模擬（宣告的 step 不受群組規則約束）
           function f { set -o pipefail; }
           echo "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py

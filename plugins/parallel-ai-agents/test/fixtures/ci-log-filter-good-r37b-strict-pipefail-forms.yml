@@ -1,6 +1,8 @@
 # #33 verify R36 第 4 列 → R37：GitHub 只對**關鍵字** `shell: bash` 加 `-o pipefail`；自訂樣板照字面跑。前一版把「是 bash」當成「有 pipefail」。
 # 負對照：關鍵字 `bash`、樣板帶 `-o pipefail`（`-eo`／`-euo` 捆綁、`-o pipefail -e`、長選項＋`-eo`、絕對路徑 `/bin/bash -euo pipefail {0}`
 # ——R36 第 4 列說前一版把它判 PARSE），以及頂層的 `set -o pipefail`（含 brace 群組裡）、`shopt -so pipefail`。
+# R37 移植 #61 群組規則後：`--strict` 只收 `{ …; } 2>&1 | python3 …neutralise.py` 群組，管線改寫成群組形式。
+# 頂層大括號裡的 `set`、`shopt -so` 寫不成群組形式，那兩步改成宣告 `# LOG-FILTER:` 的 step——pipefail 規則照樣適用。
 # LINT-ARGS: --strict
 # EXPECT: pass
 name: t
@@ -12,37 +14,39 @@ jobs:
       - name: keyword
         shell: bash
         run: |
-          false 2>&1 | python3 scripts/neutralise.py || true
+          { echo ok; } 2>&1 | python3 scripts/neutralise.py
       - name: eo bundle
         shell: bash -eo pipefail {0}
         run: |
-          false 2>&1 | python3 scripts/neutralise.py || true
+          { echo ok; } 2>&1 | python3 scripts/neutralise.py
       - name: euo bundle
         shell: bash -euo pipefail {0}
         run: |
-          false 2>&1 | python3 scripts/neutralise.py || true
+          { echo ok; } 2>&1 | python3 scripts/neutralise.py
       - name: o then e
         shell: bash -o pipefail -e {0}
         run: |
-          false 2>&1 | python3 scripts/neutralise.py || true
+          { echo ok; } 2>&1 | python3 scripts/neutralise.py
       - name: long options then eo
         shell: bash --noprofile --norc -eo pipefail {0}
         run: |
-          false 2>&1 | python3 scripts/neutralise.py || true
+          { echo ok; } 2>&1 | python3 scripts/neutralise.py
       - name: absolute path
         shell: /bin/bash -euo pipefail {0}
         run: |
-          false 2>&1 | python3 scripts/neutralise.py || true
+          { echo ok; } 2>&1 | python3 scripts/neutralise.py
       - name: top-level set after a template
         shell: bash -e {0}
         run: |
           set -o pipefail
-          false 2>&1 | python3 scripts/neutralise.py || true
+          { echo ok; } 2>&1 | python3 scripts/neutralise.py
       - name: set inside a top-level brace group
         run: |
+          # LOG-FILTER: none — prints a constant（寫不成群組：群組外只收 `set` 前綴）
           { set -o pipefail; }
-          false 2>&1 | python3 scripts/neutralise.py || true
+          echo ok | cat
       - name: shopt -so
         run: |
+          # LOG-FILTER: none — prints a constant（寫不成群組：前綴只收 `set`）
           shopt -so pipefail
-          false 2>&1 | python3 scripts/neutralise.py || true
+          echo ok | cat

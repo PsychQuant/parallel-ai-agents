@@ -1,5 +1,7 @@
 # #33 verify R36 第 4 列 → R37：GitHub 只對**關鍵字** `shell: bash` 加 `-o pipefail`；自訂樣板照字面跑。前一版把「是 bash」當成「有 pipefail」。
 # `shopt -uo pipefail` 是 `set +o pipefail` 的另一個拼法（相鄰輸入，R36 沒點名）
+# R37 移植 #61 群組規則後：這個形狀寫不成群組（群組外只收 `set -e／-u／-o` 前綴），於是 step 宣告 `# LOG-FILTER:`——
+# 宣告的 step 不受群組規則約束，pipefail 規則照樣適用，這一檔只剩它會擋。
 # LINT-ARGS: --strict
 # EXPECT: rule-red
 name: t
@@ -11,5 +13,6 @@ jobs:
       - name: pipe without pipefail
         shell: bash
         run: |
+          # LOG-FILTER: none — fixture 只測 pipefail 的模擬（宣告的 step 不受群組規則約束）
           shopt -uo pipefail
           false 2>&1 | python3 scripts/neutralise.py
