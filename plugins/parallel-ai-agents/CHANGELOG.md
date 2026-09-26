@@ -13,32 +13,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Docs
 
-- **契約 §6 第 (5) 項補齊「寫得到 base」對 `meta.json`／`prompt.txt` 的全部傷害面（#54，round 10 S10-4；PR #62 verify 兩輪後修訂）**：
+- **契約 §6 第 (5) 項補齊「寫得到 base」對 `meta.json`／`prompt.txt` 的全部傷害面（#54，round 10 S10-4；PR #62 verify 三輪後修訂）**：
   R11-2 已把 (5) 擴到 `prompt.txt`／`instructions`，但只寫了 `output` 與送出 prompt 兩半。本次對
   `bin/codex-call` 逐行核對後，列出本工具從 meta 讀的十三個欄位（手動清點，無 lint 守護）並逐欄寫明效果；
   兩個檔沒有完整性驗證、內容最多只驗型別不驗值（§4 的 `O_NOFOLLOW`＋`fstat` 只套在 `lock`／`claim`；
-  `prompt.txt` 的 symlink 照跟；型別轉換經 NSNumber bridging，JSON 布林與整數值的浮點數也當整數收；
+  `prompt.txt` 的 symlink 照跟；型別轉換經 NSNumber bridging、兩個方向都成立〔verify 第三輪實測〕：JSON 布林與整數值的浮點數當整數收，
+  `1`／`1.0` 當布林 `true` 收；
   GC 範圍只看 `selftest_sleep` 的 key 在不在）：**送出面**（用受害者 ChatGPT OAuth 送攻擊者的
   prompt＋system instructions＝配額竊取；`max_time` 決定單一請求能燒多久；未知 `service_tier` 原樣送出）、
   **回流**（`prompt.txt` 指向受害者可讀的檔＋`instructions` 要求逐字複述＋`output` 指向攻擊者可讀處，
   新路徑以 0644 寫出——可外洩 `~/.codex/auth.json` 的 refresh token；`AUTH_FILE` 不隨 `$HOME`、base 隨
   `$HOME`；這條經 Codex 的通道取決於模型是否照做）、**寫入面**（worker 以受害者身分、暫存檔＋rename
   取代攻擊者選的 `output` 路徑上原有的東西並沿用原 mode——新路徑 0644、既有 0600 檔仍 0600 但內容整個換掉；
-  `selftest_sleep` 路徑確定性地把任意檔換成 `SELFTEST`〔例如毀掉 Codex 登入〕，HTTP 路徑可經 `instructions`
-  植入持久化〔`authorized_keys`、shell rc、hook〕，跨 uid 的 HOME 注入情境下＝以受害者身分執行程式碼）、
+  `selftest_sleep` 路徑把受害者可寫目錄裡的檔換成 `SELFTEST`〔例如毀掉 Codex 登入；不依賴模型，但同樣受
+  worker 端時序視窗限制、跨 uid 是競態〕；symlink——懸空或指向既有檔——被換成 `0755` 一般檔、目標不動；HTTP 路徑可經 `instructions`
+  植入持久化〔`authorized_keys`、shell rc；hook 只在該檔已可執行或目前是 symlink 時才可執行〕，跨 uid 的 HOME 注入情境下＝以受害者身分執行程式碼）、
   **回報面**（`DONE <路徑>` 只要求 status 為 `0` 且 `attributesOfItem` 量得非空——不跟 symlink，懸空
-  symlink 也算〔實測〕；engine 的 codex leg 要 agent 讀完後 `rm -f` 該路徑且不限於 base 之下，所以改寫
-  `output`＝讓遵循 engine 流程的 caller 確定性地讀出並刪除受害者可刪的任意檔，不經 Codex、不靠模型）、
-  **期限面**（三種結果：提早 kill、推遠期限而回 `RUNNING`〔改寫 worker 端 `max_time` 是必要、非充分條件〕、
+  symlink 也算〔實測〕；`DONE` 印不印取決於 run 本身的 status 是否為 `0`，光改寫 `output` 不保證；同 uid
+  只要改寫 `output`，跨 uid 造不出受害者擁有、`st_nlink == 1` 的 `lock`／`claim`，另需祖先目錄 rename
+  TOCTOU〔DA 讀碼推得〕；engine 的 codex leg 要 agent 讀完後 `rm -f` 該路徑且不限於 base 之下——讀與刪是
+  wrapper agent 照 engine 的自然語言指示做、受 caller 的 tool 權限約束〔預設權限下 `rm -f` 會跳確認〕，所以
+  這條通道不經 Codex、但**並非不靠模型配合**；讀進 context 的內容會進入模型請求與 transcript，經 finding
+  body 還可能被 IDD verify 貼成 PR comment）、
+  **期限面**（三種結果：提早 kill、推遠期限而回 `RUNNING`〔要「一直」回 `RUNNING`，須在 worker 端時序視窗內改寫 `max_time`、**或**加上
+  `selftest_sleep`——擇一是必要、非充分條件〕、
   期限算術任一方向溢位讓 poll 與 worker trap、stdout 無 token）、**測試鉤子面**（四個 `selftest_*` 各自的
   效果與前置條件；`selftest_fail` 與 `selftest_ignore_term` 只在 `selftest_sleep` 生效時才讀）、
-  **`default_output`**（改成 `true` 落在第 2 項；改成 `false` 讓預設輸出在非 `DONE` 終態留到 24 h GC）；
+  **`default_output`**（改成 `true`／`1`／`1.0` 落在第 2 項；改成 `false`、`0` 或轉不成布林的值讓預設輸出在
+  非 `DONE` 終態留到 24 h GC）；
   時序分成 worker 端快照（meta 拿鎖前後各讀一次、`prompt.txt` 在非 `selftest_sleep` 路徑讀一次——跨 uid
-  是競態；同 uid 若能在 worker 讀取前以 `SIGSTOP` 停住它，停住期間的改寫是確定性的，但停住本身仍是 20 s
-  readiness 窗內的競態）與 poll 端每次重讀。「刪除面（round 5 S2 已修）」限定為只指本工具的
-  `removeDefaultOutput`。§4 的「HOME 注入在 §6 之外」改寫為「不在本工具的防禦範圍內、是跨 uid 取得寫得到
-  base 的途徑」，與 (5) 對齊。§5 的期限 bullet 改寫成「期限都取自 `meta.json`〔grace 預設 60 s〕，fail-closed
-  只保證損毀」（原句「不依賴可被竄改的 deadline 檔」與後句矛盾），`DONE` 的「非空」補上 symlink 限定；
+  是競態；同 uid 若能在 worker 讀到目標欄位前以 `SIGSTOP` 停住它，停住期間的改寫是確定性的，但停住本身仍是
+  有時限的競態——拿鎖前讀的 `selftest_prelock` 受 20 s readiness 上限，其餘欄位在拿鎖後才讀、不受它限制但窗口更窄）與 poll 端每次重讀。「刪除面（round 5 S2 已修）」限定為只指本工具的
+  `removeDefaultOutput`。§4 的「HOME 注入在 §6 之外」改寫為「不在本工具的防禦範圍內」，並分開兩條路：同 uid 寫得到 base 時
+  沒有任何檢查能成立；跨 uid 的 HOME 注入只控制 base 之上的祖先目錄，`hardenBase` 每次 `--detach` 對兩層
+  base 要求真目錄＋owner＝當前 uid＋`0700`，owner 檢查在這條路上有約束力，真正通到「寫得到 base」的是
+  `runDir(id)` 每次重新解析路徑的 TOCTOU〔security 讀碼推得，未以兩個 uid 實測〕；§6 跨 uid 列補一句指回
+  第二列第 (5) 項。§5 的期限 bullet 改寫成「期限都取自 `meta.json`〔grace 預設 60 s〕，fail-closed
+  只保證損毀」（原句「不依賴可被竄改的 deadline 檔」與後句矛盾），兜底的訊號序列更正為 SIGTERM → 2 s →
+  SIGKILL〔原寫逕行 SIGKILL〕，`DONE` 的「非空」補上 symlink 限定；§2 `TIMEOUT` 列的期限由寫死的 60 s 改為
+  取自 meta 的 grace；
   §7 的 `--_selftest-gc-age` 與「隱藏旗標同 uid 皆可達」各補一句指回 (5)。§6 仍為六項（lint D 不變）；
   不改任何行為、不宣稱防禦。
 
