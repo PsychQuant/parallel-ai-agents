@@ -18,7 +18,7 @@
 # 用法：test/lint-ci-log-filter.sh --strict [workflow.yml…]   **檢查真的 workflow 用這個**（CI 與 run.sh 都是）；
 #                                                             預設 ../../.github/workflows/*.yml *.yaml（全部 workflow）
 #       test/lint-ci-log-filter.sh [workflow.yml…]            預設模式：fixture 與產生語料用，量的是 lint 與 bash 的詞法對帳，
-#                                                             **假設 shell 是 bash**、不要求 pipefail 與逐段 `2>&1`
+#                                                             **假設 shell 是 bash**、不要求 pipefail 與群組形式
 #       test/lint-ci-log-filter.sh --selftest
 #       檔名請給絕對路徑或相對於 plugin 目錄的路徑：本 lint 先 `cd` 到 plugin 目錄，找不到檔案回 rc=2（不是 pass）。
 # **兩種模式的取捨（#33 verify R34 放行條件第 5 條的偏離，R36 第 25 列要求寫在這裡）**：非 bash 的 shell（`sh`、`pwsh`、
@@ -39,7 +39,7 @@ if [ "${1:-}" = "--selftest" ]; then
   #   (3) bypass fixture 加 `--require-run-steps`，保留原本的 vacuity 保護（正式執行時不再套用，
   #       因為純 `uses:` workflow 沒有 run step 是合法的）。
   shopt -s nullglob
-  fail=0; n_pass=0; n_rule=0; n_parse=0
+  fail=0; n_pass=0; n_rule=0; n_parse=0; n_msg=0
   for f in test/fixtures/ci-log-filter-*.yml; do
     want=$(sed -n 's/^# EXPECT: //p' "$f" | head -1)
     if [ -z "${want}" ]; then
@@ -68,6 +68,19 @@ if [ "${1:-}" = "--selftest" ]; then
       echo "lint-ci-log-filter selftest FAILED: ${f} 宣告 ${want}，實測 ${got}" >&2
       printf '%s\n' "$out" | head -2 >&2; fail=1; continue
     fi
+    # R37：`# EXPECT-MSG:`（可多行）斷言**訊息內容**——每一行都必須以子字串出現在輸出裡。
+    # 為什麼：類別對了不代表訊息對。`--verify-expected` 比對整段 stderr，推翻了「只改訊息文字 ⇒ 等價」
+    # 這類理由（`set -x` 印成「開了 verbose」也照樣 rule-red）；而子 shell `-o xtrace` 的訊息實際印成
+    # `-oo xtrace`，正是因為沒有任何一張 fixture 看訊息。
+    msg_bad=""
+    while IFS= read -r m; do
+      case "$out" in *"$m"*) ;; *) msg_bad="$m"; break ;; esac
+    done < <(sed -n 's/^# EXPECT-MSG: //p' "$f")
+    if [ -n "${msg_bad}" ]; then
+      echo "lint-ci-log-filter selftest FAILED: ${f} 的輸出沒有 EXPECT-MSG「${msg_bad}」" >&2
+      printf '%s\n' "$out" | head -2 >&2; fail=1; continue
+    fi
+    if grep -q '^# EXPECT-MSG: ' "$f"; then n_msg=$((n_msg+1)); fi
     case "${want}" in
       pass)      n_pass=$((n_pass+1)) ;;
       rule-red)  n_rule=$((n_rule+1)) ;;
@@ -89,7 +102,11 @@ if [ "${1:-}" = "--selftest" ]; then
     echo "lint-ci-log-filter selftest FAILED: parse-red 是 ${n_parse} 個，預期恰好 143（先前這一類完全沒有下限）" >&2
     exit 1
   fi
-  echo "lint-ci-log-filter selftest ok: ${n_pass} 正向通過、${n_rule} 條規則紅、${n_parse} 條解析紅（來源逐一比對相符）"
+  if [ "${n_msg}" -ne 4 ]; then
+    echo "lint-ci-log-filter selftest FAILED: 帶 EXPECT-MSG 的 fixture 是 ${n_msg} 張，預期恰好 4" >&2
+    exit 1
+  fi
+  echo "lint-ci-log-filter selftest ok: ${n_pass} 正向通過、${n_rule} 條規則紅、${n_parse} 條解析紅、${n_msg} 張訊息斷言（來源逐一比對相符）"
   exit 0
 fi
 
@@ -168,14 +185,14 @@ BLOCK_SCALAR_RE = re.compile(r"^[|>](?:([1-9])[+-]?|[+-]([1-9])?)?\s*(#.*)?$")
 # `|`、`>`、反引號、`&` 緊接在後都是 bash 的詞尾，前一版判「沒有經 neutralise.py」（誤擋，`good-r37m-neutralise-glued-follower`
 # 與 `-unobservable` 兩張；後者是神諭量不到的四種寫法）。
 # 兩端現在都用 bash 的 metacharacter 當詞界；`(` 不算詞尾（`neutralise.py(` 是語法錯誤，`bypass-r37m-neutralise-glued-paren`），
-# 一般字元也不算（`neutralise.pyc` 是另一個檔）。後者沒有 fixture：神諭的環境裡那個檔不存在、python3 什麼都不印，
+# 一般字元也不算（`neutralise.pyc` 是另一個檔）。後者沒有 fixture：神諭的環境裡那個檔不存在、python3 對 stdout 什麼都不印（stderr 仍會印出 can't open file 的錯誤），
 # 神諭會把 lint 的 RULE 判成誤擋——這一格神諭在原理上量不了。`(` 那張已經殺得到「拿掉詞尾判定」的突變。
 PIPED_RE = re.compile(r"[^|\s;&(]\s*\|(?!\|)&?\s*python3\s+[^\s;&|()<>`]*neutralise\.py(?=[\s;&|)<>`]|$)")
 LOGFILTER_RE = re.compile(r"^\s*#\s*LOG-FILTER:\s*(in-process|none — .+)")
 # **fd 流向、`--strict` 的 `2>&1`、pipefail、shell 樣板**這四條規則不在這裡用正規式寫——它們讀的是 run 區塊的**結構**
 # （詞、重導向、管線的每一段、群組、`case`），見 `shell_scan()` 之後的「規則層的詞法」一節（#33 verify R36 第 3、4、8、9、22 列）。
-# R35 在這裡的五條正規式（`FD_RE`、`STRICT_NEUT_RE`、`PIPEFAIL_RE`、`ANY_PIPE_RE`、`BASH_SHELL_RE`＋`XTRACE_OPT_RE`）是拼法清單，
-# R36 在每一條上都找到作者沒點名的相鄰輸入，所以整組換掉。
+# R35 在這裡的六條正規式（`FD_RE`、`STRICT_NEUT_RE`、`PIPEFAIL_RE`、`ANY_PIPE_RE`、`BASH_SHELL_RE`＋`XTRACE_OPT_RE`）是拼法清單，
+# R36 在其中五條（`XTRACE_OPT_RE` 除外）上都找到作者沒點名的相鄰輸入，所以整組換掉。
 # **extglob 改變 bash 的詞法**（#33 verify R36 第 17 列；`shell_scan()` 已知不涵蓋第三組第 4 條，見下）：
 # `shopt -s extglob` 之後 `@(`、`!(`、`+(`、`?(`、`*(pattern-list)` 都是合法語法，`(` 不再只是 subshell／
 # 命令替換的開括號。本掃描器完全沒有模擬這套額外詞法，continuing 會把 `@(x 2>&1| python3 …)` 的 `(` 讀成
@@ -247,8 +264,10 @@ SHELL_WORD_BREAK = " \t;&|()<>`"
 DELIM_WORD_BREAK = " \t;&|()<>"
 # **命令位置的觸發字元**（R37，`shell_scan()` 的 `cmd_pos` 用它維護；不含關鍵字，關鍵字另外整段消費）：
 # `;`、`&`（含 `&&` 裡的每一個 `&`）、`|`（含 `||`／`|&` 裡的每一個 `|`）、`(`（含 `((`／`$(` 開啟時已各自處理，
-# 這裡補的是落到逐字元 fallthrough 的裸 `(`）、`!`、`{`。`)`／`}` 收尾**不**在這裡——收尾一個 subshell／group
-# 之後不是自動的命令位置，要等下一個分隔字元。
+# 這裡補的是落到逐字元 fallthrough 的裸 `(`）**無條件**把 `cmd_pos` 設成 True；`!`、`{` 不對稱——只在
+# `cmd_pos` 已是 True 時依詞尾條件決定要不要保留（`cmd_pos = cmd_pos and 詞尾落在空白／行尾`），本身
+# 從不會把 False 變成 True。`)`／`}` 收尾**不**在這裡——收尾一個 subshell／group 之後不是自動的命令
+# 位置，要等下一個分隔字元。
 CMD_POS_CHARS = ";&|(!{"
 
 
@@ -289,16 +308,18 @@ def dedent_block(lines, explicit_pad=None):
     假管線變成 code → rc=0，而 runner 把展開後的 `$PR_TITLE` 當 heredoc 資料印出。
     有指示子時 `explicit_pad` 由呼叫端算好傳進來（父縮排 + N），沒有才用最小縮排。
     前一版把帶 YAML 縮排的原始行直接丟進掃描器，於是 heredoc 的終止判定
-    `probe.rstrip() == delim` 永遠不成立（`          EOF` 不等於 `EOF`）——**那個分支在任何真實
+    （歷史寫法）`probe.rstrip() == delim` 永遠不成立（`          EOF` 不等於 `EOF`）——**那個分支在任何真實
     `run: |` 裡都不可達**，heredoc 之後的真管線與真的 `# LOG-FILTER:` 一起被吞掉。
     DA 用合成的 base-綠語料量到：含 heredoc 的合規檔 17 個裡 **16 個被打紅**。
-    順帶修好 `#` 詞首判定裡 `i == 0` 的語意——縮排剝掉後，行首才真的是行首。
+    （原句稱「順帶修好 `#` 詞首判定裡 `i == 0` 的語意」是錯的：`shell_scan()` 的 `#` 詞首判定靠 `prev_sig`——
+    追蹤前一個有意義字元，不是字元索引 `i == 0`，這裡的縮排剝除跟它無關。）
     """
     # **「空行」的判準只算空白，tab 是內容**（#33 verify R37／R36 logic 第 10 列）。前一版用不帶參數的
     # `.strip()` 篩「非空行」——Python 的 `.strip()` 連 tab 一起當空白，於是一行「9 個空格 + 1 個 tab」
     # 被誤判成空行、排出 `body`，min() 就少算了它。YAML 的規則是**第一個非空行**（空行＝只含空白，而
     # 這裡的「空白」只算 SPACE）決定整段的縮排；那一行雖然總字元數比其他內容行少，只要它是**第一個**
-    # 排進 body 的非空行，min() 自然會取到它（後面的內容行縮排不可能比它更淺，否則 YAML 解析器會把
+    # 排進 body 的非空行，min() 就會取到它（min() 對順序不敏感，取到它是因為它的 pad 值本來就是 body
+    # 集合裡的最小值——由 YAML 良構性保證：後面的內容行縮排不可能比它更淺，否則 YAML 解析器會把
     # 那一行讀成區塊外——已成立的 YAML 保證這件事）。PyYAML 對帳：`run: |` ⏎ `<9sp><tab>` ⏎
     # `<10sp>echo "$PR_TITLE"; cat <<EOF` ⏎ `<10sp>EOF` 剝出的縮排是 9（不是 10），第一行變成單一個
     # `\t`，其餘行留一個 leading space——前一版把那個 tab 行排出去，min 改算其餘行的 10，把 `\t` 也
@@ -320,7 +341,7 @@ def dedent_block(lines, explicit_pad=None):
 
 # R37 修法（#33 verify R36 第 21 列 LOW）：`|&`（bash 的 stderr 管線，等同 `2>&1 |`）先前不在這裡——
 # `echo "$PR_TITLE" |&` 換行接 `python3 …neutralise.py` 沒被接成同一個邏輯行，真管線因此被誤判成「未過濾」
-# （RULE 誤擋）。`\|&` 放在 `\|\|?` 之前之後都一樣（regex 回溯會試到），這裡照抄其餘三個運算子的順序放最後。
+# （RULE 誤擋）。`\|&` 放在 `\|\|?` 之前之後都一樣（regex 回溯會試到），這裡插在 `\|\|?` 之後、`&&` 之前——三個 alternative 中的第二個，不是放在最後（regex 回溯讓順序不影響行為）。
 CONT_RE = re.compile(r"(\|\|?|\|&|&&)\s*$")     # 邏輯行的續行運算子：`|`／`||`／`|&`／`&&`
 
 
@@ -367,8 +388,9 @@ def fold_block(lines, folded):
         # 前一版把它當空行 ⇒ 當成分隔符丟掉 ⇒ 空分隔字的 heredoc 被一個 runner 沒有的終止提早收掉 ⇒ 假放行。
         if not _fold_blank(l):
             more = l[:1] in (" ", "\t")
-            # `acc` 非 None ⇒ 它指向一個非空內容行（見下：只在 `not more` 為真時設定、空行段後歸 None），
-            # 所以「`out[acc]` 非 None 且非空」是恆真的——R33 opsweep 對那兩個運算元各報存活，實測依構造多餘，刪掉。
+            # `acc` 非 None ⇒ 在被讀取合併的那一刻，它指向一個非空內容行（`acc` 的賦值本身不限定 `not more`——
+            # `more` 為 True 時一樣會賦值，讀取安全靠的是 `prev_more` 迫使下一輪立刻重新賦值），所以
+            # 「`out[acc]` 非 None 且非空」在讀取當下恆真——R31／R32 opsweep 對那兩個運算元各報存活，實測依構造多餘，刪掉。
             if acc is not None and not more and not prev_more:
                 # **接上去的 `l` 不 strip**（#33 verify R37／R36 logic 第 11 列）。折疊只在兩個內容行之間插入
                 # 一個空白，不動任一行本身的內容——`l` 在這個分支已保證沒有前導空白（`not more`），差別只在
@@ -379,8 +401,9 @@ def fold_block(lines, folded):
                 # `EXPECTED_SURVIVE`（`strip→id|fold_block|…`）論證「折進去的只差行尾空白，下游消費者都吃得
                 # 下」是假的：heredoc 分隔字比對用的正是**沒被折走的整行**，`l.strip()` 悄悄把該行的行尾空白
                 # 吃掉，讓 lint 算出的分隔字比 bash（＝PyYAML）短一個字元——分隔字恰好是空白時（`cat <<' '`
-                # 這一族）差一個字元就是有沒有終止的差別。R37 DA 用突變體（把這裡的 `.strip()` 拿掉）證明：
-                # 拿掉之後 selftest 數字不變、且會讓原本放行的探針正確翻紅，`.strip()` 才是那個 bug。
+                # 這一族）差一個字元就是有沒有終止的差別。R36 verify（agents:logic）點名、R37 e 包用突變體
+                # （把這裡的 `.strip()` 拿掉）驗殺：拿掉之後會讓原本放行的探針正確翻紅（t8 隔離測試量到正向與
+                # rule-red 計數各差 1，並非「數字不變」），`.strip()` 才是那個 bug。
                 out[acc] = out[acc] + " " + l
                 out.append(None)                # 佔位：行數不變，但 runner 眼中沒有這一行
             else:
@@ -431,11 +454,13 @@ def _ansic_decode(s):
 
     bash 5.3 實測（heredoc 終止字，讀 EOF 警告）：`E\x41`→`EA`、`E\'F`→`E'F`、`\101B`→`AB`、`E\\F`→`E\F`、
     `E\"F`→`E"F`、`E\qF`→`E\qF`（認不得的逃脫保留反斜線）、`E\x4`→`E\x04`。`E\cAF` 得到 `E\x01\x01F`——
-    `\x01`（與 `\x7f`）是 bash 內部的引號跳脫字元，會被重複；`\c` 與解出這兩個字元的一律不猜。
+    `\x01` 是 bash 內部的引號跳脫字元（CTLESC），出現時會自我重複；`\x7f`（CTLNUL）不是同一種逃脫字元，
+    出現時是被加上一個 `\x01` 前綴，不是被複製成兩個 `\x7f`；`\c` 與解出這兩個字元的一律不猜。
 
     #33 verify R36（logic HIGH-3／R35 回歸）：`\x`、八進位、`\u`、`\U` 解出的**任何 ≥0x80 的值**一律 fail-closed。
     bash 對 `\x`／八進位產生的是單一**原始位元組**，不做任何 Unicode 解碼；Python 的 `chr(0xe9)` 卻是碼位
-    U+00E9（一個字元），兩者在 UTF-8 檔案裡永遠不是同一行——`\377`、`\xe9`、兩個 `\x` 湊出的 `\xc3\xa9`
+    U+00E9（一個字元），兩者（僅指 ≥0x80 的值；<0x80 的 ASCII 逃脫兩邊本來就是同一個位元組）在 UTF-8
+    檔案裡永遠不是同一行——`\377`、`\xe9`、兩個 `\x` 湊出的 `\xc3\xa9`
     都曾讓 heredoc 提早（或延後）收尾、真管線被吞。`\u`／`\U` 雖然語意上是碼位不是位元組，這裡不區分、
     一律用同一條門檻擋下：解不出確定的 ASCII 值就不猜。同一條門檻也**先擋掉 NUL**（bash 在 NUL 截斷
     字串，本 lint 解出的卻是含 `\x00` 的完整字串——兩邊的終止字不同，前一版因此讓 heredoc 永不終止、
@@ -551,7 +576,7 @@ def _cmdsub_end(line, j):
     """`$(…)` 的配對：從 `$(` 到收尾 `)` 之後的位置；同一行沒收尾、或裡面有本 lint 不解析的構造，回 None。
 
     `$((` 是算術，交給 `_arith_end`。其餘括號計深度，略過逃脫、單雙引號（`_dq_end`）、巢狀的 `${…}`／反引號／
-    `$((…))`。**這不是 bash 的命令替換剖析**（#33 verify R36 第 7 列：logic HIGH-4、codex 第 1 條）——下列五種
+    `$((…))`。**這不是 bash 的命令替換剖析**（#33 verify R36 第 7 列：agents:logic, codex 第 1 條）——下列五種
     構造讓括號計數與 bash 分岔，**遇到一律回 None**（封閉列舉，只有這五種；其餘構造照上面的規則配對）：
       1. 詞首的 `#`：註解到行尾，註解裡的 `)` 不收尾（`$(echo a #)` 在 bash 要到下一行才收）。
       2. `<<`（`<<<` 除外）：heredoc 的內文在下一行起，同一行收尾的 `$(cat <<EOF)` 讓 bash 從下一行讀內文。
@@ -602,7 +627,7 @@ def _cmdsub_end(line, j):
 
 # `$(…)` 裡的 case 追蹤（見 `shell_scan` 的 `cases`）用的工具。R37，R36 第 7 列。
 CASE_KW_RE = re.compile(r"(case|esac)(?=[\s;&|()<>]|$)")
-# 命令起點：本行到目前為止的 code 以分隔字元（或行首）結尾，後面至多接幾個「後面還是命令」的保留字。
+# 命令起點：本行到目前為止的 code 以分隔字元（或行首）結尾，後面接零或多個（無上限）「後面還是命令」的保留字。
 # 保留字本身也要在命令起點——`echo do case` 的 `do` 是參數，所以要求它前面緊接分隔字元，不接受任意空白後的 `do`。
 AT_CMD_RE = re.compile(r"(?:^|[;&|(`])(?:\s*(?:do|then|else|elif|if|while|until|time|!|\{))*\s*$")
 
@@ -794,16 +819,16 @@ def shell_scan(lines):
          `known-stderr-cmd-error-missing-2to1`）。**`--strict` 的群組規則擋它**——CI 與 run.sh 對真 workflow 用 `--strict`，
          所以這一條只剩 fixture／產生語料（它們量的是詞法）。另：把輸出轉到 stderr 或開 xtrace 的寫法（`>&2`、
          `set -x`…）在**兩種模式**都是規則（R35；R33 的 S-2 範例用的正是 `>&2`，它不屬於這一條）。
-         **逐段的 `2>&1` 只涵蓋命令執行時寫出的 stderr**（R37 合併時協調者發現，bash 5.3 實測；#60 第 2 類）：在該段
+         **逐段的 `2>&1` 只涵蓋命令執行時寫出的 stderr**（a 包發現，R37 合併時協調者以 bash 5.3 覆核；#60 第 2 類）：在該段
          `2>&1` 生效**之前**就寫出的，預設模式看不到（範例 `known-expansion-error-before-2to1`）——(a) 展開期錯誤：`echo "${!PR_TITLE}" |& …` 印出
          「<原值>：無效的變數名稱」、`echo $(( PR_TITLE )) 2>&1 | …` 印出算術錯誤；(b) 寫在 `2>&1` 左邊的重導向本身出錯：
          `echo x > "$PR_TITLE" 2>&1 | …` 印出 `<原值>: No such file…`（`2>&1` 放左邊就走進管線）。命令執行時才產生的
          錯誤（`[[ $PR_TITLE -eq 1 ]] 2>&1 | …`）會走管線、被過濾。群組 `{ …; } 2>&1 |` 的重導向在內部展開之前生效，
          (a)(b) 一起關掉——`--strict` 要求整個區塊就是那個群組（R37 自 PR #61 移植；R36 的逐段 `2>&1` 規則看不到它們）。
          本 lint 不為 (a)(b) 逐拼法列規則（那正是 R36 批評的形狀）。
-         R34 更正：R33 這裡寫「repo 自己的 17 條管線全部已帶 `2>&1`／`|&`」——`--strict` 第一次跑就在 pack anchor
+         R35 更正：R33 這裡寫「repo 自己的 17 條管線全部已帶 `2>&1`／`|&`」——`--strict` 第一次跑就在 pack anchor
          那一步抓到一條 `… | tee | python3 …` 的最後一段沒帶（`tee` 的 stderr 沒有 PR 文字，但宣稱是假的）。
-      2. **顆粒度（預設模式）**：一個 run 區塊裡**任一條**邏輯行接了管線，整個區塊就算已過濾（Codex 第 4 條）。
+      2. **顆粒度（預設模式）**：一個 run 區塊裡**任一條**邏輯行接了管線，整個區塊就算已過濾（#33 verify R34 requirements F4、logic F6、DA；追蹤 #59）。
          `echo "$PR_TITLE"` ⏎ `echo safe | python3 …` 因此放行（已知類別 G）。這是宣告過的語意，不是漏洞的偽裝。
          **`--strict` 改了「什麼算已過濾」**（#59，R37 自 PR #61 移植）：整個區塊必須是一個 `{ …; } 2>&1 | python3 …`
          群組（見 `strict_group_violation`），另一條命令不可能在群組外。
@@ -814,14 +839,15 @@ def shell_scan(lines):
          `true &&` 換行 `|& python3 …`——`;`／`&&` 之後直接是管線、bash 語法錯誤）不算接到 neutralise 的管線，
          `PIPED_RE` 排除 `;`／`&`／`(` 當左邊界，見該正規式旁的說明）。
       3. **多行分隔字**：`cat <<"A` ⏎ `B" | python3 …` 在 bash 是引號跨行、heredoc 永不終止但**管線照建**；
-         本 lint 的分隔字是單行字串、表示不了它，一律 `PARSE:`（Codex 第 7 條，誤擋方向；產生語料的
+         本 lint 的分隔字是單行字串、表示不了它，一律 `PARSE:`（誤擋方向，源頭在 R33、該回合無 Codex leg；產生語料的
          `d-delimword-unterm-*` 四檔由神諭歸「不可比（fail-closed）」）。
     **已知不涵蓋，第三組——預設模式的假設（封閉列舉，只有五條，不得依性質相似類推第六條；R35 新增前三條，
     R37 新增第 4、5 條）**：
       1. **shell 是 bash**：預設模式不讀 `shell:`／`defaults.run.shell`／container／runs-on，照 bash 的詞法判。
          `--strict`（CI 與 run.sh 對真 workflow 用的模式）驗這個假設：shell 必須是 bash（可帶選項、不得開 xtrace），
          container 或 Windows／運算式 runs-on 的 job 必須明寫 bash。R35 第一版在預設模式也套用，三軸量到合成 A
-         語料 959 個 base-綠檔 290 個翻紅，所以移進 `--strict`。
+         語料 959 個 base-綠檔 290 個翻紅（R36 重算為聯集 268 檔：shell 值規則 75 檔、container／Windows 規則
+         223 檔，多數來自後者），所以移進 `--strict`。
       2. **跨行的 `${…}`**（含雙引號裡的）：本 lint 的 `${…}` 配對不跨行 ⇒ fail-closed `PARSE:`（誤擋方向；
          合成 A 語料 1 檔：`"${X:+$X` ⏎ `…}"`）。
       3. **`$(…)` 裡的 `case`**：命令替換用括號計深度配對，`case … in a)` 的單邊模式括號會讓深度提早歸零。
@@ -835,7 +861,7 @@ def shell_scan(lines):
          詞法，偵測到就整個 run 區塊 fail-closed `PARSE:`（見 `EXTGLOB_RE`；R36 第 17 列）。
       5. **頂層 `case` 的模式文字當成 code**（R37 完整性審查，缺陷 d）：`case x in a|python3\ scripts/neutralise.py ) ;; esac`
          的 `|` 是「或」、不建管線，預設模式的 `PIPED_RE` 卻算它接了 neutralise——放行（`known-r37t8-default-case-pattern-pipe`，
-         神諭列為 `KNOWN_DISAGREE`）。`--strict` 由「看得到管線、規則層剖析不出它」那條擋下
+         神諭列為 `KNOWN_DISAGREE`）。`--strict` 由群組規則擋下（區塊不是 `{ …; } 2>&1 | python3 …` 群組；R37 移植 #61 之前是「看得到管線、規則層剖析不出它」那條）
          （`bypass-r37t8-strict-case-pattern-looks-piped`），CI 對真 workflow 用的是 `--strict`。修它要把第 3 條的 case 追蹤延伸到頂層、
          並把模式文字挖空；頂層 case 在 workflow 裡很常見，而那套追蹤對表示不了的形狀一律 fail-closed——延伸過去的誤擋代價沒量過，本輪不做。
 
@@ -935,8 +961,10 @@ def shell_scan(lines):
         code, i, n = [], 0, len(line)
         # **新的實體行＝新的命令位置**（R37）：換行本身就是命令分隔字元（等同 `;`），不管上一行是怎麼結束的
         # ——即使上一行以 `&&`／`|` 收尾（該接續到這一行），接續點本來就是命令位置，所以無條件重設為 True
-        # 一律正確。仍在 heredoc 內文（上面 `continue` 掉）或仍在 `arith`／`brk`／`cond`／`csub` 裡的字元
-        # 不看這個旗標（那些分支在到得了 `[[`／`((` 判定之前就 `continue` 掉了）。
+        # 一律正確。仍在 heredoc 內文（上面 `continue` 掉）或仍在 `arith`／`brk`／`cond` 裡的字元不看這個旗標
+        # （那些分支在到得了 `[[`／`((` 判定之前就 `continue` 掉了）；`csub`（`$(…)` 內容）不算例外——`$(`
+        # 開啟時明確把 `cmd_pos` 設成 True（見下），csub 內容照一般規則用到這個旗標，`case` 追蹤等 csub
+        # 專屬邏輯排在 `[[`／`((` 判定之後，不是判定之前就 continue 掉。
         cmd_pos = True
         after_compound = False               # 換行本身就是分隔字元：之後的保留字照一般命令位置處理
         quote0, prev0 = quote, prev_sig      # 邏輯行起點的狀態：摺疊後要從頭重掃
@@ -966,6 +994,9 @@ def shell_scan(lines):
                 if line.startswith("$[", i):
                     # 舊式算術：bash 把 `$[ … ]` 當巢狀結構讀，裡面的 `"` 不收外層（實測 `: "$[ " | … " ]"` 是一個引數、
                     # 沒有管線）——與 `${…}` 裡的 `$[` 同一條（R36 第 5 列 (c) 的相鄰輸入 `bypass-r37c-dq-legacy-arith-inner-quote`）。
+                    # 這裡 break 之後 quote 仍是 `"`，run 區塊結尾的一般性檢查（見 `if quote is not None:` 分支）一律會
+                    # 覆寫這句成「引號到 run 區塊結尾都沒收」——判定仍是 PARSE-red，但使用者實際看到的不是這句
+                    # （已實測：本 fixture 與最小重現 `: "$[ "` 皆印出覆寫後的訊息）。
                     unparsed = "雙引號裡的舊式算術 `$[…]`——bash 把它當巢狀結構讀，本 lint 不解析"
                     break
                 if ch == "`" or line.startswith("$(", i):
@@ -982,10 +1013,16 @@ def shell_scan(lines):
                     if e is not None:
                         code.append(" " * (e - i)); i = e; prev_sig = "x"; continue
                     if line.startswith("$((", i):
+                        # 這句訊息會不會被使用者看到要看運氣：只有當同一個 run 區塊裡稍後的內容剛好把外層雙引號
+                        # 收掉，才不會被結尾的一般性檢查（`if quote is not None:`）覆寫；沒有後續收尾內容時
+                        # 一樣會被換成「引號到 run 區塊結尾都沒收」（已用 fixture 與最小重現各實測一次）。
                         unparsed = ("雙引號裡的算術 `$((…))` 本 lint 不解析：同一行沒收尾、裡面有引號／反引號／反斜線，"
                                     "或其實是 `$((…) …)` 形式的命令替換")
                         break
                     if ch == "`" and bt:
+                        # 同上：break 後 quote 仍是 `"`，多半會被結尾的一般性檢查覆寫成「引號到 run 區塊結尾都沒收」
+                        # （已實測：fixture 與最小重現 `` `echo "a` `` 皆印出覆寫後的訊息）——判定仍是 PARSE-red，
+                        # 但這句訊息文字通常不是使用者實際看到的那句。
                         unparsed = "反引號裡的雙引號又開了一個跨行的反引號——巢狀反引號本 lint 不解析"
                         break
                     if ch == "`":
@@ -1099,7 +1136,8 @@ def shell_scan(lines):
                     break
             if ch in ("'", '"'):
                 quote = ch; code.append(ch); i += 1; prev_sig = ch; cmd_pos = False; continue  # 吃掉的是一個詞（的一部分），不是運算子：之後不在命令位置（R37 合併時發現，見 bypass-r37m-*）
-            # **保留字**（R37，#33 verify R36 第 5(a) 列）：`then`／`do`／`else`／`elif`／`if`／`while`／`until`
+            # **保留字**（R37，延伸自 #33 verify R36 第 5(a) 列的位置敏感性原則——原列只點名 `[[`／`((`，不是這幾個保留字）：
+            # `then`／`do`／`else`／`elif`／`if`／`while`／`until`
             # 本身就是命令位置才成立的保留字，且它們後面**接著也是**命令位置（`if <cmd>`、`then <cmd>`…）。
             # 只在目前已經是命令位置、且這裡是一個詞的開頭（`prev_sig` 落在詞界）時才整段消費並保持
             # `cmd_pos = True`；不是保留字就不消費，落到下面逐字元處理（第一個字元就會把 `cmd_pos` 收回 False，
@@ -1130,7 +1168,7 @@ def shell_scan(lines):
             if line.startswith("((", i) and (prev_sig == "$" or cmd_pos):
                 arith_cmd = prev_sig != "$"          # `$((` 是算術展開：後面的詞是引數，不是保留字的位置
                 arith += 1; code.append("(("); i += 2; prev_sig = "("; paren_claimed = True; continue
-            # **`$(…)` 裡的 `case`**（#33 verify R36 第 7 列，logic HIGH-4 p12）：模式括號是單邊 `)`，只數括號的 `csub` 會提早
+            # **`$(…)` 裡的 `case`**（#33 verify R36 第 7 列）：模式括號是單邊 `)`，只數括號的 `csub` 會提早
             # 歸零，之後開的 heredoc 被當成不在命令替換裡——R35 的「命令替換裡的 heredoc 以前綴收尾 ⇒ fail-closed」因此被繞過
             # （`bypass-r37c-case-cmdsub-heredoc-prefix-term`）；從雙引號進來的命令替換（`dq_ret`）也會提早回到雙引號。
             # R37 第一版照工作包一律 fail-closed，語料對照量到野外合法寫法（`bad="$(` ⏎ `… case "$p" in a|b) ;; esac` ⏎ `)"`，
@@ -1180,7 +1218,7 @@ def shell_scan(lines):
             if ch == "#" and (prev_sig is None or prev_sig in SHELL_WORD_BREAK):
                 # **反引號裡的註解止於收尾反引號**（#33 verify R37 合併時協調者發現）：bash 先照字面找收尾反引號
                 # （反斜線逃脫下一個字元）、再把中間當指令剖析，所以 `echo a `# x` b` 印 `a b`。前一版一律吃到行尾：
-                # 收尾反引號之後的程式碼跟著消失、`bt` 留在 True——d 包的區塊結尾檢查因此把合法的 bash 判 PARSE
+                # 收尾反引號之後的程式碼跟著消失、`bt` 留在 True——R37 新增的區塊結尾檢查因此把合法的 bash 判 PARSE
                 # （生成語料 gen-c-backtick-* 八個檔）。只在**最內層就是反引號**時成立：反引號裡又開了 `$(`／`(`，
                 # 註解吞掉的是那一層的收尾（bash 報語法錯誤），照舊吃到行尾、由區塊結尾的檢查 fail-closed。
                 # 同一行沒有收尾反引號＝跨行的反引號，註解止於行尾，也照舊。
@@ -1234,8 +1272,11 @@ def shell_scan(lines):
                     if line.startswith("$(", j):
                         # bash 對分隔字裡的 `$(…)` **重新序列化**再當終止字：`cat <<EOF$(a;b)` 的 EOF 警告寫
                         # 「需要 EOF$(a; b)」（多了一個空格）。詞法上抄不出 bash 的序列化，所以本 lint 不解析它
-                        # ——fail-closed 走 PARSE，與「引號沒收尾」同一條出口（R33，opsweep 對前一版整段消費的
-                        # 十個運算元報存活，而它們守的東西根本追不到 bash）。
+                        # ——fail-closed 走 PARSE，與「引號沒收尾」同一條出口（R33 開發迭代內部：opsweep 對一版
+                        # 整段消費 `$(…)` 的運算元報存活而刪掉；這裡的「前一版」指 R33 過程中的過渡草稿，不是
+                        # 已提交的 d8340a6——d8340a6 這段迴圈用 SHELL_WORD_BREAK 斷詞，遇到 `(` 就提早斷開，
+                        # 從未整段消費過 `$(…)`。它們守的東西——bash 對分隔字 `$(…)` 的重新序列化——本來就
+                        # 追不到，故 fail-closed）。
                         unparsed = "heredoc 分隔字裡有 `$(…)`——bash 會重新序列化它，本 lint 不解析"; j = n; saw_word = True; break
                     if line.startswith("${", j) or line.startswith("$[", j):
                         # **`${…}`／`$[…]` 在分隔字詞裡也是詞的一部分**（R37，#33 verify R36 第 14 列）：bash 的
@@ -1329,7 +1370,10 @@ def shell_scan(lines):
         if pending:                     # 走到這裡 heredoc 必為 None：內文行在迴圈頂端就被消化掉、不會掃到這
             heredoc = pending.pop(0)
         li += spans
-    if quote is not None:              # `and not unparsed` 只決定訊息寫哪個原因、判定都是 PARSE（opsweep 報存活，刪掉）
+    if quote is not None:              # `and not unparsed` 只決定訊息寫哪個原因、判定都是 PARSE（opsweep 報存活，刪掉）；
+        # 注意：這一句無條件覆寫上面雙引號分支裡任何已設的 unparsed 訊息（例如 967／983／987 行附近的訊息），
+        # 只要 break 當下 quote 仍非 None——訊息文字最終是否被使用者看到，取決於同一個 run 區塊後面有沒有
+        # 內容意外把雙引號收掉（各訊息旁已補上個別實測結果）。
         # **引號開到 run 區塊結尾**（R35，E 組語料抓到）：那一行在 bash 是語法錯誤、不會執行，而它前面的行照樣先執行——
         # lint 若照讀引號之前的 `| python3 …` 就會看到一條永遠不會建立的管線。bash 語法錯誤的行本 lint 不解析 ⇒ fail-closed。
         unparsed = "引號到 run 區塊結尾都沒收——那一行在 bash 是語法錯誤、不會執行，本 lint 不解析"
@@ -1486,7 +1530,7 @@ def _clamp(C, p, e):
 
 
 def _brace_end(S, k):
-    """`${` 之後（k 指向內容開頭）配對的 `}` 之後的位置；只用來跳過挖空段，結果一律再經 `_clamp`。"""
+    """`${` 之後（k 指向內容開頭）配對的 `}` 之後的位置；只用來跳過挖空段；只有 `_word` 那次呼叫（第 1737 行）的結果會再經 `_clamp`（第 1755 行）——`_dq_parts` 呼叫它時（第 1525 行）沒有 `C` 陣列可用，回傳值直接當新游標，不經過 `_clamp`。"""
     d, n = 1, len(S)
     while k < n and d:
         c = S[k]
@@ -1563,7 +1607,7 @@ def _hidden_subs(S, lo, hi, dq):
     各自剖析成詞元串（R37：`"$(cmd >&2)"`、`${X:-$(cmd >&2)}` 裡的重導向與 xtrace 同樣會外流，而挖空後規則看不到）。
     對不到收尾或掃描器不解析的回 None（呼叫端 fail-closed）。dq＝外層是雙引號：那裡的單引號是字面、不是引號；
     而且雙引號的結尾**由原文自己找**（hi 只當下限參考）——掃描器對 `"$(… "…" …)"` 的引號配對與 bash 不同
-    （#33 verify R36 第 6 列，工作包 c 修），程式碼給的引號位置可能落在命令替換中間。已經剖析過的區段不重做（`_COVERED`）。"""
+    （掃描器層級的引號配對已由工作包 c 修，#33 verify R36 第 6 列；但這裡 `_hidden_subs` 自行重找雙引號結尾是工作包 b 的獨立防禦，依 report-b 自己的交界說明，不論 c 修好與否都成立），程式碼給的引號位置可能落在命令替換中間。已經剖析過的區段不重做（`_COVERED`）。"""
     if any(a <= lo < b for a, b in _COVERED.get(S, ())):
         return []
     out, k = [], lo
@@ -1645,7 +1689,7 @@ def _interior_subs(S, lo, hi):
 
 
 def _word(C, S, p, stop):
-    r"""從 p 讀一個詞 → {code, lit, skel, glob, subs, bad_sub, s, e}。lit＝去引號後的字面（含展開、或看不到原文，就是 None）；
+    r"""從 p 讀一個詞 → {k, code, lit, skel, glob, subs, bad_sub, s, e}（k＝"W"，docstring 原本漏列）。lit＝去引號後的字面（含展開、或看不到原文，就是 None）；
     skel＝字面部分＋把展開換成 `\0` 的骨架（看不到原文是 None）；subs＝詞裡的命令替換，各自一串詞元——包括雙引號與
     `${…}` 裡、掃描器挖空的那些（`_hidden_subs`）；bad_sub＝有命令替換對不到收尾（規則層 fail-closed）。"""
     n, st = len(C), p
@@ -2091,7 +2135,7 @@ class _Sh:
         text = w["skel"] if w["skel"] is not None else w["code"]
         for key in _RUN_ENV_KEYS:
             if text.startswith((key + "=", key + "+=")) or (bare and text == key):
-                self.hit("run 裡設定 `%s`——bash（含子行程）啟動時會讀它、可以開 xtrace 或執行別的程式碼" % key, ctx)
+                self.hit("run 裡設定 `%s`——bash（含子行程）啟動時會讀它，依鍵不同可能開 xtrace、執行別的程式碼，或把已開啟的 trace 輸出轉向到別的 fd（`BASH_XTRACEFD` 單獨設定不會自己打開 xtrace，需要 `-x`／verbose 已經開著）" % key, ctx)
 
     def pf_event(self, on, ctx):
         self.o["events"].append({"k": "pf", "on": on, "sub": ctx["sub"]})
@@ -2165,7 +2209,7 @@ class _Sh:
                     nm = args[i]["lit"] if i < len(args) else None
                     i += 1
                     if ch == "o" and on and (nm is None or nm in _TRACE_OPTS):
-                        self.hit("子 shell 的 `%so %s` 開了 trace" % (a, nm or "…"), ctx)
+                        self.hit("子 shell 的 `%s %s` 開了 trace" % (a, nm or "…"), ctx)
                 elif ch == "c":
                     return                       # 之後是命令字串（不剖析，見本節已知不涵蓋第 2 條）
                 elif on and ch in "xv":
@@ -2382,7 +2426,7 @@ REQUIRE_RUN_STEPS = "--require-run-steps" in sys.argv
 #   (3) shell 只能是 bash 樣板（不得開 xtrace／verbose）；container 或 Windows／運算式 runs-on 的 job 必須明寫 shell
 #       （R35 從預設模式移過來：預設模式假設 shell 是 bash，見 `shell_scan` 已知不涵蓋第三組第 1 條）。
 #   (4) workflow 根層級 `defaults.run` 寫成 flow 形式 ⇒ PARSE（R36 第 13 列：讀不到 shell）。
-# 預設模式不要求這四條：fixture 與產生語料量的是**詞法**，不是 CI 的寫法規範；改寫兩百個 fixture 的管線只會讓
+# 預設模式不要求這四條：fixture 與產生語料量的是**詞法**，不是 CI 的寫法規範；改寫數百個 fixture 的管線只會讓
 # 每一個詞法形狀多一個與它無關的變數。fd 流向與 env 那兩條（見規則層的詞法一節）兩種模式都套用。
 STRICT = "--strict" in sys.argv
 FLAGS = ("--require-run-steps", "--strict")
@@ -2698,7 +2742,7 @@ for path in [a for a in sys.argv[1:] if a not in FLAGS]:
         return (min(nx) - 1) if nx else len(raw) - 1
 
     def _uncomment(t):
-        """去掉 YAML 行尾註解、**保留引號內容**。`yaml_split_comment()` 的程式碼半邊是引號挖空的，只能拿它的註解半邊找起點
+        """去掉 YAML 行尾註解、**保留引號內容**。`yaml_split_comment()` 的程式碼半邊雖然引號內容被挖空，但挖空是逐字元替換、長度不變（`len(code)` 恆等於註解起點位置），所以程式碼半邊的長度同樣可以拿來找起點；目前的實作選擇拿註解半邊的長度用
         （#33 verify R36 第 12、22 列：`_scalar` 與 `ro_text` 各自踩過一次——一個把 `"bash"` 讀成一串空白，一個把
         `# windows runners …` 這句註解讀成 Windows runner）。"""
         _code, cmt = yaml_split_comment(t)
@@ -2845,7 +2889,7 @@ for path in [a for a in sys.argv[1:] if a not in FLAGS]:
                           "跨行的重新序列化規則不猜")
                 continue
             # R28 D7：`run: "…" # note` 的行尾註解是 YAML 層的，不在引號純量裡。先用 YAML 規則
-            # 找到註解起點（yaml_split_comment 只回挖空後的文字，所以用註解長度切原文），再解碼
+            # 找到註解起點（yaml_split_comment 回傳的兩半，只有程式碼半邊被挖空，註解半邊 `comment = line[i:]` 是未挖空的原始文字；這裡捨棄挖空的那半，只借用原始註解的長度切原文），再解碼
             # 程式碼半邊；註解半邊歸宣告來源 (3)。前一版整行送去解碼→不是引號純量→原樣當 shell
             # 掃，於是引號裡的真管線被挖空、rc=1，而 runner 眼中那條管線存在。
             _, yaml_cmt = yaml_split_comment(inline)
@@ -2897,7 +2941,7 @@ for path in [a for a in sys.argv[1:] if a not in FLAGS]:
             reject(r, run_unparsed)
             continue
         decl_lines += shell_decls + yaml_trailing_cmts
-        # **邏輯行**：只有前一行以 `|`／`||`／`&&` 結尾時才接續下一行——那才是 bash 會把兩行當成同一條
+        # **邏輯行**：只有前一行以 `|`／`||`／`|&`／`&&` 結尾時才接續下一行——那才是 bash 會把兩行當成同一條
         # 命令的情形。前一版把整個區塊用空白接成一串再比對（`run_joined`），於是 literal 區塊裡
         # `echo "$PR_TITLE"` ⏎ `| python3 …neutralise.py` 被接成一條假管線而放行，
         # 而 bash 對行首的 `|` 報的是**語法錯誤**（R30 H-6：兩條路各自獨立足以放行，
@@ -2949,8 +2993,8 @@ for path in [a for a in sys.argv[1:] if a not in FLAGS]:
                   "展開期／重導向錯誤，都不經過濾（#59／#60）：%s" % (s["name"], group_why), file=sys.stderr)
             rc = 1
         if STRICT and not _pipefail_holds(an["events"], tmpl["pipefail"] if tmpl is not None else False):
-            # R36 第 4、22 列：起始值由樣板決定（只有關鍵字 `bash` 或樣板自帶 `-o pipefail`），頂層的 `set ±o pipefail` 依序改變它；
-            # 管線運算子是剖析出來的（`case … in a|b)` 的模式 `|` 不是管線）。
+            # R36 第 4 列：起始值由樣板決定（只有關鍵字 `bash` 或樣板自帶 `-o pipefail`），頂層的 `set ±o pipefail` 依序改變它；
+            # 管線運算子是剖析出來的（`case … in a|b)` 的模式 `|` 不是管線，R36 第 22 列）。
             print(where + "[--strict] step '%s' 有管線，卻沒有跑在 pipefail 之下（shell 不是關鍵字 `bash`、樣板也沒帶 `-o pipefail`，"
                   "run 裡也沒在管線之前、頂層地 `set -o pipefail`——或之後又關掉了）——GitHub 預設 `bash -e {0}`，"
                   "管線前段的失敗會被後段的 rc 蓋掉" % s["name"], file=sys.stderr)

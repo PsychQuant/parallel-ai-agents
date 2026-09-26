@@ -104,12 +104,13 @@ EXPECTED_SURVIVE = {   # id → 理由（依構造等價）。每一條都要能
     # `logical[-1]` 之後，下一行的續接判定**兩版都是否**；至於接進去時多出來的那段空白，同樣被
     # `PIPED_RE` 的 `\\s*` 吸收。
     "strip→id|<module>|cs = c.strip()|1": "純空白的邏輯行對 `PIPED_RE`／`CONT_RE` 都不成立，多出的空白被 `\\s*` 吸收",
-    # **R37 最終 lint（`--since 380e4a4`）的 46 條等價**：各群分析者給構造論證、另一位反駁者逐條試著寫出殺得掉的 fixture
-    # （推翻了 52 條裡的 6 條，已補 fixture），剩下這 46 條在補件之後由 opsweep 的正式判定重跑仍存活。理由類別：純訊息文字、
+    # **R37 最終 lint（`--since 380e4a4`）的 42 條等價**：各群分析者給構造論證、另一位反駁者逐條試著寫出殺得掉的 fixture
+    # （推翻了 52 條裡的 6 條，已補 fixture），剩下的在補件之後由 opsweep 的正式判定重跑仍存活。理由類別：
     # 被同一條件的其他運算元或緊接的檢查蘊含、依構造恆真的條件、冪等賦值、呼叫端保證到不了的分支。`--verify-expected` 在產生語料上實跑。
+    # **原本是 46 條，另 4 條理由寫「純訊息文字」——那一類整個撤掉**：`--verify-expected` 比對整段 stderr，訊息文字就是輸出，
+    # `set_cmd` 那條因此被推翻（`set -x` 印成「開了 verbose」）。改成在 selftest 加 `# EXPECT-MSG:` 斷言、用既有 fixture 殺掉
+    # 四個突變體；順帶修掉子 shell `-o xtrace` 的訊息實際印成 `-oo xtrace` 的缺陷——它就是因為沒有任何 fixture 看訊息才活下來的。
     "==↔!=|_cmdsub_end_case|at_word = prev in SHELL_WORD_BREAK or prev == \"\\n\"|1": "只在真的掃到 `\\n` 時才有差別；`_cmdsub_end_case` 的兩個呼叫端都不會讓它在收尾前掃到換行（單一實體行，或收尾落在同一實體行的前綴內）",
-    "==↔!=|set_cmd|self.hit(\"`set %s` 開了 %s\" % (a, \"xtrace\" if ch == \"x\" else \"verbose\"), ctx)|1": "純訊息文字：三元只決定印 xtrace 還是 verbose，`self.hit` 一定會呼叫",
-    "==↔!=|shell_opts|self.hit(\"子 shell 的 `%s` 開了 %s\" % (a, \"xtrace\" if ch == \"x\" else \"verbose\"), ctx)|1": "純訊息文字：同上（子 shell 的 -x／-v）",
     "==↔!=|shell_scan|quote = None; code.append(line[i:i + w]); i += w; prev_sig = \"`\" if w == 1 else \"(\"|1": "`\"`\"` 與 `\"(\"` 都在 SHELL_WORD_BREAK 裡、都不是 `$`；prev_sig 的消費者只問 None／in SHELL_WORD_BREAK／== \"$\"，對調不改變任何判定",
     "drop-operand|<module>|elif STRICT and not declared and group_why:|1": "`group_why` 只在 STRICT 下計算、否則恆為 None；拿掉 `STRICT` 後 `group_why` 仍是 None",
     "drop-operand|<module>|if _flow_value(l_) and \":\" in yaml_split_comment(KEY_RE.match(norm[l_]).group(3) or \"\")[0]:|4": "左運算元 `_flow_value` 為真時 group(3) 必然是以 `{`／`[` 開頭的非空字串，`or \"\"` 的後備從不生效",
@@ -139,8 +140,6 @@ EXPECTED_SURVIVE = {   # id → 理由（依構造等價）。每一條都要能
     "drop-operand|parse_command|if t is None or t[\"k\"] == \"NL\" or end(t):|2": "唯一會讓 parse_command 看到 NL 的呼叫點，其 end 參數都把 NL 當成結束，拿掉 `t[\"k\"] == \"NL\"` 仍立即回 None",
     "drop-operand|parse_list|if t[\"k\"] == \"NL\" or self.op(t, \";\", \"&\"):|1": "NL／`;`／`&` 不走快速跳過時，parse_command 同樣零消耗回 None，由 parse_list 的零進度安全網跳過同一個詞元",
     "drop-operand|parse_list|if t[\"k\"] == \"NL\" or self.op(t, \";\", \"&\"):|2": "同上一條（BoolOp 的另一個運算元）",
-    "drop-operand|shell_opts|self.hit(\"子 shell 的 `%so %s` 開了 trace\" % (a, nm or \"…\"), ctx)|1": "純訊息文字：`nm or \"…\"` 只決定訊息印什麼，`self.hit` 是否呼叫不受影響",
-    "drop-operand|shell_opts|self.hit(\"子 shell 的 `%so %s` 開了 trace\" % (a, nm or \"…\"), ctx)|2": "純訊息文字：同上",
     "drop-operand|shell_scan|after_compound = arith_cmd and not arith; continue|2": "arith 依構造只有 0／1，這一行前一句剛把它從 1 減到 0，`not arith` 恆為真",
     "drop-operand|shell_scan|if (cmd_pos and ch.isalpha() and (prev_sig is None or prev_sig in SHELL_WORD_BREAK)):|1": "這個分支只整段消費純字母的保留字；cmd_pos 為假時逐字元處理得到相同的 code、i、prev_sig，且 cmd_pos 維持假",
     "drop-operand|shell_scan|if (cmd_pos and ch.isalpha() and (prev_sig is None or prev_sig in SHELL_WORD_BREAK)):|2": "緊接的 `re.match(r\"[A-Za-z]+\")` 本身就要求 ch 是字母，非字母時 w 為空、不在保留字集合裡",
@@ -475,6 +474,8 @@ def main():
     src = LINT.read_text(encoding="utf-8")
     py, py_off = embedded_python(src)
     ms = mutants(py)
+    all_ms = ms                           # `--verify-expected` 對全集做（R37 量測：拿區域清單去驗，區域外的舊條目
+                                          # 只會得到「不在本次掃描範圍內」——4 條因此從沒被驗過）
     all_ids = [m[0] for m in ms]          # **陳舊性檢查對全集做**，不對區域做：
                                           # 區域外的 EXPECTED_SURVIVE 本來就不會出現在區域清單裡，
                                           # 拿區域清單去判「這個 key 還在不在」會對每一條區域外的條目誤報。
@@ -500,7 +501,7 @@ def main():
         for m in ms: print("  ", m[0])
         return 0
     if args.verify_expected:
-        return verify_expected(src, py, py_off, ms, args.jobs)
+        return verify_expected(src, py, py_off, all_ms, args.jobs)
     t0 = time.monotonic()
     pre = subprocess.run(["bash", str(LINT), "--selftest"], cwd=PLUGIN, capture_output=True, text=True)
     if pre.returncode != 0:
