@@ -11,6 +11,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed（#56 —— `bin/pai-collect-lens-layers` 的 semver 與 `<profile>` 參數對齊 validator）
+
+- **版本目錄改用 semver 2.0.0 整串比對**：先前 `^(\d+)\.(\d+)\.(\d+)` + `match()` 是 prefix match，
+  `1.0.0` 與 `9.9.9.bak` 並存時後者被判成 `(9,9,9)` 勝出、載入它的 lens；`01.0.0` 也算版本。
+  現在 `SEMVER` 與 `plugins/pai-lenses/scripts/validate.py` 逐字相同、用 `fullmatch()`；只剩非 semver 目錄時回 `unversioned`。
+- **prerelease 依 semver §11 排序，不再由 readdir 決定**：先前 key 只取 core，`0.4.0-rc1`／`0.4.0-rc2`／`0.4.0`
+  全部打平，`max()` 取第一個 —— 勝者由 `iterdir()` 順序決定。現在 `version_key` 與 validator 的
+  `version_tuple` 同義（逐 identifier 比較、正式版高於同 core 的 prerelease、`rc.9 < rc.10`）。
+- **回報的 `version` 是實際目錄名**：先前由 key 重組成 `"0.4.0"`，可能是 cache 裡不存在的版本
+  （`1.2.3+build.7` 也被回報成 `1.2.3`）。
+- **最高版本打平時 fail-loud**：只差 build metadata（`1.0.0+a` / `1.0.0+b`）或不同 marketplace 裝了同一版 →
+  新 status `ambiguous` ＋ warning（列出所有同序目錄）、本層略過，不再由 readdir／glob 排序替使用者挑。
+  退出碼契約不變（仍為 0）—— 與 `unversioned` 同屬「裝了但不可用」，照 D5 警告而不中斷審閱。
+  `references/lens-layers.md` 的 status 表補上這一列。
+- **`<profile>` 字元集收成 `[a-z0-9][a-z0-9-]*`**：R23 已擋下 `..`／絕對路徑，但 (a) 放行 `_`，而 validator
+  端以 `PROFILES` 成員資格判定、沒有任何 key 含 `_`；(b) **從來沒有測試** —— 把檢查整段拿掉 bats 仍全綠。
+  現在兩條測試守住（逃逸路徑 × 8 種形狀、字元集 × 8 種非法 ＋ 8 個合法名）。
+- **共用 vs 複製的決定：複製，並用機械對帳擋分岔**。validate.py 屬另一個 plugin 且是 CI-only 工具；
+  runtime 去 import 它等於讓層 ② 的定位邏輯依賴層 ② 本身（沒裝就連「沒裝」都判斷不了），反向則讓 CI 閘門依賴
+  無副檔名 bin 檔的內部函式名。新增的「逐對同序」測試直接載入兩邊，對 38 個字串的 corpus 比對合法性與每一對的比較結果。
+
+  RED 證據：新增的 11 條中 9 條在修法前紅（prefix match、只剩非 semver 目錄、prerelease 排序、正式版 > rc、
+  實際目錄名、兩種打平、逐對同序、字元集 `_`）；路徑逃逸那條對 R23 之前的版本（`387effe^`）紅、對 R23 版綠
+  （R23 已修、此前無網）；「較低版本的打平不影響唯一最高者」是防過度修正的護欄，修法前後皆綠。
+  另對修法本身跑了 8 個 mutation（`fullmatch→match`、前導零、prerelease 數字段、正式版 vs rc、打平判定、
+  回報重組字串、放回 `_`、拿掉 profile 檢查），每個都至少讓一條測試紅。
+  本檔現為 22 個 case（`grep -c "^@test" test/pai-collect-lens-layers.bats`）。
+
 ## [2.24.0] - 2026-09-10
 
 `pai-lenses` 從獨立 repo 併回本 repo 成為第二個 plugin，並把三層 lens 疊加的文件與 CI 閘門補齊。
