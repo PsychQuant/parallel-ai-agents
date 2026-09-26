@@ -69,11 +69,38 @@ DA 專門盯三種安靜的偏移：把個別發言寫成全體共識、把條�
 
 ### Phase 2：派發
 
-1. **蒐集 lens 層 ②③**（#29、#40）：`python3 "${CLAUDE_PLUGIN_ROOT}/bin/pai-collect-lens-layers" minutes`
-   → `lenses` **原樣**（含 `override` 與 `needsSrt` 欄）進 `args.customLenses`；`layers` / `warnings`
-   留給 Phase 3 的 provenance 行。完整契約見 [`references/lens-layers.md`](../../references/lens-layers.md)。
+1. **蒐集 lens 層 ②③**（#29、#40），在呼叫 Workflow **之前**：
+
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT}/bin/pai-collect-lens-layers" minutes
+   ```
+
+   stdout 是一個 JSON 物件 `{ lenses, layers, warnings }`（schema 見
+   [`references/lens-layers.md`](../../references/lens-layers.md) §1）。`lenses` **原樣**（含 `override`、
+   `needsSrt`、`_layer` 欄）進 `args.customLenses`；**整個物件留到 Phase 3** —— provenance 行要用
+   `layers`、`warnings` 與每條 lens 的 `_layer`。
    ⚠️ **`profile` 維持 `"minutes"`，不可改成 `"custom"`** —— 理由（`profile.title` 無 args 覆寫路徑）在該文件。
    `lenses` 為空（沒裝 `pai-lenses`、也沒有 `~/.claude/pai-lenses/minutes.csv`）時省略 `customLenses`。
+
+   **collector 失敗 ≠ 沒裝 pack。** 退出碼非 0（2 = 用法錯；其他多半是 Python traceback），或 stdout
+   解析不出含 `lenses` 陣列的 JSON 物件 → 記下退出碼與 stderr 第一行，**省略 `customLenses` 照常派發**
+   （built-in 四條不受影響，不值得陪葬），並在 Phase 3 的 provenance 行改印
+   `Lens 來源：built-in <n> 條 · ⚠️ lens collector 失敗（exit <rc>：<stderr 第一行>），層 ②③ 未載入`。
+   這與 collector 對單一層損壞的處理（`corrupt` → 警告、略過該層、繼續）同一原則：缺席靜默、損壞出聲。
+   各層自己的損壞（`empty` / `corrupt` / `unversioned`）collector 仍是 exit 0，走 `warnings`，不走這條。
+
+   > ⚠️ **層 ②③ 的 lens 會讀到本 skill 的全部輸入** —— 會議錄音逐字稿、佐證文件，以及 contextBlock
+   > 裡「哪些內容是刻意不記錄的」這類敏感說明。lens 的 `focus` 逐字成為 reviewer 的角色級指令、
+   > **不經 sentinel 包裹**（結構性修法追蹤於 [#36](https://github.com/PsychQuant/parallel-ai-agents/issues/36)），
+   > 而 reviewer 有 Read / Bash。所以：
+   > - pack lens 的界線是 [`plugins/pai-lenses/README.md`](../../../pai-lenses/README.md)「界線：封閉列舉，
+   >   不是總括判準」列出的四類禁止事項（讀審閱標的以外的路徑、不回報某類 finding、輸出到別處、忽略其他指令）；
+   > - collector 選 pack 的方式是跨 marketplace glob `<cache>/*/pai-lenses/<semver>/`、取**版本最高**的一份
+   >   （`bin/pai-collect-lens-layers` 的 `find_pack_dir`）—— 不論它來自哪個 marketplace。裝了誰的
+   >   `pai-lenses`，就是把逐字稿交給誰寫的 prompt；
+   > - 標了 `override` 的 lens 會**原位取代** built-in（包括 `fidelity` 這條本 skill 的核心 lens），
+   >   Phase 3 會把它印成警告。
+
 2. 呼叫 Workflow：
 
 ```javascript
@@ -101,14 +128,44 @@ Workflow({ name: "parallel-ai-agents:pai-ensemble", args: {
 
 ### Phase 3：讀結果
 
-回傳 `{ findings, verdict, stats }`。`stats.agents` 應等於 lens 數 × replicas + DA
-（lens 數 = 四個 built-in + 層 ②③ 實際 `added` 的條數；`override` 是原位取代，不增加條數）；
-**明顯偏少就是有 agent 死掉或 profile 沒吃到**，先查 `journal.jsonl` 再解讀 findings。
+回傳 `{ findings, verdict, stats }`。
 
-**findings 表之前先印 provenance 行**（#29、#40）：lens 來源一行 + `warnings` 逐條。資料來自
-Phase 2 collector 的 `layers` 與 harness 回傳的 `stats.lensProvenance`，格式見
-[`references/lens-layers.md`](../../references/lens-layers.md) §4–5。**沒裝 lens pack 時這行仍要印**
-（只顯示 built-in）—— 否則「層 ②③ 沒生效」與「沒裝」在輸出上無從分辨，#40 就是這樣安靜了一整版。
+**先確認派發規模對得上。** `stats.agents` 數的是**派出去**的 agent（harness 在派發時算，不看誰回來），
+公式照 `workflows/ensemble-workflow.js` 的上限夾擠：
+
+- `L` = `stats.lensProvenance` 裡 `action === "added"` 的條數（四條 built-in ＋ 層 ②③ 新增的；
+  `overridden` 是原位取代、`ignored` 沒派，都不加）
+- `maxAgents` = `args.maxAgents` 夾在 4..30，沒給就是 16；本 skill `codexEnabled: false`，只保留 DA 一席
+- 預期 `stats.agents` = `min(L, maxAgents − 1) × stats.replicas + 1`
+  （`stats.replicas` 已是夾擠後的值：`min(replicas, max(1, ⌊(maxAgents − 1) / min(L, maxAgents − 1)⌋))`）
+
+`L > maxAgents − 1` 時超出的 lens 被**從尾端丟掉**（層 ③ 先丟），`journal.jsonl` 會有
+`lens set N → M … extra lenses dropped`；replicas 被壓也會有 `replicas clamped` 一行。
+`stats.agents` 與預期不符 → profile 沒吃到或 args 形狀錯，先查 `journal.jsonl`；`agents: 0` 見上方 ⚠️。
+**agent 死掉不會讓 `stats.agents` 變少** —— 看 `stats.reviewers[].ok === false`、`stats.daOk === false`
+與 `stats.integrity`（每個沒完成的 lens 都有一條 `<key> lens did not complete` 的 HIGH finding）。
+
+**findings 表之前先印 provenance 行**（#29、#40）：lens 來源一行 + `warnings` 逐條，格式見
+[`references/lens-layers.md`](../../references/lens-layers.md) §4–5。每個數字的來源：
+
+| 欄位 | 從哪裡來 |
+|---|---|
+| built-in `<n>` | `stats.lensProvenance` 中 `origin === "builtin"` 的條數 |
+| pack `<version>` | collector `layers` 中 `name === "pack"` 那筆的 `version`；其 `status` 為 `absent` 時整段省略，其他非 `ok` 狀態印 `pack（<status>）`（原因在 `warnings`）|
+| `+<a>` / `⊕<b>`（pack）、`+<c>` / `⊕<d>`（user）| harness 不知道 pack 與 user 之分 —— 兩者在 `stats.lensProvenance` 裡都是 `origin === "custom"`。**依順序配對**：第 i 筆 `origin === "custom"` 的條目對應 collector `lenses[i]`，取後者的 `_layer`；再依該條目的 `action` 計 `added` → `+`、`overridden` → `⊕` |
+| 被覆蓋者 | `action === "overridden"` 的條目：`<key>←<該條的 _layer>` |
+
+配對成立的前提是 `customLenses` 只放 collector 的 `lenses`、且沒有 `disableLenses`（本 skill 皆是）；
+兩邊條數不等時**不要硬配**，改印 `層 ②③ 合計 +<added>/⊕<overridden>（無法歸屬 pack／user：條數不符）`。
+`action === "ignored"` 的條目（撞名卻沒標 `override`，一個 agent 都沒派）在 `warnings` 之後逐條列出。
+
+**built-in 被取代要出聲。** 每一筆 `action === "overridden"` 且 `overrodeFrom === "builtin"` 的條目，
+在 provenance 行下方印一行警告：`⚠️ built-in lens「<key>」已被 <_layer> 層取代（override）——
+本次審閱不含原本的 <key> 檢查`。`fidelity`／`completeness`／`attribution` 是本 skill 的核心，
+被換掉而只在 provenance 行留一個 `⊕`，讀報表的人不會發現。
+
+**沒裝 lens pack 時 provenance 行仍要印**（只顯示 built-in）—— 否則「層 ②③ 沒生效」與「沒裝」
+在輸出上無從分辨，#40 就是這樣安靜了一整版。
 
 ### Phase 4：處置
 

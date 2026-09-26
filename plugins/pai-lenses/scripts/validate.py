@@ -392,7 +392,10 @@ def collector_wiring(repo, profile):
     現在改成 (1) 只看該 profile 自己的 skill、(2) 跳過 shell 註解行、(3) 不再解析參數
     （`"$PROFILE"` 這種變數寫法本來就抓不到），並且**訊息降級為附帶但書的提示** ——
     它指出一個值得人工確認的可能缺口，不宣稱事實。這類缺口的前例是 #40（minutes，已修）；
-    主 plugin 那一側的硬閘門是 `plugins/parallel-ai-agents/test/skill-lens-wiring.bats`。"""
+    主 plugin 那一側另有 `plugins/parallel-ai-agents/test/skill-lens-wiring.bats`：對每一支 `ensemble-*-review`
+    的 SKILL.md 做結構檢查（派發段的 fenced shell block 呼叫 collector、派發模板帶 `customLenses` 且 `profile`
+    是自己的、派發之後的 Phase 段指示印 provenance 行），每條判準都有 mutation case。它不涵蓋
+    `ensemble-compose`，也只證明指令寫在對的位置、不證明模型照做。"""
     if repo is None:
         return None, None
     d = repo / "plugins" / "parallel-ai-agents" / "skills" / f"ensemble-{profile}-review"
@@ -1331,7 +1334,7 @@ def check_csvs(root, errs, files):
             emit(f"::warning file={rel}::在 `/{wc(own)}` 的 SKILL.md 裡找不到 "
                   f"pai-collect-lens-layers 的呼叫 —— 若確實沒接，這裡的 lens 不會出現在"
                   f"它的審閱裡，只會在 /ensemble-compose --base {wc(profile)} 時被載入"
-                  f"（那是該 skill 的接線缺口 —— 前例見 #40；主 plugin 的 test/skill-lens-wiring.bats 應擋下它 —— 不是本 pack 的問題）。"
+                  f"（那是該 skill 的接線缺口 —— 前例見 #40；主 plugin 的 test/skill-lens-wiring.bats 對 ensemble-*-review 的 SKILL.md 做結構檢查 —— 不是本 pack 的問題）。"
                   f"**本檢查是掃 SKILL.md 文字的啟發式，可能誤判，請人工確認**")
 
         for r in rows:

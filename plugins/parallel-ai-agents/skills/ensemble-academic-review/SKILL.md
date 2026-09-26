@@ -189,7 +189,13 @@ TaskCreate: "Final: merge all rounds"
 每一輪這樣呼叫：
 
 1. 解析 harness 絕對路徑 `${CLAUDE_PLUGIN_ROOT}/workflows/ensemble-workflow.js`；wrapper 絕對路徑 `${CLAUDE_PLUGIN_ROOT}/bin/codex-call`。並依 [`references/codex-governance.md`](../../references/codex-governance.md) 解析 `CODEX_MODEL`/`CODEX_EFFORT`（#23，codex-pro 契約；缺席 fail-fast）。
-2. **蒐集 lens 層 ②③**（#29）：`python3 "${CLAUDE_PLUGIN_ROOT}/bin/pai-collect-lens-layers" academic` → `lenses` **原樣**（含 `override` 欄）進 `args.customLenses`；`layers` / `warnings` 留給 Phase 4 的 provenance 行。完整契約見 [`references/lens-layers.md`](../../references/lens-layers.md)。⚠️ **`profile` 維持 `"academic"`，不可改成 `"custom"`**。多輪模式**每一輪都重新蒐集**（使用者可能在輪次之間改了 `~/.claude/pai-lenses/`）。
+2. **蒐集 lens 層 ②③**（#29）：
+
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT}/bin/pai-collect-lens-layers" academic
+   ```
+
+   → `lenses` **原樣**（含 `override` 欄）進 `args.customLenses`；`layers` / `warnings` 留給 Phase 4 的 provenance 行。完整契約見 [`references/lens-layers.md`](../../references/lens-layers.md)。⚠️ **`profile` 維持 `"academic"`，不可改成 `"custom"`**。多輪模式**每一輪都重新蒐集**（使用者可能在輪次之間改了 `~/.claude/pai-lenses/`）。
 3. 解析 dispatch model（#20）：`PAI_AGENT_MODEL` 未設 → `opus`；設了但不在 `sonnet|opus|haiku|fable` → **abort with usage error**（fail-loud，不靜默換模型；engine 對顯式非法值亦會於派發前 throw 作第二層）。解析值經 `args.agentModel` 傳入。接著呼叫 `Workflow` tool，傳 `scriptPath` + `args`：
 
    ```json

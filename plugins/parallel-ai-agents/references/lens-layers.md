@@ -102,7 +102,7 @@ custom lens（`--lens` / `--lens-file`），那些排在**後面**（使用者�
 
 ### 4. 報表印 provenance 行
 
-合併/報表階段（各 skill 的 Phase 4，`ensemble-compose` 為 Phase 3）在 findings 表**之前**印一行：
+合併/報表階段（`code` / `academic` / `lecture` 為 Phase 4；`ensemble-minutes-review` 與 `ensemble-compose` 為 Phase 3）在 findings 表**之前**印一行：
 
 ```
 Lens 來源：built-in <n> 條 · pack <version> +<a>/⊕<b> · user +<c>/⊕<d>
@@ -111,6 +111,13 @@ Lens 來源：built-in <n> 條 · pack <version> +<a>/⊕<b> · user +<c>/⊕<d>
 
 資料來自兩處：`pai-collect-lens-layers` 的 `layers`（哪幾層在、版本多少）與 harness 回傳的
 `stats.lensProvenance`（每個 lens 的處置：`added` / `overridden` / `ignored`，`overrodeFrom` 指出被誰蓋）。
+
+pack 與 user 的拆分**不能**直接從 `stats.lensProvenance` 讀：harness 看不到 `_layer`，層 ②③ 的條目
+一律是 `origin: "custom"`（skill 自己的 `--lens` / `--lens-file` 也是）。harness 依 `customLenses` 的順序
+逐條記錄，所以**依順序配對**：第 i 筆 `origin === "custom"` 的條目對應 `customLenses[i]`，取其 `_layer`
+（沒有 `_layer` 的是 skill 自己的 `--lens` / `--lens-file`）。
+前提是 `customLenses` 裡沒有被 `disableLenses` 跳過的 key（被跳過者不留 provenance 條目，配對會錯位）；
+兩邊條數不等時不要硬配，改印層 ②③ 的合計。`ensemble-minutes-review` 的 Phase 3 有逐欄的來源表。
 
 **沒裝 lens pack 時這行仍要印**（只會顯示 built-in），這樣「今天的報表跟昨天不同」永遠有據可查 ——
 量測儀器換了刻度卻不說，是 eval 數字不可比的根源。

@@ -18,21 +18,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   在它的審閱裡**完全不生效，也沒有任何警告**。現在 Phase 2 比照其餘三支 review skill：
   `pai-collect-lens-layers minutes` 的 `lenses` 原樣併入 `args.customLenses`、`profile` 維持 `"minutes"`，
   Phase 3 在 findings 表之前印 provenance 行（沒裝 pack 也印）。minutes 只有 `Workflow` 一條派發路徑，
-  沒有 Backend B，故不需要那段「Backend B 吃不到層 ②③」的但書。
+  沒有 Backend B，故不需要那段「Backend B 吃不到層 ②③」的但書。同一段還補了（#65 verify R1）：
+  - **collector 失敗有自己的路徑**：退出碼非 0 或 stdout 不是 JSON → 省略 `customLenses` 照常派發，
+    provenance 行改印「lens collector 失敗（exit / stderr）」—— 不再與「沒裝 pack」長得一樣。
+    其餘三支 review skill **沒有**這一段（見下方 Known limitations）。
+  - **provenance 行每個數字的來源**：pack / user 的拆分無法直接從 `stats.lensProvenance` 讀（層 ②③ 都是
+    `origin: "custom"`），改為依順序與 collector 的 `lenses[i]._layer` 配對；條數不符時只印合計。
+    這條配對規則也寫進 `references/lens-layers.md` §4，四支 skill 共用。
+  - **built-in 被 `override` 取代時印警告**（`overrodeFrom === "builtin"`）—— `fidelity` 等核心 lens
+    被換掉不能只留一個 `⊕`。並註明 lens 會讀到逐字稿：指向 pack README 的四類禁止事項、collector
+    跨 marketplace 取最高版本的選法、與 #36（lens 文字未經 sentinel 包裹）。
+  - **`stats.agents` 的預期公式改照 harness 的上限夾擠**（`maxAgents` 預設 16、夾在 4..30；lens 數與
+    replicas 依序被壓），並更正「偏少就是 agent 死掉」：`stats.agents` 數的是派出去的，agent 死掉要看
+    `stats.reviewers[].ok` / `stats.daOk` / `stats.integrity`。
 - 移除 `CLAUDE.md` Skills 表與 root `README.md` 裡「minutes 尚未接線」的 ⚠️；root README 的三層段補上限定：
   層 ②③ 只在有接 collector 的 skill（四支 `ensemble-*-review` 與帶 `--base` 的 `/ensemble-compose`）且走
-  `Workflow` backend 時生效。`references/lens-layers.md` 的 profile 列舉補上 `minutes`。
-  `plugins/pai-lenses/scripts/validate.py` 的接線警告改指向新閘門，不再說「追蹤於 #40」。
+  `Workflow` backend 時生效，並寫明機器閘門只涵蓋四支 review skill 的 SKILL.md 接線 ——
+  `ensemble-compose` 與「只在 `Workflow` backend 生效」沒有閘門。`references/lens-layers.md` 的 profile 列舉
+  補上 `minutes`，§4 的「各 skill 的 Phase 4」改為 minutes 與 compose 是 Phase 3。
+  `plugins/pai-lenses/scripts/validate.py` 的接線警告改指向新測試，不再說「追蹤於 #40」。
+- `code` / `academic` / `lecture` 三支 review skill 的 collector 呼叫由散文裡的 inline code 改成
+  `bash` fenced block（指令內容不變）—— 新測試要求呼叫以可執行的形狀寫在派發段裡（見下）。
 
 ### Added
 
-- `test/skill-lens-wiring.bats`：5 個 case（`grep -c "^@test" test/skill-lens-wiring.bats`），以
-  `skills/ensemble-*-review/` glob 列舉每一支專屬 review skill，斷言它以自己的 profile 呼叫
-  `pai-collect-lens-layers`（非註解行）、派發 args 帶 `customLenses`、`profile` 不改成 `custom`、報表提到
-  provenance 行；並釘住列舉至少 4 支且含 minutes（防 vacuous 綠燈）。修正前在本分支的 base 上 3 個 case 紅
-  （皆指向 `ensemble-minutes-review`），修正後全綠。新增第五支 review skill 時自動涵蓋。
-  `validate.py` 的 `collector_wiring` 只在該 profile 有 pack CSV 時才看、只印 warning 且自承啟發式，
-  這是主 plugin 這一側的硬閘門。
+- `test/skill-lens-wiring.bats`：16 個 case（`grep -c "^@test" test/skill-lens-wiring.bats`）。以
+  `skills/ensemble-*-review/` glob 列舉每一支專屬 review skill，依 markdown 的 fenced block 與 `Phase N` 標題
+  切段做**結構**檢查，四條判準：派發段的 shell fenced block 以自己的 profile 非註解地呼叫
+  `pai-collect-lens-layers` 且在派發模板之前；每個派發模板（含 `profile` 鍵的 json / javascript block）
+  帶 `customLenses`；同一批模板的 `profile` 都等於自己（因此不是 `custom`）；派發之後的 Phase 段有一句
+  未否定的「印 provenance 行」。每條判準都有 mutation case：在暫存副本上把呼叫換成「⚠️ **不要**呼叫 …」、
+  註解掉、換 profile、刪模板的 `customLenses`、`profile` 改 `custom`、刪或否定報表段的 provenance ——
+  斷言變紅且紅在該判準；另有 verify R1 實測的兩組合（minutes 三處、lecture 兩處）。上一版只 grep 字，
+  這些 mutation 全部仍綠（#65 verify R1）。
+  它只證明指令寫在對的位置、以可執行的形狀，**不證明模型照做**；不涵蓋 `ensemble-compose`。
+  `validate.py` 的 `collector_wiring` 只在該 profile 有 pack CSV 時才看、只印 warning 且自承啟發式。
+
+### Known limitations
+
+- `code` / `academic` / `lecture` 的 SKILL.md 沒有 collector 失敗的處理（非 0 退出或非 JSON 輸出時該怎麼辦
+  沒寫），與 minutes 現在的寫法不一致；它們的派發模板把 `customLenses` 寫成字串佔位符
+  （`"<pai-collect-lens-layers 的 lenses…>"`），而 harness 對非陣列一律當成沒給。本 PR 未改。
 
 ## [2.24.0] - 2026-09-10
 
