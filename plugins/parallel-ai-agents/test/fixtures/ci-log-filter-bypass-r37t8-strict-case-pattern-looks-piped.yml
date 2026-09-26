@@ -1,4 +1,4 @@
-# t8 N31（`--strict`：看得到接 neutralise 的管線、規則層卻剖析不出它 ⇒ fail-closed）：`case` 模式 `a|python3\ scripts/neutralise.py` 的 `|` 是「或」（bash -n 通過、不建管線），`PIPED_RE` 卻把它算成管線；規則層剖析出 0 條接 neutralise 的管線，靠這一條擋下。拿掉時 `--strict` 也放行，bash 實測第一行裸印 PR 文字。
+# R37 完整性審查（`--strict`：看得到接 neutralise 的管線、規則層卻剖析不出它 ⇒ fail-closed）：`case` 模式 `a|python3\ scripts/neutralise.py` 的 `|` 是「或」（bash -n 通過、不建管線），`PIPED_RE` 卻把它算成管線；規則層剖析出 0 條接 neutralise 的管線，靠這一條擋下。拿掉時 `--strict` 也放行，bash 實測第一行裸印 PR 文字。
 # EXPECT: rule-red
 # LINT-ARGS: --strict
 name: t

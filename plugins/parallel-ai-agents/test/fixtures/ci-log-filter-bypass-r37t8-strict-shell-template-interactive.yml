@@ -1,4 +1,4 @@
-# t8 R35a（`_bash_template`：短選項白名單外的一律不認）：`bash -i` 是互動 shell——啟動時先 source `~/.bashrc`，那是 run 區塊以外、本 lint 看不到的程式碼（可以 `set -x`）；拿掉白名單時 `-i` 被當成無害、樣板帶的 `-o pipefail` 讓 `--strict` 放行。
+# R37 完整性審查（`_bash_template`：短選項白名單外的一律不認）：`bash -i` 是互動 shell——啟動時先 source `~/.bashrc`，那是 run 區塊以外、本 lint 看不到的程式碼（可以 `set -x`）；拿掉白名單時 `-i` 被當成無害、樣板帶的 `-o pipefail` 讓 `--strict` 放行。
 # EXPECT: parse-red
 # LINT-ARGS: --strict
 name: t

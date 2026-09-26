@@ -1,4 +1,4 @@
-# t8 R31b（`_Sh.shopt_cmd`：`shopt -o` 的選項名不是字面 ⇒ fail-closed）：`shopt -so errexit "$X"` 的第一個選項名是字面（旗標迴圈在那裡停下），第二個不是（X=xtrace）；拿掉這一條時非字面的選項名被略過而放行，bash 實測 xtrace 把 PR 文字印到 stderr。（`shopt -so "$X"` 這種非字面名排第一的，由旗標迴圈的「參數不是字面」先擋下，走不到這一條。）
+# R37 完整性審查（`_Sh.shopt_cmd`：`shopt -o` 的選項名不是字面 ⇒ fail-closed）：`shopt -so errexit "$X"` 的第一個選項名是字面（旗標迴圈在那裡停下），第二個不是（X=xtrace）；拿掉這一條時非字面的選項名被略過而放行，bash 實測 xtrace 把 PR 文字印到 stderr。（`shopt -so "$X"` 這種非字面名排第一的，由旗標迴圈的「參數不是字面」先擋下，走不到這一條。）
 # EXPECT: rule-red
 name: t
 on: pull_request

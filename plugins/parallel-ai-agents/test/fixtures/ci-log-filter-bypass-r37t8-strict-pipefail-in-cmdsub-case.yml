@@ -1,4 +1,4 @@
-# t8 R16（`_lex`：命令替換裡 `case` 的模式 `)` 不是命令替換的收尾）：`$(case a in a) set -o pipefail ;; esac)` 整段都在命令替換的子殼層裡、不改變外層的 pipefail；在 `case` 的模式 `)` 就收掉命令替換時 `set -o pipefail` 被讀成頂層、`--strict` 的 pipefail 規則被滿足而放行（樣板 `bash -e {0}` 本身不帶 pipefail）。
+# R37 完整性審查（`_lex`：命令替換裡 `case` 的模式 `)` 不是命令替換的收尾）：`$(case a in a) set -o pipefail ;; esac)` 整段都在命令替換的子殼層裡、不改變外層的 pipefail；在 `case` 的模式 `)` 就收掉命令替換時 `set -o pipefail` 被讀成頂層、`--strict` 的 pipefail 規則被滿足而放行（樣板 `bash -e {0}` 本身不帶 pipefail）。
 # EXPECT: rule-red
 # LINT-ARGS: --strict
 name: t

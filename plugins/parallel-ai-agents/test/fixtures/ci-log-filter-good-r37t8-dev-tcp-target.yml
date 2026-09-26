@@ -1,4 +1,4 @@
-# t8 R22（`_redir_hit`：`/dev/tcp/…`、`/dev/udp/…` 是 bash 的網路 socket，不是 log）：寫到 `/dev/tcp/127.0.0.1/1` 不會把輸出帶到 log；不豁免時它落在 /dev 底下而誤擋（野外語料有 3 處這種寫法）。
+# R37 完整性審查（`_redir_hit`：`/dev/tcp/…`、`/dev/udp/…` 是 bash 的網路 socket，不是 log）：寫到 `/dev/tcp/127.0.0.1/1` 不會把輸出帶到 log；不豁免時它落在 /dev 底下而誤擋（野外語料有 3 處這種寫法）。
 # EXPECT: pass
 name: t
 on: pull_request

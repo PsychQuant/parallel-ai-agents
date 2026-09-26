@@ -1,4 +1,4 @@
-# #33 verify R37 c 包 t8/U2 補件（`_cmdsub_end` 裡的雙引號改走 `_dq_end` 做配對剖析，姊妹靶：
+# #33 verify R37 c 包的完整性審查補件（`_cmdsub_end` 裡的雙引號改走 `_dq_end` 做配對剖析，姊妹靶：
 # 既有的 param-cmdsub-nested-dq-cmdsub 系列測的是巢狀命令替換，本張測的是**逃脫的引號**）：
 # `_cmdsub_end`（頂層 `${…}` 裡、非雙引號脈絡的 `$(…)`）遇到 `"` 時若只用 `line.find('"', k+1)`
 # 找下一個字面 `"`（mutation_check 的靶），會把 `it\"s escaped` 裡**被反斜線逃脫**的那個 `"`

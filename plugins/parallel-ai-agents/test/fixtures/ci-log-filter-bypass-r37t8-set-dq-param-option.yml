@@ -1,4 +1,4 @@
-# t8 R3（`_dq_parts`：雙引號裡的 `$X` 是展開、字面未知）：`set "-$X"` 開了什麼看不出來（X=x 時就是 xtrace）；把 `$X` 當字面時 `-$X` 不像選項、`set` 規則直接放過，bash 實測 xtrace 把 PR 文字印到 stderr。
+# R37 完整性審查（`_dq_parts`：雙引號裡的 `$X` 是展開、字面未知）：`set "-$X"` 開了什麼看不出來（X=x 時就是 xtrace）；把 `$X` 當字面時 `-$X` 不像選項、`set` 規則直接放過，bash 實測 xtrace 把 PR 文字印到 stderr。
 # EXPECT: rule-red
 name: t
 on: pull_request

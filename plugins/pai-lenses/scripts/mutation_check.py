@@ -336,8 +336,8 @@ MUTATIONS += [
      '                heredoc = pending.pop(0) if pending else None\n                body_continued = False\n            elif in_sub', '                heredoc = None\n                body_continued = False\n            elif in_sub', "lint"),
     # R27 把這一條列入 EXPECTED_SURVIVE，理由是：關掉之後 `<<<` 落到下面的 `<<` 分支，分隔字從第三個 `<`
     # 讀起、`<` 在 `SHELL_WORD_BREAK` 裡 ⇒ delim 為空、不產生 heredoc ⇒ 行為等價。**那個論證只看了第一個 `<<`，
-    # 是錯的**（#33 verify R37 全輪 mutation 抓到）：`<<<<<EOF` 拿掉這個分支後，掃描器往後還會讀到一個真正的
-    # `<<EOF`，對齊結果就不同——`bypass-r37t8-misaligned-herestring-heredoc` 從 rule-red 變成 pass（繞過方向）。
+    # 是錯的**（#33 verify R37 全輪 mutation 抓到）：`<<<<<EOF`（bash 裡是語法錯誤）拿掉這個分支後，掃描器會在後面的
+    # `<<` 登記 heredoc、對齊跟著錯位——`bypass-r37t8-misaligned-herestring-heredoc` 從 rule-red 變成 pass（繞過方向）。
     # 已從 EXPECTED_SURVIVE 移除，靶名也拿掉「依構造等價」。
     ("lint: `<<<` 是 here-string 不是 heredoc",
      '            if line.startswith("<<<", i):', "            if False:", "lint"),

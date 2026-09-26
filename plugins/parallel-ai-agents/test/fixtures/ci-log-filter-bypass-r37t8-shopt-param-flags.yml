@@ -1,4 +1,4 @@
-# t8 R31a（`_Sh.shopt_cmd`：`shopt` 的參數不是字面 ⇒ fail-closed）：`shopt $F xtrace`（F=-so）開了什麼看不出來；拿掉這一條時非字面的參數直接進正規式比對而 traceback（不是 fail-closed 的 RULE），bash 實測 xtrace 把 PR 文字印到 stderr。
+# R37 完整性審查（`_Sh.shopt_cmd`：`shopt` 的參數不是字面 ⇒ fail-closed）：`shopt $F xtrace`（F=-so）開了什麼看不出來；拿掉這一條時非字面的參數直接進正規式比對而 traceback（不是 fail-closed 的 RULE），bash 實測 xtrace 把 PR 文字印到 stderr。
 # EXPECT: rule-red
 name: t
 on: pull_request

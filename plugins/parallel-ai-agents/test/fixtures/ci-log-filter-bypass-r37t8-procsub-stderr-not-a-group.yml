@@ -1,4 +1,4 @@
-# t8 R14（`_lex`：process substitution `>(…)` 是一個詞、裡面是子殼層）：`tee >(cat >&2)` 的 `cat` 寫到 shell 的 stderr（在外層 `2>&1` 套用之前就接好）；不認 `>(` 時它被拆成 `>` 加一個群組 `( … )`，後面的 `2>&1 |` 讓那個群組吃到豁免、`>&2` 被放過，bash 實測 PR 文字裸印到 stderr。
+# R37 完整性審查（`_lex`：process substitution `>(…)` 是一個詞、裡面是子殼層）：`tee >(cat >&2)` 的 `cat` 寫到 shell 的 stderr（在外層 `2>&1` 套用之前就接好）；不認 `>(` 時它被拆成 `>` 加一個群組 `( … )`，後面的 `2>&1 |` 讓那個群組吃到豁免、`>&2` 被放過，bash 實測 PR 文字裸印到 stderr。
 # EXPECT: rule-red
 name: t
 on: pull_request

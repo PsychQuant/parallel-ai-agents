@@ -1,4 +1,4 @@
-# t8 R20（`_redir_hit`：`>&$X` 複製到看不出值的 fd 一律算外流）：`X=2` 時 `>&$X` 就是 `>&2`，stdout 在管線之前就改走原本的 stderr，後面的 `2>&1` 也救不回來（重導向由左到右套用）；把非字面的 fd 當成一般檔名目標時骨架不在 /dev 底下而放行（`--strict` 也放行），bash 實測 PR 文字裸印到 stderr。
+# R37 完整性審查（`_redir_hit`：`>&$X` 複製到看不出值的 fd 一律算外流）：`X=2` 時 `>&$X` 就是 `>&2`，stdout 在管線之前就改走原本的 stderr，後面的 `2>&1` 也救不回來（重導向由左到右套用）；把非字面的 fd 當成一般檔名目標時骨架不在 /dev 底下而放行（`--strict` 也放行），bash 實測 PR 文字裸印到 stderr。
 # EXPECT: rule-red
 name: t
 on: pull_request

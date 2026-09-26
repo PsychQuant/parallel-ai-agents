@@ -1,4 +1,4 @@
-# t8 R24a（`_Sh.parse_command`：`function f { …; }` 的本體要呼叫才執行——子脈絡）：沒呼叫的函式裡的 `set -o pipefail` 不作用在外層；本體不當子脈絡時它被讀成頂層、`--strict` 的 pipefail 規則被滿足而放行（`f() {…}` 那種寫法由 bypass-r37b-strict-pipefail-set-in-function 守，`function` 關鍵字這種沒有）。
+# R37 完整性審查（`_Sh.parse_command`：`function f { …; }` 的本體要呼叫才執行——子脈絡）：沒呼叫的函式裡的 `set -o pipefail` 不作用在外層；本體不當子脈絡時它被讀成頂層、`--strict` 的 pipefail 規則被滿足而放行（`f() {…}` 那種寫法由 bypass-r37b-strict-pipefail-set-in-function 守，`function` 關鍵字這種沒有）。
 # EXPECT: rule-red
 # LINT-ARGS: --strict
 name: t

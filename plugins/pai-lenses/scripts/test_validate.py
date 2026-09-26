@@ -43,7 +43,7 @@ R18 抽樣三個粗靶，三個都藏著細顆粒缺口；R19 拆了三處，R20
 `test_every_decoding_call_site_survives_undecodable_bytes`。看到「0 存活」請先問：有沒有哪個靶蓋住了兩個實作？
 `EXPECTED_SURVIVE` 3 個：`_find_pack_at` git 分支的兩個守衛依構造不可達（R12 logic L3 / DA-6，保留為防禦）、
 「換回 splitlines()」（LineSanitiser 對每一段獨立判定，過度切段只會過度消毒）。R27 到 R35 另有 lint 的 `<<<` here-string 分支
-（理由是「關掉後落到 `<<` 分支而 delim 為空」）——R37 全輪 mutation 殺掉它：`<<<<<EOF` 裡還有一個真正的 `<<EOF`，那個論證是錯的。
+（理由是「關掉後落到 `<<` 分支而 delim 為空」）——R37 全輪 mutation 殺掉它：拿掉這個分支後，`<<<<<EOF` 後面的 `<<` 會被登記成 heredoc、對齊錯位，那個論證是錯的。
 **注意這三個是 `mutation_check.py` 的具名靶集合**；`test/opsweep.py`（作者無關的運算子掃描）另有自己的
 `EXPECTED_SURVIVE`（R33：7 條——R32 DA-2 把 `fold_block` 的四條全部撤掉，理由本身就是那個 bug），兩者是不同的集合、不同的判準，不要混著數。R31 起 opsweep 那一組的
 「依構造等價」由 `--verify-expected` 在 468 檔產生語料上逐檔跑出來，不是散文。規則明寫在 mutation_check.py：每一條

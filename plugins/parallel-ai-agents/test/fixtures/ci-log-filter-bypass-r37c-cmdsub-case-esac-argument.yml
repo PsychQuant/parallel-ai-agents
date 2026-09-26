@@ -1,4 +1,4 @@
-# #33 verify R37 c 包 t8/U2 補件（主掃描器 case 追蹤的 esac-pop 條件，姊妹靶是
+# #33 verify R37 c 包的完整性審查補件（主掃描器 case 追蹤的 esac-pop 條件，姊妹靶是
 # bypass-r37c-case-clause-stray-paren／bypass-r37c-dq-case-esac-argument）：子句命令裡的 `esac`
 # 是 `echo` 的參數，不該收 case（`cases[-1][1]=="pat" or at_cmd` 兩者皆 False）。若把它當成不論
 # 階段都收尾（mutation_check 的靶：把這個條件換成 `True`），`cases` 提早清空，緊接著出現的同層單獨

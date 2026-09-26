@@ -1,4 +1,4 @@
-# t8 R15b（`_lex`：fd 前綴要是未引號的字面數字）：`ls "$PR_TITLE" "2">&1` 的 `"2"` 是引號包住的引數、不是 fd 前綴，`>&1` 是 no-op；把引號裡的 `2` 也當前綴時 `--strict` 的 `2>&1` 規則被滿足而放行，bash 實測 PR 文字從 stderr 裸印。
+# R37 完整性審查（`_lex`：fd 前綴要是未引號的字面數字）：`ls "$PR_TITLE" "2">&1` 的 `"2"` 是引號包住的引數、不是 fd 前綴，`>&1` 是 no-op；把引號裡的 `2` 也當前綴時 `--strict` 的 `2>&1` 規則被滿足而放行，bash 實測 PR 文字從 stderr 裸印。
 # EXPECT: rule-red
 # LINT-ARGS: --strict
 name: t

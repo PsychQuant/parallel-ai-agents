@@ -1,4 +1,4 @@
-# #33 verify R37 c 包 t8/U2 補件：頂層（非雙引號）`${…}` 裡的 `$((…))` 沒有既有 fixture 覆蓋——
+# #33 verify R37 c 包的完整性審查補件：頂層（非雙引號）`${…}` 裡的 `$((…))` 沒有既有 fixture 覆蓋——
 # 現有的 good-arith-shift 系列都是裸 `$((…))`（走 shell_scan 主掃描器自己的 arith 追蹤，不經
 # `_cmdsub_end`），good-r37c-dq-arith-shift 是雙引號裡的（走 `_cmdsub_end_case`）。這裡的
 # `${PR_TITLE:-$((1 << 2))}` 要靠 `_param_end` 呼叫 `_cmdsub_end`，`_cmdsub_end` 自己再把

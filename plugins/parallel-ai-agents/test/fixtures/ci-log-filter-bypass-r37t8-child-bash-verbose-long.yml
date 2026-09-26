@@ -1,4 +1,4 @@
-# t8 R32c（`_Sh.shell_opts`：子 shell 的 `--verbose` 開了 verbose）：`bash --verbose -c "true $PR_TITLE"` 把讀進來的命令字串（已展開 PR 文字）印到原始 stderr；拿掉 `--verbose` 那一支時長選項被當成無害而放行。
+# R37 完整性審查（`_Sh.shell_opts`：子 shell 的 `--verbose` 開了 verbose）：`bash --verbose -c "true $PR_TITLE"` 把讀進來的命令字串（已展開 PR 文字）印到原始 stderr；拿掉 `--verbose` 那一支時長選項被當成無害而放行。
 # EXPECT: rule-red
 name: t
 on: pull_request
