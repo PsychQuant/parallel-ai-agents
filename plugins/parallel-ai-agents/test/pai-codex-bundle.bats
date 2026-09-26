@@ -118,7 +118,9 @@ section() {
   [ "$status" -eq 0 ]
   [[ "$output" == *'-	"node_modules"	excluded: build/vendor directory (not descended)'* ]]
   [[ "$output" == *'-	"dist"	excluded: build/vendor directory (not descended)'* ]]
-  [[ "$stderr" == *"pruned-dirs=2"* ]]
+  [[ "$output" == *"# not sent by policy (not a coverage gap): "*"pruned-dirs=2"* ]]
+  # round 2 #10：剪掉 build/vendor 目錄是政策，不是覆蓋缺口 → 不印 PAI-BUNDLE-TRUNCATED（不觸發 coverage INFO）
+  [[ "$stderr" != *"PAI-BUNDLE-TRUNCATED"* ]]
 }
 
 @test "二進位檔（含 NUL）只在 manifest 列出，不送內容" {
@@ -188,13 +190,36 @@ SH
   [[ "$output" == *'"zh.txt"	included'* ]]
 }
 
-@test "R1 被排除的檔也計入 PAI-BUNDLE-TRUNCATED（wrapper agent 才會回報覆蓋不完整）" {
+@test "R1 被排除的非 UTF-8 檔計入 PAI-BUNDLE-TRUNCATED 的缺口（wrapper agent 才會回報覆蓋不完整）" {
   rm -rf "$D/node_modules" "$D/dist"
-  printf 'AB\000CD' > "$D/img.bin"
+  printf 'caf\351\n' > "$D/latin1.py"
   run --separate-stderr bundle "$D"
   [ "$status" -eq 0 ]
-  [[ "$stderr" == "PAI-BUNDLE-TRUNCATED: "*"excluded=1"* ]]
+  [[ "$stderr" == "PAI-BUNDLE-TRUNCATED: gaps: "*"not-utf8=1"*"; not-sent-by-policy: "* ]]
   [[ "$output" == *"# NOTE: this bundle is INCOMPLETE"* ]]
+}
+
+@test "round2 #10 只有依政策不送的檔（二進位、疑似憑證）→ 不印 PAI-BUNDLE-TRUNCATED，header 分開計數" {
+  rm -rf "$D/node_modules" "$D/dist"
+  printf 'AB\000CD' > "$D/img.bin"
+  printf 'K=1\n' > "$D/.env"
+  run --separate-stderr bundle "$D"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" != *"PAI-BUNDLE-TRUNCATED"* ]]
+  [[ "$output" != *"INCOMPLETE"* ]]
+  [[ "$output" == *"# not sent by policy (not a coverage gap): binary=1 secret-like=1 "* ]]
+  [[ "$output" == *"# coverage gaps (content NOT seen): truncated=0 omitted=0 "* ]]
+}
+
+@test "round2 #10 缺口與政策排除並存 → stderr 行把兩類分開（gaps: … ; not-sent-by-policy: …），只含數字" {
+  rm -rf "$D/node_modules" "$D/dist"
+  printf 'AB\000CD' > "$D/img.bin"
+  head -c 5000 /dev/zero | tr '\0' 'x' > "$D/big.py"
+  run --separate-stderr bundle --max-file-bytes 100 "$D"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == "PAI-BUNDLE-TRUNCATED: gaps: truncated=1 "*"; not-sent-by-policy: binary=1 "* ]]
+  [[ "$stderr" != *"big.py"* ]]
+  [[ "$stderr" != *"img.bin"* ]]
 }
 
 @test "疑似祕密檔名（.env / *.pem）不送給外部模型" {
@@ -382,7 +407,9 @@ SH
   [ "$status" -eq 0 ]
   [[ "$output" == *"MAIN_SOURCE_KEEP"* ]]
   [[ "$output" == *'"src/main.py"	included'* ]]
-  [[ "$output" == *'"README.md"	omitted: total cap'* ]]
+  # 文件層內 changelog／history 排最後：README 完整收錄，CHANGELOG 在預算邊界被截斷
+  [[ "$output" == *'"README.md"	included'* ]]
+  [[ "$output" == *'"CHANGELOG.md"	truncated to '*' bytes (total cap)'* ]]
 }
 
 # ── 大小上限 + 明示截斷 ─────────────────────────────────────────
@@ -401,7 +428,7 @@ SH
   run --separate-stderr bundle --max-bytes 8192 "$D"
   [ "$status" -eq 0 ]
   [[ "$output" == *"omitted: total cap"* ]]
-  [[ "$stderr" == "PAI-BUNDLE-TRUNCATED: included="*" omitted="*" cap=8192B per-file=65536B max-files=2000" ]]
+  [[ "$stderr" == "PAI-BUNDLE-TRUNCATED: gaps: "*" omitted="*"; included="*" cap=8192B per-file=65536B max-files=2000" ]]
   [[ "$stderr" != *"a.js"* ]]
   [[ "$stderr" != *"f1.py"* ]]
 }
@@ -533,4 +560,204 @@ SH
 @test "<artifact> 之後不是 -- → exit 1（不猜測意圖）" {
   run bundle "$D" "$FAKE"
   [ "$status" -eq 1 ]
+}
+
+# ── #45 verify round 2 ────────────────────────────────────────
+# 「round2 #<n>」= 第二輪 verify 報告的第 n 列。每個 case 都在 8bcff74 上 RED 過。
+
+# 手工寫一份 index v2（git update-index 會拒絕 `..` 之類的路徑，但 git ls-files 照樣列出手工 index 裡的項目）
+craft_index() {
+  local repo="$1"; shift
+  local sha; sha="$(git -C "$repo" hash-object -w "$repo/b.py")"
+  python3 - "$repo/.git/index" "$sha" "$@" <<'PY'
+import hashlib, struct, sys
+out_path, sha, paths = sys.argv[1], sys.argv[2], sorted(p.encode() for p in sys.argv[3:])
+out = b'DIRC' + struct.pack('>II', 2, len(paths))
+for p in paths:
+    e = struct.pack('>10I', 0, 0, 0, 0, 0, 0, 0o100644, 0, 0, 0) + bytes.fromhex(sha) \
+        + struct.pack('>H', min(len(p), 0xfff)) + p
+    out += e + b'\0' * (8 - len(e) % 8)
+open(out_path, 'wb').write(out + hashlib.sha1(out).digest())
+PY
+}
+
+# 有時間上限地跑 SUT（macOS 沒有 GNU timeout；perl 兩邊都有）。SUT 在自己的 process group 裡跑，
+# 逾時就把整組（bash、python3、卡住的 git）殺掉 → status 142；不殺整組的話，留下的子程序握著
+# stdout，`run` 會一直等下去。
+bundle_bounded() {
+  local secs="$1"; shift
+  perl -e '
+    my $s = shift; my $pid = fork; defined $pid or die "fork: $!";
+    if (!$pid) { setpgrp(0, 0); exec @ARGV or die "exec: $!" }
+    $SIG{ALRM} = sub { kill "KILL", -$pid; waitpid($pid, 0); exit 142 };
+    alarm $s; waitpid($pid, 0);
+    exit(($? & 127) ? 128 + ($? & 127) : $? >> 8);
+  ' "$secs" ${PAI_TEST_BASH:+"$PAI_TEST_BASH"} "$BIN" "$@"
+}
+
+@test "round2 #1 手工造的 git index 含 ../ 與 .git/ 路徑 → 不讀根目錄外的檔，列為 unsafe path" {
+  O="${BATS_TEST_TMPDIR}/outside"; mkdir -p "$O"; printf 'OUTSIDE_INDEX_SECRET\n' > "$O/notes.txt"
+  git init -q "$D"
+  git -C "$D" config core.editor OUTSIDE_GIT_CONFIG_MARK
+  craft_index "$D" b.py ../outside/notes.txt src/../../outside/notes.txt .git/config
+  git -C "$D" ls-files | grep -q '^\.\./outside/notes\.txt$'   # 前提：git 真的列出這個項目
+  run --separate-stderr bundle "$D"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"OUTSIDE_INDEX_SECRET"* ]]
+  [[ "$output" != *"OUTSIDE_GIT_CONFIG_MARK"* ]]
+  [[ "$output" == *'"../outside/notes.txt"	excluded: unsafe path in git index'* ]]
+  [[ "$output" == *'".git/config"	excluded: unsafe path in git index'* ]]
+  [[ "$stderr" == *"unsafe-paths=3"* ]]
+  [[ "$output" == *'print("b")'* ]]
+}
+
+@test "round2 #1 縱深防禦：Opener 本身拒絕 .. / . / 空段 / 絕對路徑（不靠列檔那一層）" {
+  printf 'OUTSIDE_OPENER\n' > "${BATS_TEST_TMPDIR}/outside.txt"
+  run python3 - "${BATS_TEST_DIRNAME}/../bin/pai-codex-bundle-dir" "$D" <<'PY'
+import importlib.machinery, importlib.util, sys
+loader = importlib.machinery.SourceFileLoader('bundledir', sys.argv[1])
+m = importlib.util.module_from_spec(importlib.util.spec_from_loader('bundledir', loader))
+loader.exec_module(m)
+o = m.Opener(sys.argv[2])
+for rel in (b'../outside.txt', b'src/../../outside.txt', b'./b.py', b'src//a.js', b'/etc/passwd', b'.git/config'):
+    kind, _ = o.lstat(rel)
+    try:
+        o.read(rel, 100)
+        got = 'READ'
+    except m.Refused as r:
+        got = r.kind
+    print(rel.decode(), kind, got)
+PY
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"READ"* ]]
+  [ "$(printf '%s\n' "$output" | grep -c ' unsafe-path unsafe-path$')" -eq 6 ]
+}
+
+@test "round2 #2 root 本身是 .aws／.docker（憑證目錄）→ 裡面的檔一律不送" {
+  H="${BATS_TEST_TMPDIR}/home"; mkdir -p "$H/.aws" "$H/.docker/sub"
+  printf 'AWS_ROOT_SECRET\n' > "$H/.aws/config"
+  printf 'DOCKER_ROOT_SECRET\n' > "$H/.docker/config.json"
+  printf 'DOCKER_SUB_SECRET\n' > "$H/.docker/sub/x.py"
+  run --separate-stderr bundle "$H/.aws"
+  [ "$status" -eq 1 ]
+  [[ "$output" != *"AWS_ROOT_SECRET"* ]]
+  [[ "$stderr" == *"secret-like=1"* ]]
+  run --separate-stderr bundle "$H/.docker"
+  [ "$status" -eq 1 ]
+  [[ "$output" != *"DOCKER_ROOT_SECRET"* ]]
+  run --separate-stderr bundle "$H/.docker/sub"
+  [ "$status" -eq 1 ]
+  [[ "$output" != *"DOCKER_SUB_SECRET"* ]]
+}
+
+@test "round2 #3 find 模式（外層不是 repo）不進入含 .git 的子目錄：記成巢狀 repo、計數，不送它的工作樹" {
+  O="${BATS_TEST_TMPDIR}/outer"; mkdir -p "$O/inner"
+  printf 'print(1)\n' > "$O/top.py"
+  git init -q "$O/inner"
+  printf 'secret.txt\n' > "$O/inner/.gitignore"
+  printf 'INNER_IGNORED_SECRET\n' > "$O/inner/secret.txt"
+  printf 'INNER_SRC\n' > "$O/inner/i.py"
+  run --separate-stderr bundle "$O"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"find (not a git work tree"* ]]
+  [[ "$output" != *"INNER_IGNORED_SECRET"* ]]
+  [[ "$output" != *"INNER_SRC"* ]]
+  [[ "$output" == *'-	"inner"	excluded: nested git repository (not descended)'* ]]
+  [[ "$output" != *'"inner/.git"'* ]]     # 不再把巢狀 repo 的 .git 記成 build/vendor 目錄
+  [[ "$stderr" == *"nested-repos=1"* ]]
+}
+
+@test "round2 #4a git 子程序有逾時：.git/info/exclude 是 FIFO 也不會卡住，明確失敗" {
+  git init -q "$D"
+  git -C "$D" add -A; gcommit "$D"
+  rm -f "$D/.git/info/exclude"; mkdir -p "$D/.git/info"; mkfifo "$D/.git/info/exclude"
+  PAI_CODEX_BUNDLE_GIT_TIMEOUT=2 run --separate-stderr bundle_bounded 30 "$D" -- "$FAKE" --detach
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"git 在 2 秒內沒有回應"* ]]
+  [[ "$output" != *"ARG:"* ]]
+}
+
+@test "round2 #4b 列舉上限也計算目錄：大量空目錄走到上限就停" {
+  mkdir -p "$D/e"
+  (cd "$D/e" && for i in $(seq 1 300); do mkdir "d$i"; done)
+  PAI_CODEX_BUNDLE_SCAN_LIMIT=100 run --separate-stderr bundle "$D"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"scan-stopped=1"* ]]
+}
+
+@test "round2 #4b 單一超寬目錄邊讀邊數，不整個讀完才檢查上限" {
+  mkdir -p "$D/wide"
+  (cd "$D/wide" && for i in $(seq 1 500); do printf 'w\n' > "w$i.py"; done)
+  PAI_CODEX_BUNDLE_SCAN_LIMIT=100 run --separate-stderr bundle "$D"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"scan-stopped=1"* ]]
+  [ "$(printf '%s\n' "$output" | grep -c '	"wide/w')" -le 100 ]
+}
+
+@test "round2 #5 文件層只認完全相同的主檔名：security.py history.js changes.sh … 仍是原始碼層" {
+  for f in security.py history.js changes.sh notice.py authors.py license.py copying.py; do printf 'x\n' > "$D/$f"; done
+  printf 'r\n' > "$D/README.md"
+  run bundle "$D"
+  [ "$status" -eq 0 ]
+  order="$(printf '%s\n' "$output" | grep '^PAI-BUNDLE-[0-9a-f]* FILE ' | sed 's/^PAI-BUNDLE-[0-9a-f]* FILE "\([^"]*\)" .*/\1/' | tr '\n' ' ')"
+  [ "$order" = "authors.py b.py changes.sh copying.py history.js license.py notice.py security.py src/a.js README.md " ]
+}
+
+@test "round2 #5 預算邊界：高層的檔放不下時截斷收錄，低層的檔不補進空位" {
+  rm -rf "$D/node_modules" "$D/dist"
+  head -c 20000 /dev/zero | tr '\0' 'x' > "$D/big.py"
+  printf 'SMALL_DOC_BACKFILL\n' > "$D/zz.md"
+  run --separate-stderr bundle --max-bytes 16384 "$D"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'20000	"big.py"	truncated to '*' bytes (total cap)'* ]]
+  [[ "$output" == *'"zz.md"	omitted: total cap'* ]]
+  [[ "$output" != *"SMALL_DOC_BACKFILL"* ]]
+  printf '%s\n' "$output" > "${BATS_TEST_TMPDIR}/b"
+  [ "$(wc -c < "${BATS_TEST_TMPDIR}/b" | tr -d ' ')" -le 16384 ]
+}
+
+@test "round2 #5 文件層內：SKILL.md／skills/／references/ 在前，CHANGELOG／HISTORY 在最後" {
+  rm -rf "$D/node_modules" "$D/dist"
+  mkdir -p "$D/skills/x" "$D/references" "$D/docs"
+  printf 'c\n' > "$D/CHANGELOG.md"; printf 'h\n' > "$D/HISTORY.md"
+  printf 's\n' > "$D/skills/x/SKILL.md"; printf 'r\n' > "$D/references/r.md"; printf 'g\n' > "$D/docs/guide.md"
+  run bundle "$D"
+  [ "$status" -eq 0 ]
+  order="$(printf '%s\n' "$output" | grep '^PAI-BUNDLE-[0-9a-f]* FILE ' | sed 's/^PAI-BUNDLE-[0-9a-f]* FILE "\([^"]*\)" .*/\1/' | tr '\n' ' ')"
+  [ "$order" = "b.py src/a.js references/r.md skills/x/SKILL.md docs/guide.md CHANGELOG.md HISTORY.md " ]
+}
+
+@test "round2 #7 未追蹤的新檔在 bundle header 點名（JSON 字串，最多 20 個，其餘計數）；stderr 仍只有數字" {
+  git init -q "$D"
+  git -C "$D" add -A; gcommit "$D"
+  printf 'NEW\n' > "$D/src/new_feature.py"
+  run --separate-stderr bundle "$D"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'# untracked, NOT sent (Claude reviewers may see them; you do not): "src/new_feature.py"'* ]]
+  [[ "$stderr" == *"untracked=1"* ]]
+  [[ "$stderr" != *"new_feature"* ]]
+  for i in $(seq 1 24); do printf 'n\n' > "$D/src/u$i.py"; done
+  run --separate-stderr bundle "$D"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'# untracked, NOT sent'*'(+5 more; all are in the manifest)'* ]]
+}
+
+@test "round2 #8 .env* 全部不送：.env-prod .env_local .envs .env.example" {
+  for f in .env-prod .env_local .envs .env.example; do printf 'ENVSECRET_%s\n' "$f" > "$D/$f"; done
+  run bundle "$D"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"ENVSECRET_"* ]]
+  for f in .env-prod .env_local .envs .env.example; do
+    [[ "$output" == *"\"$f\"	excluded: secret-like name"* ]] || { echo "not excluded: $f"; return 1; }
+  done
+}
+
+@test "round2 #8 root 被 gitignore → header 明說「git 會忽略的檔在這裡會送出」" {
+  git init -q "$D"
+  printf 'gen/\n' > "$D/.gitignore"
+  git -C "$D" add -A; gcommit "$D"
+  mkdir -p "$D/gen"; printf 'x=1\n' > "$D/gen/x.py"
+  run bundle "$D/gen"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"# NOTE: root is gitignored: files git would ignore ARE sent here"* ]]
 }

@@ -64,16 +64,21 @@ allowed-tools:
 > **目錄模式的 Codex leg（#45）**：Codex 不逐檔讀目錄，而是由 `bin/pai-codex-bundle`（目錄部分交給同目錄的 python3 helper
 > `pai-codex-bundle-dir`）機械組成**一份有上限的 bundle** 當 `--prompt-file`（bytes 不經 agent context，與 #37 的單一檔案
 > path-only 同一原則）。完整規則在 `bin/pai-codex-bundle` 開頭，重點：
-> - **送什麼**：git 工作樹內只送**被追蹤**的檔（尊重 `.gitignore`）；未追蹤的檔只在 manifest 列出、不送（最可能是本機草稿或祕密）。
->   root 底下完全沒有被追蹤的檔（新目錄、還沒 commit）→ 送 git 眼中未被 ignore 的檔；root 本身被 ignore → 當一般目錄。
->   git 不會執行目標 repo 設定的 `core.fsmonitor` 等命令。非 git 目錄不進入 `node_modules`／`dist`／`build`／`target`／`.venv`
->   等目錄，但**每個被剪掉的目錄都列在 manifest**；git 模式下被追蹤的檔不因目錄名剪掉。
-> - **不送內容、只列原因**：路徑上任何一段是 symlink、特殊檔、含 NUL、非合法 UTF-8、疑似憑證的檔名（`.env*`、`.envrc`、`*.pem`、
->   `*.key`、`*.jks`、`*.tfstate`、`credentials`、`id_rsa*`、`.ssh/`／`.aws/`／`.docker/` 底下…）。**檔名 denylist 不是祕密偵測**：
->   寫死在原始碼裡的金鑰照樣會送給外部模型——含祕密的目錄請先清理，或不要開 `--codex`。
-> - **順序與上限**：原始碼 → 測試 → 設定 → 文件 → fixture／lockfile；整份 bundle 512 KiB（含 manifest）、單檔 64 KiB、
->   檔案數 2000。**只要有任何檔沒有完整送出（截斷、上限、排除規則），報告會有一條 INFO「cross-model coverage partial」**
->   ——大目錄請改指更小的子目錄，或用 diff 模式。
+> - **送什麼**：git 工作樹內只送**被追蹤**的檔（尊重 `.gitignore`）；未追蹤的檔不送（最可能是本機草稿或祕密），
+>   但 manifest 逐一列出、bundle header 點名（最多 20 個）——Claude lens 看得到它們、Codex 看不到，報告要看得出差在哪。
+>   root 底下完全沒有被追蹤的檔（還沒 commit）→ 送 `git ls-files -o --exclude-standard` 列出的檔；root 本身被 ignore
+>   → 當一般目錄，**git 會忽略的檔在這裡會送出**（header 明說；只剩 build/vendor 剪枝與憑證 denylist）。
+>   git 不會執行目標 repo 設定的 `core.fsmonitor` 等命令，每個 git 子程序有逾時（卡住 → 失敗，不送）；
+>   git index 裡的 `..`／`.git/`／絕對路徑一律不讀。非 git 目錄不進入 `node_modules`／`dist`／`build`／`target`／`.venv`
+>   等目錄，也不進入含 `.git` 的子目錄（巢狀 repo），但**每一個都列在 manifest 並計數**；git 模式下被追蹤的檔不因目錄名剪掉。
+> - **不送內容、只列原因**：路徑上任何一段是 symlink、特殊檔、含 NUL、非合法 UTF-8、疑似憑證的檔名（`.env` 開頭的任何檔名、
+>   `*.pem`、`*.key`、`*.jks`、`*.tfstate`、`credentials`、`id_rsa*`、`.ssh/`／`.aws/`／`.docker/` 底下…，root 本身就是這種目錄也算）。
+>   **檔名 denylist 不是祕密偵測**：寫死在原始碼裡的金鑰照樣會送給外部模型——含祕密的目錄請先清理，或不要開 `--codex`。
+> - **順序與上限**：原始碼 → 測試 → 設定 → 文件（SKILL.md／references 在前、CHANGELOG 在後）→ fixture／lockfile；
+>   整份 bundle 512 KiB（含 manifest）、單檔 64 KiB、檔案數 2000。預算用完的那個檔截斷收錄，之後的檔不送（低層不補位）。
+>   **只有真正的覆蓋缺口（截斷、上限、未追蹤、非 UTF-8、讀不到、巢狀 repo、列舉上限）才會讓報告多一條 INFO
+>   「cross-model coverage partial」**（計數分 `gaps:` 與 `not-sent-by-policy:`）；二進位、憑證檔名、symlink、build 目錄
+>   這類依政策不送的檔只在 bundle 的 manifest 裡，不觸發 INFO。大目錄請改指更小的子目錄，或用 diff 模式。
 
 **B. diff**（審變更）— 擇一 flag：
 ```
@@ -327,8 +332,9 @@ Agent:
   --service-tier fast --max-time 600 \
   --instructions "你是嚴謹的審閱者，用繁體中文輸出。"
 # → 從這一次 tool call 的輸出讀 id，記在你自己的回覆文字裡。
-#   若輸出含 `PAI-BUNDLE-TRUNCATED: …`（目錄有檔沒完整送出：上限或排除規則），報告要加一條
-#   INFO「cross-model coverage partial」並附該行——Codex 只看到部分目錄。這條與
+#   若輸出含 `PAI-BUNDLE-TRUNCATED: …`（目錄有覆蓋缺口：上限、截斷、未追蹤、非 UTF-8…；
+#   只有政策排除時不印），報告要加一條 INFO「cross-model coverage partial」並附該行——Codex 只看到
+#   部分目錄（`gaps:` 是缺口、`not-sent-by-policy:` 是無害的排除）。這條與
 #   FAILED／TIMEOUT 時的失敗 finding 並存，不互相取代。
 #   每次 Bash 呼叫都是全新 shell，變數不會保留；不要寫 RUNDIR=$(...)——command
 #   substitution 會吃掉 stdout，你在 tool output 裡看不到 id。

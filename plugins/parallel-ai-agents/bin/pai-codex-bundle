@@ -14,35 +14,51 @@
 #   以 - 開頭的 artifact 路徑必須放在 -- 之後（engine 一律寫 `-- <artifact>`）；不認得的選項 → exit 1。
 #
 # 退出碼：0 成功（或 <cmd> 的 exit code）；1 錯誤（用法錯／路徑不存在／非檔案非目錄／
-#         目錄內沒有可送出的檔案／組裝失敗）——這些情況下 <cmd> 不會被呼叫。
+#         目錄內沒有可送出的檔案／組裝失敗／git 逾時）——這些情況下 <cmd> 不會被呼叫。
 #
 # 依賴：單一檔案只用 bash（3.2 相容）；目錄模式用 python3 跑同目錄的 pai-codex-bundle-dir
 #       （python3 本來就是本 plugin 的 runtime 依賴：pai-collect-lens-layers／pai-parse-lens-csv）。
 #
 # 目錄規則（#45；實作與常數在 pai-codex-bundle-dir，兩處一起改）：
 #   列檔  git 工作樹內 → 只送**被追蹤**的檔（`git ls-files`，尊重 .gitignore）；未追蹤的檔只在
-#         manifest 列出「untracked (not sent)」——還沒 commit 的東西最可能是本機草稿或祕密。
-#         git 以 `-c core.fsmonitor=false`（等）執行，不跑目標 repo 設定的命令；呼叫端的 GIT_* 環境變數不帶入。
-#         root 底下沒有任何被追蹤的檔（root 被 ignore、整個未追蹤、或還沒 commit）→ 當一般目錄（find）。
-#         非 git → find，不 follow symlink；node_modules dist build target .venv .git 等 build/vendor 目錄
-#         不進入，但**每個被剪掉的目錄都在 manifest 列一行並計數**。git 模式下被追蹤的檔不因目錄名剪掉，
-#         只排到最後。submodule／巢狀 repo 不進入（列出、計數）。讀不到的子目錄略過並列出，不讓整份失敗。
+#         manifest 列出「untracked (not sent)」，bundle header 另外點名（最多 20 個）——還沒 commit 的
+#         東西最可能是本機草稿或祕密，但 Claude lens 看得到它們，所以要讓讀報告的人看得出差在哪些檔。
+#         root 底下沒有任何被追蹤的檔（還沒 commit 的新目錄）→ 送 `git ls-files -o --exclude-standard`
+#         列出的（未被 ignore 的）檔。root 本身被 gitignore（git 什麼都不列）→ 當一般目錄（find），
+#         header 明說「git 會忽略的檔在這裡會送出」。git 以 `-c core.fsmonitor=false`（等）執行，不跑目標
+#         repo 設定的命令；呼叫端的 GIT_* 環境變數不帶入；每個 git 子程序有逾時
+#         （PAI_CODEX_BUNDLE_GIT_TIMEOUT，預設 30 秒；逾時 → 失敗退出，不卡住、不退回 find）。
+#         git index 裡含 `..`／`.`／空段／`.git` 的路徑或絕對路徑（只能手工造出）→ 不讀，列為 unsafe path。
+#         非 git → find，不 follow symlink；node_modules dist build target .venv 等 build/vendor 目錄
+#         不進入，但**每個被剪掉的目錄都在 manifest 列一行並計數**。含 `.git` 的子目錄是巢狀 repo：
+#         不進入（列出、計數）。git 模式下被追蹤的檔不因目錄名剪掉，只排到最後；submodule／未追蹤的
+#         巢狀 repo 也不進入。讀不到的子目錄略過並列出，不讓整份失敗。列舉上限
+#         （PAI_CODEX_BUNDLE_SCAN_LIMIT，預設 50000）計算每一個看過的目錄項目（檔案與目錄都算），
+#         超寬的單一目錄也是邊讀邊數——指到 $HOME 之類的巨大樹會停在上限並標 scan-stopped。
 #   排除  路徑上任何一段是 symlink（含父目錄）、FIFO 等特殊檔、含 NUL 的檔、非合法 UTF-8 的檔、
-#         疑似憑證的檔名（.env .env.* *.env .envrc *.pem *.key *.p12 *.pfx *.p8 *.jks *.keystore *.ppk
-#         *.kdbx *.tfstate *.tfvars id_rsa* id_dsa* id_ecdsa* id_ed25519* client_secret* credentials
-#         credentials.json secrets.{json,yml,yaml,toml} .secrets .npmrc .netrc .pypirc .pgpass
-#         .git-credentials .htpasswd .dockercfg，以及 .ssh/ .gnupg/ .aws/ .docker/ .kube/ 底下的任何檔）
-#         → 只在 manifest 列原因，不送內容。**檔名 denylist 不是祕密偵測**：寫死在原始碼裡的金鑰照樣會送出。
-#   順序  內容依優先層：0 原始碼（含無副檔名的 script）→ 1 測試 → 2 設定／其他 → 3 文件（README、
-#         CHANGELOG、*.md…）→ 4 fixture／lockfile／minified／vendored；同層依路徑位元組序。manifest 依路徑序。
-#         預算不夠時先犧牲後面的層——主要原始碼不會被 CHANGELOG 或大型 fixture 擠掉。
+#         疑似憑證的檔名（.env 開頭的任何檔名＝.env*（含 .envrc、.env.example）、*.env、*.pem *.key *.p12
+#         *.pfx *.p8 *.jks *.keystore *.ppk *.kdbx *.tfstate *.tfvars id_rsa* id_dsa* id_ecdsa* id_ed25519*
+#         client_secret* credentials credentials.json secrets.{json,yml,yaml,toml} .secrets .npmrc .netrc
+#         .pypirc .pgpass .git-credentials .htpasswd .dockercfg，以及 .ssh/ .gnupg/ .aws/ .docker/ .kube/
+#         底下的任何檔——root 本身在這些目錄裡也算）→ 只在 manifest 列原因，不送內容。
+#         **檔名 denylist 不是祕密偵測**：寫死在原始碼裡的金鑰照樣會送出。
+#   順序  內容依優先層：0 原始碼（含無副檔名的 script）→ 1 測試 → 2 設定／其他 → 3 文件 → 4 fixture／
+#         lockfile／minified／vendored；同層依路徑位元組序。manifest 依路徑序。文件層只認副檔名
+#         （*.md *.rst *.txt *.adoc…）或**完全相同**的主檔名（README、CHANGELOG、LICENSE…，無副檔名或
+#         文件副檔名）——security.py、history.js 仍是原始碼。文件層內 SKILL.md／skills/／references/ 在前，
+#         CHANGELOG／HISTORY／CHANGES／NEWS 在最後。預算用完的那一個檔**截斷收錄**（不整檔丟掉），
+#         之後的檔一律 omitted——低層的檔不會補進高層檔放不下而空出的位置。
 #   大小  --max-bytes（預設 524288）是**整份 bundle** 的上限（header、manifest、邊界行都算）；
 #         單檔 --max-file-bytes（預設 65536，同 pai-build-diff），超過截斷並標注（不切壞多位元組字元）；
 #         --max-files（預設 2000）依優先序取前 N 個，其餘只計數。每個檔只開一次、最多讀上限 +1 byte，
 #         分類與輸出用同一份 bytes。放不下的標「omitted: total cap (not inspected)」。
-#   回報  任何檔沒有完整送出（截斷、省略、排除、未追蹤、剪掉的目錄…）→ stderr 印一行
-#         `PAI-BUNDLE-TRUNCATED: …`（只含數字，不含檔名），bundle 開頭也有 NOTE，
-#         讓 Codex 與 wrapper agent 都在報告裡明說覆蓋不完整。
+#   回報  bundle header 把「沒送出」分兩類計數：
+#           覆蓋缺口（Codex 沒看到、reviewer 可能想看）：截斷、omitted、超過 --max-files、未追蹤、
+#             非 UTF-8、讀不到的檔／目錄、巢狀 repo、unsafe path、列舉上限
+#           依政策不送（不是缺口）：二進位、疑似憑證、symlink、特殊檔、工作樹裡已刪掉的檔、build/vendor 目錄
+#         **只有覆蓋缺口**才在 stderr 印一行 `PAI-BUNDLE-TRUNCATED: gaps: … ; not-sent-by-policy: … ; …`
+#         （只含數字，不含檔名），bundle 開頭也寫 INCOMPLETE NOTE，讓 Codex 與 wrapper agent 都在報告裡
+#         明說覆蓋不完整；只有政策排除時不印這行，細節只在 header 與 manifest。
 #
 # 安全：檔名與內容都是不可信 DATA。檔案邊界用每份 bundle 隨機產生的 token 標記，
 #       內容偽造不出邊界；檔名一律以 JSON 字串呈現（非 ASCII 保持可讀，換行等控制字元跳脫），

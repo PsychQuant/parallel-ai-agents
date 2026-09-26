@@ -403,7 +403,7 @@ test('#48 codexModel / codexEffort args 原樣進 codex-call 命令列，service
 // engine 看不到檔案系統、分不出 args.file 是檔案還是目錄 —— 於是目錄被原樣塞給
 // --prompt-file（codex-call 讀不了目錄 → leg 失敗），或 agent 被逼回舊的「先讀再寫」。
 // 修法：args.file 一律經 bin/pai-codex-bundle：檔案 → 原 path 直通；目錄 → 機械組裝
-// 有上限的 bundle（manifest + 排除規則 + 位元組序 + 截斷標注），bytes 仍不經 agent。
+// 有上限的 bundle（manifest + 排除規則 + 優先層再位元組序 + 截斷標注），bytes 仍不經 agent。
 
 test('#45 T1 path 模式（file）經 pai-codex-bundle 交給 codex-call，不再把目錄直接當 --prompt-file', async () => {
   const p = await codexPromptFor({ profile: 'code', file: '/repo/src' })
@@ -482,6 +482,13 @@ test('#45 R12 覆蓋不完整的 INFO 與 FAILED／TIMEOUT 的「EXACTLY one」�
   // diff 模式沒有 bundler，不該提 PAI-BUNDLE-TRUNCATED
   const d = await codexPromptFor({ profile: 'code', diffFile: '/tmp/d.diff' })
   assert.ok(!d.includes('PAI-BUNDLE-TRUNCATED'))
+})
+
+test('#45 round2 #10 coverage INFO 只針對真正的缺口：prompt 分開 gaps 與 not-sent-by-policy（政策排除不觸發）', async () => {
+  const p = await codexPromptFor({ profile: 'code', file: '/repo/src' })
+  assert.ok(/prints it ONLY for such gaps/.test(p), '沒有說明 PAI-BUNDLE-TRUNCATED 只在真正缺口時出現')
+  assert.ok(p.includes('`gaps:`') && p.includes('`not-sent-by-policy:`'), '沒有交代兩類計數的意義')
+  assert.ok(/untracked files/.test(p) && /Coverage paragraph/.test(p), '未追蹤檔的點名沒有進 coverage finding')
 })
 
 // ── runner ── 新案請加在這條線之上；迴圈之後註冊的 test() 不會執行。

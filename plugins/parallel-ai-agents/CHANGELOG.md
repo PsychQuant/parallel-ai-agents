@@ -27,22 +27,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   #37 PR 的 Decision Point D3 列的三件事，明文化在 script 開頭（實作在同目錄的 python3 helper
   `bin/pai-codex-bundle-dir`；python3 本來就是本 plugin 的 runtime 依賴——`pai-collect-lens-layers`、
   `pai-parse-lens-csv`；單一檔案的直通路徑只用 bash、不需要 python3）：
-  - **送什麼**：git 工作樹內只送**被追蹤**的檔（尊重 `.gitignore`）；未追蹤的檔只在 manifest 列「untracked (not sent)」。
-    root 底下沒有任何被追蹤的檔 → 送 git 眼中未被 ignore 的檔；root 本身被 ignore → 當一般目錄並在 header 說明。
-    submodule／巢狀 repo 不進入（列出、計數）。非 git 目錄以不跟隨 symlink 的走訪列檔，`node_modules`／`dist`／`build`／
-    `target`／`.venv` 等目錄不進入，但每個被剪掉的目錄都在 manifest 列一行並計數；git 模式下被追蹤的檔不因目錄名剪掉。
+  - **送什麼**：git 工作樹內只送**被追蹤**的檔（尊重 `.gitignore`）；未追蹤的檔不送，manifest 列「untracked (not sent)」、
+    bundle header 點名（最多 20 個）。root 底下沒有任何被追蹤的檔 → 送 `git ls-files -o --exclude-standard` 列出的檔；
+    root 本身被 ignore → 當一般目錄，header 明說「git 會忽略的檔在這裡會送出」。submodule／巢狀 repo 不進入（列出、計數；
+    find 模式下含 `.git` 的子目錄也是）。git index 裡的 `..`／`.`／`.git`／絕對路徑不讀。每個 git 子程序有逾時（預設 30 秒，
+    逾時 → 失敗退出）。非 git 目錄以不跟隨 symlink 的走訪列檔，`node_modules`／`dist`／`build`／`target`／`.venv` 等目錄不進入，
+    但每個被剪掉的目錄都在 manifest 列一行並計數；列舉上限（50000 項）檔案與目錄都算。git 模式下被追蹤的檔不因目錄名剪掉。
   - **排除（只列原因、不送內容）**：路徑上**任何一段**是 symlink、特殊檔、含 NUL、非合法 UTF-8（strict 驗證實際送出的
-    bytes）、疑似憑證的檔名（`.env*`、`*.env`、`.envrc`、`*.pem`、`*.key`、`*.p12`、`*.jks`、`*.keystore`、`*.tfstate`、
+    bytes）、疑似憑證的檔名（`.env` 開頭的任何檔名、`*.env`、`.envrc`、`*.pem`、`*.key`、`*.p12`、`*.jks`、`*.keystore`、`*.tfstate`、
     `*.tfvars`、`id_rsa*`、`client_secret*`、`credentials`、`.npmrc`、`.netrc`…，以及 `.ssh/`、`.gnupg/`、`.aws/`、`.docker/`、
-    `.kube/` 底下的任何檔）。**檔名 denylist 不是祕密偵測**：寫死在原始碼裡的金鑰照樣會送出。
+    `.kube/` 底下的任何檔；root 本身在這些目錄裡也算）。**檔名 denylist 不是祕密偵測**：寫死在原始碼裡的金鑰照樣會送出。
   - **順序**：內容依優先層——原始碼（含無副檔名 script）→ 測試 → 設定／其他 → 文件 → fixture／lockfile／vendored，
-    同層依路徑位元組序；manifest 依路徑序。預算不夠時先犧牲後面的層，主要原始碼不會被 `CHANGELOG.md` 擠掉。
+    同層依路徑位元組序；manifest 依路徑序。文件層只認文件副檔名或完全相同的主檔名（`security.py` 仍是原始碼），層內
+    `SKILL.md`／`skills/`／`references/` 在前、`CHANGELOG`／`HISTORY` 在後。預算用完的那個檔截斷收錄、之後的檔不送——
+    低層的檔不會補進高層檔的空位，主要原始碼不會被 `CHANGELOG.md` 擠掉。
   - **大小**：`--max-bytes`（512 KiB）是**整份 bundle** 的上限（header、manifest、邊界行都算）；單檔 64 KiB（同
     `pai-build-diff`），截斷不切壞多位元組字元；檔案數 2000（依優先序取前 N 個）。每個檔只開一次、最多讀上限 +1 byte，
     分類與輸出用同一份 bytes。
-  - **回報**：只要有任何檔沒有完整送出（截斷、上限、**排除規則**）→ bundle 開頭寫 NOTE、stderr 印一行只含數字的
-    `PAI-BUNDLE-TRUNCATED: …`，engine 要求 agent 據此回一條 INFO「cross-model coverage partial」——**報告明說 Codex
-    沒看完整個目錄**，不靜默。這條 INFO 與 FAILED／TIMEOUT 時「恰好一條」的失敗 finding 並存（prompt 明說「恰好一條」只算失敗 finding）。
+  - **回報**：header 把沒送出的檔分成「覆蓋缺口」（截斷、上限、未追蹤、非 UTF-8、讀不到、巢狀 repo、unsafe path、列舉上限）
+    與「依政策不送」（二進位、疑似憑證、symlink、特殊檔、build/vendor 目錄）。**只有覆蓋缺口**才讓 bundle 開頭寫 INCOMPLETE
+    NOTE、stderr 印一行只含數字的 `PAI-BUNDLE-TRUNCATED: gaps: … ; not-sent-by-policy: … ; …`，engine 要求 agent 據此回一條
+    INFO「cross-model coverage partial」——**報告明說 Codex 沒看完整個目錄**，不靜默；只有政策排除時不印、不回 INFO。這條 INFO 與 FAILED／TIMEOUT 時「恰好一條」的失敗 finding 並存（prompt 明說「恰好一條」只算失敗 finding）。
 
   #45 verify（FAIL，7 blocking）後的修正：macOS 的 `iconv` 輸出到 `/dev/null` 會回 rc=1，數 KB 的合法中文檔被悄悄排除
   → 改用 Python strict decode，且排除也計入 `PAI-BUNDLE-TRUNCATED`；只檢查最後一段的 `-L` 讓父目錄 symlink 可以穿出去
@@ -53,6 +58,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `CHANGELOG.md` 擠掉原始碼、目錄名剪枝不計數 → 優先層＋計數。檔名改以 JSON 字串呈現（非 ASCII 保持可讀，不再是
   `printf %q` 的八進位跳脫）。
 
+  #45 verify round 2（FAIL，5 blocking）後的修正：手工造的 git index 可含 `../x`，逐段 `O_NOFOLLOW` 擋不住 `..`（它不是
+  symlink）→ 列檔與 Opener 兩層都拒絕 `..`／`.`／空段／`.git`／絕對路徑；root 本身是 `.aws`／`.docker` 時裡面的檔照送 →
+  root 的路徑段也進憑證目錄判斷；find 模式會進入巢狀 repo、無視它的 `.gitignore` → 含 `.git` 的子目錄不進入並計數；
+  `.git/info/exclude` 是 FIFO 時 git 永遠卡住、列舉上限不算目錄 → git 子程序逾時、上限計入每個看過的目錄項目且邊讀邊數；
+  `security.py` 之類以前綴比對進了文件層、預算邊界讓低層補位 → 文件層改完全比對、邊界檔截斷收錄後停止。另：`.env*`
+  全擋（含 `.env-prod`、`.env.example`）；未追蹤檔在 header 點名；coverage INFO 只在真正的缺口出現；macOS CI 的 bundler
+  step 移到 codex-call step 之後並在前面失敗時照跑。
+
   **遷移**：engine 對 `file` 一律經 `pai-codex-bundle`（`'<bundle>' -- '<file>' -- '<codex-call>' --detach …`，逐值
   `shQuote()`；artifact 前的 `--` 讓以 `-` 開頭的路徑不會被當成選項）。bundler 以 `codexCallPath` 的**同目錄**解析
   （新增可選 arg `codexBundlePath` 覆蓋）——從 `${CLAUDE_PLUGIN_ROOT}/bin/` 傳路徑的第一方 skill 不受影響；外部
@@ -60,8 +73,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `diffFile` 永遠是 `pai-build-diff` 產的單一檔案，維持直接 `--prompt-file`。既有 arg 與回傳形狀不變。
   Claude lens 讀目錄的那一半屬 #44，本版不動。
 
-  測試：`test/pai-codex-bundle.bats` 共 52 個 case（`grep -c "^@test" test/pai-codex-bundle.bats`），CI 的 macOS job
-  另以系統 bash 3.2（`PAI_TEST_BASH=/bin/bash`）跑一次；`test/ensemble-workflow.test.mjs` 新增 9 個 #45 case。
+  測試：`test/pai-codex-bundle.bats` 共 67 個 case（`grep -c "^@test" test/pai-codex-bundle.bats`），CI 的 macOS job
+  另以系統 bash 3.2（`PAI_TEST_BASH=/bin/bash`）跑一次；`test/ensemble-workflow.test.mjs` 新增 10 個 #45 case。
   `ensemble-code-review` 與 `ensemble-compose` 的 SKILL.md 同步說明目錄模式的 Codex leg。
 
 ## [2.23.0] - 2026-09-10
