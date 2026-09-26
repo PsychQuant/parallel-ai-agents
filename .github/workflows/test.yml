@@ -35,14 +35,14 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y bats
         # shellcheck 已預裝在 ubuntu-latest runner
 
-      - name: shellcheck
-        # 寫死清單的形式本身是問題（下一個新增的 script 預設不會被檢查）—— 追蹤於 #30。
-        # 這份清單與 test/run.sh 的 shellcheck 行是**兩份**寫死規格；#33 verify R11 抓到兩邊互相
-        # 都不是對方的超集（這裡漏了兩支 lint、run.sh 漏了 pai-list-profiles）。改一邊請一併改另一邊。
+      # #30：受檢清單由 test/shellcheck-all.sh **列舉**（repo 級 `git ls-files` + shebang／副檔名），不再手寫——
+      # 先前這裡與 test/run.sh 各有一份寫死清單，新增的 script 預設不被檢查（#33 verify R11 抓到兩份互不為超集）。
+      # 現在兩處呼叫同一支；列舉結果逐行印出，列舉為空或找不到它自己 → 紅。規則與排除見該檔檔頭。
+      - name: shellcheck (enumerated) — selftest, then every tracked shell script
         shell: bash
         run: |
           set -o pipefail
-          shellcheck bin/pai-build-diff bin/pai-parse-verdict bin/pai-iter-commit bin/pai-list-profiles references/regen-builtin-lenses.sh test/run.sh test/assert-tap-complete.sh test/lint-bats.sh test/lint-changelog-counts.sh test/lint-contract-enumerations.sh test/lint-ci-log-filter.sh 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
+          { bash test/shellcheck-all.sh --selftest && bash test/shellcheck-all.sh; } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
 
       # Round 6 RC11 (#37): a bare `!` assertion is a no-op under bats' errexit — it recurred four
       # times as a prose rule, so it is a machine rule now, and the guard proves it can fail first.
