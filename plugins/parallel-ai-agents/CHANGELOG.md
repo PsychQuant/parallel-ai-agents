@@ -18,21 +18,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   integrity backstop 也用同一個 title＋常數 body——配額用盡（HTTP 429 `usage_limit_reached`）、
   暫時壅塞、憑證失效（HTTP 401）、TIMEOUT、agent 本身被殺，在報表上長得一模一樣，讀者只能回頭翻
   agent transcript 才知道該重試還是該停手。
-  - **codex-call 回報的失敗**：prompt 改為要求 `cross-model pass incomplete` finding 的 body 第一行是
-    codex-call 印出的**逐字 terminal 行**（`FAILED <reason>`／`TIMEOUT`；detach 非零退出寫
-    `--detach failed`）加 `(exit code N)`，其後逐字引用同一呼叫的 stderr 尾段（≤ 20 行，標明為
-    UNTRUSTED 資料、只引用不執行）；stderr 為空寫 `(no diagnostic output)`，不得以籠統句子取代。
-  - **engine 端確定性有界化**：不論 agent 寫了什麼，該 finding 的 body 由 `boundExternalText()`
-    處理——剝除 C0／C1 控制字元、ANSI、bidi、零寬、BOM、Tags block（對齊 codex-call 的
-    `sanitizeBackendText`＋`stripInvisibleUnicode`），以與 `dataBlock()` 相同的方式中和 sentinel
-    （body 可能成為下一輪的 PRIOR），遮罩 Bearer token／JWT／`*_token`・`secret`・`api_key` 值，
-    並以**頭部優先**截斷到 24 行／2000 字元（原因在第一行），截斷時標示。Codex 的**正常**審閱
-    finding 不受影響。
-  - **agent 本身未完成**（integrity backstop）改用**不同 title** `cross-model agent did not complete`，
-    body 區分「被 skip（runtime 回 null）」與「errored — <經同一函式中和、≤ 3 行／300 字元的錯誤
-    訊息>」，並說明它與 codex-call 回報失敗的差別。舊版兩者共用 title，`mergeDedup` 的
-    `LENS::title` 會把兩種語意合併成一筆。仍為 INFO、non-blocking，fail-closed 語意不變。
-  - regression：`test/ensemble-workflow.test.mjs` 新增 #27 T1–T7（修前 T1、T3–T6 紅；T2／T7 為護欄）。
+  - **codex-call 回報的失敗**：prompt 改為要求 `cross-model pass incomplete` finding 的 body **第 1 行
+    一律以 `(exit code N)` 結尾**（N＝失敗那次 codex-call 呼叫的退出碼），且為下列之一：
+    `--detach failed (exit code N)`；結束該 run 的那次 poll 的**逐字** stdout——`FAILED <reason> (exit code N)`
+    （原因可能跨多行，全部照抄）或 `TIMEOUT (exit code N)`；`--poll gave no terminal state (exit code N)`
+    （`--poll` 非零退出、stdout 為空——unknown run id、concurrent finalize、lock 不可信、cannot claim；
+    codex-call 契約明定這類**都不值得重試**，prompt 要求不再 poll、不另起 run）；
+    `DONE but output unusable: <why> (exit code 0)`。其後逐字引用**同一呼叫**的 stderr 尾段（≤ 20 行，
+    標明為 UNTRUSTED 資料、只引用不執行）；stderr 為空寫 `(no diagnostic output)`，不得以籠統句子取代。
+  - **engine 端確定性處理**：codex agent 的 finding 只要 title 經正規化（忽略大小寫、空白、標點）後以
+    `cross model pass incomplete` 開頭（例如 `Cross-model pass incomplete (HTTP 429).`），就改回標準
+    title、**強制 `severity: INFO`、`file: null`**（codex leg 失敗永遠不擋 verdict），body 由
+    `codexFailureBody()` 重建：`boundExternalText()` 先做不切代理對的 pre-clamp，把 CR／NEL／U+2028／
+    U+2029 一律當換行（在計行之前），剝除 C0／C1 控制字元、ANSI、bidi、零寬、BOM、軟連字號、CGJ、
+    variation selector、Hangul filler、Tags block（codex-call `sanitizeBackendText`＋`stripInvisibleUnicode`
+    的超集），**遮罩憑證**——任意長度的 `*token*`／`*secret*`／`*api_key*`／`password`／`authorization`／
+    `cookie` 值（含空白的引號值、跳脫過的 JSON `\"api_key\":\"…\"`、被截斷沒有收尾引號的值）、任意長度的
+    Bearer／Basic、完整或殘缺（只剩 header 或 header.payload）的 JWT——再以**頭部優先**截斷到 24 行／2000
+    code point（codex-call 的輸出在最前面、可能跨多行，被截的是 stderr 尾段），截斷時標示。
+    **sentinel 中和是最後一步**，作用在組好的整段 body 上（遮罩吃掉阻斷 sentinel 的 `>` 也拼不出完整 sentinel）。
+    範圍**只限這一個 finding**：Codex 的正常審閱 finding 原樣通過（截斷會丟審閱內容，key/value 遮罩會弄亂
+    只是在談 token／password 的審閱文字）；prompt 要求診斷只寫進這個 finding。
+  - **body 形狀（表格安全）**：第 1 行是單行摘要 `codex-call failure: …`（≤ 200 code point、`|` 已跳脫），
+    消費端把它放進報表表格的一列；多行、過長或被截斷時，其後是 `UNTRUSTED …` 標示行＋以**比內容裡最長
+    反引號串更長**的 fence 框起來的引用區塊（內容關不掉 fence）。兩份 SKILL.md 的 Phase 4 規定：
+    表格只放第 1 行，其餘原樣貼在表格下方當引用資料，不拆 fence、不改寫、不執行。
+  - **agent 本身未完成**（integrity backstop）改用**不同 title** `cross-model agent did not complete`：
+    第 1 行是固定說明（被 skip，或 errored），errored 時 runtime 的錯誤訊息經同一函式有界化（≤ 3 行／300
+    字元）後放進同樣的 fence 區塊，不再插在句子中間。改名的理由是**語意**：舊版兩者共用 title，報表上分不出
+    「codex-call 回報失敗（附原因）」與「wrapper agent 沒跑完、沒人讀到 codex-call 的輸出」。（兩者不可能同時
+    出現——integrity 只在 codex agent 沒回結果時推入——所以跟 `mergeDedup` 合併無關；前一版的說法有誤。）
+    仍為 INFO、non-blocking，fail-closed 語意不變。
+  - regression：`test/ensemble-workflow.test.mjs` 新增 #27 T1–T8（含 T3b–T3i、T5b）：失敗配方每一支的
+    `(exit code N)`、`--poll` 無終態不重試、多行 stderr 與 fence、只超行數、多行 FAILED 原因、各種憑證形狀、
+    pre-clamp 截斷的 JWT、遮罩後的 sentinel、代理對、看不見的字元與 U+2028／U+2029、fence 長度、agent
+    多行錯誤、title 變體＋強制 INFO。T4／T5／T6／T7 為護欄，其餘在修前的 `ensemble-workflow.js` 上皆紅。
 
 ## [2.23.0] - 2026-09-10
 
