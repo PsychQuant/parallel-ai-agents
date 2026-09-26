@@ -25,10 +25,15 @@ import sys
 # #33 verify R9：先前是 `^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$` 搭 `match()` —— `$` 接受尾端
 # 換行、`01.2.3` 前導零、`1.2.3-`／`1.2.3+` 空後綴全部放行，而這道閘門的**整個理由**
 # 就是「cache 目錄名必須是 semver」。改用 semver 官方文法 + `fullmatch()`。
+# #56 verify R1：數字一律寫 `[0-9]`，不寫 `\d` —— Python 的 `\d` 對 str 是 Unicode 數字，`9９.0.0`
+# （全形 ９）會 fullmatch，`int()` 又照收成 99。semver 只允許 ASCII 數字。
+# **本 regex（pattern 與 flags）與 `plugins/parallel-ai-agents/bin/pai-collect-lens-layers` 的 `SEMVER`
+# 必須逐字相同**，`version_tuple` 與它的 `version_key` 的函式本體也是 —— 由
+# `test/pai-collect-lens-layers.bats` 的逐對同序測試機械比對，改一邊不改另一邊 → 紅。
 SEMVER = re.compile(
-    r"(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)"
-    r"(?:-(?P<pre>(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)"
-    r"(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?"
+    r"(?P<major>0|[1-9][0-9]*)\.(?P<minor>0|[1-9][0-9]*)\.(?P<patch>0|[1-9][0-9]*)"
+    r"(?:-(?P<pre>(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
+    r"(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?"
     r"(?:\+(?P<build>[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?")
 TRUTHY = ("1", "true", "yes")
 FALSY = ("", "0", "false", "no")

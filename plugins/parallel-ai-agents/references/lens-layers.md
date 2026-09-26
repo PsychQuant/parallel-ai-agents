@@ -126,14 +126,34 @@ Lens 來源：built-in <n> 條 · pack <version> +<a>/⊕<b> · user +<c>/⊕<d>
 | `empty` | 檔案在、卻解析出 0 條（多半 header 打錯） | ✅ |
 | `corrupt` | 解析器非零退出 | ✅ |
 | `unversioned` | 裝了 `pai-lenses` 但無 semver 目錄（`plugin.json` 缺 `version`） | ✅ |
-| `ambiguous` | 最高 semver 有兩個以上目錄同序（只差 build metadata，或跨 marketplace 同版本）→ 本層略過（#56） | ✅ |
+| `ambiguous` | 最高 semver 有兩個以上**非孤兒**目錄同序（只差 build metadata，或跨 marketplace 同版本）→ 本層略過（#56） | ✅ |
 
 `empty` 與 `unversioned` 是刻意加的防安靜失敗：前者會讓一個存在的檔案什麼都不貢獻，
 後者會讓「裝了但定位不到」看起來像「沒裝」。
-`ambiguous` 則是不讓 readdir／glob 排序替使用者決定載入哪一份 pack。
+`ambiguous` 則是不讓排序替使用者決定載入哪一份 pack（修法前：同 marketplace 內的打平由 readdir 順序決定，
+跨 marketplace 的打平固定取 marketplace 名字母序第一個）。警告會列出同序的目錄與補救指令
+（跨 marketplace → 擇一 `/plugin uninstall pai-lenses@<marketplace>`；同 marketplace 只差 build metadata →
+多半是不同 scope 各裝一份，移除其一或更新到同一版）。
+
+provenance 行的 pack 段：status 為 `ok` 時印 `pack <version> +<a>/⊕<b>`；**其他 status 一律印 `pack <status>`**
+（例：`pack ambiguous（略過）`、`pack unversioned（略過）`）——`ambiguous`／`unversioned` 的 `version` 是 `null`，
+照模板硬印會變成 `pack null +0/⊕0`，看起來像「裝了、貢獻 0 條」而不是「這層沒載入」。警告本身照上表逐條印。
+
+**孤兒目錄不算安裝**：Claude Code 在版本目錄不再被任何安裝引用時（update 換版、uninstall）會在
+`~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/` **正下方**寫一個 `.orphaned_at` 檔，約 7 天後才刪。
+collector 略過帶這個檔的目錄：它不參與選版、不參與打平；只剩孤兒時層 ② 回 `absent`（已解除安裝，靜默）。
 
 版本目錄以 semver 2.0.0 **整串**比對（`9.9.9.bak`、`01.0.0` 不是版本），排序依 §11（`0.3.0-rc.1` < `0.3.0`、
 `rc.9` < `rc.10`），與 `pai-lenses` 的 `scripts/validate.py` 同一套；`layers[].version` 回報的是**實際目錄名**。
+數字只收 ASCII `[0-9]`（`9９.0.0` 不是版本）。注意 `9.9.9-not-a-real-version-just-a-prefix` **是**合法 semver
+（prerelease `not-a-real-version-just-a-prefix`），依規則它就是高於 `1.0.0` —— 這不是缺陷，是 semver 本身。
+
+**已知限制（待決，#56 verify R1）：選版是「全 cache 最高者勝」，不看這台機器／這個專案實際啟用的是哪一份。**
+兩種情況下這會選到非預期的那份，且**不會**有任何警告：
+- 不同 marketplace 各裝了一份 `pai-lenses`、版本不同 → 版本較高者勝，不論哪一個是使用者想用的；
+- 同一 marketplace 在不同 scope（`managed`／`user`／`project`／`local`）各裝了不同版本 → 版本較高者勝，不論目前專案套用哪個 scope。
+改成讀 `~/.claude/plugins/installed_plugins.json` 的 `installPath`（依 scope 挑出目前生效的那份）是否值得、
+以及跨 marketplace 同版本時要不要改成「內容相同就任取、不同才 `ambiguous`」，都是尚未做的產品決定。
 
 ## Lens pack 的 CSV 格式
 

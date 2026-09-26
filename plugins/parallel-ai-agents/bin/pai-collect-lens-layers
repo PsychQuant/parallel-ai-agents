@@ -27,8 +27,13 @@ status 語意（對應 spec D5「缺席與損壞分開處理」）：
   corrupt      解析器非零退出（讀不到 / 編碼壞）→ 警告
   unversioned  裝了 pai-lenses 卻沒有 semver 目錄（plugin.json 缺 version）→ 警告。
                「裝了但不可用」不是「沒裝」，不可靜默
-  ambiguous    最高 semver 有兩個以上目錄同序（只差 build metadata，或跨 marketplace
-               同版本）→ 警告、本層略過。挑哪一個不能交給 readdir 順序（#56）
+  ambiguous    最高 semver 有兩個以上**非孤兒**目錄同序（只差 build metadata，或跨
+               marketplace 同版本）→ 警告、本層略過。同 marketplace 內的打平先前由 readdir
+               順序決定、跨 marketplace 由 marketplace 名的字母序決定 —— 兩者都不是使用者的選擇（#56）
+
+孤兒目錄：Claude Code 在版本目錄**不再被任何安裝引用**時（update 換版、uninstall）會在該目錄
+**正下方**寫一個 `.orphaned_at` 檔（內容是毫秒時間戳），約 7 天後才刪。它不是一個安裝，所以
+不參與選版、也不參與打平判定；只剩孤兒的 pai-lenses 等於沒裝（absent，靜默）。
 
 version 是被選中的**實際目錄名**（含 prerelease／build 後綴），不是重組字串（#56）。
 版本目錄名以 semver 2.0.0 **整串**比對，排序依 §11 —— 與 pai-lenses 的 validate.py 同一套。
@@ -62,17 +67,24 @@ PARSER = Path(__file__).resolve().parent / "pai-parse-lens-csv"
 # runtime 去 import 它等於讓層 ② 的定位邏輯依賴層 ② 本身（沒裝就連「沒裝」都判斷不了）。反過來讓
 # validator import 這支 runtime 腳本，則是 CI 閘門依賴一個無副檔名的 bin 檔的內部函式名。所以兩邊
 # 各留一份，**分岔由機械對帳擋**：`test/pai-collect-lens-layers.bats` 的「逐對同序」測試直接載入兩邊，
-# 對一組 corpus 比對「是否合法」與每一對的比較結果。改任何一邊而不改另一邊 → 那條測試紅。
+# 斷言 (a) `SEMVER.pattern` 與 `SEMVER.flags` 相同、(b) `version_key` 與 `version_tuple` 的 AST 本體相同、
+# (c) 固定 corpus ＋ 定種子隨機字串上「是否合法」與比較結果相同。改任何一邊而不改另一邊 → 那條測試紅。
+# 數字寫 `[0-9]` 不寫 `\d`：Python 的 `\d` 對 str 是 Unicode 數字（`9９.0.0` 會 fullmatch、`int()` 收成 99）。
 SEMVER = re.compile(
-    r"(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)"
-    r"(?:-(?P<pre>(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)"
-    r"(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?"
+    r"(?P<major>0|[1-9][0-9]*)\.(?P<minor>0|[1-9][0-9]*)\.(?P<patch>0|[1-9][0-9]*)"
+    r"(?:-(?P<pre>(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
+    r"(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?"
     r"(?:\+(?P<build>[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?")
 
 # profile 名：與 harness `PROFILES` 的 key 形狀一致（`bin/pai-list-profiles` 目前印出的全部 key 都符合）。
 # 它會被接成 `<dir>/<profile>.csv`，所以是封閉字元集，不是黑名單：`/`、`.`、`\`、`_`、大寫、非 ASCII
 # 全部出局（#56；R23 版多放行了 `_`，而 validator 端以 PROFILES 成員資格判定，沒有任何 key 含 `_`）。
 PROFILE_NAME = re.compile(r"[a-z0-9][a-z0-9-]*")
+# 長度上限：`<profile>.csv` 是一個路徑段，超過檔名上限（Linux 255 bytes）時 `is_file()` 會丟 OSError
+# （ENAMETOOLONG），先前是未捕捉的 traceback、exit 1 —— 用法錯要是 exit 2（#56 verify R1）。
+# 64 遠高於任何 PROFILES key，也遠低於任何檔案系統的上限。
+PROFILE_MAX_LEN = 64
+ORPHAN_MARKER = ".orphaned_at"
 
 
 def version_key(v):
@@ -98,9 +110,12 @@ def find_pack_dir(cache_root):
     marketplace 是使用者端的事，不該寫死在這裡。
 
     version 一律是**實際的目錄名**（#56），不是由比較 key 重組的字串。最高版本若有兩個以上
-    目錄同序（只差 build metadata，或不同 marketplace 裝了同一版）→ status `ambiguous`、
-    detail 列出它們，本層略過 —— 挑哪一個不能交給 readdir／glob 排序決定。"""
+    非孤兒目錄同序（只差 build metadata，或不同 marketplace 裝了同一版）→ status `ambiguous`、
+    detail 列出它們，本層略過 —— 挑哪一個不能交給 readdir 順序或 marketplace 名的字母序決定。
+
+    帶 `.orphaned_at` 的版本目錄是 Claude Code 留著待刪的舊版，不是安裝 → 完全略過。"""
     candidates = []
+    live_seen = orphan_seen = False
     homes = sorted(Path(cache_root).glob(f"*/{PACK_PLUGIN}")) if cache_root.exists() else []
     for home in homes:
         if not home.is_dir():
@@ -108,6 +123,10 @@ def find_pack_dir(cache_root):
         for child in home.iterdir():
             if not child.is_dir():
                 continue
+            if (child / ORPHAN_MARKER).exists():
+                orphan_seen = True
+                continue
+            live_seen = True
             key = version_key(child.name)
             if key is not None:
                 candidates.append((key, child))
@@ -117,10 +136,27 @@ def find_pack_dir(cache_root):
         if len(winners) > 1:
             return None, None, "ambiguous", winners
         return winners[0], winners[0].name, "ok", None
+    # 只剩孤兒 = Claude Code 已解除安裝、還沒清掉的殘留 → 沒裝（靜默）
+    if orphan_seen and not live_seen:
+        return None, None, "absent", None
     # 有 pai-lenses 目錄卻挑不出 semver 版本 = 裝了但不可用，不是沒裝
     if homes:
         return None, None, "unversioned", None
     return None, None, "absent", None
+
+
+def ambiguous_warning(tied):
+    """`ambiguous` 的警告文字。tied = 同序的非孤兒版本目錄（cache/<marketplace>/pai-lenses/<version>）。"""
+    markets = sorted({p.parent.parent.name for p in tied})
+    head = (f"{PACK_PLUGIN} 的最高版本有 {len(tied)} 個已安裝目錄 semver 比較相等："
+            f"{', '.join(str(p) for p in tied)} —— 無法決定載入哪一個，本層已略過。"
+            f"（帶 {ORPHAN_MARKER} 的舊版殘留目錄不計入，這幾個都不是殘留。）")
+    if len(markets) > 1:
+        cmds = "、".join(f"`/plugin uninstall {PACK_PLUGIN}@{m}`" for m in markets)
+        return head + f"它們來自不同 marketplace（{', '.join(markets)}）：擇一執行 {cmds} 只留一份即可。"
+    return (head + f"它們在同一個 marketplace（{markets[0]}）且只差 build metadata —— 多半是不同 scope"
+            f"（user／project／local 等）各裝了一份：在不需要的那個 scope 執行 `/plugin uninstall "
+            f"{PACK_PLUGIN}@{markets[0]}`，或把兩邊更新到同一版。")
 
 
 def parse_csv(path):
@@ -155,6 +191,10 @@ def main():
     # 的內容會變成**未經 sentinel 包裹的 role 級 reviewer 指令**。今天不是 fork 面（呼叫端都傳
     # 字面值，只有 `ensemble-compose` 會傳使用者自己的 `--base`），但「今天沒有呼叫端把不可信
     # 的字串傳進來」不是機制，是巧合。profile 名就是一個檔名，封閉字元集足矣（字元集見 PROFILE_NAME）。
+    if len(profile) > PROFILE_MAX_LEN:
+        print("profile 名過長（%d 字元，上限 %d）—— 它會被接成檔名" % (len(profile), PROFILE_MAX_LEN),
+              file=sys.stderr)
+        return 2
     if profile and not PROFILE_NAME.fullmatch(profile):
         print("profile 名只能是小寫英數與 `-`、且以英數開頭（收到 %r）—— 它會被接成檔名，"
               "`..`／絕對路徑會讀到預期外的檔" % profile, file=sys.stderr)
@@ -174,11 +214,7 @@ def main():
     pack_dir, pack_version, pack_status, tied = find_pack_dir(cache_root)
     pack_csv = pack_dir / "lenses" / f"{profile}.csv" if pack_dir else None
     if pack_status == "ambiguous":
-        warnings.append(
-            f"{PACK_PLUGIN} 的最高版本有 {len(tied)} 個目錄同序（semver 比較相等：只差 build metadata，"
-            f"或不同 marketplace 裝了同一版）：{', '.join(str(p) for p in tied)} —— "
-            "無法決定載入哪一個，本層已略過。請移除多餘的安裝。"
-        )
+        warnings.append(ambiguous_warning(tied))
     elif pack_status == "unversioned":
         warnings.append(
             f"{PACK_PLUGIN} 已安裝但找不到 semver 版本目錄（{cache_root}）—— "

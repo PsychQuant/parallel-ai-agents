@@ -16,13 +16,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **版本目錄改用 semver 2.0.0 整串比對**：先前 `^(\d+)\.(\d+)\.(\d+)` + `match()` 是 prefix match，
   `1.0.0` 與 `9.9.9.bak` 並存時後者被判成 `(9,9,9)` 勝出、載入它的 lens；`01.0.0` 也算版本。
   現在 `SEMVER` 與 `plugins/pai-lenses/scripts/validate.py` 逐字相同、用 `fullmatch()`；只剩非 semver 目錄時回 `unversioned`。
+  **issue 原文的例子 `9.9.9-not-a-real-version-just-a-prefix` 不在「修掉」之列**：它是合法 semver
+  （core `9.9.9` ＋ prerelease `not-a-real-version-just-a-prefix`），依 semver §11 本來就高於 `1.0.0`，
+  修法前後都勝出、而且應該勝出。真正的 prefix-match 缺陷是 `9.9.9.bak` 這種**不是** semver 的名字。
+- **數字只收 ASCII `[0-9]`（兩邊同步改）**：Python 的 `\d` 對 str 是 Unicode 數字 —— `9９.0.0`（全形 ９）
+  會 fullmatch、`int()` 收成 `99` 而勝出；prerelease 的數字段同理。collector 與 validate.py 的 `SEMVER`
+  一起改成 `[0-9]`，pattern 仍逐字相同。
 - **prerelease 依 semver §11 排序，不再由 readdir 決定**：先前 key 只取 core，`0.4.0-rc1`／`0.4.0-rc2`／`0.4.0`
   全部打平，`max()` 取第一個 —— 勝者由 `iterdir()` 順序決定。現在 `version_key` 與 validator 的
   `version_tuple` 同義（逐 identifier 比較、正式版高於同 core 的 prerelease、`rc.9 < rc.10`）。
 - **回報的 `version` 是實際目錄名**：先前由 key 重組成 `"0.4.0"`，可能是 cache 裡不存在的版本
   （`1.2.3+build.7` 也被回報成 `1.2.3`）。
 - **最高版本打平時 fail-loud**：只差 build metadata（`1.0.0+a` / `1.0.0+b`）或不同 marketplace 裝了同一版 →
-  新 status `ambiguous` ＋ warning（列出所有同序目錄）、本層略過，不再由 readdir／glob 排序替使用者挑。
+  新 status `ambiguous` ＋ warning（列出所有同序目錄與補救指令）、本層略過。修法前：同 marketplace 內的打平
+  由 `iterdir()` 順序決定；跨 marketplace 的打平是**確定的**（`sorted(glob)` 後 `max()` 取第一個 = marketplace
+  名字母序第一個），但那個順序與使用者要哪一份無關。
+- **Claude Code 的孤兒版本目錄不算安裝**：版本目錄不再被任何安裝引用時（update 換版、uninstall），Claude Code
+  在該目錄正下方寫 `.orphaned_at`、約 7 天後才刪（對 CLI 本體的實作確認：標記路徑是
+  `cache/<marketplace>/<plugin>/<version>/.orphaned_at`）。先前 collector 不看這個標記：孤兒與現役同版本 →
+  假 `ambiguous`（最常見的誤觸發）；孤兒版本較高 → **孤兒勝出**、載入已解除安裝的舊 lens。現在帶標記的目錄
+  完全略過；只剩孤兒時回 `absent`（靜默）。非孤兒之間的真打平仍是 `ambiguous`。
+- **`<profile>` 長度上限 64**：先前 300 字元的 profile 在目標目錄存在時讓 `is_file()` 丟 `ENAMETOOLONG`，
+  未捕捉的 traceback、exit 1；現在 exit 2（用法錯）。
   退出碼契約不變（仍為 0）—— 與 `unversioned` 同屬「裝了但不可用」，照 D5 警告而不中斷審閱。
   `references/lens-layers.md` 的 status 表補上這一列。
 - **`<profile>` 字元集收成 `[a-z0-9][a-z0-9-]*`**：R23 已擋下 `..`／絕對路徑，但 (a) 放行 `_`，而 validator
@@ -30,14 +45,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   現在兩條測試守住（逃逸路徑 × 8 種形狀、字元集 × 8 種非法 ＋ 8 個合法名）。
 - **共用 vs 複製的決定：複製，並用機械對帳擋分岔**。validate.py 屬另一個 plugin 且是 CI-only 工具；
   runtime 去 import 它等於讓層 ② 的定位邏輯依賴層 ② 本身（沒裝就連「沒裝」都判斷不了），反向則讓 CI 閘門依賴
-  無副檔名 bin 檔的內部函式名。新增的「逐對同序」測試直接載入兩邊，對 38 個字串的 corpus 比對合法性與每一對的比較結果。
+  無副檔名 bin 檔的內部函式名。新增的「逐對同序」測試直接載入兩邊，斷言 (a) `SEMVER` 的 pattern **與 flags**
+  相同、(b) `version_key` 與 `version_tuple` 的函式本體 AST 相同（去 docstring、參數名正規化）、(c) 固定 corpus ＋
+  `random.Random(56)` 產生的 20000 個字串上合法性相同、corpus 全對＋依序相鄰對＋隨機 10 萬對的比較結果相同。
+  初版只有 (c) 的 38 字串 corpus，verify 指出 6 種只改一邊的變異全部存活（validate.py 的 build 放行 `_`、
+  collector 只比前 2 個 prerelease identifier、minor／patch 放行前導零、只在一邊加 `re.ASCII`、prerelease
+  `lower()`、禁止以 `-` 開頭的 identifier）；現在 6 種各自讓這條紅（`re.ASCII` 在 `[0-9]` 之後行為上無差，只有
+  flags 比對抓得到——這正是要比 flags 的理由）。validate.py 缺席時：所在 repo 的 `.claude-plugin/marketplace.json`
+  把 `pai-lenses` 列為本 repo 內的 plugin → **紅**；只有 collector 被單獨安裝（plugin cache 副本）才 skip。
 
-  RED 證據：新增的 11 條中 9 條在修法前紅（prefix match、只剩非 semver 目錄、prerelease 排序、正式版 > rc、
-  實際目錄名、兩種打平、逐對同序、字元集 `_`）；路徑逃逸那條對 R23 之前的版本（`387effe^`）紅、對 R23 版綠
-  （R23 已修、此前無網）；「較低版本的打平不影響唯一最高者」是防過度修正的護欄，修法前後皆綠。
-  另對修法本身跑了 8 個 mutation（`fullmatch→match`、前導零、prerelease 數字段、正式版 vs rc、打平判定、
-  回報重組字串、放回 `_`、拿掉 profile 檢查），每個都至少讓一條測試紅。
-  本檔現為 22 個 case（`grep -c "^@test" test/pai-collect-lens-layers.bats`）。
+  RED 證據（對 `cb0c7ba^` 的 collector 實跑本檔）：新增的 #56 測試中，prefix match、只剩非 semver 目錄、
+  prerelease 排序、實際目錄名、兩種打平、逐對同序、字元集 `_`、孤兒 × 4、Unicode 數字、profile 長度**確定地**紅；
+  「正式版高於同 core 的 prerelease」在修法前**依 readdir 順序而定**（三個目錄 key 相同、`max()` 取 iterdir 第一個：
+  ext4 上實測紅，readdir 已排序的檔案系統上正式版恰好排第一而綠）——它守的是修法後的語意，不是修法前的確定性缺陷；
+  路徑逃逸那條對 R23 之前的版本（`387effe^`）紅、對 R23 版綠（R23 已修、此前無網）；「較低版本的打平不影響唯一
+  最高者」是防過度修正的護欄，修法前後皆綠。孤兒 × 4、Unicode 數字、profile 長度與跨 marketplace 補救指令
+  那條對 `cb0c7ba`（verify R1 之前）也紅。另對修法本身跑了 8 個 mutation（`fullmatch→match`、前導零、prerelease
+  數字段、正式版 vs rc、打平判定、回報重組字串、放回 `_`、拿掉 profile 檢查），每個都至少讓一條測試紅。
+  本檔現為 28 個 case（`grep -c "^@test" test/pai-collect-lens-layers.bats`）。
+  `../pai-lenses/scripts/test_validate.py` 新增 `test_semver_rejects_non_ascii_digits`，對 `cb0c7ba` 的 validate.py 紅；
+  測試 144 → 145 條（`grep -c "    def test_" ../pai-lenses/scripts/test_validate.py`）。
 
 ## [2.24.0] - 2026-09-10
 
@@ -884,7 +911,7 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
     處置是刪掉（同 `fold_block` 折疊條件那兩個運算元），不是寫進 `EXPECTED_SURVIVE`。
   三軸（base `d278e99`，野外 1565 檔／分母 369）：`GREEN→RED` **0**、`RED→GREEN` 0、`RULE:` 逐行相同
   （`PARSE:` 有 26 行是訊息文字改了：anchor／alias／merge key **／tag**）。
-  測試 143 → 144 條（`grep -c "    def test_" ../pai-lenses/scripts/test_validate.py`）；
+  測試 143 → 144 條（lint 形式的宣稱只留在最新一段——#56 起是 145）；
   靶清單 139 → 155 個（9 個 EXPECTED_SURVIVE；lint 形式的宣稱只留在最新一段——R33 起是 161）；
   lint fixture 109 → 156 個（61 正向／60 規則紅／35 解析紅；`ls test/fixtures/ci-log-filter-*.yml | wc -l`）；
   CI run step 22 個（R33 起 23：形狀普查閘門）；

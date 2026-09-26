@@ -195,7 +195,8 @@ assert v=='${VER}', (v, '${VER}')
 # ── #56：semver 與 <profile> 參數對齊 validator ──────────────────────────────────────────
 # 先前 `SEMVER = ^(\d+)\.(\d+)\.(\d+)` 是 prefix match、`_semver_key` 丟掉 prerelease：
 # 不是 semver 的目錄名能勝出、prerelease 之間打平由 readdir 順序決定、回報的 version 是
-# 由 key 重組的字串（可能不存在）。以下每條都在修法前實測為紅（見 CHANGELOG #56 段）。
+# 由 key 重組的字串（可能不存在）。哪幾條在修法前紅、哪幾條依 readdir 順序而定、哪幾條是護欄，
+# 逐條記在 CHANGELOG #56 段（對 `cb0c7ba^` 的 collector 實跑）。
 
 # 便利：取 pack 層
 pack_layer='
@@ -247,7 +248,9 @@ assert P["version"]=="0.4.0-rc.10", P
 ' "$output"
 }
 
-@test "#56 正式版高於同 core 的 prerelease（0.3.0 > 0.3.0-rc1），不靠 readdir" {
+@test "#56 正式版高於同 core 的 prerelease（0.3.0 > 0.3.0-rc1、0.3.0-zzz）" {
+  # 修法前三者 key 全是 (0,3,0)、`max()` 取 iterdir 的第一個：readdir 已排序的檔案系統上
+  # 正式版恰好排第一（'0.3.0' 是另兩者的前綴），所以這條在修法前**不一定紅** —— 依 readdir 順序而定。
   mkpack psychquant 0.3.0-rc1
   printf 'key,focus\nrc,fx\n' > "${PACK}/lenses/code.csv"
   mkpack psychquant 0.3.0
@@ -286,10 +289,11 @@ assert P["version"] is None and P["path"] is None, P
 assert d["lenses"]==[], d["lenses"]
 w=" ".join(d["warnings"])
 assert "1.0.0+a" in w and "1.0.0+b" in w, d["warnings"]
+assert "/plugin uninstall pai-lenses@psychquant" in w and "scope" in w, w   # 同 marketplace 的補救方法
 ' "$output"
 }
 
-@test "#56 跨 marketplace 同版本 → ambiguous（不靠 glob 排序挑一個）" {
+@test "#56 跨 marketplace 同版本 → ambiguous（先前固定取 marketplace 名字母序第一個）" {
   mkpack alpha 2.0.0
   printf 'key,focus\na,fa\n' > "${PACK}/lenses/code.csv"
   mkpack beta 2.0.0
@@ -300,6 +304,9 @@ assert "1.0.0+a" in w and "1.0.0+b" in w, d["warnings"]
 assert P["status"]=="ambiguous", P
 assert d["lenses"]==[], d["lenses"]
 assert any("alpha" in w and "beta" in w for w in d["warnings"]), d["warnings"]
+w=" ".join(d["warnings"])
+# 補救方法要說得出口：兩個 marketplace 各自的 uninstall 指令
+assert "/plugin uninstall pai-lenses@alpha" in w and "/plugin uninstall pai-lenses@beta" in w, w
 ' "$output"
 }
 
@@ -319,36 +326,121 @@ assert P["version"]=="1.1.0", P
 ' "$output"
 }
 
-@test "#56 semver 比較與 validate.py 的 version_tuple 逐對同序（兩份規格的機械對帳）" {
+@test "#56 semver 與 validate.py 逐對同序：regex 逐字、函式本體 AST、corpus ＋ 定種子 fuzz（兩份規格的機械對帳）" {
   VALIDATOR="${BATS_TEST_DIRNAME}/../../pai-lenses/scripts/validate.py"
-  [ -f "$VALIDATOR" ] || skip "找不到 $VALIDATOR（pai-lenses 未併入本 repo）"
+  MKT="${BATS_TEST_DIRNAME}/../../../.claude-plugin/marketplace.json"
+  if [ ! -f "$VALIDATOR" ]; then
+    # 只有「collector 被單獨安裝」（plugin cache 副本，沒有 sibling pack）才可以 skip；
+    # 若所在 repo 的 marketplace.json 把 pai-lenses 列在本 repo 內，validate.py 缺席就是壞了，不是不適用。
+    if [ -f "$MKT" ] && python3 -c '
+import json,sys
+d=json.load(open(sys.argv[1],encoding="utf-8"))
+sys.exit(0 if any(p.get("name")=="pai-lenses" and str(p.get("source","")).startswith("./") for p in d.get("plugins",[])) else 1)
+' "$MKT"; then
+      echo "marketplace.json 列了本 repo 內的 pai-lenses，卻找不到 $VALIDATOR —— 對帳測試不得 skip"
+      return 1
+    fi
+    skip "找不到 $VALIDATOR 且不在列出 pai-lenses 的 monorepo 內（collector 單獨安裝）"
+  fi
   run python3 - "$BIN" "$VALIDATOR" <<'PY'
-import importlib.machinery, importlib.util, itertools, sys
+import ast, importlib.machinery, importlib.util, itertools, random, sys
 sys.dont_write_bytecode = True        # 不在 bin/ 與 pai-lenses/scripts/ 留 __pycache__
 def load(name, path):
     loader = importlib.machinery.SourceFileLoader(name, path)
     spec = importlib.util.spec_from_loader(name, loader)
     m = importlib.util.module_from_spec(spec); loader.exec_module(m); return m
 c = load("collector", sys.argv[1]); v = load("validator", sys.argv[2])
-key = getattr(c, "version_key", None) or getattr(c, "_semver_key")
+key, tup = c.version_key, v.version_tuple
+bad = {}
+def fail(kind, item):
+    bad.setdefault(kind, []).append(item)
+
+# (a) regex 逐字：pattern 與 flags 都要相同（re.ASCII 之類只加在一邊，行為上可能測不出來，這裡測得出來）
+if c.SEMVER.pattern != v.SEMVER.pattern:
+    fail("regex", ("pattern", c.SEMVER.pattern, v.SEMVER.pattern))
+if c.SEMVER.flags != v.SEMVER.flags:
+    fail("regex", ("flags", c.SEMVER.flags, v.SEMVER.flags))
+
+# (b) 函式本體：兩邊的 AST（去掉 docstring、參數名正規化）必須相同。註解不在 AST 裡，可以各寫各的。
+def body(path, fname):
+    tree = ast.parse(open(path, encoding="utf-8").read())
+    fn = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == fname]
+    assert len(fn) == 1, (path, fname)
+    fn = fn[0]
+    params = [a.arg for a in fn.args.args]
+    class N(ast.NodeTransformer):
+        def visit_Name(self, n):
+            if n.id in params:
+                n.id = "_p%d" % params.index(n.id)
+            return n
+        def visit_arg(self, n):
+            n.arg = "_p%d" % params.index(n.arg) if n.arg in params else n.arg
+            return n
+    stmts = fn.body
+    if stmts and isinstance(stmts[0], ast.Expr) and isinstance(stmts[0].value, ast.Constant) \
+            and isinstance(stmts[0].value.value, str):
+        stmts = stmts[1:]
+    fn.body = stmts; fn.name = "_f"; fn.decorator_list = []
+    return ast.dump(N().visit(fn))
+if body(sys.argv[1], "version_key") != body(sys.argv[2], "version_tuple"):
+    fail("ast", "version_key 與 version_tuple 的函式本體不同")
+
+# (c) 行為：固定 corpus（含 verify 指名的每種一邊式變異的觸發形狀）＋ 定種子的隨機字串
 corpus = ["0.0.0", "1.0.0", "1.0.1", "1.1.0", "2.0.0", "1.10.0", "1.9.0",
           "1.0.0-alpha", "1.0.0-alpha.1", "1.0.0-alpha.beta", "1.0.0-beta", "1.0.0-beta.2",
           "1.0.0-beta.11", "1.0.0-rc.1", "1.0.0-rc1", "1.0.0-rc10", "1.0.0-rc9", "1.0.0-0",
           "1.0.0-1", "1.0.0-01", "1.0.0-a-b", "1.0.0-x.7.z.92", "1.0.0+build", "1.0.0-rc.1+b.2",
           "01.0.0", "1.0", "1.0.0.bak", "1.0.0-", "1.0.0+", "1.0.0\n", " 1.0.0", "v1.0.0",
-          "9.9.9_x", "1.0.0-rc..1", "1.0.0-é", "unknown", "abc1234", ""]
-bad = []
-for s in corpus:
-    if (key(s) is None) != (v.version_tuple(s) is None):
-        bad.append(("validity", s, key(s), v.version_tuple(s)))
-ok = [s for s in corpus if v.version_tuple(s) is not None]
-for a, b in itertools.product(ok, ok):
-    ka, kb, va, vb = key(a), key(b), v.version_tuple(a), v.version_tuple(b)
-    if ka is None or kb is None:
-        continue
-    if ((ka > kb) - (ka < kb)) != ((va > vb) - (va < vb)):
-        bad.append(("order", a, b))
-print(bad[:10]); sys.exit(1 if bad else 0)
+          "9.9.9_x", "1.0.0-rc..1", "1.0.0-é", "unknown", "abc1234", "",
+          # 一邊式變異的觸發形狀（#56 verify R1）
+          "1.0.0+a_b", "1.0.0+_", "1.0.0-a_b",                         # build／prerelease 放行 `_`
+          "1.0.0-a.b.c", "1.0.0-a.b.d", "1.0.0-a.b", "1.0.0-a.b.c.d",   # 只比前 N 個 identifier
+          "1.01.0", "1.0.01", "1.00.0", "0.0.00",                      # minor／patch 前導零
+          "9９.0.0", "1.٣.0", "1.0.0-rc.９", "1.0.0-٣", "1.0.0+٣",        # Unicode 數字（`\d` vs `[0-9]`）
+          "1.0.0-A", "1.0.0-a", "1.0.0-Alpha", "1.0.0-alpha.B", "1.0.0-alpha.b",   # 大小寫（不得 lower()）
+          "1.0.0--", "1.0.0--a", "1.0.0-a.-b", "1.0.0-a.-", "1.0.0-0-", "1.0.0+-",  # 以 `-` 開頭的 identifier
+          "4.9.8-9.9.9", "9.9.9-not-a-real-version-just-a-prefix"]
+rng = random.Random(56)
+DIGITS = "0123456789"
+def num():
+    r = rng.random()
+    if r < 0.04: return "0" + rng.choice(DIGITS)             # 前導零
+    if r < 0.06: return rng.choice(["９", "٣", "1٣", "0９"])   # 非 ASCII 數字
+    return str(rng.choice([0, 0, 1, 1, 2, 3, 9, 10, 11]))
+ID_ALPH = "019azAZ-"                                          # 小字母表 → 前綴相同、後段才分出高下的對很多
+def ident():
+    if rng.random() < 0.45: return num()
+    x = [rng.choice(ID_ALPH) for _ in range(0 if rng.random() < 0.02 else rng.randint(1, 3))]
+    if x and rng.random() < 0.04: x[rng.randrange(len(x))] = rng.choice("_９é")
+    return "".join(x)
+def gen():
+    s = ".".join(num() for _ in range(3 if rng.random() < 0.95 else rng.choice([2, 4])))
+    if rng.random() < 0.7: s += "-" + ".".join(ident() for _ in range(rng.randint(1, 4)))
+    if rng.random() < 0.3: s += "+" + ".".join(ident() for _ in range(rng.randint(1, 3)))
+    if rng.random() < 0.03: s = rng.choice([" ", "v", ""]) + s + rng.choice(["\n", "", ".bak", " "])
+    return s
+fuzz = [gen() for _ in range(20000)]
+strings = list(dict.fromkeys(corpus + fuzz))
+for s in strings:
+    if (key(s) is None) != (tup(s) is None):
+        fail("validity", (s, key(s), tup(s)))
+ok = [s for s in strings if tup(s) is not None and key(s) is not None]
+def sign(a, b): return (a > b) - (a < b)
+pairs = list(itertools.product([s for s in corpus if s in ok], repeat=2))
+ok.sort(key=tup)
+pairs += list(zip(ok, ok[1:]))                                  # 依 validator 排序後的相鄰對（最細的差異）
+pairs += [(rng.choice(ok), rng.choice(ok)) for _ in range(100000)]
+for a, b in pairs:
+    if sign(key(a), key(b)) != sign(tup(a), tup(b)):
+        fail("order", (a, b))
+n_valid = len(ok)
+print("strings=%d valid=%d pairs=%d" % (len(strings), n_valid, len(pairs)))
+for k in bad:
+    print("DRIFT[%s] %d: %r" % (k, len(bad[k]), bad[k][:5]))
+# 護欄：fuzz 要真的產生夠多合法字串，否則「逐對同序」是空轉
+if n_valid < 8000:
+    print("fuzz 產生的合法 semver 太少（%d）—— 產生器壞了，對帳是空轉" % n_valid); sys.exit(1)
+sys.exit(1 if bad else 0)
 PY
   echo "$output"
   [ "$status" -eq 0 ]
@@ -379,6 +471,105 @@ PY
     run "$BIN" "$p"
     [ "$status" -eq 0 ]
   done
+}
+
+# ── #56 verify R1：孤兒目錄（`.orphaned_at`）、Unicode 數字、profile 長度 ──────────────────────
+# Claude Code 在版本目錄不再被任何安裝引用時（update 換版、uninstall）在該目錄**正下方**寫
+# `.orphaned_at`（cache/<marketplace>/<plugin>/<version>/.orphaned_at），約 7 天後才刪。
+
+# mkorphan <marketplace> <version>：造一個孤兒版本目錄（帶一條 lens，好讓「誤載入」看得見）
+mkorphan() {
+  mkpack "$1" "$2"
+  printf 'key,focus\norphan,孤兒目錄的 lens\n' > "${PACK}/lenses/code.csv"
+  printf '1790000000000' > "${PACK}/.orphaned_at"
+}
+
+@test "#56 孤兒 + 同版本的現役安裝 → 選現役、status ok（不是 ambiguous）" {
+  mkorphan alpha 1.0.0
+  mkpack beta 1.0.0
+  printf 'key,focus\nlive,現役\n' > "${PACK}/lenses/code.csv"
+  run "$BIN" code
+  [ "$status" -eq 0 ]
+  jq_py "$pack_layer"'
+assert P["status"]=="ok", P
+assert [x["key"] for x in d["lenses"]]==["live"], d["lenses"]
+assert "/beta/" in P["path"], P
+assert d["warnings"]==[], d["warnings"]
+' "$output"
+}
+
+@test "#56 孤兒的版本較高 → 仍選版本較低的現役安裝" {
+  mkorphan alpha 9.0.0
+  mkorphan beta 2.0.0
+  mkpack beta 1.0.0
+  printf 'key,focus\nlive,現役\n' > "${PACK}/lenses/code.csv"
+  run "$BIN" code
+  [ "$status" -eq 0 ]
+  jq_py "$pack_layer"'
+assert P["status"]=="ok", P
+assert P["version"]=="1.0.0", P
+assert [x["key"] for x in d["lenses"]]==["live"], d["lenses"]
+' "$output"
+}
+
+@test "#56 只剩孤兒 → absent（已解除安裝的殘留，靜默），不是 unversioned 也不載入" {
+  mkorphan alpha 1.0.0
+  run "$BIN" code
+  [ "$status" -eq 0 ]
+  jq_py "$pack_layer"'
+assert P["status"]=="absent", P
+assert d["lenses"]==[] and d["warnings"]==[], d
+' "$output"
+}
+
+@test "#56 兩個非孤兒同版本（旁邊還有孤兒）→ 仍是 ambiguous，警告不列孤兒" {
+  mkorphan gamma 2.0.0
+  mkpack alpha 2.0.0
+  printf 'key,focus\na,fa\n' > "${PACK}/lenses/code.csv"
+  mkpack beta 2.0.0
+  printf 'key,focus\nb,fb\n' > "${PACK}/lenses/code.csv"
+  run "$BIN" code
+  [ "$status" -eq 0 ]
+  jq_py "$pack_layer"'
+assert P["status"]=="ambiguous", P
+assert d["lenses"]==[], d["lenses"]
+w=" ".join(d["warnings"])
+assert "/alpha/" in w and "/beta/" in w and "/gamma/" not in w, w
+assert ".orphaned_at" in w, w      # 告訴使用者殘留目錄已經不算了，剩下的是真的兩份安裝
+' "$output"
+}
+
+@test "#56 Unicode 數字不是 semver：'9９.0.0'（全形）不得勝過 1.0.0，'1.0.0-rc.９' 不算版本" {
+  mkpack psychquant 1.0.0
+  printf 'key,focus\ngood,ASCII 版本\n' > "${PACK}/lenses/code.csv"
+  mkpack psychquant '9９.0.0'
+  printf 'key,focus\nwide,全形數字\n' > "${PACK}/lenses/code.csv"
+  mkpack psychquant '1.0.1-rc.９'
+  printf 'key,focus\nwidepre,全形 prerelease\n' > "${PACK}/lenses/code.csv"
+  mkpack psychquant '1.٣.0'
+  printf 'key,focus\narabic,阿拉伯-印度數字\n' > "${PACK}/lenses/code.csv"
+  run "$BIN" code
+  [ "$status" -eq 0 ]
+  jq_py "$pack_layer"'
+assert P["status"]=="ok", P
+assert P["version"]=="1.0.0", P
+assert [x["key"] for x in d["lenses"]]==["good"], d["lenses"]
+' "$output"
+}
+
+@test "#56 <profile> 長度上限 64：65／300 字元 → exit 2（不是 ENAMETOOLONG traceback），64 照常" {
+  # user 目錄要**存在** —— 不存在時 stat 回 ENOENT、is_file() 安靜回 False；存在時才是
+  # ENAMETOOLONG → 未捕捉的 OSError、exit 1（修法前的實際失敗形狀）
+  mkdir -p "$USERDIR"
+  mkpack psychquant 1.0.0
+  run "$BIN" "$(printf 'a%.0s' $(seq 1 300))"
+  echo "$output"
+  [ "$status" -eq 2 ]
+  [ "${output#*Traceback}" = "$output" ]
+  run "$BIN" "$(printf 'a%.0s' $(seq 1 65))"
+  [ "$status" -eq 2 ]
+  run "$BIN" "$(printf 'a%.0s' $(seq 1 64))"
+  [ "$status" -eq 0 ]
 }
 
 @test "無參數 → exit 2（用法）" {
