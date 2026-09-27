@@ -2443,6 +2443,11 @@ def _bash_template(sh):
 #     PR 可控的 `${{ github.event.* }}` 由 `GH_EXPR_UNTRUSTED_RE` 那條規則另外擋（R39）。
 # `set` 前綴只收 `-e`／`-u`／`-E`／`-o pipefail|errexit|nounset|errtrace`（`-E`／errtrace：R39，只影響 ERR trap 的繼承）：`set -v` 會把原始碼（含 runner 代入的 `${{ … }}`）
 # 印到群組外的 stderr，`-x` 同理；裸 `set` 把所有變數（含 PR 可控的 env）印到群組外的 stdout。
+# **代價：保守誤擋**（#33 verify R38 第 11 列：R37 只揭露了前兩類）。封閉列舉，只有這七類，每一類在 oracle.py 的 KNOWN_DISAGREE
+# 與一張 `restrict-*` fixture 登記：逐段 `2>&1`（不是群組形式）、`( … )` 子殼層、群組內定義函式、群組內的巢狀群組
+# （`{ …; } >> "$GITHUB_ENV"`）、一個 step 兩個群組、群組前的 `cd`／`export`、命令替換裡不在命令起點的 `case` 普通參數
+# （這一類是掃描器的 fail-closed，不是群組規則）。R39 放寬了四類（未加引號的 `${{ … }}`、尾巴後的 `;`、`set -E`／errtrace、
+# `set` 前綴行尾的 `;`）。
 # **子殼層 `( … ) 2>&1 |` 不收**：`(`／`)` 也出現在 `$(`、`$((`、陣列、`case` 模式裡，同一套「恰好一對」的論證不成立。
 # 斷詞只認 ASCII 空白與 tab——bash 的詞界就是這兩個加上 metachar。Python 的 `\s` 還認 NBSP 等 Unicode 空白：
 # `{<NBSP>true` 在 `\s` 下斷成 `{`、`true`，bash 卻讀成一個詞（不存在的命令），群組根本沒開
