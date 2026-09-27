@@ -289,6 +289,14 @@ SHAPES = [
      lambda text, runs: any(re.search(r'"[^"]*\$\(\(', l) for run in runs for l in run.split("\n"))),
     ("R37-10 反引號命令替換內含 `#`（合併時修的收尾判定）",
      lambda text, runs: any(re.search(r"`[^`]*#[^`]*`", l) for run in runs for l in run.split("\n"))),
+    # R39（#33 verify R38 第 2、10、11 列）：`shellgen.py --strict` 維度 7–9 的機制。
+    ("R39-1 群組外有一行只由展開／逃脫構成（程式碼半邊整行挖空）",
+     lambda text, runs: any(re.fullmatch(r"\s*(?:\$\{[^}]*\}|\\\w|\$'[^']*')+(?:\s.*)?", l) and "neutralise.py" not in l
+                            for run in runs for l in run.split("\n") if l.strip())),
+    ("R39-2 群組內有未加引號的 `${{ … }}`（遮罩後計數）",
+     lambda text, runs: any(re.search(r"(?<![\"'])\$\{\{", l) for run in runs for l in run.split("\n"))),
+    ("R39-3 群組尾巴或 `set` 前綴行尾帶 `;`",
+     lambda text, runs: any(re.search(r"neutralise\.py\s*;\s*$|^\s*set\s+-\S+.*;\s*$", l) for run in runs for l in run.split("\n"))),
     ("any heredoc（分母參考）", sh(lambda run, hd: True)),
     ("any `<<-`（分母參考）", sh(lambda run, hd: hd[3])),
 ]

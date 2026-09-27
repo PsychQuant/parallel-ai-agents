@@ -303,7 +303,7 @@ TAG_BANG_DOC = (HEAD + '      - name: tag-bang\n        run: !!str "echo hi | '
 # `shell:`、`defaults:`、`env:` 維度，624 檔全是預設模式。這一組補上這四個維度，每個檔頭帶 `# LINT-ARGS: --strict`
 # 讓 `oracle.py` 用 strict 模式對帳（機制見 oracle.py R35 段：`# LINT-ARGS:` 已經是既有機制，這裡只是餵它）。
 #
-# 六個封閉列舉的維度（**只有這六個，不得在別處「順便」擴充**——改動這份清單是另一次 change）：
+# 九個封閉列舉的維度（**只有這九個，不得在別處「順便」擴充**——改動這份清單是另一次 change；R39 加了 7–9）：
 #   1. shell 值（SHELL_TEMPLATES，18）：`--strict` 接受 `bash`／`/bin/bash`／`/usr/bin/bash` 加白名單選項的整個樣板家族（不含 xtrace/verbose 以外的選項一律拒）；樣板（`bash -e {0}`…）與非 bash
 #      shell（`sh`／`pwsh`／`python {0}`）本來就不接受。R36 第 4 列點名的是 pipefail 規則的 `is_bash` 旗標漏掉 `bash {0}`／`bash -e {0}`／`bash -l {0}`／`bash -el {0}`／`bash --noprofile --norc -e {0}` 五種**仍是 bash** 的樣板，不是非 bash shell 或另一條規則的字面清單問題。
 #   2. env 鍵（ENV_KEYS）：**只有 `SHELLOPTS`**，值只有 `xtrace`（`verbose` 被 `ENV_VALUES` 排除，理由見下），三層（workflow／job／step）各一檔，共 3 檔。
@@ -339,6 +339,16 @@ TAG_BANG_DOC = (HEAD + '      - name: tag-bang\n        run: !!str "echo hi | '
 #      **沒有**群組包裹時的對照——六個「有包」＋六個「沒包」＝ 12 檔，全部本機 bash 5.3 實測過。
 #      **R37 移植群組規則之後**：群組規則只收 `{ …; }`，`( … )` 那三個「有包」改成保守擋下（同 fixture
 #      `restrict-r37-strict-subshell-group`，記在 `KNOWN_DISAGREE`）；`{ … }` 那三個照樣放行。
+#   **維度 3、4、5、6 的非群組形式在 `--strict` 下全部先被群組規則擋下**（#33 verify R38 第 12 列）：它們量不到 fd 流向規則與
+#   xtrace 規則本身——requirements 把 fd 複製偵測改成 `return None`，這一組的神諭結果逐字不變。那兩條規則在 `--strict` 下是縱深
+#   防禦，鑑別力由預設模式的 A–E 組與 fixture 量（selftest 殺得掉那個突變體：rule-red 少 56 張）。維度 7–9 補的是群組規則**本身**
+#   沒量到的東西：
+#   7. 群組外的行（OUTSIDE_LINES × OUTSIDE_POSITIONS）：群組前、`set` 前綴與群組之間、群組之後各放一行——`set` 前綴（該放行）、
+#      會外流的命令、以及**程式碼半邊整行挖空**的行（`${PR_TITLE}`、`\e\c\h\o …`、`$'\x65cho' …`、`${X:-eval} $'…'`，R38 第 2 列：
+#      詞元檢查與只收非空白碼行的字面檢查都看不到它們）。`set` 前綴只放在群組之前（群組之後的 `set` 不是前綴，照規則擋、不外流）。
+#   8. 群組內部內容（GROUP_INNER）：群組裡的 `if`／`for`／`case`／heredoc／`>&2`／`set -x`／`exec 3>&1`／`trap`／子殼層裡關 pipefail／
+#      未加引號的 `${{ … }}`——全部安全、`--strict` 都該放行（R38 第 11 列：前一版沒有這個維度，群組規則的誤擋面沒被量到）。
+#   9. 群組尾巴後（GROUP_TAILS）：尾巴後的 `;`（該放行）、尾巴後接命令（該擋）。
 SHELL_TEMPLATES = [
     ("bash", "bash"), ("bash-dq", '"bash"'), ("bash-sq", "'bash'"),
     ("bash-brace", "bash {0}"), ("bash-e", "bash -e {0}"), ("bash-l", "bash -l {0}"),
@@ -360,6 +370,22 @@ FD_SPELLINGS = [
 XTRACE_SPELLINGS = ["set -x", "set -o xtrace", "set -eo xtrace", "shopt -s -o xtrace", "shopt -so xtrace"]
 SEGMENT_COUNTS = [2, 3]
 WRAP_STYLES = [("brace", "{ %s; }"), ("subshell", "( %s )")]
+OUTSIDE_LINES = [
+    ("set-prefix", "set -eo pipefail", True), ("set-E-prefix", "set -Eeuo pipefail", True),
+    ("echo", 'echo "$PR_TITLE"', False), ("blank-expansion", "${PR_TITLE}", False),
+    ("escaped-cmd", "\\e\\c\\h\\o ${PR_TITLE}", False), ("ansic-cmd", "$'\\x65cho' ${PR_TITLE}", False),
+    ("eval-ansic", "${X:-eval} $'echo \"$PR_TITLE\" >&2'", False),
+]
+OUTSIDE_POSITIONS = ["before", "after-set", "after"]
+GROUP_INNER = [
+    ("if", ['if true; then echo "$PR_TITLE"; fi']), ("for", ['for i in 1; do echo "$PR_TITLE"; done']),
+    ("case", ['case x in x) echo "$PR_TITLE";; esac']), ("heredoc", ["cat <<EOF", "$PR_TITLE", "EOF"]),
+    ("stderr", ['printf \'%s\\n\' "$PR_TITLE" >&2']), ("xtrace", ["set -x", 'echo "$PR_TITLE"']),
+    ("saved-fd", ["exec 3>&1", 'echo "$PR_TITLE" >&3']), ("trap", ["trap 'echo \"$PR_TITLE\"' EXIT"]),
+    ("subshell-pipefail-off", ["( set +o pipefail )", "false | true || :", 'echo "$PR_TITLE"']),
+    ("gh-expr-unquoted", ['echo ${{ github.run_id }} "$PR_TITLE"']),
+]
+GROUP_TAILS = [("semicolon", ";", True), ("command-after", "; echo \"$PR_TITLE\"", False)]
 WRAP_CONTENTS = [
     ("fd-redirect", ['printf \'%s\\n\' "$PR_TITLE" >&2']),
     ("xtrace", ["set -x", 'printf \'%s\\n\' "$PR_TITLE"']),
@@ -465,6 +491,28 @@ def group_strict():
             bare = list(clines[:-1]) + [clines[-1] + " 2>&1 | " + NEUT]
             yield ("f-wrap-%s-%s-bare" % (wn, cn),
                    LA + _strict_doc("%s bare %s" % (wn, cn), bare, step_shell="bash"))
+
+    # 維度 7：群組外的行 × 位置（R39）
+    grp = ["{", '  echo "$PR_TITLE"', "} 2>&1 | " + NEUT]
+    for on, line, safe in OUTSIDE_LINES:
+        for pos in OUTSIDE_POSITIONS:
+            if safe and pos == "after":
+                continue
+            body = ([line] + grp if pos == "before" else ["set -e", line] + grp if pos == "after-set" else grp + [line])
+            yield ("f-outside-%s-%s" % (on, pos),
+                   LA + _strict_doc("outside line %s %s" % (on, pos), body, step_shell="bash"))
+
+    # 維度 8：群組內部內容（R39）
+    for gn, glines in GROUP_INNER:
+        yield ("f-inner-%s" % gn,
+               LA + _strict_doc("group inner %s" % gn, ["{"] + ["  " + l for l in glines] + ["} 2>&1 | " + NEUT],
+                                step_shell="bash"))
+
+    # 維度 9：群組尾巴後（R39）
+    for tn, tail, _safe in GROUP_TAILS:
+        yield ("f-tail-%s" % tn,
+               LA + _strict_doc("group tail %s" % tn, ["{", '  echo "$PR_TITLE"', "} 2>&1 | " + NEUT + tail],
+                                step_shell="bash"))
 
 
 def main():
