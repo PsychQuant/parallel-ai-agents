@@ -18,12 +18,13 @@ mutation」。**那三句話會讓下一個維護者以為改動 `validate.py` �
 **最近一次完整量測（R39 最終，於 `git archive c99e4c5` 副本上跑，`--jobs 8`）：435 個靶 → 432 殺 / 0 存活 / 3 預期存活 / 0 靶壞**，
 牆鐘 **60.6 分鐘 / 435 靶 = 每靶 8.4 s**（8 個 worker 各一份不含 `.git` 的副本；開跑時一分鐘平均負載 19.0，同機另有其他 session）。
 同一棵樹立刻重跑：435 靶**全部沿用** `mutation-cache.json`、16 秒——快取的 key 是「突變後的正規化程式碼＋守備單位讀得到的
-輸入＋工具版本」，之後只改 docstring 與 CHANGELOG（兩者都不進 key）。發版前的量測用 `--no-cache`。
+輸入＋工具版本」，之後只改了 docstring、CHANGELOG 與快取檔本身（三者都不進 key：`.py` 以剝掉 docstring 的 AST 計算、
+CHANGELOG 在 `_NOT_READ`、快取檔在 `inputs_digest` 的 exclude 裡）。發版前的量測用 `--no-cache`。
 R39 之前那一輪（`bf961d1`）：殺 431 / 存活 1 / 預期存活 3——存活的是神諭續行判定的 bash 那一支，我原本想列成等價，
 實際它只在同一個 run 區塊有兩條註解續行的管線時分岔（`known-r39-g-two-continued-pipelines`，見 CHANGELOG 的 R38 段）。
 **R37 最終（`git archive d1014e6`，串行）**：394 個靶 → 391 殺 / 0 存活 / 3 預期存活 / 0 靶壞，327.7 分鐘 / 394 靶 = 每靶 49.9 s
 （醒著的時間；牆鐘另含約 4 小時 40 分的系統休眠——電量耗盡強制睡眠，工具以單調時鐘計時所以不算進去）。
-lint 靶跑的是 selftest、神諭靶跑的是 `test/oracle.py` 全集（反向單位跑 `oracle_selfcheck.py`），都比純 python 套件重——
+lint 靶跑的是 selftest、神諭靶跑的是 `test/oracle.py` 全集，都比純 python 套件重（反向單位跑的 `oracle_selfcheck.py` 反而很輕）——
 **耗時不是效能指標，只是「這一輪真的跑了多久」**。
 **R37 移植 #61 之前（`git archive 5367d9a`）**：390 個靶 → 387 殺 / 0 存活 / 3 預期存活 / 0 靶壞，265.8 分鐘 / 390 靶 =
 每靶 40.9 s；當時列在 `EXPECTED_SURVIVE` 的 4 條裡，lint 的 `<<<` here-string 那一條**被殺掉了**——它的「依構造等價」論證
