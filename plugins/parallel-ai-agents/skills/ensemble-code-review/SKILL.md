@@ -66,19 +66,27 @@ allowed-tools:
 > path-only 同一原則）。完整規則在 `bin/pai-codex-bundle` 開頭，重點：
 > - **送什麼**：git 工作樹內只送**被追蹤**的檔（尊重 `.gitignore`）；未追蹤的檔不送（最可能是本機草稿或祕密），
 >   但 manifest 逐一列出、bundle header 點名（最多 20 個）——Claude lens 看得到它們、Codex 看不到，報告要看得出差在哪。
->   root 底下完全沒有被追蹤的檔（還沒 commit）→ 送 `git ls-files -o --exclude-standard` 列出的檔；root 本身被 ignore
->   → 當一般目錄，**git 會忽略的檔在這裡會送出**（header 明說；只剩 build/vendor 剪枝與憑證 denylist）。
->   git 不會執行目標 repo 設定的 `core.fsmonitor` 等命令，每個 git 子程序有逾時（卡住 → 失敗，不送）；
->   git index 裡的 `..`／`.git/`／絕對路徑一律不讀。非 git 目錄不進入 `node_modules`／`dist`／`build`／`target`／`.venv`
+>   root 底下完全沒有被追蹤的檔（還沒 commit）→ 送 `git ls-files -o --exclude-standard` 列出的檔；`git check-ignore`
+>   確認 root **本身**被 ignore → 當一般目錄，**git 會忽略的檔在這裡會送出**（header 明說；只剩 build/vendor 剪枝與憑證
+>   denylist）；root 沒被 ignore 但裡面的檔全被 ignore → 沒有可送的檔、leg 失敗。
+>   git 不會執行目標 repo 設定的 `core.fsmonitor` 等命令，每個 git 子程序有逾時；**git 的任何失敗**（卡住、index 損壞、
+>   dubious ownership、有 `.git` 卻讀不了）→ leg 失敗、不送，不會退回一般目錄模式把被 ignore 的檔送出去。
+>   git index 裡的 `..`／`.git/`／絕對路徑一律不讀。root 是 `/`、`$HOME`（或其上層）、`.git` 目錄 → 拒絕。非 git 目錄不進入 `node_modules`／`dist`／`build`／`target`／`.venv`
 >   等目錄，也不進入含 `.git` 的子目錄（巢狀 repo），但**每一個都列在 manifest 並計數**；git 模式下被追蹤的檔不因目錄名剪掉。
 > - **不送內容、只列原因**：路徑上任何一段是 symlink、特殊檔、含 NUL、非合法 UTF-8、疑似憑證的檔名（`.env` 開頭的任何檔名、
->   `*.pem`、`*.key`、`*.jks`、`*.tfstate`、`credentials`、`id_rsa*`、`.ssh/`／`.aws/`／`.docker/` 底下…，root 本身就是這種目錄也算）。
+>   `*.pem`、`*.key`、`*.jks`、`*.tfstate`、`credentials`、`id_rsa*`、`*_history`、`.vault-token`、`.ssh/`／`.aws/`／`.docker/`／
+>   `.codex/`／`.azure/`／`.config/gh/`／`.config/gcloud/` 底下…，root 本身就是這種目錄也算）。檔名以 JSON 字串呈現，
+>   控制字元、U+2028、bidi 與零寬字元一律 `\uXXXX` 跳脫。
 >   **檔名 denylist 不是祕密偵測**：寫死在原始碼裡的金鑰照樣會送給外部模型——含祕密的目錄請先清理，或不要開 `--codex`。
-> - **順序與上限**：原始碼 → 測試 → 設定 → 文件（SKILL.md／references 在前、CHANGELOG 在後）→ fixture／lockfile；
+> - **順序與上限**：原始碼 → 測試 → 設定 → 文件（SKILL.md／references 在前、CHANGELOG 在後）→ fixture／lockfile
+>   （engine 把 `profile` 以 `--profile` 傳給 bundler；academic／lecture／minutes 改為文件 → `.bib`／`.sty` → 原始碼）；
 >   整份 bundle 512 KiB（含 manifest）、單檔 64 KiB、檔案數 2000。預算用完的那個檔截斷收錄，之後的檔不送（低層不補位）。
->   **只有真正的覆蓋缺口（截斷、上限、未追蹤、非 UTF-8、讀不到、巢狀 repo、列舉上限）才會讓報告多一條 INFO
+>   **只有真正的覆蓋缺口（截斷、上限、未追蹤、非 UTF-8、讀不到、巢狀 repo、unsafe path、列舉上限）才會讓報告多一條 INFO
 >   「cross-model coverage partial」**（計數分 `gaps:` 與 `not-sent-by-policy:`）；二進位、憑證檔名、symlink、build 目錄
->   這類依政策不送的檔只在 bundle 的 manifest 裡，不觸發 INFO。大目錄請改指更小的子目錄，或用 diff 模式。
+>   這類依政策不送的檔只在 bundle 的 manifest 裡，不觸發 INFO。列舉上限（50000 個目錄項目）若在找到任何檔之前就用完，
+>   leg 會失敗（錯誤訊息明說是上限）。大目錄請改指更小的子目錄，或用 diff 模式。
+>   已知限制：INFO 那一行只有數字；**未追蹤檔的檔名**只在 bundle header／manifest，能不能進報告取決於 Codex 有沒有照
+>   header 的 NOTE 寫進 Coverage 段落。
 
 **B. diff**（審變更）— 擇一 flag：
 ```

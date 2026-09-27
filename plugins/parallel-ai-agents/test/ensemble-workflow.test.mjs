@@ -407,7 +407,7 @@ test('#48 codexModel / codexEffort args 原樣進 codex-call 命令列，service
 
 test('#45 T1 path 模式（file）經 pai-codex-bundle 交給 codex-call，不再把目錄直接當 --prompt-file', async () => {
   const p = await codexPromptFor({ profile: 'code', file: '/repo/src' })
-  assert.ok(p.includes("'/bin/pai-codex-bundle' -- '/repo/src' -- '/bin/codex-call' --detach"),
+  assert.ok(p.includes("'/bin/pai-codex-bundle' --profile 'code' -- '/repo/src' -- '/bin/codex-call' --detach"),
     'file 沒有經 pai-codex-bundle 組裝（目錄會被原樣當成 --prompt-file）')
   assert.ok(!p.includes("--prompt-file '/repo/src'"),
     'args.file 仍被直接當 --prompt-file —— 目錄時 codex-call 讀不了，這正是 #45')
@@ -445,20 +445,20 @@ test('#45 T4 覆蓋不完整要在報告裡明說：PAI-BUNDLE-TRUNCATED → INF
 
 test('#45 T5 bundler 路徑：預設為 codexCallPath 的同目錄；codexBundlePath 可覆蓋；都經 shQuote', async () => {
   const p = await codexPromptFor({ profile: 'code', file: '/r', codexCallPath: "/opt/we'ird/bin/codex-call" })
-  assert.ok(p.includes("'/opt/we'\\''ird/bin/pai-codex-bundle' -- '/r' -- '/opt/we'\\''ird/bin/codex-call' --detach"),
+  assert.ok(p.includes("'/opt/we'\\''ird/bin/pai-codex-bundle' --profile 'code' -- '/r' -- '/opt/we'\\''ird/bin/codex-call' --detach"),
     'bundler 沒有取 codexCallPath 的同目錄，或未正確單引號化')
   const q = await codexPromptFor({ profile: 'code', file: '/r', codexBundlePath: '/x/y/bundle' })
-  assert.ok(q.includes("'/x/y/bundle' -- '/r' -- '/bin/codex-call' --detach"), 'codexBundlePath 沒有被採用')
+  assert.ok(q.includes("'/x/y/bundle' --profile 'code' -- '/r' -- '/bin/codex-call' --detach"), 'codexBundlePath 沒有被採用')
   // 沒給 codexCallPath → 兩者都退回裸名（PATH）
   const { seen, impl } = captureCodex()
   await runEnsemble({ profile: 'code', file: '/r', codexEnabled: true }, impl)
-  assert.ok(seen[0].includes("'pai-codex-bundle' -- '/r' -- 'codex-call' --detach"), '無 codexCallPath 時未退回裸名')
+  assert.ok(seen[0].includes("'pai-codex-bundle' --profile 'code' -- '/r' -- 'codex-call' --detach"), '無 codexCallPath 時未退回裸名')
 })
 
 test('#45 T6 file path 以 POSIX 單引號傳給 bundler（$(...) 不展開）', async () => {
   const p = await codexPromptFor({ profile: 'code', file: EVIL })
   const expected = "'" + EVIL.replace(/'/g, "'\\''") + "'"
-  assert.ok(p.includes(`'/bin/pai-codex-bundle' -- ${expected} -- `), 'file path 未正確 POSIX 單引號化')
+  assert.ok(p.includes(`'/bin/pai-codex-bundle' --profile 'code' -- ${expected} -- `), 'file path 未正確 POSIX 單引號化')
   assert.ok(!p.includes(`"${EVIL}"`))
 })
 
@@ -469,7 +469,7 @@ test('#45 T7 只有 context 時不經 bundler（沒有 artifact 可組）', asyn
 
 test('#45 R8 以 - 開頭的 file 路徑：bundler 命令在 artifact 之前也有 --（不會被當成 bundler 的選項）', async () => {
   const p = await codexPromptFor({ profile: 'code', file: '--max-bytes' })
-  assert.ok(p.includes("'/bin/pai-codex-bundle' -- '--max-bytes' -- '/bin/codex-call' --detach"),
+  assert.ok(p.includes("'/bin/pai-codex-bundle' --profile 'code' -- '--max-bytes' -- '/bin/codex-call' --detach"),
     'artifact 前沒有 --：以 - 開頭的路徑會被 bundler 當成選項')
 })
 
@@ -489,6 +489,20 @@ test('#45 round2 #10 coverage INFO 只針對真正的缺口：prompt 分開 gaps
   assert.ok(/prints it ONLY for such gaps/.test(p), '沒有說明 PAI-BUNDLE-TRUNCATED 只在真正缺口時出現')
   assert.ok(p.includes('`gaps:`') && p.includes('`not-sent-by-policy:`'), '沒有交代兩類計數的意義')
   assert.ok(/untracked files/.test(p) && /Coverage paragraph/.test(p), '未追蹤檔的點名沒有進 coverage finding')
+})
+
+test('#45 round3 #3 bundler 收到 profile key（--profile，單引號化）：學術／講義的 .tex／.md 才排得到最前', async () => {
+  for (const profile of ['academic', 'lecture', 'minutes', 'code']) {
+    const p = await codexPromptFor({ profile, file: '/paper' })
+    assert.ok(p.includes(`'/bin/pai-codex-bundle' --profile '${profile}' -- '/paper' -- '/bin/codex-call' --detach`),
+      `profile "${profile}" 沒有傳給 bundler（非 code profile 會用原始碼優先的層級，.tex 被 .R／.sty 擠掉）`)
+  }
+  // compose：--base academic → args.profile = 'academic'；沒有 --base → 'custom'（原始碼優先，向後相容）
+  const c = await codexPromptFor({ profile: 'custom', file: '/d', customLenses: [{ key: 'x', focus: 'y' }] })
+  assert.ok(c.includes("'/bin/pai-codex-bundle' --profile 'custom' -- '/d' -- "), 'custom profile 沒有照傳')
+  // diff 模式不經 bundler，不帶 --profile
+  const d = await codexPromptFor({ profile: 'academic', diffFile: '/tmp/d.diff' })
+  assert.ok(!d.includes('--profile'))
 })
 
 // ── runner ── 新案請加在這條線之上；迴圈之後註冊的 test() 不會執行。

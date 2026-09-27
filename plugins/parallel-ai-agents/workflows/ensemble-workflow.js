@@ -479,7 +479,8 @@ function codexPrompt(profile, A) {
   }
   const detachCmd = [
     // `--` BEFORE the artifact too (#45 verify R8): a path starting with `-` must never be read as a bundler option
-    ...(viaBundler ? [shQuote(bundler), '--', shQuote(A.file), '--'] : []),
+    // `--profile` (#45 verify round 3 #3): academic / lecture / minutes put documents (.tex .md …) first in the bundle
+    ...(viaBundler ? [shQuote(bundler), '--profile', shQuote(A.profile || 'code'), '--', shQuote(A.file), '--'] : []),
     shQuote(wrapper), '--detach',
     '--model', shQuote(codexModel),
     '--effort', shQuote(codexEffort),

@@ -168,7 +168,8 @@ jobs:
             echo "::error::TAP plan announces $plan tests but $ran executed"; exit 1
           fi
           for anchor in 'R1 數 KB 的合法多位元組檔' 'R1 不依賴 iconv' 'R2 git 追蹤 src/x' 'R5 讀不到的子目錄' \
-                        'round2 #1 手工造的 git index' 'round2 #4a git 子程序有逾時'; do
+                        'round2 #1 手工造的 git index' 'round2 #4a git 子程序有逾時' \
+                        'round3 #1 git 失敗（index 損壞）' 'round3 #7 tracked 模式' 'round3 #8 find 模式逐層走訪'; do
             grep -E "^ok [0-9]+ $anchor" "$TAP" | grep -qv '# skip' \
               || { echo "::error::macOS anchor case did not run and pass: $anchor"; exit 1; }
           done

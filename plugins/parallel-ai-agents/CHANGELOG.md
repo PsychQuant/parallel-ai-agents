@@ -66,15 +66,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   全擋（含 `.env-prod`、`.env.example`）；未追蹤檔在 header 點名；coverage INFO 只在真正的缺口出現；macOS CI 的 bundler
   step 移到 codex-call step 之後並在前面失敗時照跑。
 
-  **遷移**：engine 對 `file` 一律經 `pai-codex-bundle`（`'<bundle>' -- '<file>' -- '<codex-call>' --detach …`，逐值
+  #45 verify round 3（FAIL，3 blocking）後的修正：git 失敗（index 損壞、dubious ownership）時退回 find、把 `.gitignore`
+  排除的檔送出去，header 還寫「root is gitignored」→ **git 的任何失敗都讓 bundler 失敗退出、不呼叫 `codex-call`**
+  （root 或上層有 `.git` 但 `rev-parse` 失敗也算，不再當成「不是 git 工作樹」）；git 成功但列出零個檔也被當成「root 被
+  ignore」→ 先以 `git check-ignore` 確認 root **本身**被 ignore 才退回 find，否則是「沒有可送的檔」；論文／講義 profile
+  用原始碼優先的層級，三份 60 KB 的 `.tex` 被 `.R`／`.sty` 擠掉 → engine 以 `--profile` 把 profile key 傳給 bundler，
+  academic／lecture／minutes 改為文件（`.tex`／`.md`／`.srt`…）→ 參考文獻與樣式（`.bib`／`.sty`／`.cls`…）→ 原始碼。
+  另：憑證 denylist 補上 `.codex/`、`.azure/`、`.terraform.d/`、`.config/gh/`、`.config/gcloud/`、`.credentials.json`、
+  `credentials.toml`、`credentials.tfrc.json`、`application_default_credentials.json`、`msal_token_cache.*`、`.vault-token`、
+  `*_history`，並拒絕以 `/`、`$HOME`（或其上層）、`.git` 目錄當 root；manifest 被大小上限截斷時，缺口類項目（未追蹤等）
+  優先列出，header 的「all are in the manifest」只在屬實時才寫；檔名裡的 U+0085、U+2028／2029、bidi、零寬、BOM、Tags
+  等字元一律 `\uXXXX` 跳脫；有被追蹤的檔時，列未追蹤清單的那次 git 呼叫逾時只記 scan-stopped、不再讓整份失敗；find
+  改逐層（BFS）走訪，上限在找到任何檔之前用完時訊息明說是上限；有 `#!` 的無副檔名 script 一律是原始碼、`RELEASES`
+  進文件層、`CMakeLists.txt`／`requirements.txt` 是設定；二進位判斷至少看前 8 KiB，不受預算邊界剩餘 bytes 影響。
+  已知限制：未追蹤檔的**檔名**只在 bundle header／manifest（stderr 只有數字），能不能進報告取決於 Codex 是否照 NOTE 寫出。
+
+  **遷移**：engine 對 `file` 一律經 `pai-codex-bundle`（`'<bundle>' --profile '<profile>' -- '<file>' -- '<codex-call>' --detach …`，逐值
   `shQuote()`；artifact 前的 `--` 讓以 `-` 開頭的路徑不會被當成選項）。bundler 以 `codexCallPath` 的**同目錄**解析
   （新增可選 arg `codexBundlePath` 覆蓋）——從 `${CLAUDE_PLUGIN_ROOT}/bin/` 傳路徑的第一方 skill 不受影響；外部
   consumer 若把 `codex-call` 複製到別處，要一起複製 `pai-codex-bundle` 與 `pai-codex-bundle-dir`，或傳 `codexBundlePath`。
   `diffFile` 永遠是 `pai-build-diff` 產的單一檔案，維持直接 `--prompt-file`。既有 arg 與回傳形狀不變。
   Claude lens 讀目錄的那一半屬 #44，本版不動。
 
-  測試：`test/pai-codex-bundle.bats` 共 67 個 case（`grep -c "^@test" test/pai-codex-bundle.bats`），CI 的 macOS job
-  另以系統 bash 3.2（`PAI_TEST_BASH=/bin/bash`）跑一次；`test/ensemble-workflow.test.mjs` 新增 10 個 #45 case。
+  測試：`test/pai-codex-bundle.bats` 共 80 個 case（`grep -c "^@test" test/pai-codex-bundle.bats`），CI 的 macOS job
+  另以系統 bash 3.2（`PAI_TEST_BASH=/bin/bash`）跑一次；`test/ensemble-workflow.test.mjs` 新增 11 個 #45 case。
   `ensemble-code-review` 與 `ensemble-compose` 的 SKILL.md 同步說明目錄模式的 Codex leg。
 
 ## [2.23.0] - 2026-09-10

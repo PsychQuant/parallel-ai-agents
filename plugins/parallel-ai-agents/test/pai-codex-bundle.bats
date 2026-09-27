@@ -667,14 +667,23 @@ PY
   [[ "$stderr" == *"nested-repos=1"* ]]
 }
 
-@test "round2 #4a git 子程序有逾時：.git/info/exclude 是 FIFO 也不會卡住，明確失敗" {
+@test "round2 #4a git 子程序有逾時：.git/info/exclude 是 FIFO 也不會卡住（沒有 commit → 明確失敗；有 commit → 只有未追蹤清單不完整）" {
+  # 還沒有 commit：要送的就是 `ls-files -o --exclude-standard` 的清單 → 它逾時就整份失敗
+  U="${BATS_TEST_TMPDIR}/fresh"; mkdir -p "$U"; printf 'x=1\n' > "$U/x.py"
+  git init -q "$U"
+  rm -f "$U/.git/info/exclude"; mkdir -p "$U/.git/info"; mkfifo "$U/.git/info/exclude"
+  PAI_CODEX_BUNDLE_GIT_TIMEOUT=2 run --separate-stderr bundle_bounded 30 "$U" -- "$FAKE" --detach
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"git 在 2 秒內沒有回應"* ]]
+  [[ "$output" != *"ARG:"* ]]
+  # 有 commit：送的是被追蹤的檔；未追蹤清單逾時只記 scan-stopped（round3 #7）
   git init -q "$D"
   git -C "$D" add -A; gcommit "$D"
   rm -f "$D/.git/info/exclude"; mkdir -p "$D/.git/info"; mkfifo "$D/.git/info/exclude"
   PAI_CODEX_BUNDLE_GIT_TIMEOUT=2 run --separate-stderr bundle_bounded 30 "$D" -- "$FAKE" --detach
-  [ "$status" -eq 1 ]
-  [[ "$stderr" == *"git 在 2 秒內沒有回應"* ]]
-  [[ "$output" != *"ARG:"* ]]
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"scan-stopped=1"* ]]
+  grep -q 'print("b")' "$FAKE_OUT/seen"
 }
 
 @test "round2 #4b 列舉上限也計算目錄：大量空目錄走到上限就停" {
@@ -760,4 +769,272 @@ PY
   run bundle "$D/gen"
   [ "$status" -eq 0 ]
   [[ "$output" == *"# NOTE: root is gitignored: files git would ignore ARE sent here"* ]]
+}
+
+# ── #45 verify round 3 ────────────────────────────────────────
+# 「round3 #<n>」= 第三輪 verify 報告的第 n 列。每個 case 都在 8788c78 上 RED 過。
+
+# bundle 裡 FILE 邊界的順序（JSON 檔名，空白分隔）
+file_order() {
+  printf '%s\n' "$1" | grep '^PAI-BUNDLE-[0-9a-f]* FILE ' | sed 's/^PAI-BUNDLE-[0-9a-f]* FILE "\([^"]*\)" .*/\1/' | tr '\n' ' '
+}
+
+@test "round3 #1 git 失敗（index 損壞）→ 失敗退出、不呼叫 <cmd>，不退回 find 把 .gitignore 排除的檔送出" {
+  git init -q "$D"
+  printf 'local.cfg\n' > "$D/.gitignore"
+  printf 'IGNORED_LOCAL_CFG\n' > "$D/local.cfg"
+  git -C "$D" add -A; gcommit "$D"
+  cp "$D/.git/index" "${BATS_TEST_TMPDIR}/index.good"
+  for variant in garbage v99; do
+    if [ "$variant" = garbage ]; then
+      printf 'garbage' > "$D/.git/index"
+    else   # 版本 99 的 index 標頭（git 說 bad index version）
+      python3 -c 'import hashlib,struct,sys; b=b"DIRC"+struct.pack(">II",99,0); open(sys.argv[1],"wb").write(b+hashlib.sha1(b).digest())' "$D/.git/index"
+    fi
+    run git -C "$D" ls-files
+    [ "$status" -ne 0 ]                        # 前提：git 真的失敗
+    run --separate-stderr bundle "$D" -- "$FAKE" --detach
+    [ "$status" -ne 0 ]
+    [[ "$output" != *"ARG:"* ]]
+    [ ! -e "$FAKE_OUT/seen" ]
+    [[ "$output$stderr" != *"IGNORED_LOCAL_CFG"* ]]
+    [[ "$stderr" == *"git 失敗"* ]]
+    run --separate-stderr bundle "$D"
+    [ "$status" -ne 0 ]
+    [[ "$output$stderr" != *"IGNORED_LOCAL_CFG"* ]]
+  done
+  cp "${BATS_TEST_TMPDIR}/index.good" "$D/.git/index"
+}
+
+@test "round3 #1 git 拒絕讀 repo（dubious ownership）→ 失敗退出，不當成「不是 git 工作樹」" {
+  git init -q "$D"
+  printf 'local.cfg\n' > "$D/.gitignore"
+  printf 'IGNORED_LOCAL_CFG\n' > "$D/local.cfg"
+  git -C "$D" add -A; gcommit "$D"
+  mkdir -p "$D/sub"; printf 's=1\n' > "$D/sub/s.py"; printf 'IGNORED_SUB\n' > "$D/sub/local.cfg"
+  # GIT_TEST_ASSUME_DIFFERENT_OWNER 是 git 的測試開關；bundler 只放行這一個 GIT_* 變數（見 git_env）
+  run env GIT_TEST_ASSUME_DIFFERENT_OWNER=1 git -C "$D" rev-parse --is-inside-work-tree
+  [ "$status" -ne 0 ] || skip "這個 git 不認 GIT_TEST_ASSUME_DIFFERENT_OWNER（git < 2.35.2）"
+  for root in "$D" "$D/sub"; do                 # root 本身有 .git、或只有上層有
+    GIT_TEST_ASSUME_DIFFERENT_OWNER=1 run --separate-stderr bundle "$root" -- "$FAKE" --detach
+    [ "$status" -ne 0 ]
+    [[ "$output" != *"ARG:"* ]]
+    [[ "$output$stderr" != *"IGNORED_"* ]]
+    [[ "$stderr" == *"git 失敗"* ]]
+    [[ "$stderr" == *"dubious ownership"* ]]
+  done
+}
+
+@test "round3 #2 git 成功但列出零個檔、root 本身沒被 ignore（/private/*.txt）→ 沒有可送的檔，不當成 root 被 ignore" {
+  git init -q "$D"
+  printf '/private/*.txt\n' > "$D/.gitignore"
+  git -C "$D" add -A; gcommit "$D"
+  mkdir -p "$D/private"; printf 'CONFIDENTIAL\n' > "$D/private/notes.txt"
+  run git -C "$D" check-ignore -q private
+  [ "$status" -eq 1 ]                          # 前提：private 本身沒有被 ignore
+  run --separate-stderr bundle "$D/private" -- "$FAKE" --detach
+  [ "$status" -eq 1 ]
+  [[ "$output" != *"ARG:"* ]]
+  [ ! -e "$FAKE_OUT/seen" ]
+  [[ "$output$stderr" != *"CONFIDENTIAL"* ]]
+  [[ "$stderr" != *"gitignored"* ]]
+  # 對照：root 本身被 ignore 時照舊當一般目錄（R11／round2 #8 的行為不變）
+  printf 'gen/\n' >> "$D/.gitignore"; mkdir -p "$D/gen"; printf 'g=1\n' > "$D/gen/g.py"
+  run bundle "$D/gen"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"g=1"* ]]
+}
+
+@test "round3 #3 --profile academic：文件（.tex）優先於 .bib／.sty 與原始碼；不給 profile 仍是原始碼優先" {
+  P="${BATS_TEST_TMPDIR}/paper"; mkdir -p "$P"
+  for n in 1 2 3; do { printf 'TEX_CHAPTER_%s\n' "$n"; head -c 61440 /dev/zero | tr '\0' 't'; printf '\n'; } > "$P/ch$n.tex"; done
+  head -c 204800 /dev/zero | tr '\0' 'b' > "$P/refs.bib"
+  for n in 1 2 3 4 5 6; do head -c 61440 /dev/zero | tr '\0' 's' > "$P/style$n.sty"; done
+  for n in 1 2 3; do printf 'x <- %s\n' "$n" > "$P/analysis$n.R"; done
+  printf '<p>h</p>\n' > "$P/index.html"
+  run --separate-stderr bundle --profile academic "$P"
+  [ "$status" -eq 0 ]
+  for n in 1 2 3; do
+    [[ "$output" == *"\"ch$n.tex\"	included"* ]] || { echo "ch$n.tex not included"; return 1; }
+    [[ "$output" == *"TEX_CHAPTER_$n"* ]]
+  done
+  order="$(file_order "$output")"
+  [[ "$order" == "ch1.tex ch2.tex ch3.tex refs.bib "* ]]
+  [[ "$output" == *"# content order: priority tier (0 documents"* ]]
+  # 不給 --profile（或 code）：向後相容，原始碼先
+  run --separate-stderr bundle "$P"
+  [ "$status" -eq 0 ]
+  order="$(file_order "$output")"
+  [[ "$order" == "analysis1.R analysis2.R analysis3.R index.html "* ]]
+  # 不合法的 profile 名 → exit 1
+  run bundle --profile 'a b' "$P"
+  [ "$status" -eq 1 ]
+}
+
+@test "round3 #4 憑證 denylist：.codex/ .azure/ .config/gh/ .config/gcloud/ .terraform.d/ .credentials.json credentials.toml .vault-token *_history" {
+  mkdir -p "$D/.codex" "$D/.claude" "$D/.config/gh" "$D/.config/gcloud" "$D/.cargo" "$D/.terraform.d" "$D/.azure"
+  for f in .codex/auth.json .claude/.credentials.json .config/gh/hosts.yml .config/gcloud/application_default_credentials.json \
+           .config/gcloud/access_tokens.db .cargo/credentials.toml .terraform.d/credentials.tfrc.json \
+           .azure/msal_token_cache.json .vault-token .zsh_history .bash_history .python_history; do
+    printf 'TOKEN_%s\n' "$f" > "$D/$f"
+  done
+  printf 'ok\n' > "$D/.config/other.yml"
+  run --separate-stderr bundle "$D"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"TOKEN_"* ]]
+  for f in .codex/auth.json .config/gh/hosts.yml .config/gcloud/access_tokens.db .zsh_history .vault-token; do
+    [[ "$output" == *"\"$f\"	excluded: secret-like name"* ]] || { echo "not excluded: $f"; return 1; }
+  done
+  [[ "$output" == *'"'.config/other.yml'"	included'* ]]
+  # root 是 ~/.config：gh/hosts.yml 仍湊得成 (.config, gh)；root 是 ~/.config/gh：全部不送
+  run --separate-stderr bundle "$D/.config"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"TOKEN_"* ]]
+  run --separate-stderr bundle "$D/.config/gh"
+  [ "$status" -eq 1 ]
+  [[ "$output" != *"TOKEN_"* ]]
+}
+
+@test "round3 #4 root 是 \$HOME、\$HOME 的上層、/、或 .git（及其內部）→ 拒絕，不呼叫 <cmd>" {
+  H="${BATS_TEST_TMPDIR}/h/user"; mkdir -p "$H"; printf 'HOME_FILE\n' > "$H/notes.py"
+  HOME="$H" run --separate-stderr bundle "$H" -- "$FAKE" --detach
+  [ "$status" -eq 1 ]
+  [[ "$output" != *"ARG:"* ]]
+  [[ "$stderr" == *'$HOME'* ]]
+  HOME="$H" run --separate-stderr bundle "${BATS_TEST_TMPDIR}/h" -- "$FAKE" --detach
+  [ "$status" -eq 1 ]
+  [[ "$output" != *"ARG:"* ]]
+  HOME="$H" run --separate-stderr bundle "$H/.." -- "$FAKE" --detach
+  [ "$status" -eq 1 ]
+  git init -q "$D"
+  git -C "$D" config remote.origin.url 'https://user:GIT_URL_TOKEN@example.com/r.git'
+  printf 'x=1\n' > "$D/.git/notes.py"
+  for g in "$D/.git" "$D/.git/refs"; do
+    run --separate-stderr bundle "$g" -- "$FAKE" --detach
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"ARG:"* ]]
+    [[ "$output" != *"GIT_URL_TOKEN"* ]]
+  done
+  run --separate-stderr bundle_bounded 60 / -- "$FAKE" --detach
+  [ "$status" -eq 1 ]
+  [[ "$output" != *"ARG:"* ]]
+  # 家目錄底下的專案目錄照常
+  mkdir -p "$H/proj"; printf 'p=1\n' > "$H/proj/p.py"
+  HOME="$H" run bundle "$H/proj"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"p=1"* ]]
+}
+
+@test "round3 #5 manifest 放不下全部時，未追蹤的檔仍全部列出（缺口項目優先）；header 的「all are in the manifest」是真的" {
+  git init -q "$D"
+  mkdir -p "$D/t"
+  (cd "$D/t" && for i in $(seq 1 1800); do printf '%s\n' "$i" > "f$i.py"; done)
+  git -C "$D" add -A; gcommit "$D"
+  for i in $(seq 1 30); do printf 'u\n' > "$D/zz_untracked_$i.py"; done
+  run --separate-stderr bundle "$D"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"# ... "*" more entries not listed (manifest size cap)"* ]]   # 前提：manifest 真的被截
+  for i in $(seq 1 30); do
+    [[ "$output" == *"\"zz_untracked_$i.py\"	excluded: untracked (not sent)"* ]] || { echo "untracked $i not in manifest"; return 1; }
+  done
+  [[ "$output" == *'(+10 more; all are in the manifest)'* ]]
+  # 連未追蹤的都放不下（很小的 --max-bytes）→ header 不再宣稱全都列了
+  run --separate-stderr bundle --max-bytes 8192 "$D"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'more; manifest truncated — '*' of the untracked entries are not listed)'* ]]
+  [[ "$output" != *'all are in the manifest'* ]]
+}
+
+@test "round3 #6 檔名裡的 U+2028／U+0085／bidi／零寬／BOM／Tags 一律跳脫成 JSON 的 u 跳脫（不原樣進 bundle）" {
+  # 檔名以 code point 產生：測試原始碼本身不含這些隱形／倒轉字元
+  python3 - "$D" <<'PY' || skip "檔案系統不接受這些檔名"
+import os, sys
+for cp in (0x2028, 0x2029, 0x85, 0x9b, 0x202e, 0x2066, 0x200b, 0x200e, 0xfeff, 0xe0041, 0x61c, 0x202c, 0x7f):
+    open(os.path.join(sys.argv[1], 'n%x_%s_.py' % (cp, chr(cp))), 'w').write('v=1\n')
+PY
+  run bundle "$D"
+  [ "$status" -eq 0 ]
+  printf '%s' "$output" > "${BATS_TEST_TMPDIR}/b"
+  python3 - "${BATS_TEST_TMPDIR}/b" <<'PY'
+import sys, unicodedata
+t = open(sys.argv[1], encoding='utf-8').read()
+BS = chr(92)
+def esc(cp):
+    if cp > 0xFFFF:
+        cp -= 0x10000
+        return BS + 'u%04x' % (0xD800 + (cp >> 10)) + BS + 'u%04x' % (0xDC00 + (cp & 0x3FF))
+    return BS + 'u%04x' % cp
+missing = []
+for cp in (0x2028, 0x2029, 0x85, 0x9b, 0x202e, 0x2066, 0x200b, 0x200e, 0xfeff, 0xe0041, 0x61c, 0x202c, 0x7f):
+    row = '"n%x_%s_.py"\tincluded' % (cp, esc(cp))
+    if row not in t:
+        missing.append(hex(cp))
+if missing:
+    sys.exit('not escaped: %s' % missing)
+bad = sorted(set('U+%04X' % ord(c) for c in t if c not in '\n\t' and unicodedata.category(c) in ('Cc', 'Cf', 'Zl', 'Zp')))
+if bad:
+    sys.exit('raw control/format chars in bundle: %s' % bad)
+PY
+  # 一般的非 ASCII 仍原樣可讀（R10 不變）
+  printf 'n\n' > "$D/中文.py"
+  run bundle "$D"
+  [[ "$output" == *'"中文.py"	included'* ]]
+}
+
+@test "round3 #7 tracked 模式：未追蹤清單的 git 呼叫逾時 → 只記 scan-stopped，不讓整份失敗" {
+  git init -q "$D"
+  git -C "$D" add -A; gcommit "$D"
+  printf 'NEW\n' > "$D/new.py"
+  STUB="${BATS_TEST_TMPDIR}/stub"; mkdir -p "$STUB"
+  printf '#!/bin/sh\nfor a in "$@"; do [ "$a" = "-o" ] && exec sleep 20; done\nexec %s "$@"\n' "$(command -v git)" > "$STUB/git"
+  chmod +x "$STUB/git"
+  PATH="$STUB:$PATH" PAI_CODEX_BUNDLE_GIT_TIMEOUT=2 run --separate-stderr bundle_bounded 30 "$D" -- "$FAKE" --detach
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"scan-stopped=1"* ]]
+  grep -q 'print("b")' "$FAKE_OUT/seen"
+  [[ "$(cat "$FAKE_OUT/seen")" != *"NEW"* ]]
+}
+
+@test "round3 #8 find 模式逐層走訪：很深的子樹不會在別的頂層目錄被讀到之前用完列舉上限" {
+  rm -rf "$D/node_modules" "$D/dist" "$D/src" "$D/b.py"
+  mkdir -p "$D/aaa/x" "$D/zzz"
+  (cd "$D/aaa/x" && for i in $(seq 1 600); do mkdir "d$i"; done)
+  printf 'ZZZ_TOP_LEVEL\n' > "$D/zzz/a.py"
+  PAI_CODEX_BUNDLE_SCAN_LIMIT=300 run --separate-stderr bundle "$D"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ZZZ_TOP_LEVEL"* ]]
+  [[ "$stderr" == *"scan-stopped=1"* ]]
+}
+
+@test "round3 #8 列舉上限在找到任何檔之前就用完 → 錯誤訊息說是上限（不是「沒有可送的檔」）" {
+  E="${BATS_TEST_TMPDIR}/emptydirs"; mkdir -p "$E"
+  (cd "$E" && for i in $(seq 1 600); do mkdir "d$i"; done)
+  PAI_CODEX_BUNDLE_SCAN_LIMIT=100 run --separate-stderr bundle "$E" -- "$FAKE" --detach
+  [ "$status" -eq 1 ]
+  [[ "$output" != *"ARG:"* ]]
+  [[ "$stderr" == *"列舉上限"* ]]
+  [[ "$stderr" == *"PAI_CODEX_BUNDLE_SCAN_LIMIT=100"* ]]
+}
+
+@test "round3 #9 層級邊界：有 #! 的無副檔名 script 是原始碼、RELEASES 是文件、只有文件名的 .txt 進文件層" {
+  rm -rf "$D/node_modules" "$D/dist"
+  for f in security changes news authors license-check; do printf '#!/bin/sh\necho %s\n' "$f" > "$D/$f"; done
+  printf 'r\n' > "$D/RELEASES"
+  printf 'cmake_minimum_required(VERSION 3.10)\n' > "$D/CMakeLists.txt"
+  printf 'requests==2\n' > "$D/requirements.txt"
+  printf 'n\n' > "$D/NOTES.txt"; printf 'm\n' > "$D/README.md"
+  run bundle "$D"
+  [ "$status" -eq 0 ]
+  [ "$(file_order "$output")" = "authors b.py changes license-check news security src/a.js CMakeLists.txt requirements.txt NOTES.txt README.md RELEASES " ]
+}
+
+@test "round3 #11 二進位判斷看固定的最小探測量，不受剩餘預算影響（--max-file-bytes 很小時 PNG 不被當成非 UTF-8）" {
+  printf '\211PNG\r\n\032\n\000\000\000\015IHDR' > "$D/img.png"
+  { printf 'abcdefgh'; printf '\000\000\000'; } > "$D/blob.dat"
+  run --separate-stderr bundle --max-file-bytes 4 "$D"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"img.png"	excluded: binary (NUL byte)'* ]]
+  [[ "$output" == *'"blob.dat"	excluded: binary (NUL byte)'* ]]
+  [[ "$output" != *"abcd"* ]]
+  [[ "$stderr" == *"not-utf8=0"* ]]
 }

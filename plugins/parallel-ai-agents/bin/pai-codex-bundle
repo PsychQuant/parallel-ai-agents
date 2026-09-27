@@ -5,16 +5,18 @@
 # #37 只處理了單一檔案（path 直接當 --prompt-file）；目錄模式由這裡機械組裝。
 #
 # 用法：
-#   pai-codex-bundle [--max-bytes N] [--max-file-bytes N] [--max-files N] [--] <artifact> -- <cmd> [args...]
+#   pai-codex-bundle [--max-bytes N] [--max-file-bytes N] [--max-files N] [--profile P] [--] <artifact> -- <cmd> [args...]
 #       regular file → exec <cmd> [args...] --prompt-file <artifact>（逐 byte 同 #37，不複製）
 #       directory    → 組 bundle 到暫存檔 → <cmd> [args...] --prompt-file <bundle>
 #                      → 等 <cmd> 返回後刪 bundle，exit code 照傳
-#   pai-codex-bundle [--max-bytes N] [--max-file-bytes N] [--max-files N] [--] <directory>
+#   pai-codex-bundle [--max-bytes N] [--max-file-bytes N] [--max-files N] [--profile P] [--] <directory>
 #       只把 bundle 寫到 stdout（除錯／測試用）
+#   --profile P：ensemble 的 profile key（engine 傳 args.profile）。academic／lecture／minutes → 文件優先的層級；
+#       其他（code、general、custom）或不給 → 原始碼優先。只接受 [a-z0-9_-]，最多 32 字元。
 #   以 - 開頭的 artifact 路徑必須放在 -- 之後（engine 一律寫 `-- <artifact>`）；不認得的選項 → exit 1。
 #
 # 退出碼：0 成功（或 <cmd> 的 exit code）；1 錯誤（用法錯／路徑不存在／非檔案非目錄／
-#         目錄內沒有可送出的檔案／組裝失敗／git 逾時）——這些情況下 <cmd> 不會被呼叫。
+#         目錄內沒有可送出的檔案／組裝失敗／git 逾時或失敗／root 被拒絕）——這些情況下 <cmd> 不會被呼叫。
 #
 # 依賴：單一檔案只用 bash（3.2 相容）；目錄模式用 python3 跑同目錄的 pai-codex-bundle-dir
 #       （python3 本來就是本 plugin 的 runtime 依賴：pai-collect-lens-layers／pai-parse-lens-csv）。
@@ -24,44 +26,62 @@
 #         manifest 列出「untracked (not sent)」，bundle header 另外點名（最多 20 個）——還沒 commit 的
 #         東西最可能是本機草稿或祕密，但 Claude lens 看得到它們，所以要讓讀報告的人看得出差在哪些檔。
 #         root 底下沒有任何被追蹤的檔（還沒 commit 的新目錄）→ 送 `git ls-files -o --exclude-standard`
-#         列出的（未被 ignore 的）檔。root 本身被 gitignore（git 什麼都不列）→ 當一般目錄（find），
-#         header 明說「git 會忽略的檔在這裡會送出」。git 以 `-c core.fsmonitor=false`（等）執行，不跑目標
-#         repo 設定的命令；呼叫端的 GIT_* 環境變數不帶入；每個 git 子程序有逾時
-#         （PAI_CODEX_BUNDLE_GIT_TIMEOUT，預設 30 秒；逾時 → 失敗退出，不卡住、不退回 find）。
+#         列出的（未被 ignore 的）檔。git 什麼都不列時，只有 `git check-ignore` 確認 root **本身**被 ignore
+#         才當一般目錄（find），header 明說「git 會忽略的檔在這裡會送出」；root 沒被 ignore（裡面的檔全被
+#         `/dir/*.txt` 之類的規則排除）→ 沒有可送的檔，失敗退出。git 以 `-c core.fsmonitor=false`（等）執行，
+#         不跑目標 repo 設定的命令；呼叫端的 GIT_* 環境變數不帶入（唯一例外是只給測試用、只會讓 git 拒絕讀
+#         repo 的 GIT_TEST_ASSUME_DIFFERENT_OWNER）；每個 git 子程序有逾時（PAI_CODEX_BUNDLE_GIT_TIMEOUT，
+#         預設 30 秒）。**git 的任何失敗**（逾時、非零退出：index 損壞、dubious ownership…；root 或上層有
+#         `.git` 但 git 說不是 repo、或沒裝 git）→ 失敗退出，不卡住、**不退回 find**（那會送出被 ignore 的檔）。
+#         唯一例外：有被追蹤的檔時，列「未追蹤清單」那一次 git 呼叫失敗或逾時只記 scan-stopped——它不影響送什麼。
 #         git index 裡含 `..`／`.`／空段／`.git` 的路徑或絕對路徑（只能手工造出）→ 不讀，列為 unsafe path。
 #         非 git → find，不 follow symlink；node_modules dist build target .venv 等 build/vendor 目錄
 #         不進入，但**每個被剪掉的目錄都在 manifest 列一行並計數**。含 `.git` 的子目錄是巢狀 repo：
 #         不進入（列出、計數）。git 模式下被追蹤的檔不因目錄名剪掉，只排到最後；submodule／未追蹤的
 #         巢狀 repo 也不進入。讀不到的子目錄略過並列出，不讓整份失敗。列舉上限
 #         （PAI_CODEX_BUNDLE_SCAN_LIMIT，預設 50000）計算每一個看過的目錄項目（檔案與目錄都算），
-#         超寬的單一目錄也是邊讀邊數——指到 $HOME 之類的巨大樹會停在上限並標 scan-stopped。
+#         超寬的單一目錄也是邊讀邊數，停在上限並標 scan-stopped。find 逐層（BFS）走訪：淺層的檔先於深處的
+#         樹被看到；上限在找到任何檔之前就用完（例如單一目錄裡上萬個子目錄）→ 失敗退出並明說是上限。
+#   拒絕  root 是 `/`、$HOME 或 $HOME 的任何上層、`.git` 目錄或其內部、bare repo → 失敗退出（整個家目錄
+#         不是審閱對象，denylist 也列不全；git metadata 的 config 可能在 remote URL 裡帶 token）。
 #   排除  路徑上任何一段是 symlink（含父目錄）、FIFO 等特殊檔、含 NUL 的檔、非合法 UTF-8 的檔、
 #         疑似憑證的檔名（.env 開頭的任何檔名＝.env*（含 .envrc、.env.example）、*.env、*.pem *.key *.p12
 #         *.pfx *.p8 *.jks *.keystore *.ppk *.kdbx *.tfstate *.tfvars id_rsa* id_dsa* id_ecdsa* id_ed25519*
 #         client_secret* credentials credentials.json secrets.{json,yml,yaml,toml} .secrets .npmrc .netrc
-#         .pypirc .pgpass .git-credentials .htpasswd .dockercfg，以及 .ssh/ .gnupg/ .aws/ .docker/ .kube/
-#         底下的任何檔——root 本身在這些目錄裡也算）→ 只在 manifest 列原因，不送內容。
+#         .pypirc .pgpass .git-credentials .htpasswd .dockercfg .credentials.json credentials.toml
+#         credentials.tfrc.json application_default_credentials.json msal_token_cache.* .vault-token
+#         *_history（.zsh_history…），以及 .ssh/ .gnupg/ .aws/ .docker/ .kube/ .codex/ .azure/ .terraform.d/
+#         .config/gh/ .config/gcloud/ 底下的任何檔——root 本身在這些目錄裡也算）→ 只在 manifest 列原因，不送內容。
 #         **檔名 denylist 不是祕密偵測**：寫死在原始碼裡的金鑰照樣會送出。
 #   順序  內容依優先層：0 原始碼（含無副檔名的 script）→ 1 測試 → 2 設定／其他 → 3 文件 → 4 fixture／
 #         lockfile／minified／vendored；同層依路徑位元組序。manifest 依路徑序。文件層只認副檔名
 #         （*.md *.rst *.txt *.adoc…）或**完全相同**的主檔名（README、CHANGELOG、LICENSE…，無副檔名或
 #         文件副檔名）——security.py、history.js 仍是原始碼。文件層內 SKILL.md／skills/／references/ 在前，
-#         CHANGELOG／HISTORY／CHANGES／NEWS 在最後。預算用完的那一個檔**截斷收錄**（不整檔丟掉），
+#         CHANGELOG／HISTORY／CHANGES／NEWS／RELEASES 在最後。*.txt 只有主檔名是文件名（README.txt、
+#         NOTES.txt…）才算文件，CMakeLists.txt、requirements.txt 是設定；無副檔名、以 `#!` 開頭的檔不論
+#         叫什麼（security、changes…）都是原始碼。--profile academic／lecture／minutes 改用文件優先：
+#         0 文件（.tex .md .rst .txt .typ .srt…）→ 1 參考文獻／樣式（.bib .bst .sty .cls…）→ 2 原始碼 →
+#         3 設定／其他 → 4 fixture 等。預算用完的那一個檔**截斷收錄**（不整檔丟掉），
 #         之後的檔一律 omitted——低層的檔不會補進高層檔放不下而空出的位置。
 #   大小  --max-bytes（預設 524288）是**整份 bundle** 的上限（header、manifest、邊界行都算）；
 #         單檔 --max-file-bytes（預設 65536，同 pai-build-diff），超過截斷並標注（不切壞多位元組字元）；
-#         --max-files（預設 2000）依優先序取前 N 個，其餘只計數。每個檔只開一次、最多讀上限 +1 byte，
-#         分類與輸出用同一份 bytes。放不下的標「omitted: total cap (not inspected)」。
+#         --max-files（預設 2000）依優先序取前 N 個，其餘只計數。每個檔只開一次、最多讀
+#         max(上限, 8 KiB) +1 byte：二進位（NUL）判斷至少看前 8 KiB（預算邊界剩幾個 byte 也一樣），送出的只到
+#         上限；分類與輸出用同一份 bytes。放不下的標「omitted: total cap (not inspected)」。manifest 有大小上限
+#         （--max-bytes 的 1/4）：放不下全部時，缺口類項目（未追蹤、巢狀 repo、unsafe path、讀不到）先列。
 #   回報  bundle header 把「沒送出」分兩類計數：
 #           覆蓋缺口（Codex 沒看到、reviewer 可能想看）：截斷、omitted、超過 --max-files、未追蹤、
 #             非 UTF-8、讀不到的檔／目錄、巢狀 repo、unsafe path、列舉上限
 #           依政策不送（不是缺口）：二進位、疑似憑證、symlink、特殊檔、工作樹裡已刪掉的檔、build/vendor 目錄
 #         **只有覆蓋缺口**才在 stderr 印一行 `PAI-BUNDLE-TRUNCATED: gaps: … ; not-sent-by-policy: … ; …`
 #         （只含數字，不含檔名），bundle 開頭也寫 INCOMPLETE NOTE，讓 Codex 與 wrapper agent 都在報告裡
-#         明說覆蓋不完整；只有政策排除時不印這行，細節只在 header 與 manifest。
+#         明說覆蓋不完整；只有政策排除時不印這行，細節只在 header 與 manifest。未追蹤檔的**檔名**只在 bundle
+#         header 與 manifest（stderr 只有數字）：它們能不能進報告取決於 Codex 有沒有照 header 的 NOTE 寫出來
+#         （已知限制）。
 #
 # 安全：檔名與內容都是不可信 DATA。檔案邊界用每份 bundle 隨機產生的 token 標記，
-#       內容偽造不出邊界；檔名一律以 JSON 字串呈現（非 ASCII 保持可讀，換行等控制字元跳脫），
+#       內容偽造不出邊界；檔名一律以 JSON 字串呈現（一般非 ASCII 保持可讀；控制字元、換行、U+0085、
+#       U+2028／2029、bidi 與零寬等格式字元一律 \uXXXX 跳脫），
 #       換行檔名造不出假邊界行。stdout 只屬於 <cmd>（codex-call --detach 的 run id）；本腳本自己只寫 stderr。
 #
 # 遷移（#45）：engine 以 `codexCallPath` 的同目錄找本 script（或 `codexBundlePath` 覆蓋）。
@@ -70,11 +90,12 @@
 set -uo pipefail
 
 err() { printf 'pai-codex-bundle: %s\n' "$*" >&2; }
-usage() { sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//' >&2; }
+usage() { sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//' >&2; }
 
 MAX_BYTES=524288
 MAX_FILE_BYTES=65536
 MAX_FILES=2000
+PROFILE=code
 
 is_posint() {
   case "$1" in ''|0*|*[!0-9]*) return 1 ;; esac
@@ -93,6 +114,11 @@ while [ $# -gt 0 ]; do
         *) MAX_FILES="$2" ;;
       esac
       shift 2 ;;
+    --profile)
+      if [ $# -lt 2 ]; then err "--profile 需要值"; exit 1; fi
+      case "$2" in ''|*[!a-z0-9_-]*) err "--profile 只接受 [a-z0-9_-]"; exit 1 ;; esac
+      [ "${#2}" -le 32 ] || { err "--profile 太長"; exit 1; }
+      PROFILE="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     --)
       [ $# -ge 2 ] || { err "-- 之後缺 <artifact>"; exit 1; }
@@ -128,7 +154,7 @@ command -v python3 >/dev/null 2>&1 || { err "目錄模式需要 python3"; exit 1
 
 if [ "$HAVE_CMD" -eq 0 ]; then
   exec python3 "$HELPER" --max-bytes "$MAX_BYTES" --max-file-bytes "$MAX_FILE_BYTES" \
-    --max-files "$MAX_FILES" --out - -- "$ARTIFACT"
+    --max-files "$MAX_FILES" --profile "$PROFILE" --out - -- "$ARTIFACT"
 fi
 
 BUNDLE="$(mktemp "${TMPDIR:-/tmp}/pai-codex-bundle.XXXXXX")" || { err "mktemp 失敗"; exit 1; }
@@ -141,7 +167,7 @@ chmod 600 "$BUNDLE" || { err "chmod 失敗"; exit 1; }
 
 # helper 失敗（沒有可送的檔、寫入失敗…）→ 不呼叫 <cmd>；它自己的 stderr（含 PAI-BUNDLE-TRUNCATED）原樣留著
 python3 "$HELPER" --max-bytes "$MAX_BYTES" --max-file-bytes "$MAX_FILE_BYTES" \
-  --max-files "$MAX_FILES" --out "$BUNDLE" -- "$ARTIFACT" || exit 1
+  --max-files "$MAX_FILES" --profile "$PROFILE" --out "$BUNDLE" -- "$ARTIFACT" || exit 1
 
 # 不 exec：<cmd>（codex-call --detach）在印出 run id 前已同步讀完 prompt，返回後即可刪 bundle。
 "$@" --prompt-file "$BUNDLE"
