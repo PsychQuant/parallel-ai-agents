@@ -134,7 +134,13 @@ esac
 1. 解析 harness 絕對路徑：`${CLAUDE_PLUGIN_ROOT}/workflows/ensemble-workflow.js`。
 2. **解析 codex 治理**（#23，codexEnabled=true 必經）：依 [`references/codex-governance.md`](../../references/codex-governance.md) 從 codex-pro 契約解析 `CODEX_MODEL`/`CODEX_EFFORT`（缺席 fail-fast + 安裝指令）。
 3. 解析 wrapper 絕對路徑：`${CLAUDE_PLUGIN_ROOT}/bin/codex-call`（**用絕對路徑**，不賭 workflow agent shell 的 PATH —— install-time PATH 注入是 version-pinned、可能 stale/不存在）。
-4. **蒐集 lens 層 ②③**（#29）：`python3 "${CLAUDE_PLUGIN_ROOT}/bin/pai-collect-lens-layers" code` → `lenses` **原樣**（含 `override` 欄）進 `args.customLenses`；`layers` / `warnings` 留給 Phase 4 的 provenance 行。完整契約見 [`references/lens-layers.md`](../../references/lens-layers.md)。⚠️ **`profile` 維持 `"code"`，不可改成 `"custom"`** —— 理由（`profile.title` 無 args 覆寫路徑）在該文件。
+4. **蒐集 lens 層 ②③**（#29）：
+
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT}/bin/pai-collect-lens-layers" code
+   ```
+
+   → `lenses` **原樣**（含 `override` 欄）進 `args.customLenses`；`layers` / `warnings` 留給 Phase 4 的 provenance 行。完整契約見 [`references/lens-layers.md`](../../references/lens-layers.md)。⚠️ **`profile` 維持 `"code"`，不可改成 `"custom"`** —— 理由（`profile.title` 無 args 覆寫路徑）在該文件。
 5. 解析 dispatch model（#20）：`PAI_AGENT_MODEL` 未設 → `opus`；設了但不在 `sonnet|opus|haiku|fable` → **abort with usage error**（fail-loud，不靜默換模型；engine 對顯式非法值亦會於派發前 throw 作第二層）。解析值經 `args.agentModel` 傳入。接著呼叫 `Workflow` tool，傳 `scriptPath`（harness 絕對路徑）+ `args`：
 
    ```json

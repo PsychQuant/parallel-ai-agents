@@ -1,6 +1,6 @@
 # 三層 lens 疊加（#29）
 
-所有 ensemble skill 的 lens 集合由**三層**疊出來。這份文件是四個 skill 共用的契約 ——
+所有 ensemble skill 的 lens 集合由**三層**疊出來。這份文件是五個 skill（四支 `ensemble-*-review` ＋ `ensemble-compose`）共用的契約 ——
 **要改行為就改這裡**，不要在個別 SKILL.md 裡各寫一份（三份文案會漂移，那正是 #29
 診斷時記下的風險）。同 `codex-governance.md` 的引用模式。
 
@@ -64,7 +64,7 @@
 python3 "${CLAUDE_PLUGIN_ROOT}/bin/pai-collect-lens-layers" <profile>
 ```
 
-`<profile>` = 該 skill 的 profile 名（`code` / `academic` / `lecture`；`ensemble-compose`
+`<profile>` = 該 skill 的 profile 名（`code` / `academic` / `lecture` / `minutes`；`ensemble-compose`
 用 `--base` 的值，預設不帶則跳過本步）。
 
 輸出：
@@ -102,7 +102,7 @@ custom lens（`--lens` / `--lens-file`），那些排在**後面**（使用者�
 
 ### 4. 報表印 provenance 行
 
-合併/報表階段（各 skill 的 Phase 4，`ensemble-compose` 為 Phase 3）在 findings 表**之前**印一行：
+合併/報表階段（`code` / `academic` / `lecture` 為 Phase 4；`ensemble-minutes-review` 與 `ensemble-compose` 為 Phase 3）在 findings 表**之前**印一行：
 
 ```
 Lens 來源：built-in <n> 條 · pack <version> +<a>/⊕<b> · user +<c>/⊕<d>
@@ -111,6 +111,32 @@ Lens 來源：built-in <n> 條 · pack <version> +<a>/⊕<b> · user +<c>/⊕<d>
 
 資料來自兩處：`pai-collect-lens-layers` 的 `layers`（哪幾層在、版本多少）與 harness 回傳的
 `stats.lensProvenance`（每個 lens 的處置：`added` / `overridden` / `ignored`，`overrodeFrom` 指出被誰蓋）。
+
+pack 與 user 的拆分**不能**直接從 `stats.lensProvenance` 讀：harness 看不到 `_layer`，層 ②③ 的條目
+一律是 `origin: "custom"`（skill 自己的 `--lens` / `--lens-file` 也是）。harness 依 `customLenses` 的順序
+逐條記錄，所以**依順序配對**：第 i 筆 `origin === "custom"` 的條目對應 `customLenses[i]`，取其 `_layer`
+（沒有 `_layer` 的是 skill 自己的 `--lens` / `--lens-file`）。
+配對的前提 —— harness 在下列情況**不留** provenance 條目，配對會錯位：
+(a) 該 key 在 `disableLenses` 裡；(b) 該條的 `key` 或 `focus` 不是字串、或 `trim()` 後為空
+（`workflows/ensemble-workflow.js` 的 `customs` 過濾，安靜丟掉、不警告）。
+因此先比條數：令 `N` = `customLenses` 條數、`C` = `origin === "custom"` 的條目數。
+
+- `C === N` → 依序配對。
+- `N > 0` 且 `C === 0` → 這**不是**歸屬問題，是層 ②③ 整批沒進 harness（典型成因：`customLenses` 被傳成
+  字串 —— harness 對非陣列一律當成沒給）。印警告 `⚠️ 層 ②③ 未進入 harness`，不要印成 `+0/⊕0`。
+  `stats.agents` 在這種情況下與「沒裝 pack」一模一樣，拿 harness 自己回傳的 lens 數與 replicas 去驗算
+  `stats.agents` 永遠對得上，驗不出這件事。
+- 其他（`0 < C ≠ N`）→ 不要硬配，改印層 ②③ 的合計並註明條數不符。
+
+**被上限切掉的 lens 仍記為 `added`。** harness 先記 provenance，之後才依 `maxAgents` 從 lens 集合**尾端**
+`slice`（新增的層 ③ 排最後、先被切）。判別：`stats.reviewers[].lens` 是實際派出的 lens key；
+`lensProvenance` 裡 key 不在其中的條目就是被切掉的（`journal.jsonl` 另有 `lens set N → M … extra lenses dropped`）。
+這些要印成 `✂`（不是 `+`），並警告哪幾條層 ②③ lens 被切。
+
+**同一條 built-in 被 pack 與 user 都 override** 時會有兩筆 `overridden`（第一筆 `overrodeFrom: "builtin"`、
+第二筆 `overrodeFrom: "custom"`）；實際在跑的是**該 key 最後一筆** `overridden` 的那一層，警告要點名它。
+
+`ensemble-minutes-review` 的 Phase 3 有逐欄的來源表與上述各警告的文案。
 
 **沒裝 lens pack 時這行仍要印**（只會顯示 built-in），這樣「今天的報表跟昨天不同」永遠有據可查 ——
 量測儀器換了刻度卻不說，是 eval 數字不可比的根源。
