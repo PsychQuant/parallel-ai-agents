@@ -89,8 +89,8 @@ if [ "${1:-}" = "--selftest" ]; then
   done
   # R24 regression F9：門檻寫成 `>=` 而實際值更高時，那個差額**沒有網**——刪掉一個 fixture 仍然綠。
   # 三個門檻一律改成**等於實測值**：要加 fixture 就同步改這裡，讓「少了一個」立刻紅。
-  if [ "${n_pass}" -ne 246 ]; then
-    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 246（改動 fixture 請同步改這個數字）" >&2
+  if [ "${n_pass}" -ne 247 ]; then
+    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 247（改動 fixture 請同步改這個數字）" >&2
     fail=1
   fi
   if [ "${n_rule}" -ne 350 ]; then
@@ -2450,6 +2450,8 @@ CLOSE_AT_RE = re.compile(r"(?<![^ \t;&|()<>])\}(?![^ \t;&|()<>])")
 
 def _set_prefix_line(toks):
     """`set` 前綴行：只收 `-e`／`-u`／`-E`（可合寫）與 `-o NAME`（可與 `-euE` 合寫成 `-euo NAME`），NAME 限 SET_OPT_NAMES。"""
+    if toks[-1:] == [";"]:
+        toks = toks[:-1]                         # 行尾的 `;` 只是結束那條命令（R39，R38 第 11 列）
     if toks[:1] != ["set"] or len(toks) < 2:
         return False
     k = 1

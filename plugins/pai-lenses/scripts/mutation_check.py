@@ -1266,6 +1266,8 @@ MUTATIONS += [
     ("lint: run 裡的 PR 可控運算式不擋（R39，R38 第 14 列 → bypass-r39-github-event-expression-in-run）",
      '        elif not declared and any(GH_EXPR_UNTRUSTED_RE.search(l) for l in scan_in if l is not None):',
      '        elif False:', "lint"),
+    ("lint: `set` 前綴行尾的 `;` 不收（R39，R38 第 11 列 → good-r39-strict-set-prefix-semicolon）",
+     '    if toks[-1:] == [";"]:\n        toks = toks[:-1]', '    if False:\n        toks = toks[:-1]', "lint"),
     ("lint: PR 可控運算式不認 `github.head_ref`（R39 → bypass-r39-github-head-ref-in-run-default）",
      r'(?:event\.|head_ref\b)', r'(?:event\.)', "lint"),
 ]
