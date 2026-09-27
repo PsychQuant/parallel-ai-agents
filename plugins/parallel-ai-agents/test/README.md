@@ -18,6 +18,7 @@ ensemble-* 的程式表面看似都是「LLM 驅動的編排」，不可測。�
 | 檔案 | 對象 |
 |------|------|
 | `pai-build-diff.bats` | `../bin/pai-build-diff`（ensemble-code-review 的 diff 模式建構器）|
+| `pai-codex-bundle.bats` | `../bin/pai-codex-bundle` ＋ `../bin/pai-codex-bundle-dir`（Codex leg 的 artifact 組裝器：檔案直通 `--prompt-file`、目錄組成有上限的 bundle；#45）|
 | `ensemble-workflow.test.mjs` | `../workflows/ensemble-workflow.js`（共用 harness，4 個 skill 的底層）|
 | `pai-parse-lens-csv.bats` | `../bin/pai-parse-lens-csv`（ensemble-compose 的 `--lens-file` CSV 解析器）|
 | `pai-parse-verdict.bats` | `../bin/pai-parse-verdict`（ensemble-academic-review `--auto-iterate` 的 verdict tag 解析器）|
@@ -33,6 +34,8 @@ ensemble-* 的程式表面看似都是「LLM 驅動的編排」，不可測。�
 
 `pai-parse-lens-csv.bats` 涵蓋：含逗號/引號/換行的 focus（csv 模組、不被切爛）、needsSrt 變體、空欄跳過、**BOM 不丟列（utf-8-sig regression）**、CRLF、缺檔/缺欄。
 `codex-call-error-extract.bats` 的 SUT 是 macOS-only 的 Swift script，故在 ubuntu job 上會**自我 skip**；CI 另有 `macos-swift-bats` job 確保它真的被執行（只加 skip guard 而不加 job，錨點會變成永遠 skip 的 vacuous green —— #25 verify）。
+
+`pai-codex-bundle.bats` 涵蓋：單一檔案逐 byte 直通（#37 路徑不變、不需要 python3）、目錄 → bundle 且 `<cmd>` 返回後刪暫存檔、stdout 只屬於 `<cmd>`、exit code 照傳；排除規則（剪掉的目錄要列出並計數、二進位含 8 KiB 之後的 NUL、strict UTF-8、擴充的憑證檔名 denylist、葉節點與**父目錄** symlink、FIFO、`.gitignore`、git 模式不送未追蹤檔、被追蹤的 `dist/` 不悄悄剪掉、巢狀 repo、root 被 ignore）；不執行目標 repo 的 `core.fsmonitor`、不吃呼叫端的 `GIT_DIR`；不依賴 macOS `iconv` 寫 `/dev/null` 的行為、數 KB 中文檔逐 byte 收錄、覆蓋缺口（非 UTF-8、截斷、未追蹤…）才印 `PAI-BUNDLE-TRUNCATED` 且與政策排除（二進位、憑證、build 目錄）分開計數；優先層（原始碼先於 CHANGELOG、文件層只認完全相同的主檔名、SKILL.md／references 先於 changelog、預算邊界的檔截斷收錄而不讓低層補位）、整份 bundle 不超過 `--max-bytes`、2000 個小檔 10 秒內；寫入失敗非零退出、讀不到的子目錄略過（root 身分會 skip）；隨機邊界 token、JSON 檔名（換行防偽造、非 ASCII 可讀）；以 `-` 開頭的路徑；verify round 2：手工 git index 的 `..`／`.git/` 路徑（列檔與 Opener 兩層都擋）、root 本身是 `.aws`／`.docker`、find 模式不進入巢狀 repo、`.git/info/exclude` 是 FIFO 時 git 逾時而不卡住、列舉上限計入目錄與超寬目錄、`.env*` 全擋、未追蹤檔在 header 點名、root 被 gitignore 的明示；verify round 3：git 失敗（index 損壞、dubious ownership）→ 失敗退出而不退回 find、git 列出零個檔但 root 沒被 ignore（`git check-ignore`）→ 不送、`--profile academic` 的文件優先層級、擴充的憑證 denylist 與拒絕 `/`／`$HOME`／`.git` 當 root、manifest 截斷時未追蹤項目優先列出、檔名的 bidi／U+2028 等跳脫、未追蹤清單逾時只記 scan-stopped、find 逐層走訪與「上限先到」的訊息、`#!` script／`RELEASES`／`*.txt` 的層級、預算邊界的二進位探測；空目錄／不存在／非法上限 → exit 1 且不呼叫 `<cmd>`。macOS CI 以 `PAI_TEST_BASH=/bin/bash`（系統 bash 3.2）再跑一次。
 
 `pai-parse-verdict.bats` 涵蓋：**last-match（防 echoed instruction 範例造成假收斂的 regression）**、`{N}` placeholder 不匹配、嚴格大寫、查無 tag → 非零、stdin/file。
 
@@ -50,7 +53,8 @@ brew install bats-core shellcheck
 ./test/run.sh
 
 # 或分開
-shellcheck bin/pai-build-diff
+shellcheck bin/pai-build-diff bin/pai-codex-bundle
+python3 -m py_compile bin/pai-codex-bundle-dir
 bats test/
 ```
 
