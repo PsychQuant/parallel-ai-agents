@@ -93,8 +93,8 @@ if [ "${1:-}" = "--selftest" ]; then
     echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 261（改動 fixture 請同步改這個數字）" >&2
     fail=1
   fi
-  if [ "${n_rule}" -ne 367 ]; then
-    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 367" >&2
+  if [ "${n_rule}" -ne 373 ]; then
+    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 373" >&2
     fail=1
   fi
   if [ "${fail}" -ne 0 ]; then exit 1; fi
@@ -2033,7 +2033,7 @@ class _Sh:
             self.skip_nl()
             if self.tok() is None or end(self.tok()):
                 return
-            self.parse_pipeline(ctx, end)
+            self.parse_pipeline(dict(ctx, cond=True), end)      # 右邊可能不執行（R40，R39 verify 第 5 列：`true || set -o pipefail`）
 
     def parse_pipeline(self, ctx, end):
         ev0, segs, conns = len(self.o["events"]), [], []
@@ -2049,7 +2049,7 @@ class _Sh:
                 break
             conns.append(self.tok()["op"])
             own.add(len(self.o["events"]))
-            self.o["events"].append({"k": "pipe", "scope": ctx["scope"]})
+            self.o["events"].append({"k": "pipe", "scope": ctx["scope"], "loop": tuple(self.o["loops"])})
             bounds.append(len(self.o["events"]))
             self.i += 1
             self.skip_nl()
@@ -2114,6 +2114,7 @@ class _Sh:
         return {"kind": "simple", "trail": rs, "neut": neut}
 
     def parse_case(self, ctx):
+        ctx = dict(ctx, cond=True)               # 分支可能不執行（R40）
         self.i += 1                              # `case`
         if self.tok() is not None and self.tok()["k"] == "W":
             self.subs(self.tok(), ctx)
@@ -2172,6 +2173,7 @@ class _Sh:
                 self.env_word(w, ctx, bare=False)
             elif w["code"] not in _LEAD_WORDS:
                 break
+            self.ctl(w["code"])
             k += 1
             # 前綴詞自己的選項（R39，#33 verify R38 第 4、8 列）：`command -p set -x`、`builtin -- set +o pipefail`、`time -p …`——
             # 前一版只剝裸詞，選項被當成命令名，後面的 `set` 就看不到了（380e4a4 的 `FD_RE` 擋這幾種，回歸）。
@@ -2184,6 +2186,10 @@ class _Sh:
             return
         name = words[k]["lit"] if words[k]["lit"] is not None else words[k]["code"]
         args = words[k + 1:]
+        if name in ("for", "select", "fi", "done"):
+            self.ctl(name)
+            if name in ("fi", "done"):
+                return
         if words[k]["lit"] is None:
             self.opaque_cmd(args, ctx)
         if name == "eval" and args[:1] and args[0]["lit"] == "--":
@@ -2194,6 +2200,8 @@ class _Sh:
             return
         if name == "set":
             self.set_cmd(args, ctx)
+        elif name == "trap":
+            self.trap_cmd(args, ctx)
         elif name == "shopt":
             self.shopt_cmd(args, ctx)
         elif name in ("export", "declare", "typeset", "local", "readonly", "env"):
@@ -2228,8 +2236,25 @@ class _Sh:
             if text.startswith((key + "=", key + "+=")) or (bare and text == key):
                 self.hit("run 裡設定 `%s`——bash（含子行程）啟動時會讀它，依鍵不同可能開 xtrace、執行別的程式碼，或把已開啟的 trace 輸出轉向到別的 fd（`BASH_XTRACEFD` 單獨設定不會自己打開 xtrace，需要 `-x`／verbose 已經開著）" % key, ctx)
 
-    def pf_event(self, on, ctx):
-        self.o["events"].append({"k": "pf", "on": on, "scope": ctx["scope"], "fn": ctx.get("fn", False)})
+    def pf_event(self, on, ctx, glob=False):
+        """`cond`：在條件裡（if／while／until／for／select／case 的本體或條件、`&&`／`||` 右邊）——可能沒執行。`loop`：所在的迴圈
+        （外到內的 id）。`glob`：不受範圍限制、作用到之後的每一條管線（trap 動作、lastpipe 之後）。見 `_pipefail_holds`。"""
+        self.o["events"].append({"k": "pf", "on": on, "scope": ctx["scope"], "fn": ctx.get("fn", False),
+                                 "cond": bool(ctx.get("cond")) or self.o["cond"] > 0, "loop": tuple(self.o["loops"]),
+                                 "glob": glob})
+
+    def ctl(self, word):
+        """控制結構的保留字（R40，#33 verify R39 第 5 列）：解析器不替 if／while／for 建結構，這裡只記深度——條件深度與迴圈堆疊。
+        `fi`／`done` 對不上時停在 0（fail-closed：多出來的收尾不會讓後面的「開」被當成無條件）。"""
+        if word in ("if", "while", "until", "for", "select"):
+            self.o["cond"] += 1
+            if word != "if":
+                self.o["nloop"] += 1
+                self.o["loops"].append(self.o["nloop"])
+        elif word in ("fi", "done"):
+            self.o["cond"] = max(0, self.o["cond"] - 1)
+            if word == "done" and self.o["loops"]:
+                self.o["loops"].pop()
 
     def set_cmd(self, args, ctx):
         i = 0
@@ -2258,7 +2283,22 @@ class _Sh:
                 elif on and ch in "xv":
                     self.hit("`set %s` 開了 %s" % (a, "xtrace" if ch == "x" else "verbose"), ctx)
 
+    def trap_cmd(self, args, ctx):
+        """`trap '<動作>' <訊號>`（R40，#33 verify R39 第 5 列）：DEBUG trap 在每個命令之前執行、EXIT／RETURN／ERR 在之後——動作裡的
+        `set` 什麼時候生效，順序模型答不出來。動作不是字面、或字面裡有 `set`／`pipefail` ⇒ 從這裡起當成關掉，不分範圍。"""
+        a = [x for x in args if x["lit"] != "--"]
+        if not a or (a[0]["lit"] is not None and a[0]["lit"].startswith("-")):
+            return                                # `trap -l`／`trap -p`：只列出
+        act = a[0]["lit"]
+        if act is None or re.search(r"\bset\b|pipefail", act):
+            self.pf_event(False, ctx, glob=True)
+
     def shopt_cmd(self, args, ctx):
+        # `shopt -s lastpipe`（R40，#33 verify R39 第 5 列）：管線最後一段改在目前的 shell 跑，「管線的每一段各開一層範圍」不再成立
+        # ⇒ 之後的「關」一律作用到底（見 `_pipefail_holds`）。
+        lits = [a["lit"] for a in args]
+        if "lastpipe" in lits and any(l is not None and l.startswith("-") and "s" in l for l in lits):
+            self.o["events"].append({"k": "lastpipe", "scope": ctx["scope"]})      # `scope`：rescope 會走訪每個事件
         flags, i = "", 0
         while i < len(args):
             a = args[i]["lit"]
@@ -2328,7 +2368,7 @@ def _analyse(logical, logical_src):
     S = "\n".join(s if s is not None else "\0" * len(c) for c, s in zip(logical, logical_src))
     _COVERED.clear()
     toks, _ = _lex(C, S)
-    out = {"groups": [], "hits": [], "events": [], "pipelines": [], "nscope": 0}
+    out = {"groups": [], "hits": [], "events": [], "pipelines": [], "nscope": 0, "cond": 0, "loops": [], "nloop": 0}
     _Sh(toks, out).parse_list({"stack": (), "scope": ()}, lambda t: False)
     for segs, conns in out["pipelines"]:
         last = max((k for k, sg in enumerate(segs) if sg["neut"]), default=0)
@@ -2362,14 +2402,32 @@ def _pipefail_holds(events, on):
       · 同一範圍裡先關再開 ⇒ 之後是開的（R37 版忽略子殼層裡的「開」，誤擋同一個寫法）；
       · `set -o pipefail &` 在背景子殼層裡 ⇒ 管不到外面（R37 版把 `&` 當 `;`，R38 第 8 列）。
     **函式本體**不開新範圍：本體要呼叫才執行，所以裡面的「開」不算數（可能沒被呼叫），「關」照樣作用在定義所在的範圍
-    （可能被呼叫）——兩個方向都是 fail-closed。"""
+    （可能被呼叫）——兩個方向都是 fail-closed。
+    **控制流程**（R40，#33 verify R39 第 5 列：R39 的範圍模型照詞元順序，`if false; then set -o pipefail; fi`、`true || set -o pipefail`
+    之後的管線被當成開著——c53ac22 擋、R39 放行，回歸）。封閉列舉，只有這四條：
+      · 條件裡（`cond`：if／while／until／for／select／case、`&&`／`||` 右邊）的「開」不算數，同函式本體；「關」照算。
+      · 迴圈本體裡的「關」作用到**同一個迴圈裡的每一條管線**，不論前後——第二趟時它已經執行過了。
+      · `glob` 的「關」（非字面或含 `set`／`pipefail` 的 trap 動作）作用到之後的每一條管線，不分範圍，**之後的「開」也蓋不掉**
+        （DEBUG trap 在每個命令之前再執行一次）。不分範圍是過度保守：設在子殼層裡的 trap 其實管不到外層——方向是 fail-closed。
+      · `shopt -s lastpipe` 之後的設定不分範圍（管線最後一段在目前的 shell 跑）；「開」「關」照順序。"""
+    lastpipe_at = next((i for i, e in enumerate(events) if e["k"] == "lastpipe"), None)
     for j, ev in enumerate(events):
         if ev["k"] != "pipe":
             continue
-        st = on
-        for e in events[:j]:
-            if e["k"] == "pf" and ev["scope"][:len(e["scope"])] == e["scope"] and not (e["fn"] and e["on"]):
+        st, stuck = on, False
+        for i, e in enumerate(events[:j]):
+            if e["k"] != "pf":
+                continue
+            if e["glob"] and not e["on"]:
+                stuck = True                     # trap 的「關」在每個命令之前再執行一次：之後的「開」救不回來
+            elif ((lastpipe_at is not None and lastpipe_at < i) or ev["scope"][:len(e["scope"])] == e["scope"]) \
+                    and not ((e["fn"] or e["cond"]) and e["on"]):
                 st = e["on"]
+        st = st and not stuck
+        if st and ev["loop"]:
+            loop = set(ev["loop"])
+            st = not any(e["k"] == "pf" and not e["on"] and loop & set(e["loop"])
+                         and ev["scope"][:len(e["scope"])] == e["scope"] for e in events)
         if not st:
             return False
     return True

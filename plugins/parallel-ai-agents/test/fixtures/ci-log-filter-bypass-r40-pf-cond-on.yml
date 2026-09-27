@@ -1,0 +1,20 @@
+# #33 verify R39 第 5 列：pipefail 範圍模型照詞元順序、不照控制流程。`if false; then set -o pipefail; fi`：條件裡的「開」可能沒執行（c53ac22 擋，R39 放行——回歸）。
+# bash 5.3 實跑：失敗被遮蔽、step rc=0。R40：條件（if／while／until／for／case、`&&`／`||` 右邊）裡的「開」不算數；迴圈本體裡的
+# 「關」作用到同一迴圈的所有管線；非字面或含 `set`／`pipefail` 的 trap 動作、`shopt -s lastpipe` 之後的「關」一律作用到底。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: cond-on
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            set +o pipefail
+            if false; then set -o pipefail; fi
+            false | cat
+          } 2>&1 | python3 scripts/neutralise.py
