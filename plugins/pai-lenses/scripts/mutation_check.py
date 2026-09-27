@@ -46,10 +46,10 @@ R7 有一個 mutation 一直沒轉紅，差點被判定成「那條測試是套�
 mutation test 本身也需要被驗證有沒有真的打中。
 """
 import argparse
-import ast
 import concurrent.futures
 import hashlib
 import json
+import os
 import pathlib
 import queue
 import re
@@ -117,36 +117,16 @@ SUITE_INPUTS = {
 SUITE_INPUTS["oracle-inverted"] = SUITE_INPUTS["oracle"]
 
 
-def _strip_docstrings(tree):
-    for node in ast.walk(tree):
-        body = getattr(node, "body", None)
-        if (isinstance(body, list) and body and isinstance(body[0], ast.Expr)
-                and isinstance(body[0].value, ast.Constant) and isinstance(body[0].value.value, str)):
-            body[0] = ast.Pass()
-    return tree
-
-
-def _py_norm(src):
-    try:
-        return ast.dump(_strip_docstrings(ast.parse(src)), include_attributes=False)
-    except SyntaxError:
-        return "RAW\0" + src                    # 突變體可能讓程式碼不合法：照原文比
-
-
-def normalized_source(path, text):
-    """快取 key 用的正規化內容：`.py` 用剝掉註解與 docstring 的 AST；內嵌 Python 的 bash（lint）外殼照原文、內嵌那段
-    用 AST；其他照原文。只改註解時 key 不變，改一個字面值 key 就變。"""
-    if path.suffix == ".py":
-        return _py_norm(text)
-    if "<<'PY'\n" in text and "\nPY" in text:
-        head, rest = text.split("<<'PY'\n", 1)
-        py, tail = rest.rsplit("\nPY", 1)
-        return head + "\0" + _py_norm(py) + "\0" + tail
+def source_for_key(path, text):
+    """快取 key 用的內容：**原文**。R39 用「剝掉註解與 docstring 的 AST」，宣稱只改註解時結果不變——#33 verify R39 第 4 列
+    證明不成立：`test_validate.py` 讀 `validate.py` 的 `# READ-SITE k/N` 註解、也讀 lint 的原始碼，把 `READ-SITE 1/` 改成
+    `READ-SITE 99/` 測試就紅了，快取卻照樣「沿用、殺掉」。哪些位元組會被某個驗證指令讀到，列舉不完；所以一律照原文。
+    代價是只改 docstring 也會讓快取失效；不計入的只有 `_NOT_READ` 裡點名的檔。"""
     return text
 
 
 def inputs_digest(spec, exclude=frozenset()):
-    """輸入檔的雜湊：路徑與（正規化後的）內容都計入，所以改內容、增刪檔案都會換 digest。"""
+    """輸入檔的雜湊：路徑與原文都計入，所以改內容（含註解）、增刪檔案都會換 digest。"""
     h = hashlib.sha256()
     files = set()
     for root, pats, *skip in spec:
@@ -157,39 +137,46 @@ def inputs_digest(spec, exclude=frozenset()):
                         and f.resolve() not in exclude and str(f.relative_to(root)) not in skip:
                     files.add((root, f))
     for root, f in sorted(files, key=lambda x: str(x[1])):
-        raw = f.read_bytes()
-        try:
-            body = normalized_source(f, raw.decode("utf-8")).encode("utf-8", "surrogatepass")
-        except UnicodeDecodeError:
-            body = raw
+        body = f.read_bytes()
         h.update(str(f.relative_to(root)).encode() + b"\0" + hashlib.sha256(body).digest())
     return h.hexdigest()
 
 
 def tool_versions():
-    """python 與 bash 的版本（還有 PyYAML，神諭用它）——換版本就不沿用。"""
-    v = [sys.version]
-    try:
-        v.append(subprocess.run(["bash", "--version"], capture_output=True, text=True).stdout.split("\n")[0])
-    except OSError:
-        v.append("no-bash")
+    """執行環境的指紋——換了就不沿用。版本：python（跑本工具的）、PATH 上的 python3（驗證指令用的）、bash、PyYAML。
+    環境（#33 verify R39 第 4 列）：神諭依 `/proc/self/fd` 是否存在改變 KNOWN_DISAGREE、`/bin/sh` 是 bash 還是 dash 會改變
+    fixture 的外流、`ORACLE_LINT` 換掉整支 lint——而快取檔進了版控，會被帶到別台機器上。"""
+    def run(cmd):
+        try:
+            return subprocess.run(cmd, capture_output=True, text=True).stdout.strip().split("\n")[0]
+        except OSError:
+            return "missing"
+    v = [sys.version, "bash " + run(["bash", "--version"])]
+    py3 = shutil.which("python3") or "none"
+    v.append("python3=%s %s" % (py3, run([py3, "--version"]) if py3 != "none" else ""))
     try:
         import yaml
         v.append("yaml " + yaml.__version__)
     except ImportError:
         v.append("no-yaml")
+    v.append("platform=%s proc=%s" % (sys.platform, os.path.isdir("/proc/self/fd")))
+    v.append("sh=%s" % os.path.realpath("/bin/sh"))
+    v.append("ORACLE_LINT=%s" % os.environ.get("ORACLE_LINT", ""))
     return "\n".join(v)
 
 
 def target_key(suite, path, mutated, digest, tools):
-    return hashlib.sha256("\0".join([suite, normalized_source(path, mutated), digest, tools]).encode(
+    return hashlib.sha256("\0".join([suite, source_for_key(path, mutated), digest, tools]).encode(
         "utf-8", "surrogatepass")).hexdigest()
 
 
 def load_cache(path):
     try:
         d = json.loads(path.read_text(encoding="utf-8"))
-        return d.get("results", {}) if d.get("version") == 1 else {}
+        res = d.get("results", {}) if d.get("version") == 1 else {}
+        # 只收兩種結果（#33 verify R39 第 17 列）：快取檔進了版控，任何人都能寫進一筆；「靶壞」本來就不快取。
+        return {k: v for k, v in res.items()
+                if isinstance(v, list) and len(v) == 2 and v[0] in ("killed", "survived") and isinstance(v[1], str)}
     except (OSError, ValueError):
         return {}
 
@@ -1598,13 +1585,16 @@ def main():
     # R28 D9（G-R29-4）：前置檢查先前只跑 `test_validate.py`。R27 把守備範圍擴到 lint 之後，lint 靶的
     # 生死由 `--selftest` 判——而 selftest 紅的時候每個 lint 靶都被判「殺掉」，同一個洞換個 suite 又開了。
     # 現在對 SUITES 裡每一條不同的驗證指令各跑一次，任一紅就整輪不跑、點名是哪個 suite。
-    # 全部命中快取時不跑（那些結果是在綠底線下量的）；worker 由父行程檢查過。
-    if not args.worker and (run_sel or not sel) and not precheck_ok():
+    # 全部命中快取時**也要跑**（#33 verify R39 第 4 列）：R39 以為「那些結果是在綠底線下量的」就夠了，但底線可以因為
+    # 不在 key 裡的東西變紅，快取卻照樣回「殺掉」——R9 M15 的洞以快取的形狀重開。worker 由父行程檢查過。
+    if not args.worker and not precheck_ok():
         return 1
     for i in sel:
         if i in results:
             kind = results[i][0]
             print({"killed": "  沿用 殺掉 ", "survived": "  沿用 存活 "}.get(kind, "  沿用 靶壞 ") + MUTATIONS[i][0], flush=True)
+            if args.only:                        # `--only` 承諾每個靶一行 RESULT，不論是否沿用（R39 verify 第 17 列）
+                print(f"RESULT\t{i}\t{kind}", flush=True)
     if args.jobs > 1 and run_sel:
         fresh = run_parallel(run_sel, args.jobs)
     else:
@@ -1623,7 +1613,7 @@ def main():
     if args.worker:
         return 1 if broken else 0
     reused = sum(1 for i in sel if results[i][2])
-    rc = report(killed, survived, broken, time.monotonic() - t0, args.jobs)
+    rc = report(killed, survived, broken, time.monotonic() - t0, args.jobs, n_rerun=len(sel) - reused)
     if use_cache:
         why = ("（--no-cache：這一輪不沿用，結果仍寫回快取）" if args.no_cache
                else "（沿用的條件：key 相同——突變後的程式碼、守備單位的輸入、工具版本都沒變；發版前的量測請加 --no-cache）")
@@ -1731,11 +1721,14 @@ def run_parallel(sel, jobs):
     return results
 
 
-def report(killed, survived, broken, elapsed, jobs):
+def report(killed, survived, broken, elapsed, jobs, n_rerun=None):
     # R17 DA-H：耗時別再手填。散文裡的區間會漂（R14→R17 連四輪被抓到低估），所以這一輪起
     # **由程式自己量並印出**；文件只保留粗估並指向這一行。`--jobs` 時印的是牆鐘時間。
-    n_run = len(killed) + len(survived) + len(broken)
-    if n_run:
+    # 分母只算真的重跑的靶（R39 verify 第 17 列）：沿用快取的靶沒有耗時，除進去的每靶秒數沒有意義。
+    n_run = len(killed) + len(survived) + len(broken) if n_rerun is None else n_rerun
+    if n_rerun == 0:
+        print("\n本輪沒有重跑任何靶（全部沿用快取），不印每靶耗時。")
+    elif n_run:
         print(f"\n本輪實測耗時：{elapsed/60:.1f} 分鐘 / {n_run} 靶 = 每靶 {elapsed/n_run:.1f} s"
               + (f"（--jobs {jobs}，牆鐘）" if jobs > 1 else "")
               + "（把這個數字填回 test_validate.py 檔頭與 CHANGELOG，不要沿用舊區間）")

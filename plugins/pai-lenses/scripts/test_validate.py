@@ -2275,21 +2275,23 @@ class ValidateTest(unittest.TestCase):
                 or (isinstance(n, ast.Import) and any(a.asname and a.name in V.READ_MODULES for a in n.names))]
         self.assertEqual(len(hits), 2)
 
-    def test_mutation_cache_key_ignores_comments_but_not_code(self):
-        """R39（使用者提議：沒改變就沿用 JSON 記錄）：快取 key 用「剝掉註解與 docstring 的 AST」，所以 lint 嵌入的 Python
-        只改註解時 key 不變；改一個字面值 key 就變。bash 外殼照原文比（它很短，而且 `--selftest` 的門檻就寫在那裡）。"""
+    def test_mutation_cache_key_tracks_comments_too(self):
+        """R39 verify 第 4 列：R39 的 key 用「剝掉註解與 docstring 的 AST」，宣稱只改註解時結果不變——不成立：
+        `test_validate.py` 讀 `validate.py` 的 `# READ-SITE k/N` 註解，也讀 lint 的原始碼。把 `READ-SITE 1/` 改成
+        `READ-SITE 99/`，測試紅了，快取卻照樣「沿用、殺掉」。key 改用原文：任何一個位元組改了，key 都要換。"""
         sys.path.insert(0, str(HERE)); import mutation_check as M
+        path = pathlib.Path("lint-ci-log-filter.sh")
         base = "#!/bin/bash\nx=1\npython3 - <<'PY'\ndef f():\n    \"\"\"doc\"\"\"\n    return 1\nPY\n"
-        comment = base.replace("def f():\n", "def f():\n    # 新註解\n").replace('"""doc"""', '"""另一段說明"""')
-        code = base.replace("return 1", "return 2")
-        shell = base.replace("x=1", "x=2")
-        k = lambda s: M.normalized_source(pathlib.Path("lint-ci-log-filter.sh"), s)
-        self.assertEqual(k(base), k(comment), "只改註解與 docstring，key 不該變")
-        self.assertNotEqual(k(base), k(code), "改了程式碼，key 必須變")
-        self.assertNotEqual(k(base), k(shell), "bash 外殼改了，key 必須變")
-        kp = lambda s: M.normalized_source(pathlib.Path("oracle.py"), s)
-        self.assertEqual(kp("x = 1  # a\n"), kp("x = 1  # b\n"))
-        self.assertNotEqual(kp("x = 1\n"), kp("x = 2\n"))
+        k = lambda s: M.target_key("lint", path, s, "digest", "tools")
+        for variant in (base.replace("def f():\n", "def f():\n    # 新註解\n"), base.replace('"""doc"""', '"""另一段"""'),
+                        base.replace("return 1", "return 2"), base.replace("x=1", "x=2")):
+            self.assertNotEqual(k(base), k(variant), "改了任何內容（含註解與 docstring），key 都必須換")
+        self.assertEqual(k(base), k(base))
+        with tempfile.TemporaryDirectory() as td:
+            td = pathlib.Path(td); f = td / "v.py"
+            f.write_text("x = 1  # READ-SITE 1/2\n"); d0 = M.inputs_digest([(td, ["v.py"])])
+            f.write_text("x = 1  # READ-SITE 99/2\n")
+            self.assertNotEqual(d0, M.inputs_digest([(td, ["v.py"])]), "輸入檔只改註解，digest 也要換")
 
     def test_mutation_cache_inputs_digest_tracks_every_input_file(self):
         """快取 key 的另一半是守備單位讀得到的輸入檔（fixture、測試檔…）。任何一個改了、增加或刪除，digest 都要變——
@@ -2351,7 +2353,8 @@ class ValidateTest(unittest.TestCase):
             self.assertEqual(rc, 0); self.assertIn("殺掉 1", out)
             self.assertTrue(json.loads(cache.read_text())["results"], "第一次要寫入快取")
             rc, out = run()
-            self.assertEqual(len(log.read_text().split()), n_first, "同一個 key 第二次不該再跑驗證指令")
+            # R40：前置檢查一律要跑（R39 verify 第 4 列），所以第二次恰好多一次呼叫——那是綠底線檢查，不是重跑靶
+            self.assertEqual(len(log.read_text().split()), n_first + 1, "同一個 key 第二次只該多跑一次前置檢查，不重跑靶")
             self.assertIn("殺掉 1", out); self.assertIn("沿用", out)
             rc, out = run("--no-cache")
             self.assertGreater(len(log.read_text().split()), n_first, "--no-cache 一定重跑")
@@ -2394,6 +2397,89 @@ class ValidateTest(unittest.TestCase):
             (td / "t.py").write_text("x = 1\ny = 2\nz = 3\n")        # 兩個靶的 key 都換了
             rc, out = run("--only", "0")
             self.assertEqual(len(entries()), 1, "過期的 key 要清掉：只剩靶一的新 key（靶二這輪沒跑、它的舊 key 已過期）")
+
+    def _mutation_harness(self, td, muts, chk_body):
+        """快取測試共用的樁：一個被 mutate 的 t.py、一支驗證指令 chk.sh（它是守備單位唯一的輸入）。"""
+        import contextlib, io
+        sys.path.insert(0, str(HERE)); import mutation_check as M
+        chk = td / "chk.sh"; chk.write_text("#!/bin/sh\n" + chk_body); chk.chmod(0o755)
+        suites = {"validate": (td / "t.py", lambda: [str(chk)], td)}
+        cache = td / "cache.json"
+        def run(*extra):
+            keep = (M.SUITES, M.MUTATIONS, M.SUITE_INPUTS, sys.argv)
+            buf = io.StringIO()
+            try:
+                M.SUITES, M.MUTATIONS, M.SUITE_INPUTS = suites, muts, {"validate": [(td, ["chk.sh"])]}
+                sys.argv = ["mutation_check.py", "--cache", str(cache), *extra]
+                with contextlib.redirect_stdout(buf):
+                    rc = M.main()
+            finally:
+                M.SUITES, M.MUTATIONS, M.SUITE_INPUTS, sys.argv = keep
+            return rc, buf.getvalue()
+        return M, run, cache
+
+    def test_mutation_cache_full_hit_still_runs_precheck(self):
+        """R39 verify 第 4 列：全部命中快取時跳過綠底線前置檢查——底線紅了（原因不在 key 裡），快取照樣回「殺掉」、rc=0。
+        R9 M15「在紅底線上量，每個靶都被判殺掉」的洞以快取的形狀重開。前置檢查一律要跑。"""
+        with tempfile.TemporaryDirectory() as td:
+            td = pathlib.Path(td); (td / "t.py").write_text("x = 1\n")
+            M, run, cache = self._mutation_harness(td, [("靶一", "x = 1", "x = 'MUT'")],
+                                                   'grep -q MUT "%s" && exit 1\n[ -f "%s" ] && exit 3\nexit 0\n' % (td / "t.py", td / "red"))
+            rc, out = run(); self.assertEqual(rc, 0); self.assertIn("殺掉 1", out)
+            (td / "red").write_text("")                      # 底線變紅，而 red 不在任何 key 裡
+            rc, out = run()
+            self.assertNotEqual(rc, 0, "底線是紅的，快取全部命中也不能回 0（輸出：%r）" % out)
+
+    def test_mutation_cache_result_line_and_timing_on_hit(self):
+        """R39 verify 第 17 列：`--only` 承諾每個靶印一行 `RESULT\t<索引>\t<結果>`，快取命中時卻不印；全部沿用時仍印
+        「每靶 X s（把這個數字填回…）」——那個數字對沒有重跑的靶沒有意義。"""
+        with tempfile.TemporaryDirectory() as td:
+            td = pathlib.Path(td); (td / "t.py").write_text("x = 1\n")
+            M, run, cache = self._mutation_harness(td, [("靶一", "x = 1", "x = 'MUT'")],
+                                                   'grep -q MUT "%s" && exit 1\nexit 0\n' % (td / "t.py"))
+            run("--only", "0")
+            rc, out = run("--only", "0")
+            self.assertIn("沿用 1 靶", out)
+            self.assertIn("RESULT\t0\tkilled", out, "快取命中也要印 RESULT 行")
+            self.assertNotIn("把這個數字填回", out, "沒有重跑任何靶時，不印每靶耗時")
+
+    def test_mutation_cache_rejects_unknown_result_kinds_and_tracks_environment(self):
+        """R39 verify 第 4、17 列：快取檔進了版控，`load_cache` 卻不檢查結果值；key 也沒有執行環境——神諭依 `/proc` 是否存在
+        改變 KNOWN_DISAGREE、驗證指令用的是 PATH 上的 `python3`、`ORACLE_LINT` 換掉整支 lint。"""
+        sys.path.insert(0, str(HERE)); import mutation_check as M
+        with tempfile.TemporaryDirectory() as td:
+            p = pathlib.Path(td) / "c.json"
+            p.write_text(json.dumps({"version": 1, "results": {"a": ["killed", ""], "b": ["weird", ""], "c": "x"}}))
+            self.assertEqual(set(M.load_cache(p)), {"a"}, "只接受 killed／survived 兩種結果")
+        keep = os.environ.get("ORACLE_LINT")
+        try:
+            os.environ["ORACLE_LINT"] = "/a/lint.sh"; a = M.tool_versions()
+            os.environ["ORACLE_LINT"] = "/b/lint.sh"; b = M.tool_versions()
+        finally:
+            if keep is None: os.environ.pop("ORACLE_LINT", None)
+            else: os.environ["ORACLE_LINT"] = keep
+        self.assertNotEqual(a, b, "ORACLE_LINT 不同，key 必須不同")
+        tv = M.tool_versions()
+        for fact in ("proc=", "sh=", "python3="):
+            self.assertIn(fact, tv, "執行環境的指紋要含 %s" % fact)
+
+    def test_run_sh_stops_when_either_oracle_step_fails(self):
+        """R39 verify 第 6 列（我在 R39 自己引入的回歸）：`if …; then python3 test/oracle.py && python3 test/oracle_selfcheck.py`
+        ——`&&` 左邊的失敗不觸發 errexit，fixture 神諭紅了 run.sh 照樣往下走、最後回 0。抽出 run.sh 跑神諭的那個 `if` 區塊，
+        在樁目錄裡執行：兩支任一支失敗，區塊都必須讓 `set -euo pipefail` 的殼層停下。"""
+        src = (PACK.parent / "parallel-ai-agents" / "test" / "run.sh").read_text(encoding="utf-8").splitlines()
+        start = next(i for i, l in enumerate(src) if l.startswith("if ") and "test/oracle.py" in "\n".join(src[i:i + 3]))
+        end = next(j for j in range(start, len(src)) if src[j].rstrip().endswith("fi"))
+        block = "\n".join(src[start:end + 1])
+        for failing in ("oracle.py", "oracle_selfcheck.py"):
+            with tempfile.TemporaryDirectory() as td:
+                td = pathlib.Path(td); (td / "test").mkdir()
+                for name in ("oracle.py", "oracle_selfcheck.py"):
+                    (td / "test" / name).write_text("import sys; sys.exit(%d)\n" % (1 if name == failing else 0))
+                r = subprocess.run(["bash", "-c", "set -euo pipefail\n" + block + "\necho REACHED"],
+                                   cwd=td, capture_output=True, text=True)
+                self.assertNotEqual(r.returncode, 0, "%s 失敗，run.sh 的神諭區塊卻讓殼層繼續（輸出：%r）" % (failing, r.stdout))
+                self.assertNotIn("REACHED", r.stdout, failing)
 
     def test_mutation_check_main_installs_restore_signals(self):
         """R16 logic LOW：R15 的 SIGTERM 修法 wiring 無網——把 main() 裡那行 `install_restore_signals()` 換成 `pass`，
