@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **CI 的 `actions/checkout` 釘到完整 commit SHA**（`# v4.4.0` 註解保留版號），並在三個 job 都設
+  `persist-credentials: false`（#58）。tag 可被重新指向而安靜換掉 checkout 的程式碼；預設留在
+  `.git/config` 的 `GITHUB_TOKEN` 會被之後每個跑 PR 程式碼的 step 讀到。三個 job checkout 之後都沒有
+  需要 token 的 git 操作（`manifests-and-lens-pack` 的 `fetch-depth: 0` 在 checkout 當下抓齊歷史，
+  `validate.py` 只讀本地物件庫）。
+
 ## [2.24.0] - 2026-09-10
 
 `pai-lenses` 從獨立 repo 併回本 repo 成為第二個 plugin，並把三層 lens 疊加的文件與 CI 閘門補齊。
