@@ -2280,10 +2280,11 @@ class ValidateTest(unittest.TestCase):
         calls = [n.lineno for n in ast.walk(main)
                  if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "install_restore_signals"]
         self.assertTrue(calls, "main() 沒有呼叫 install_restore_signals()")
-        # R29：認**mutate 迴圈**（iter 是 `MUTATIONS`），不是「main 裡第一個 for」——D9 的前置檢查在它前面
-        # 多了一個印失敗 suite 的 for，第一版這樣寫就把那個當成 mutate 迴圈而誤紅。
+        # R29：認**mutate 迴圈**，不是「main 裡第一個 for」——D9 的前置檢查在它前面多了一個印失敗 suite 的 for，
+        # 第一版這樣寫就把那個當成 mutate 迴圈而誤紅。R39 加 `--only` 之後迴圈走選出來的索引（iter 是 `sel`）；
+        # `--jobs` 的平行路徑不在本樹就地改寫，不需要還原 handler（每個 worker 自己走這條串行路徑、自己掛）。
         loop = next(n.lineno for n in ast.walk(main)
-                    if isinstance(n, ast.For) and getattr(n.iter, "id", None) == "MUTATIONS")
+                    if isinstance(n, ast.For) and getattr(n.iter, "id", None) == "sel")
         self.assertLess(calls[0], loop, "handler 必須在 mutate 迴圈開始前掛上")
 
     def test_external_strings_in_annotations_are_always_wrapped(self):
