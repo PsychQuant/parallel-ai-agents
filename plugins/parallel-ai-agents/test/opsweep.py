@@ -149,7 +149,6 @@ EXPECTED_SURVIVE = {   # id → 理由（依構造等價）。每一條都要能
     "drop-operand|shell_scan|if dq_ret and ((ch == \"`\" and not bt) if dq_ret[-1] == 0 else (ch == \")\" and csub + cpar < dq_ret[-1])):|4": "同上一條（另一個運算元）",
     "drop-operand|shell_scan|if dq_ret and ((ch == \"`\" and not bt) if dq_ret[-1] == 0 else (ch == \")\" and csub + cpar < dq_ret[-1])):|5": "csub、cpar 只在 ch == \")\" 時遞減，而本條件每個字元都檢查、一滿足就 pop；第一次降到門檻以下的字元必然是 `)`",
     "drop-operand|simple|if name == \"eval\" and args and all(a[\"lit\"] is not None for a in args):|2": "裸 `eval`（args 為空）時突變體進分支、遞迴剖析空字串並 return，原版落到後面也找不到任何可命中的分支，判定相同",
-    "strip→id|_scalar|return d if d is not None else body.strip()|1": "d 為 None 只在 body 含引號與反斜線時發生；消費者 `sh == \"bash\"` 恆假，`sh.split()` 本身忽略頭尾空白",
     "±1→±2|_cmdsub_end_case|code.append(\";\"); k += 1; prev = \"\\n\"; continue|1": "同第 0 條：`\\n` 那一支在任何呼叫端都到不了，`k += 1` 改成 2 無從觀察",
     "±1→±2|parse_case|self.i += 1|6": "到這一行時 tok() 已確定是非 None、非 esac 的詞元，前面的模式掃描必然前進，`self.i == i0` 的安全網不可達",
 }

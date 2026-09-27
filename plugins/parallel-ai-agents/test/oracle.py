@@ -205,6 +205,13 @@ KNOWN_DISAGREE = {
     ("ci-log-filter-restrict-r39-strict-cd-before-group.yml", "cd before group"):
         "群組前只收 `set` 前綴：`cd`、`export` 放進群組或改用 `working-directory:`／`env:`。",
     ("ci-log-filter-restrict-r39-strict-export-before-group.yml", "export before group"): "同上。",
+    # ── R39（R38 第 13 列）：殺 `_cmdsub_end_case` 四條存活突變的 fixture——原碼保守判 RULE（命令替換裡的 `shopt -s extglob`
+    # 改變之後的詞法，本 lint 不追蹤就擋），bash 照常執行、不外流 ──
+    ("ci-log-filter-restrict-r39-cmdsub-case-esac-at-cmd.yml", "cmdsub case esac at cmd"):
+        "命令替換裡 `shopt -s extglob`：保守擋（見 `restrict-r37p-*` 的同類理由）；這張的用途是殺 `_cmdsub_end_case` 的突變體。",
+    ("ci-log-filter-restrict-r39-cmdsub-case-hash-word-start.yml", "cmdsub case hash word start"): "同上。",
+    ("ci-log-filter-restrict-r39-cmdsub-case-paren-branch.yml", "cmdsub case paren branch"): "同上。",
+    ("ci-log-filter-restrict-r39-cmdsub-case-herestring.yml", "cmdsub case herestring"): "同上。",
 }
 # **只在沒有 /proc 的平台上成立**的已知分歧（R39，#33 verify R38 第 1、5 列）：macOS 沒有 `/proc`，`/dev/fd` 也不是指向
 # `/proc/self/fd` 的 symlink，這幾個外流在本機量不到、判誤擋。Linux（CI）上**不列入**——在那裡神諭必須看到外流、判一致，
