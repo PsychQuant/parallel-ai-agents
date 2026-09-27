@@ -22,11 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     來源指令的輸出先落檔並檢查退出碼，失敗就紅（不拿部分清單繼續）。
   - **收入**：shell = `*.sh`／`*.bash`，或 shebang 直譯器是 sh／bash／dash／ksh；python = `*.py`，或直譯器是
     python／python3／python3.N。經 `env` 時跳過 env 的選項（含吃參數的 `-u`／`--unset`／`-C`／`--chdir`／`-a`／`-P`、
-    `-S` 與黏寫形式、`--`）與 `NAME=VALUE` 指派。python 以 `python3 -m py_compile` 編譯，bytecode 寫進暫存目錄
-    （`PYTHONPYCACHEPREFIX`），不在工作樹留 `__pycache__`。
+    `-S` 與黏寫形式、`--`、BSD 的 `-L`／`-U`）與 `NAME=VALUE` 指派。python 以 `python3 -I -X pycache_prefix=<暫存> -m py_compile`
+    編譯：`-I` 讓受檢 repo 的根目錄不進 `sys.path`（repo 裡的 `py_compile.py` 遮蔽不了標準庫），bytecode 寫進暫存目錄，
+    不在工作樹留 `__pycache__`。
   - **排除（逐行印出、附理由）**：`*.bats`（`lint-bats.sh` 專責）、**直接位於 `test/`／`tests/`／`eval/` 底下的
     `fixtures/`** 裡的 script（本 repo 放故意寫壞輸入的慣例位置；其他叫 `fixtures` 的目錄照常檢查）、symlink、
     tracked 但已刪除的檔、其他直譯器（swift／node／bats…，列出來讓「沒被任何人檢查」可見）。
+  - **判定不了 → 紅，不是 skip**：shebang 只按空白切字，不做 `env -S` 的引號／跳脫／`${VAR}` 展開；直譯器（或它之前的字）
+    含 `"`、`'`、`\`、`$`，或 env 帶了不認得的短選項 → `error:shebang`，逐檔列出並紅（兩種模式都是）。
   - **護欄**：列舉為空 → 紅；副檔名規則或 shebang 規則任一零命中 → 紅（#30 自己的故障形狀：來源若只列 `*.sh`，
     extensionless 的 `bin/` script 全數消失而清單仍非空）；shell 模式下本檔不在列舉裡、或自我路徑是空字串 → 紅。
   - **`--selftest`**（CI 與 `run.sh` 都先跑）驗：分類規則與 git 來源的**完整集合逐字比對**（含 extensionless shebang、
@@ -36,8 +39,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     假的 `find`／`git` 印出部分結果後 exit 1 → 紅；shellcheck 與 py_compile 的非零都傳出來、且不留 `__pycache__`；
     vendored 副本（外層 repo 不追蹤本檔）退回 find 且不掃外層、被追蹤時改用外層 git 來源、沒有 repo 時退回 find。
   - **鑑別力用 mutation 量，不靠宣稱**：`../pai-lenses/scripts/mutation_check.py` 新增守備單位 `shellcheck-all`，
-    22 個（`grep -c "shellcheck-all.),$" ../pai-lenses/scripts/mutation_check.py`）靶，每個對應 #30 verify R1 的一列。
+    32 個（`grep -c "shellcheck-all.),$" ../pai-lenses/scripts/mutation_check.py`）靶，每個對應 #30 verify R1／R2 的一列。
     R1 報告的三個存活突變體（來源只列 `*.sh`、空列舉護欄關掉、自我路徑變空）在上一版的 selftest 下全綠，現在各自轉紅。
+    `skip:unreadable` 的靶只在非 root 下殺得掉（root 讀得到任何檔，selftest 以 root 跑時略過該子案例並明說）。
+  - **#30 verify R2**：
+    - selftest 在 **bash 3.2**（macOS `/bin/bash`）上以 `mapfile: command not found`（rc=127）紅——`run.sh` 第一步就死。
+      改成逐行 `read`；selftest 的子行程改用 `"$BASH"`（同一支直譯器），並新增 case 0：對本檔做最小的靜態掃描，擋
+      bash 4+ 語法回到這支（CI 是 bash 5，跑不出 3.2 的錯）。
+    - selftest 補上兩個 production path 的斷言：`--python --list` 只有 `py:*`（兩條規則各至少一行、沒有 `sh:`）；
+      排除清單在 `list`、`check` 與正式 dispatch 的完整執行裡都逐行印出（`skip:bats`／`fixture`／`symlink`／`missing`，
+      非 root 另驗 `unreadable`）。先前把 `--python` 接成 `lang=sh`、或把 `skip:*` 的收集整條拿掉，selftest 都照綠。
+    - 來源判定只在「確定的否定」時退回 `find`：`git rev-parse` 的探索失敗訊息（`not a git repository (or any …`）、
+      `git ls-files --error-unmatch` 的 rc=1。index 損壞、`GIT_DIR` 指錯等 → `列舉來源失敗` 紅，不再以
+      「vendored／不在 worktree」的錯誤理由拿 rc=0。
+    - selftest 隔離使用者／系統 git 設定（`GIT_CONFIG_GLOBAL=/dev/null`、`GIT_CONFIG_NOSYSTEM=1`，fixture 一律 `git add -f`），
+      「沒有 repo」子案例以 `GIT_CEILING_DIRECTORIES` 把探索擋在 fixture 目錄——`TMPDIR` 指進某個 git repo 時不再誤紅。
   - shell 的列舉結果與上一版相同；python 的列舉比舊的寫死清單多出 pack 的 `scripts/*.py` 與 `test/` 底下的 `*.py`，
     全部可編譯。pack job 自己的 `py_compile scripts/*.py`（glob）不動。
   - 仍不涵蓋：workflow `run:` 區塊裡的 inline bash（需 actionlint 之類，另一個決定）。
