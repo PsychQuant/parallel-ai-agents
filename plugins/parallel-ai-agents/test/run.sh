@@ -31,7 +31,11 @@ if [ -f ../../.github/workflows/test.yml ]; then bash test/lint-ci-log-filter.sh
 
 echo "── oracle：lint 判定 vs bash 真的有沒有把 neutralise.py 接在管線後（#33 verify R28 DA／R29）──"
 # selftest 只證「lint 判定 = 作者宣告」，神諭把 runner 拉進來對帳。PyYAML 缺席本機明說略過（CI 會 pip 裝再跑）。
-if python3 -c 'import yaml' 2>/dev/null; then python3 test/oracle.py; else echo "（缺 PyYAML：python3 -m pip install pyyaml；本機略過 oracle，CI 會跑）"; fi
+# `oracle_selfcheck.py` 與產生語料的神諭（#33 verify R38 第 18 列）：CI 的 oracle step 兩者都跑，run.sh 前一版都沒跟上——
+# R37 自己承認的錯（沒重跑產生語料神諭、推上去 CI 紅）在本機因此仍然量不到。**本機是 macOS 時，神諭的數字只對 macOS 成立**
+# （`/bin/sh` 不是 dash、沒有 `/proc`——R38 第 1 列）；CI（Linux）為準。
+if python3 -c 'import yaml' 2>/dev/null; then python3 test/oracle.py && python3 test/oracle_selfcheck.py
+else echo "（缺 PyYAML：python3 -m pip install pyyaml；本機略過 oracle，CI 會跑）"; fi
 echo "── 形狀普查：本輪每個新機制在產生語料裡都要有 > 0 檔（#33 verify R32 DA-9 / G-R32-DA-5）──"
 # 散文規則（shapes.py 檔頭 6-7 行）R31 遵守、R32 破壞——一輪就失守，所以改成會紅的閘門。
 if python3 -c 'import yaml' 2>/dev/null; then
@@ -39,6 +43,8 @@ if python3 -c 'import yaml' 2>/dev/null; then
   # `--strict` 組，只產生預設組時這 7 列恆為 0、這一步必紅——R37 加 `--strict` 組時只改了 CI，run.sh 沒跟上（R37 自查）。
   GEN=$(mktemp -d); python3 test/corpus/shellgen.py --out "$GEN" >/dev/null
   python3 test/corpus/shellgen.py --strict --out "$GEN" >/dev/null
+  # tail -2：摘要行（一致／不一致…）之後還有一行「已知類別：…」（R39 起）——只留一行會只看到類別計數、看不到判定
+  python3 test/oracle.py "$GEN"/*.yml | tail -2
   find "$GEN" -name '*.yml' -print | sort | sed 's/^/x /' > "$GEN/list.txt"   # 不用 ls（SC2012）
   python3 test/corpus/shapes.py --require-nonzero R3 "$GEN/list.txt" | tail -1
   rm -rf "$GEN"

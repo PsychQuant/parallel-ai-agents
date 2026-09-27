@@ -89,21 +89,21 @@ if [ "${1:-}" = "--selftest" ]; then
   done
   # R24 regression F9：門檻寫成 `>=` 而實際值更高時，那個差額**沒有網**——刪掉一個 fixture 仍然綠。
   # 三個門檻一律改成**等於實測值**：要加 fixture 就同步改這裡，讓「少了一個」立刻紅。
-  if [ "${n_pass}" -ne 233 ]; then
-    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 233（改動 fixture 請同步改這個數字）" >&2
+  if [ "${n_pass}" -ne 259 ]; then
+    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 259（改動 fixture 請同步改這個數字）" >&2
     fail=1
   fi
-  if [ "${n_rule}" -ne 310 ]; then
-    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 310" >&2
+  if [ "${n_rule}" -ne 362 ]; then
+    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 362" >&2
     fail=1
   fi
   if [ "${fail}" -ne 0 ]; then exit 1; fi
-  if [ "${n_parse}" -ne 143 ]; then
-    echo "lint-ci-log-filter selftest FAILED: parse-red 是 ${n_parse} 個，預期恰好 143（先前這一類完全沒有下限）" >&2
+  if [ "${n_parse}" -ne 145 ]; then
+    echo "lint-ci-log-filter selftest FAILED: parse-red 是 ${n_parse} 個，預期恰好 145（先前這一類完全沒有下限）" >&2
     exit 1
   fi
-  if [ "${n_msg}" -ne 4 ]; then
-    echo "lint-ci-log-filter selftest FAILED: 帶 EXPECT-MSG 的 fixture 是 ${n_msg} 張，預期恰好 4" >&2
+  if [ "${n_msg}" -ne 5 ]; then
+    echo "lint-ci-log-filter selftest FAILED: 帶 EXPECT-MSG 的 fixture 是 ${n_msg} 張，預期恰好 5" >&2
     exit 1
   fi
   echo "lint-ci-log-filter selftest ok: ${n_pass} 正向通過、${n_rule} 條規則紅、${n_parse} 條解析紅、${n_msg} 張訊息斷言（來源逐一比對相符）"
@@ -814,7 +814,7 @@ def shell_scan(lines):
       * `((`／`))` 整個 token 消費：前一版 `$((` 在兩個位置各命中一次而 `))` 只減一次，深度卡住。
       * `run: |N` 的顯式縮排指示子由呼叫端算成 `explicit_pad` 交給 `dedent_block()`（見該函式）。
       * 續行重掃前還原 `pending` 快照：前一版只還原 quote／prev_sig，同一個 heredoc 被排兩次。
-    **已知不涵蓋，第二組（這一組是封閉列舉，只有三條，不得依性質相似類推第四條；R32 抓到它們不在檔內）**：
+    **已知不涵蓋，第二組（這一組是封閉列舉，只有四條，不得依性質相似類推第五條；R32 抓到前三條不在檔內，第 4 條 R39 加）**：
       1. **stderr（預設模式）**：預設模式的 `PIPED_RE` 只要求管線存在，不要求 `2>&1`／`|&`（已知類別 S-2，範例
          `known-stderr-cmd-error-missing-2to1`）。**`--strict` 的群組規則擋它**——CI 與 run.sh 對真 workflow 用 `--strict`，
          所以這一條只剩 fixture／產生語料（它們量的是詞法）。另：把輸出轉到 stderr 或開 xtrace 的寫法（`>&2`、
@@ -841,6 +841,10 @@ def shell_scan(lines):
       3. **多行分隔字**：`cat <<"A` ⏎ `B" | python3 …` 在 bash 是引號跨行、heredoc 永不終止但**管線照建**；
          本 lint 的分隔字是單行字串、表示不了它，一律 `PARSE:`（誤擋方向，源頭在 R33、該回合無 Codex leg；產生語料的
          `d-delimword-unterm-*` 四檔由神諭歸「不可比（fail-closed）」）。
+      4. **過濾器的身分**（#33 verify R38 第 21 列）：`NEUT_PATH_RE` 只比對「以 `neutralise.py` 結尾、不加引號、不帶變數的路徑」。
+         本 lint 檢查的是 **shell 接線**——PR 文字有沒有經過那個過濾器——不驗證那個檔案的內容：前一個 step 寫出一個同名的
+         `cat`，或 PR 直接改掉過濾器本身，lint 都看不到。test.yml 的威脅模型寫明每個 job 本來就執行 PR 的程式碼；這條 lint
+         防的是維護者的無心之失（接線漏掉），不是對抗性的替換。過濾器自己的啟動環境（`PYTHON*` 的值是運算式）另有規則（R39）。
     **已知不涵蓋，第三組——預設模式的假設（封閉列舉，只有五條，不得依性質相似類推第六條；R35 新增前三條，
     R37 新增第 4、5 條）**：
       1. **shell 是 bash**：預設模式不讀 `shell:`／`defaults.run.shell`／container／runs-on，照 bash 的詞法判。
@@ -1434,9 +1438,14 @@ _SHELL_NAMES = frozenset(("bash", "sh", "dash", "ksh", "zsh", "mksh", "ash", "po
 _SAFE_TARGETS = frozenset(("/dev/null", "/dev/stdout", "/dev/fd/1", "/proc/self/fd/1"))
 # bash 啟動時讀、會開 xtrace 或執行別的程式碼的環境變數（`env:` 三層都查；ENV 只有 `env:` 層——run 裡 `ENV=prod make` 是常見寫法）。
 ENV_TRACE_KEYS = ("SHELLOPTS", "BASHOPTS", "BASH_ENV", "ENV", "BASH_XTRACEFD")
+ENV_EXPR_RE = re.compile(r"PYTHON\w*=\$\{\{ … \}\}")     # `_env_names` 對值是運算式的 `PYTHON*` 鍵的記法（R39，R38 第 9 列）
 _RUN_ENV_KEYS = ("SHELLOPTS", "BASHOPTS", "BASH_ENV", "BASH_XTRACEFD")
 _ASSIGN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(\[[^\]]*\])?\+?=")
 _LEAD_WORDS = frozenset(("!", "time", "if", "then", "else", "elif", "do", "while", "until", "builtin", "command"))
+# 前綴詞自己的選項（R39，#33 verify R38 第 4、8 列）：封閉列舉，只有這三個詞的這些選項。
+_LEAD_OPTS = {"command": frozenset(("-p", "--", "-v", "-V")), "builtin": frozenset(("--",)), "time": frozenset(("-p", "--"))}
+# `set` 的單字母選項（bash 5.3 `help set`）——`opaque_cmd` 判「參數像 `set -x`」用。
+_SET_LETTERS = "abefhkmnptuvxBCEHPT"
 
 
 def _skip_delim_word(s, j):
@@ -1723,6 +1732,11 @@ def _word(C, S, p, stop):
             literal = False
             skel.append("\0")
             continue
+        if c == "$" and C[p + 1:p + 2] == '"':
+            # `$"…"`：locale 翻譯字串，沒有訊息目錄時就是雙引號字串（R39，#33 verify R38 第 4 列）——前一版把 `$` 當字面，
+            # `set $"-x"` 讀成 `set '$-x'`、`>&$"2"` 讀成 `>&$2`，兩個都看不出來。跳過 `$`，交給下面的雙引號分支。
+            p += 1
+            continue
         m = _PARAM_RE.match(C, p) if c == "$" else None
         if m:
             p, literal = m.end(), False
@@ -1916,6 +1930,10 @@ def _redir_hit(r):
         return "`%s` 的目標看不到原文（本 lint 對不齊這一行）——不解析就不放行" % shown
     if t["glob"]:
         return "`%s` 的目標含萬用字元——bash 會對它做路徑展開" % shown
+    if t["lit"] is not None and ".." in t["lit"].split("/") and {"dev", "proc"} & set(t["lit"].split("/")):
+        # `..` 經過 /dev 或 /proc（R39，#33 verify R38 第 20 列）：Linux 的 `/dev/fd` 是指向 `/proc/self/fd` 的 symlink，
+        # `/dev/fd/../../self/fd/2` 字面 normpath 成 `/self/fd/2`、實際是 stderr。symlink 讓字面的 `..` 不可信 ⇒ fail-closed。
+        return "`%s` 的目標含 `..` 又經過 /dev 或 /proc——那底下有 symlink，字面的 `..` 算不出實際寫到哪裡" % shown
     if t["lit"] is not None and (posixpath.normpath(t["lit"]) in _SAFE_TARGETS
                                  or re.match(r"/dev/(tcp|udp)/", posixpath.normpath(t["lit"]))):
         return None                                      # `/dev/tcp/host/port`：bash 的網路 socket，不是 log（野外語料 3 處）
@@ -1923,6 +1941,23 @@ def _redir_hit(r):
         return "`%s` 寫到 /dev 或 /proc 底下（去引號後是 `%s`）" % (
             shown, t["lit"] if t["lit"] is not None else sk.replace("\0", "$…"))
     return None
+
+
+# 群組裡**可以**豁免的目標（R39，#33 verify R38 第 5 列）：群組的 fd 1、fd 2 是管線，所以寫到自己的 fd 1／2 是安全的。
+# 封閉列舉，只有這些：數字 fd 的複製（`>&2`、`>&3`——群組裡的 fd 都是群組自己開的或繼承自管線）與下面六個路徑。
+# `/proc/$$/fd/1`（`$$` 在子殼層裡仍是外層 shell 的 PID——Linux 上就是 step log）、`/proc/<別的>`、`/dev/tty`、`/dev/console`
+# 都不在其中：前一版把群組內的所有 fd 命中一起豁免，五條 leg 都指出這一格。
+_GROUP_SAFE_PATHS = frozenset(("/dev/stdout", "/dev/stderr", "/dev/fd/1", "/dev/fd/2", "/proc/self/fd/1", "/proc/self/fd/2"))
+
+
+def _group_safe_target(r):
+    t = r["t"]
+    tl = t["lit"] if t is not None else None
+    if tl is None:
+        return False
+    if r["op"] in (">&", "<&"):
+        return re.fullmatch(r"[0-9]+-?", tl) is not None
+    return ".." not in tl.split("/") and posixpath.normpath(tl) in _GROUP_SAFE_PATHS
 
 
 class _Sh:
@@ -1948,12 +1983,29 @@ class _Sh:
     def word(t, *codes):
         return t is not None and t["k"] == "W" and t["code"] in codes
 
+    def new_scope(self, ctx):
+        """一個新的子殼層範圍：`ctx` 的範圍路徑再加一層（R39，#33 verify R38 第 8、11 列；見 `_pipefail_holds`）。"""
+        self.o["nscope"] += 1
+        return ctx["scope"] + (self.o["nscope"],)
+
+    def rescope(self, a, b, ctx, skip):
+        """事後才知道 events[a:b] 跑在子殼層裡（管線的一段、背景執行）：把它們的範圍路徑在 `ctx` 那一層之後插入一個新範圍。
+        `skip` 是這條管線自己的 `|` 事件——那些在所在的 shell 裡求值，不搬。"""
+        sid = self.new_scope(ctx)[-1]
+        n = len(ctx["scope"])
+        for j in range(a, b):
+            if j not in skip:
+                ev = self.o["events"][j]
+                ev["scope"] = ev["scope"][:n] + (sid,) + ev["scope"][n:]
+
     def skip_nl(self):
         while self.tok() is not None and self.tok()["k"] == "NL":
             self.i += 1
 
-    def hit(self, why, ctx):
-        self.o["hits"].append((why, ctx["stack"]))
+    def hit(self, why, ctx, group_safe=True):
+        """`group_safe`：這個命中在「收尾後緊接 `2>&1 |` 進 neutralise 的群組」裡可以豁免——豁免的論證是群組裡 fd 1、fd 2
+        都是管線，所以只涵蓋寫到 fd 1／2 的東西（見 `_group_safe_target`）。"""
+        self.o["hits"].append((why, ctx["stack"], group_safe))
 
     def group(self):
         self.o["groups"].append(False)
@@ -1967,8 +2019,10 @@ class _Sh:
                 continue
             if end(t):
                 return
-            i0 = self.i
+            i0, ev0 = self.i, len(self.o["events"])
             self.parse_andor(ctx, end)
+            if self.op(self.tok(), "&"):         # 背景執行：整條 and-or 串在子殼層裡跑（R39，R38 第 8 列：`set -o pipefail &`）
+                self.rescope(ev0, len(self.o["events"]), ctx, skip=())
             if self.i == i0:                     # 語法錯誤的殘渣（孤立的 `)`、`;;`…）：略過一個，不讓迴圈卡死
                 self.i += 1
 
@@ -1985,19 +2039,25 @@ class _Sh:
         ev0, segs, conns = len(self.o["events"]), [], []
         while self.word(self.tok(), "!", "time"):
             self.i += 1
+            while self.word(self.tok(-1), "time") and self.tok() is not None and self.tok().get("lit") in _LEAD_OPTS["time"]:
+                self.i += 1                      # `time -p set -x`（R39，R38 第 4 列）
+        bounds, own = [len(self.o["events"])], set()
         seg = self.parse_command(ctx, end)
         while seg is not None:
             segs.append(seg)
             if not self.op(self.tok(), "|", "|&"):
                 break
             conns.append(self.tok()["op"])
-            self.o["events"].append({"k": "pipe"})
+            own.add(len(self.o["events"]))
+            self.o["events"].append({"k": "pipe", "scope": ctx["scope"]})
+            bounds.append(len(self.o["events"]))
             self.i += 1
             self.skip_nl()
             seg = self.parse_command(ctx, end)
-        if len(segs) > 1:                        # 管線的每一段都在子殼層：裡面的 `set -o pipefail` 不作用在外面
-            for ev in self.o["events"][ev0:]:
-                ev["sub"] = True
+        if len(segs) > 1:                        # 管線的每一段各自在一個子殼層：裡面的設定不作用在外面、也不作用在別段
+            bounds.append(len(self.o["events"]))
+            for a, b in zip(bounds, bounds[1:]):
+                self.rescope(a, b, ctx, skip=own)
         if segs:
             self.o["pipelines"].append((segs, conns))
 
@@ -2010,7 +2070,8 @@ class _Sh:
                 return None
             gid = self.group()
             self.i += 1
-            self.parse_list(dict(ctx, stack=ctx["stack"] + (gid,), sub=True), lambda x: self.op(x, ")"))
+            self.parse_list(dict(ctx, stack=ctx["stack"] + (gid,), scope=self.new_scope(ctx)),
+                            lambda x: self.op(x, ")"))
             if self.op(self.tok(), ")"):
                 self.i += 1
             return {"kind": "group", "gid": gid, "trail": self.redirs(ctx), "neut": False}
@@ -2030,7 +2091,7 @@ class _Sh:
             if self.op(self.tok(), "(") and self.op(self.tok(1), ")"):
                 self.i += 2
             self.skip_nl()
-            self.parse_command(dict(ctx, sub=True), end)
+            self.parse_command(dict(ctx, fn=True), end)
             return {"kind": "func", "trail": [], "neut": False}
         words, rs = [], []
         while self.tok() is not None and self.tok()["k"] in ("W", "R"):
@@ -2045,7 +2106,7 @@ class _Sh:
             if len(words) == 1 and not rs and self.op(self.tok(), "(") and self.op(self.tok(1), ")"):
                 self.i += 2                      # `f() …`：本體要呼叫才執行——子脈絡
                 self.skip_nl()
-                self.parse_command(dict(ctx, sub=True), end)
+                self.parse_command(dict(ctx, fn=True), end)
                 return {"kind": "func", "trail": [], "neut": False}
         self.simple(words, ctx)
         neut = (len(words) >= 2 and words[0]["code"] == "python3"
@@ -2093,7 +2154,7 @@ class _Sh:
     def redir(self, r, ctx):
         why = _redir_hit(r)
         if why:
-            self.hit(why, ctx)
+            self.hit(why, ctx, group_safe=_group_safe_target(r))
         if r["t"] is not None:
             self.subs(r["t"], ctx)
 
@@ -2101,7 +2162,7 @@ class _Sh:
         if w.get("bad_sub"):
             self.hit("引號或 `${…}` 裡的命令替換對不到收尾（或掃描器不解析它）——裡面的重導向看不到，不解析就不放行", ctx)
         for sub in w["subs"]:                    # 命令替換、process substitution：子殼層，fd 繼承自所在的位置
-            _Sh(sub, self.o).parse_list(dict(ctx, sub=True), lambda x: False)
+            _Sh(sub, self.o).parse_list(dict(ctx, scope=self.new_scope(ctx)), lambda x: False)
 
     def simple(self, words, ctx):
         k = 0
@@ -2112,10 +2173,21 @@ class _Sh:
             elif w["code"] not in _LEAD_WORDS:
                 break
             k += 1
+            # 前綴詞自己的選項（R39，#33 verify R38 第 4、8 列）：`command -p set -x`、`builtin -- set +o pipefail`、`time -p …`——
+            # 前一版只剝裸詞，選項被當成命令名，後面的 `set` 就看不到了（380e4a4 的 `FD_RE` 擋這幾種，回歸）。
+            # `command -v`／`-V` 只印命令的描述、不執行它。
+            while k < len(words) and w["code"] in _LEAD_OPTS and words[k]["lit"] in _LEAD_OPTS[w["code"]]:
+                if words[k]["lit"] in ("-v", "-V"):
+                    return
+                k += 1
         if k >= len(words):
             return
         name = words[k]["lit"] if words[k]["lit"] is not None else words[k]["code"]
         args = words[k + 1:]
+        if words[k]["lit"] is None:
+            self.opaque_cmd(args, ctx)
+        if name == "eval" and args[:1] and args[0]["lit"] == "--":
+            args = args[1:]                      # `eval -- set -x`（R38 第 4 列）
         if name == "eval" and args and all(a["lit"] is not None for a in args):
             # `eval` 後面全是字面詞：bash 執行的就是那幾個詞接起來（`eval set -x`）
             self.simple([dict(_opaque("", 0, 0), code=x, lit=x, skel=x) for x in " ".join(a["lit"] for a in args).split()], ctx)
@@ -2131,14 +2203,33 @@ class _Sh:
             if w["lit"] is not None and w["lit"].rsplit("/", 1)[-1] in _SHELL_NAMES:
                 self.shell_opts(words[j + 1:], ctx)
 
+    def opaque_cmd(self, args, ctx):
+        """命令名不是字面（`${X:-set} +o pipefail`、`"$CMD" -x`）：看不出是不是 `set`／`shopt`（R39，#33 verify R38 第 4、8 列）。
+        只在參數**像** `set` 的選項時 fail-closed，否則 `$MAKE -j4`、`"$TAR" -xzf a` 這類常見寫法會被一起擋掉：
+          · 字面參數裡有 `pipefail` ⇒ 當成關掉 pipefail；
+          · 字面參數裡有 `-o xtrace|verbose`，或一個只由 `set` 的單字母選項組成、含 `x`／`v` 的 `-…` ⇒ 當成開了 trace。
+        封閉列舉，只有這兩類，不得依「看起來像選項」類推。"""
+        lits = [a["lit"] for a in args]
+        if "pipefail" in lits:
+            self.pf_event(False, ctx)
+        if (any(l is not None and re.fullmatch(r"-[%s]+" % _SET_LETTERS, l) and set(l[1:]) & set("xv") for l in lits)
+                or ("-o" in lits and any(l in _TRACE_OPTS for l in lits))):
+            self.hit("命令名不是字面、參數像 `set -x`／`set -o xtrace`——看不出是不是開了 trace", ctx)
+
     def env_word(self, w, ctx, bare):
         text = w["skel"] if w["skel"] is not None else w["code"]
+        m = re.match(r"(PYTHON\w*)\+?=", text)
+        if m and w["lit"] is None:                # skel 裡有 `\0`（展開）時 lit 必為 None——前一版多寫的 `"\0" in text` 被它蘊含（R39 opsweep）
+            # 過濾器 `python3` 啟動時讀 `PYTHON*`（R39，#33 verify R38 第 9 列）：值不是字面就可能是 PR 文字，`PYTHONWARNINGS` 的
+            # 不合法值原樣印到管線右端的 stderr。
+            self.hit("run 裡把 `%s` 設成不是字面的值——過濾器 python3 啟動時就讀它（`PYTHONWARNINGS` 的不合法值會原樣印到"
+                     "管線右端的 stderr）" % m.group(1), ctx)
         for key in _RUN_ENV_KEYS:
             if text.startswith((key + "=", key + "+=")) or (bare and text == key):
                 self.hit("run 裡設定 `%s`——bash（含子行程）啟動時會讀它，依鍵不同可能開 xtrace、執行別的程式碼，或把已開啟的 trace 輸出轉向到別的 fd（`BASH_XTRACEFD` 單獨設定不會自己打開 xtrace，需要 `-x`／verbose 已經開著）" % key, ctx)
 
     def pf_event(self, on, ctx):
-        self.o["events"].append({"k": "pf", "on": on, "sub": ctx["sub"]})
+        self.o["events"].append({"k": "pf", "on": on, "scope": ctx["scope"], "fn": ctx.get("fn", False)})
 
     def set_cmd(self, args, ctx):
         i = 0
@@ -2237,8 +2328,8 @@ def _analyse(logical, logical_src):
     S = "\n".join(s if s is not None else "\0" * len(c) for c, s in zip(logical, logical_src))
     _COVERED.clear()
     toks, _ = _lex(C, S)
-    out = {"groups": [], "hits": [], "events": [], "pipelines": []}
-    _Sh(toks, out).parse_list({"stack": (), "sub": False}, lambda t: False)
+    out = {"groups": [], "hits": [], "events": [], "pipelines": [], "nscope": 0}
+    _Sh(toks, out).parse_list({"stack": (), "scope": ()}, lambda t: False)
     for segs, conns in out["pipelines"]:
         last = max((k for k, sg in enumerate(segs) if sg["neut"]), default=0)
         for k in range(last):
@@ -2247,23 +2338,39 @@ def _analyse(logical, logical_src):
                     (conns[k] == "|&" and not segs[k]["trail"])
                     or (conns[k] == "|" and len(segs[k]["trail"]) == 1 and _is_2to1(segs[k]["trail"][0]))):
                 out["groups"][segs[k]["gid"]] = True
-    fd = [why for why, stack in out["hits"] if not any(out["groups"][g] for g in stack)]
+    fd = [why for why, stack, safe in out["hits"] if not (safe and any(out["groups"][g] for g in stack))]
+    # neutralise **之後**還接了管線的一段（R39，mutation 全輪的存活者追到）：那一段自己的輸出不經過濾——
+    # `… | python3 …neutralise.py | printf '%s\n' "$PR_TITLE"`。`--strict` 的群組尾巴規則本來就要求 neutralise 是最後一段；
+    # 預設模式前一版沒有對應的檢查。兩種模式都適用。**保守**：`| cat`、`| tee log` 這類只轉印 stdin 的段也擋——分不出來：
+    # `printenv PR_TITLE`、`sh -c 'echo $PR_TITLE'` 的詞全是字面也照樣外流（`restrict-r39-segment-after-neutralise-cat`）。
+    for segs, _conns in out["pipelines"]:
+        neut = [k for k, sg in enumerate(segs) if sg["neut"]]
+        if neut and neut[-1] < len(segs) - 1:
+            fd.append("`python3 …neutralise.py` 之後還接了管線的一段——那一段自己的輸出不經過濾")
+            break
     return {"fd": fd, "events": out["events"]}
 
 
 def _pipefail_holds(events, on):
-    """照詞元順序模擬 pipefail：頂層（不在子殼層、命令替換、函式本體、管線的一段裡）的設定才改變它；
-    每一個管線運算子出現時它都要是開的。非字面的 `set` 參數當成關掉（fail-closed）。
+    """照詞元順序模擬 pipefail：每一個管線運算子出現時，建立那條管線的 shell 裡 pipefail 都要是開的。
+    非字面的 `set` 參數當成關掉（fail-closed）。
 
-    **子殼層裡的「關」也算數**（R37，移植 #61 群組規則時查到）：`{ set +o pipefail; false | true; } 2>&1 | python3 …`
-    的群組是管線的一段、在子殼層裡跑——裡面的 `set +o pipefail` 管不到外層，卻會關掉群組內之後的管線（bash 實測失敗被吞、
-    外層 rc=0）。前一版把子殼層裡的 pf 事件整個忽略，這一步在關鍵字 `bash` 下放行。本 lint 不追蹤子殼層的範圍在哪裡結束，
-    所以「關」一出現就一路關到底（`( set +o pipefail ); a | b` 因此誤擋，方向是 fail-closed；函式本體裡的關在呼叫後本來就作用
-    在全域）。子殼層裡的「開」照舊不算數——它確實管不到外面。"""
-    for ev in events:
-        if ev["k"] == "pf" and (not ev.get("sub") or not ev["on"]):
-            on = ev["on"]
-        elif ev["k"] == "pipe" and not on:
+    **範圍**（R39，#33 verify R38 第 8、11 列）：每個事件帶一條範圍路徑——子殼層（`( … )`、管線的每一段、命令替換、
+    背景執行）各開一層。一個設定只作用在**同一個範圍或更內層**、而且在它之後出現的管線上：
+      · `{ set +o pipefail; false | true; } 2>&1 | python3 …`：群組是管線的一段，裡面的「關」作用在群組內之後的管線（R37）；
+      · `( set +o pipefail )` 之後的管線在外層範圍 ⇒ 不受影響（R37 版「關一出現就一路關到底」在這裡誤擋，R38 第 11 列）；
+      · 同一範圍裡先關再開 ⇒ 之後是開的（R37 版忽略子殼層裡的「開」，誤擋同一個寫法）；
+      · `set -o pipefail &` 在背景子殼層裡 ⇒ 管不到外面（R37 版把 `&` 當 `;`，R38 第 8 列）。
+    **函式本體**不開新範圍：本體要呼叫才執行，所以裡面的「開」不算數（可能沒被呼叫），「關」照樣作用在定義所在的範圍
+    （可能被呼叫）——兩個方向都是 fail-closed。"""
+    for j, ev in enumerate(events):
+        if ev["k"] != "pipe":
+            continue
+        st = on
+        for e in events[:j]:
+            if e["k"] == "pf" and ev["scope"][:len(e["scope"])] == e["scope"] and not (e["fn"] and e["on"]):
+                st = e["on"]
+        if not st:
             return False
     return True
 
@@ -2325,7 +2432,8 @@ def _bash_template(sh):
 # **`--strict` 的群組規則**（#59／#60；R37 自 PR #61 移植）：靠管線過濾的 step，整個 run 區塊必須是
 #     [若干行 `set -e`／`-u`／`-o pipefail`]
 #     { …整個區塊… ; } 2>&1 | python3 <路徑>/neutralise.py        （或 `} |& python3 …`）
-# R36 的 `--strict` 只要求「接 neutralise 的管線，每一段都把 stderr 併進管線」，關不掉兩類：
+# R36 的 `--strict` 只要求「緊鄰 `python3 …neutralise.py` 的那一段把 stderr 併進管線」（`STRICT_NEUT_RE`；「每一段」是 R37 WIP
+# 的規則、從沒出貨——#33 verify R38 regression LOW-8 更正），關不掉兩類：
 #   · #59（已知類別 G）：同一個區塊裡**另一條命令**印的 PR 文字不經任何管線；
 #   · #60 第 2 類：bash 先展開詞、再由左到右套用重導向——`echo "${!PR_TITLE}" 2>&1 | …` 的展開期錯誤、
 #     `echo x > "$PR_TITLE" 2>&1 | …` 的重導向錯誤，都在那一段的 `2>&1` 生效**之前**寫到當下的 stderr。
@@ -2339,9 +2447,16 @@ def _bash_template(sh):
 #     是 bash 保留字的超集；多出任何一個 ⇒ 拒絕。
 #   · 唯一的 `{` 是 `set` 前綴之後第一個詞 ⇒ bash 一定把它當群組開頭。
 #   · 唯一的 `}` 若因為某個沒收的構造（`case`、陣列、`$(`）而不被 bash 當成保留字，群組就到檔尾都沒關——
-#     bash 在執行群組裡任何東西之前就報語法錯誤（它先讀完整個複合命令），什麼都不會印。
-# `set` 前綴只收 `-e`／`-u`／`-o pipefail|errexit|nounset`：`set -v` 會把原始碼（含 runner 代入的 `${{ … }}`）
+#     bash 在執行群組裡任何東西之前就報語法錯誤（它先讀完整個複合命令），群組裡的命令一個都不執行。bash 仍會把**語法診斷**
+#     印到群組外的 stderr（#33 verify R38 codex 第 10 條：「命令沒執行」推不出「沒有輸出」）——診斷引用的是原始碼；原始碼裡
+#     PR 可控的 `${{ github.event.* }}` 由 `GH_EXPR_UNTRUSTED_RE` 那條規則另外擋（R39）。
+# `set` 前綴只收 `-e`／`-u`／`-E`／`-o pipefail|errexit|nounset|errtrace`（`-E`／errtrace：R39，只影響 ERR trap 的繼承）：`set -v` 會把原始碼（含 runner 代入的 `${{ … }}`）
 # 印到群組外的 stderr，`-x` 同理；裸 `set` 把所有變數（含 PR 可控的 env）印到群組外的 stdout。
+# **代價：保守誤擋**（#33 verify R38 第 11 列：R37 只揭露了前兩類）。封閉列舉，只有這七類，每一類都在 oracle.py 的 KNOWN_DISAGREE
+# 登記（逐段 `2>&1` 登記的是產生語料 `gen-f-*` 的五檔，其餘六類各有一張以上的 `restrict-*` fixture）：逐段 `2>&1`（不是群組形式）、`( … )` 子殼層、群組內定義函式、群組內的巢狀群組
+# （`{ …; } >> "$GITHUB_ENV"`）、一個 step 兩個群組、群組前的 `cd`／`export`、命令替換裡不在命令起點的 `case` 普通參數
+# （這一類是掃描器的 fail-closed，不是群組規則）。R39 放寬了四類（未加引號的 `${{ … }}`、尾巴後的 `;`、`set -E`／errtrace、
+# `set` 前綴行尾的 `;`）。
 # **子殼層 `( … ) 2>&1 |` 不收**：`(`／`)` 也出現在 `$(`、`$((`、陣列、`case` 模式裡，同一套「恰好一對」的論證不成立。
 # 斷詞只認 ASCII 空白與 tab——bash 的詞界就是這兩個加上 metachar。Python 的 `\s` 還認 NBSP 等 Unicode 空白：
 # `{<NBSP>true` 在 `\s` 下斷成 `{`、`true`，bash 卻讀成一個詞（不存在的命令），群組根本沒開
@@ -2349,18 +2464,20 @@ def _bash_template(sh):
 GROUP_TOK_RE = re.compile(r"&>>|&>|>&|<&|>>|<<<|<<|&&|\|\||\|&|;;|[;&|()<>]|[^ \t;&|()<>]+")
 GROUP_TAIL = (["2", ">&", "1", "|", "python3"], ["|&", "python3"])
 NEUT_PATH_RE = re.compile(r"^[\w./-]*neutralise\.py$")
-SET_OPT_NAMES = frozenset(("pipefail", "errexit", "nounset"))
+SET_OPT_NAMES = frozenset(("pipefail", "errexit", "nounset", "errtrace"))   # errtrace：R39，R38 第 11 列（`-E` 不印任何東西）
 OPEN_AT_RE = re.compile(r"(?<![^ \t;&|()<>])\{(?![^ \t;&|()<>])")     # 實體行裡獨立詞 `{`／`}` 的位置
 CLOSE_AT_RE = re.compile(r"(?<![^ \t;&|()<>])\}(?![^ \t;&|()<>])")
 
 
 def _set_prefix_line(toks):
-    """`set` 前綴行：只收 `-e`／`-u`（可合寫）與 `-o NAME`（可與 `-eu` 合寫成 `-euo NAME`），NAME 限 SET_OPT_NAMES。"""
+    """`set` 前綴行：只收 `-e`／`-u`／`-E`（可合寫）與 `-o NAME`（可與 `-euE` 合寫成 `-euo NAME`），NAME 限 SET_OPT_NAMES。"""
+    if toks[-1:] == [";"]:
+        toks = toks[:-1]                         # 行尾的 `;` 只是結束那條命令（R39，R38 第 11 列）
     if toks[:1] != ["set"] or len(toks) < 2:
         return False
     k = 1
     while k < len(toks):
-        m = re.fullmatch(r"-(?=.)([eu]*)(o?)", toks[k])       # `(?=.)`：單獨一個 `-` 不是選項
+        m = re.fullmatch(r"-(?=.)([euE]*)(o?)", toks[k])      # `(?=.)`：單獨一個 `-` 不是選項
         if not m:
             return False
         if m.group(2):
@@ -2371,9 +2488,37 @@ def _set_prefix_line(toks):
     return True
 
 
+GH_EXPR_RE = re.compile(r"\$\{\{.*?\}\}")
+# PR 可控的 runner 運算式（R39，#33 verify R38 第 14 列）：封閉列舉，只有這兩種——`github.event.*`（標題、內文、分支名…）
+# 與 `github.head_ref`。`inputs.*`、`matrix.*`、`steps.*` 不列：它們的值由 workflow 作者或前面的 step 決定。
+GH_EXPR_UNTRUSTED_RE = re.compile(r"\$\{\{[^}]*?\bgithub\.(?:event\.|head_ref\b)")
+
+
+def _logical_lines(code_lines):
+    """程式碼半邊 → 邏輯行：只有前一行以 `CONT_RE` 結尾（`|`、`||`、`|&`、`&&`）才接下一行；空白行丟掉。"""
+    logical = []
+    for c in code_lines:
+        cs = c.strip()
+        if logical and CONT_RE.search(logical[-1]):
+            logical[-1] = logical[-1] + " " + cs
+        elif cs:
+            logical.append(cs)
+    return logical
+
+
 def strict_group_violation(logical, code, src):
     """違規原因，合規回 None。`logical` 是 shell_scan 的程式碼半邊接成的邏輯行；`code` 是逐實體行的程式碼半邊，
     `src` 是 `_aligned_sources` 給的對齊原文（對不齊的行是 None）——字面檢查用。"""
+    # runner 運算式 `${{ … }}` 在 bash 之前就被代換掉，對 bash 而言那裡沒有大括號（R39，#33 verify R38 第 10 列）。掃描器把它讀成
+    # bash 的 `${…}`、在第一個 `}` 收尾，剩下的 `}` 被算成獨立的大括號——`{ make ${{ matrix.target }}; } 2>&1 | …` 因此沒有任何
+    # 可接受的寫法（R32 HIGH-1 修過的那一類）。計數與定位用遮掉運算式的程式碼；字面檢查仍比原本的程式碼（群組外的運算式照樣拒絕）。
+    masked = list(code)
+    for i, s in enumerate(src):
+        for m in (GH_EXPR_RE.finditer(s) if s is not None else ()):
+            if m.end() <= len(masked[i]):
+                masked[i] = masked[i][:m.start()] + " " * (m.end() - m.start()) + masked[i][m.end():]
+    if masked != list(code):
+        logical = _logical_lines(masked)
     toks = [GROUP_TOK_RE.findall(l) for l in logical]
     k = next((i for i, t in enumerate(toks) if not _set_prefix_line(t)), len(toks))
     body = toks[k:]
@@ -2393,6 +2538,8 @@ def strict_group_violation(logical, code, src):
     if c and last[c - 1] not in (";", "&"):
         return "群組的 `}` 必須在命令位置（行首，或緊接在 `;`／`&` 之後）——否則它只是一個參數"
     tail = last[c + 1:]
+    if tail[-1:] == [";"]:
+        tail = tail[:-1]                         # 尾巴後的 `;` 只是結束那條管線（R39，R38 第 11 列）
     if not (tail[:-1] in GROUP_TAIL and NEUT_PATH_RE.match(tail[-1])):
         return ("群組的 `}` 之後必須恰好是 `2>&1 | python3 <路徑>/neutralise.py` 或 `|& python3 <路徑>/neutralise.py`"
                 "（路徑不加引號、不帶變數），實際是 `%s`" % " ".join(tail))
@@ -2401,13 +2548,16 @@ def strict_group_violation(logical, code, src):
     # 群組**內**可以有任何東西；群組**外**這三段（`set` 前綴、`{` 之前、`}` 之後）必須逐字就是 lint 讀到的字。
     # 對不齊的行（`_aligned_sources` 給 None）⇒ 拒絕（fail-closed）。`set` 前綴的邏輯行各自就是一個實體行
     # （它們不以 `|`／`&&`／`||` 結尾）。
-    lines = [i for i, l in enumerate(code) if l.strip()]
+    # **群組外的每一個實體行都比**，不只程式碼非空白的行（R38 第 2 列）：`${PR_TITLE}`、`\e\c\h\o …`、`$'\x65cho' …`、
+    # `${X:-eval} $'…'` 整行挖空後程式碼是一串空白——上面的詞元檢查（`logical` 丟掉空白碼行）看不到它，只收非空白行的
+    # 字面檢查也看不到，bash 卻照樣執行。純註解行與空行不受影響：註解在程式碼半邊被**截掉**、不是挖空，對齊原文只剩縮排。
+    lines = [i for i, l in enumerate(masked) if l.strip()]
     opener = lines[k]
-    closer = max(i for i in lines if CLOSE_AT_RE.search(code[i]))
-    spans = ([(i, 0, len(code[i])) for i in lines[:k]]
-             + [(opener, 0, OPEN_AT_RE.search(code[opener]).end()),
-                (closer, CLOSE_AT_RE.search(code[closer]).start(), len(code[closer]))]
-             + [(i, 0, len(code[i])) for i in lines if i > closer])
+    closer = max(i for i in lines if CLOSE_AT_RE.search(masked[i]))
+    spans = ([(i, 0, len(code[i])) for i in range(opener)]
+             + [(opener, 0, OPEN_AT_RE.search(masked[opener]).end()),
+                (closer, CLOSE_AT_RE.search(masked[closer]).start(), len(code[closer]))]
+             + [(i, 0, len(code[i])) for i in range(closer + 1, len(code))])
     if not all(src[i] is not None and src[i][a:b] == code[i][a:b] for i, a, b in spans):
         return ("群組外的 `set` 前綴、`{` 之前、`}` 之後必須是字面文字——裡面有引號、逃脫或 `${…}` 展開"
                 "（挖空後看不見，bash 會展開成命令名、選項或路徑）")
@@ -2421,7 +2571,7 @@ REQUIRE_RUN_STEPS = "--require-run-steps" in sys.argv
 #       頂層地 `set -o pipefail`（之後不得再關掉）——R33 的形狀普查 step 缺它，閘門在 CI 上結構上紅不了（R34 security S-1／
 #       regression H-3／requirements F1）；R36 第 4 列：`bash -e {0}`、`bash -l {0}` 這類樣板**沒有** pipefail。
 #   (2) 靠管線過濾的 step，整個 run 區塊必須是**一個群組** `{ …; } 2>&1 | python3 …neutralise.py`（見 `strict_group_violation`；
-#       #59／#60，R37 自 PR #61 移植）。R35／R36 的前一版只要求「接 neutralise 的管線，每一段都把 stderr 併進管線」——
+#       #59／#60，R37 自 PR #61 移植）。R35／R36 的前一版只要求「緊鄰 neutralise 的那一段把 stderr 併進管線」——
 #       已知類別 S-2 在那個模式下是規則，G（同區塊另一條命令）與展開期／重導向錯誤不是；群組形式三者都關。
 #   (3) shell 只能是 bash 樣板（不得開 xtrace／verbose）；container 或 Windows／運算式 runs-on 的 job 必須明寫 shell
 #       （R35 從預設模式移過來：預設模式假設 shell 是 bash，見 `shell_scan` 已知不涵蓋第三組第 1 條）。
@@ -2765,7 +2915,11 @@ for path in [a for a in sys.argv[1:] if a not in FLAGS]:
         inline = _uncomment(KEY_RE.match(norm[l0]).group(3) or "").strip()
         if inline:
             return [] if inline[:1] in ("{", "[") else ["?"]
-        return [k_ for _l, _i, k_ in _kids(l0, _end(l0, ind0), ind0)]
+        # `PYTHON*` 的值是 runner 運算式（R39，#33 verify R38 第 9 列）：過濾器 `python3` 啟動時就讀它——`PYTHONWARNINGS` 的值不合法時
+        # 原樣印到**管線右端**的 stderr，不經左端的 `2>&1`。記成 `KEY=${{ … }}`，由 `ENV_EXPR_RE` 認出來；字面值（`PYTHONPATH: src`）
+        # 不可能帶 PR 文字，照常放行。
+        return [k_ + "=${{ … }}" if k_.startswith("PYTHON") and "${{" in " ".join(raw[_l:_end(_l, _i) + 1]) else k_
+                for _l, _i, k_ in _kids(l0, _end(l0, ind0), ind0)]
 
     def _defaults_shell(l0, ind0):
         for l1, i1, k1 in _kids(l0, _end(l0, ind0), ind0):
@@ -2946,13 +3100,7 @@ for path in [a for a in sys.argv[1:] if a not in FLAGS]:
         # `echo "$PR_TITLE"` ⏎ `| python3 …neutralise.py` 被接成一條假管線而放行，
         # 而 bash 對行首的 `|` 報的是**語法錯誤**（R30 H-6：兩條路各自獨立足以放行，
         # 所以只收緊 `PIPED_RE` 修不好——要改的是「什麼叫一條命令」）。
-        logical = []
-        for c in run_code:
-            cs = c.strip()
-            if logical and CONT_RE.search(logical[-1]):
-                logical[-1] = logical[-1] + " " + cs
-            elif cs:
-                logical.append(cs)
+        logical = _logical_lines(run_code)
         rl_code, rl_src = _rule_lines(run_code, scan_in)     # 規則層的邏輯行：程式碼＋對齊的原文（R37，見 `_rule_lines`）
         via_pipe = any(PIPED_RE.search(l) for l in logical)
         declared = any(LOGFILTER_RE.match(l) for l in decl_lines)
@@ -2966,7 +3114,7 @@ for path in [a for a in sys.argv[1:] if a not in FLAGS]:
         # env 帶進的 shell 設定（R36 第 8 列）：workflow／job（含 container.env）／step 三層；`?` ＝值是運算式、鍵名看不到
         env_names = wf_env + (job["env"] if job else []) + (
             _env_names(s["keys"]["env"], s["kindent"]) if "env" in s["keys"] else [])
-        env_hit = [k for k in env_names if k in ENV_TRACE_KEYS or k == "?"]
+        env_hit = [k for k in env_names if k in ENV_TRACE_KEYS or k == "?" or ENV_EXPR_RE.fullmatch(k)]
         where = "%s:%d: RULE: " % (path, s["start"] + 1)
         if not ok:
             print(where + "step '%s' 的 run 區塊既沒有經 neutralise.py，也沒有 `# LOG-FILTER:` 註解說明為何不過濾"
@@ -2982,9 +3130,13 @@ for path in [a for a in sys.argv[1:] if a not in FLAGS]:
                   file=sys.stderr)
             rc = 1
         elif not declared and env_hit:
-            print(where + "step '%s' 靠管線過濾，而 env（workflow／job／step）帶了 %s——bash 啟動時就讀它們：可以開 xtrace、"
-                  "或在 run 之前執行別的程式碼，那些輸出不經過管線" % (s["name"], "、".join(
+            print(where + "step '%s' 靠管線過濾，而 env（workflow／job／step）帶了 %s——bash（或過濾器 python3）啟動時就讀它們："
+                  "可以開 xtrace、在 run 之前執行別的程式碼，或把值印在管線右端的 stderr，那些輸出不經過管線" % (s["name"], "、".join(
                       "`%s`" % k if k != "?" else "看不到鍵名的運算式" for k in env_hit)), file=sys.stderr)
+            rc = 1
+        elif not declared and any(GH_EXPR_UNTRUSTED_RE.search(l) for l in scan_in if l is not None):
+            print(where + "step '%s' 靠管線過濾，而 run 裡直接寫了 PR 可控的運算式（`${{ github.event.* }}`／`${{ github.head_ref }}`）"
+                  "——runner 在 bash 解析之前代換，PR 文字可以收掉引號與群組；改經 step 的 `env:` 傳進來" % s["name"], file=sys.stderr)
             rc = 1
         elif STRICT and not declared and group_why:
             # 訊息不得含 pipefail 這個字：oracle.py 以它辨認「只因退出碼遮蔽而紅」的列。

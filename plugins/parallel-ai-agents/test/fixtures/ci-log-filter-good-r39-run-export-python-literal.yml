@@ -1,0 +1,15 @@
+# R39 run 裡 `PYTHON*` 規則的對照（R38 第 9 列）：值是字面（`export PYTHONUNBUFFERED=1`）不可能帶 PR 文字，照常放行。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: literal python env in run
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          export PYTHONUNBUFFERED=1
+          echo "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py

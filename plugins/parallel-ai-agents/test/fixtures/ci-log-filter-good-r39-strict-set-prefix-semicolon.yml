@@ -1,0 +1,16 @@
+# R38 第 11 列（regression MEDIUM-4 的 61 個安全寫法之一）：`set` 前綴行尾的 `;` 只是結束那條命令。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: set prefix with a trailing semicolon
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail;
+          { echo "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py

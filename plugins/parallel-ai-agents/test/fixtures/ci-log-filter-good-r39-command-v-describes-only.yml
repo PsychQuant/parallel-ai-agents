@@ -1,0 +1,15 @@
+# R39（R38 第 4 列的修法）：`command -v`／`-V` 只印命令的描述、不執行它——`command -v set -x` 不開 xtrace。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: command -v only describes
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          command -v set -x >/dev/null
+          echo "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py

@@ -155,6 +155,7 @@ jobs:
       # skip reason mid-codepoint, grep sees a binary file and `-q` reports no match. `-a` reads it as
       # text; and the TAP plan-vs-executed check from the macOS job comes along (it was a strict subset).
       - name: bats (pack anchor) — run the suite, keep the TAP
+        id: pack_anchor
         shell: bash
         run: |
           set -o pipefail
@@ -162,8 +163,10 @@ jobs:
 
       # #59：TAP 守衛拆成自己的 step——它印的 `::error::` 放進上一步的過濾群組會被中和掉。
       # `success() || failure()`：上一步（bats 失敗）紅了也要跑，才印得出「哪一種」失敗（取代先前的 `rc=$?` ⋯ `exit "$rc"`）。
+      # `outcome != 'skipped'`（#33 verify R38 第 16 列）：同一 job 更前面的 step 失敗時，上一步被跳過、TAP 檔不存在——守衛照樣跑
+      # 會印出不實的 `::error::…no tests ran`（R38 那次 CI run 裡實際發生）。
       - name: bats (pack anchor) — fail on failure OR on skip (TAP guard)
-        if: success() || failure()
+        if: (success() || failure()) && steps.pack_anchor.outcome != 'skipped'
         # LOG-FILTER: none — assert-tap-complete.sh prints fixed ::error:: text and TAP counts only, never TAP lines
         shell: bash
         # #33 verify R16 DA-6: one implementation of the TAP guard, called from three places (was three hand-copies).

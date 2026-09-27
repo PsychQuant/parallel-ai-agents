@@ -1,0 +1,24 @@
+# R38 第 2 列的修法讓群組外**每一個**實體行都做字面比對。這張是對照：群組外的純註解行（註解在程式碼半邊被截掉，
+# 對齊原文只剩縮排）與空行，照樣放行。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: comments and blank lines outside the group
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          # build and neutralise everything
+          set -eo pipefail   # strict
+
+            # indented comment
+          {
+            echo "$PR_TITLE"
+          } 2>&1 | python3 scripts/neutralise.py
+          # trailing comment
+

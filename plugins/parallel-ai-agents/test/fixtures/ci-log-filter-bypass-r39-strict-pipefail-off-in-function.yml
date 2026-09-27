@@ -1,0 +1,19 @@
+# R39 opsweep 存活者（`--since c53ac22`）：`_pipefail_holds` 的 `e["on"]`（函式本體裡只忽略「開」）。函式本體裡 `set +o pipefail`、之後呼叫它——那個「關」在呼叫後作用在全域，
+# 之後 `false | true` 的失敗被吞。拿掉那個運算元，函式本體裡的「關」也被忽略。宣告了 `# LOG-FILTER:` 的 step 才走到 pipefail 規則。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: pipefail off in a called function
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          # LOG-FILTER: none — test
+          f() { set +o pipefail; }
+          f
+          false | true

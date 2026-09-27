@@ -1,0 +1,23 @@
+# R38 第 11 列（regression MEDIUM-4）：安全的寫法，群組規則保守擋下——規則只收**恰好一對**獨立的大括號、群組前只收 `set` 前綴
+# （見 `strict_group_violation` 的「為什麼是恰好一個 `{`、一個 `}`」）。揭露在 oracle.py 的 KNOWN_DISAGREE、#60 與 test.yml 的註解；
+# 一個 step 兩個獨立群組：兩對大括號。改寫：合成一個群組，或拆成兩個 step。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [a]
+    steps:
+      - name: two groups
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          { echo a; } 2>&1 | python3 scripts/neutralise.py
+          {
+            echo "$PR_TITLE"
+          } 2>&1 | python3 scripts/neutralise.py

@@ -1,0 +1,18 @@
+# R38 第 2 列（logic HIGH-1、DA HIGH）：群組外有一行的**程式碼半邊整行是空白**——`${…}`、`$'…'`、`\x` 逃脫在掃描器裡被挖成
+# 等長空白，只由這些構造組成的一行，詞元檢查（`logical` 丟掉空白碼行）與字面檢查（`lines` 只收非空白碼行）都看不到，
+# bash 卻照樣執行它。`${PR_TITLE} # c`：註解被截掉、其餘被挖空。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: bare expansion with a trailing comment
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          ${PR_TITLE} # c
+          { echo hi; } 2>&1 | python3 scripts/neutralise.py

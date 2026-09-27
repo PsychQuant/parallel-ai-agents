@@ -1,0 +1,21 @@
+# R38 第 14 列（security HIGH-1 → DA 降 MEDIUM）：`${{ github.event.* }}`／`${{ github.head_ref }}` 直接寫在 run 裡，runner 在 bash 解析之前
+# 代換——標題可以收掉引號與群組、印出 workflow command。GitHub 的建議是經 `env:` 傳。靠管線過濾的 step 兩種模式都擋。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [a]
+    steps:
+      - name: event expression in the group
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            echo "title: ${{ github.event.pull_request.title }}"
+          } 2>&1 | python3 scripts/neutralise.py

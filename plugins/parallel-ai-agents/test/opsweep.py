@@ -46,6 +46,7 @@ LINT = HERE / "lint-ci-log-filter.sh"
 # 突變體 id 的形狀：`<op>|<函式>|<該行去空白的原文>|<同一行第幾個>`。用原文不用 offset：offset 會隨任何改動漂移，
 # 原文只在那一行真的改了才變——而那時本來就該重新判讀。
 EXPECTED_SURVIVE = {   # id → 理由（依構造等價）。每一條都要能回答「為什麼關掉它沒有任何輸出會變」
+    "±1→±2|new_scope|self.o[\"nscope\"] += 1|1": "範圍 id 只用來比相等與前綴（`_pipefail_holds`）；間隔 1 或 2 都互不相同，沒有任何判定讀它的數值（R39）",
     # `len(v) >= 2` 只擋單一字元的 `'`／`"`：那是沒收尾的引號，不是合法 YAML（PyYAML ScannerError、GitHub
     # 「workflow file issue」），runner 不會跑。拿掉守衛只改變 lint 對無效輸入的訊息，不改變任何合法輸入的判定。
     "drop-operand|yaml_decode_scalar|if len(v) >= 2 and v[0] == v[-1] == \"'\":|1": "單字元 `'` 是沒收尾的引號、非合法 YAML；守衛只防越界",
@@ -103,7 +104,6 @@ EXPECTED_SURVIVE = {   # id → 理由（依構造等價）。每一條都要能
     # 既不可能命中 `PIPED_RE`，也不可能命中 `CONT_RE`（它要求結尾是 `|`／`||`／`&&`），所以它當上
     # `logical[-1]` 之後，下一行的續接判定**兩版都是否**；至於接進去時多出來的那段空白，同樣被
     # `PIPED_RE` 的 `\\s*` 吸收。
-    "strip→id|<module>|cs = c.strip()|1": "純空白的邏輯行對 `PIPED_RE`／`CONT_RE` 都不成立，多出的空白被 `\\s*` 吸收",
     # **R37 最終 lint（`--since 380e4a4`）的 42 條等價**：各群分析者給構造論證、另一位反駁者逐條試著寫出殺得掉的 fixture
     # （推翻了 52 條裡的 6 條，已補 fixture），剩下的在補件之後由 opsweep 的正式判定重跑仍存活。理由類別：
     # 被同一條件的其他運算元或緊接的檢查蘊含、依構造恆真的條件、冪等賦值、呼叫端保證到不了的分支。`--verify-expected` 在產生語料上實跑。
@@ -149,7 +149,6 @@ EXPECTED_SURVIVE = {   # id → 理由（依構造等價）。每一條都要能
     "drop-operand|shell_scan|if dq_ret and ((ch == \"`\" and not bt) if dq_ret[-1] == 0 else (ch == \")\" and csub + cpar < dq_ret[-1])):|4": "同上一條（另一個運算元）",
     "drop-operand|shell_scan|if dq_ret and ((ch == \"`\" and not bt) if dq_ret[-1] == 0 else (ch == \")\" and csub + cpar < dq_ret[-1])):|5": "csub、cpar 只在 ch == \")\" 時遞減，而本條件每個字元都檢查、一滿足就 pop；第一次降到門檻以下的字元必然是 `)`",
     "drop-operand|simple|if name == \"eval\" and args and all(a[\"lit\"] is not None for a in args):|2": "裸 `eval`（args 為空）時突變體進分支、遞迴剖析空字串並 return，原版落到後面也找不到任何可命中的分支，判定相同",
-    "strip→id|_scalar|return d if d is not None else body.strip()|1": "d 為 None 只在 body 含引號與反斜線時發生；消費者 `sh == \"bash\"` 恆假，`sh.split()` 本身忽略頭尾空白",
     "±1→±2|_cmdsub_end_case|code.append(\";\"); k += 1; prev = \"\\n\"; continue|1": "同第 0 條：`\\n` 那一支在任何呼叫端都到不了，`k += 1` 改成 2 無從觀察",
     "±1→±2|parse_case|self.i += 1|6": "到這一行時 tok() 已確定是非 None、非 esac 的詞元，前面的模式掃描必然前進，`self.i == i0` 的安全網不可達",
 }
@@ -558,10 +557,12 @@ def main():
     # 兩條上限：(1) 工具內守「EXPECTED_SURVIVE ≤ 本次掃描突變體數的 10%」——修完之後存活的只剩預期的，
     # 「≤ 存活的 1/3」在工具裡會退化成永遠失敗；(2) 每輪「新增條數 ≤ 該輪存活數的 1/3」是**審查規則**，
     # 對照該輪修法前的 sweep log 在 PR body 檢查（R29：30 存活 → 4 條預期 = 13%）。
-    cap = len(ms) // 10
+    # 分母是**全集**（R39 更正）：`EXPECTED_SURVIVE` 是全集的清單，前一版除以 `--since` 過濾後的區域——R37 的區域 866 個剛好
+    # 放得下，R39 的區域只有 368 個，46 條全集清單被判「超過 10%」。同一個集合要跟同一個分母比。
+    cap = len(all_ms) // 10
     if len(EXPECTED_SURVIVE) > cap:
         rc = 1
-        print("\n✗ EXPECTED_SURVIVE（%d）超過本次突變體數的 10%%（上限 %d）——這個集合在藏東西" % (len(EXPECTED_SURVIVE), cap))
+        print("\n✗ EXPECTED_SURVIVE（%d）超過全集突變體數的 10%%（上限 %d）——這個集合在藏東西" % (len(EXPECTED_SURVIVE), cap))
     if args.json:
         pathlib.Path(args.json).write_text(json.dumps({"results": results, "elapsed_s": elapsed}, ensure_ascii=False, indent=1))
     return rc

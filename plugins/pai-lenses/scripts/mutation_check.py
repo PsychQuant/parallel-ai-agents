@@ -46,7 +46,15 @@ R7 有一個 mutation 一直沒轉紅，差點被判定成「那條測試是套�
 mutation test 本身也需要被驗證有沒有真的打中。
 """
 import argparse
+import ast
+import concurrent.futures
+import hashlib
+import json
 import pathlib
+import queue
+import re
+import shutil
+import tempfile
 import time
 import signal
 import subprocess
@@ -84,6 +92,112 @@ SUITES = {
     # `precheck_suites` 的「未突變＝綠」前提；拿掉任一道檢查它就紅。被突變的檔仍是 `test/oracle.py`。
     "oracle-inverted": (ORACLE, lambda: [sys.executable, "test/oracle_selfcheck.py"], PAI),
 }
+
+# ── 結果快取（R39，使用者提議：沒改變就沿用 JSON 記錄）──────────────────────────────────
+# 每個守備單位的驗證指令讀得到的**輸入檔**（被突變的那個檔另外以正規化內容計入 key）。封閉列舉，只有這五組：
+#   · `lint`：selftest 只讀 fixture。
+#   · `oracle`／`oracle-inverted`：神諭讀 fixture、反向探針與假 lint，並執行 lint 本身（lint 以剝註解的 AST 計入）。
+#   · `validate`／`neutralise`：`test_validate.py` 讀的範圍很廣（整個 `plugins/`、`.github/workflows/test.yml`、skills、bin
+#     …），逐一列舉必然漏——所以這兩組的輸入是**整個 repo**（不含 `.git`、`__pycache__` 與快取檔本身）。代價是任何改動
+#     都讓它們重跑；那是對的方向：漏列一個輸入，快取就會安靜地給出舊答案。
+REPO_ROOT = PACK.parent.parent
+CACHE = PACK / "scripts" / "mutation-cache.json"
+_PAI_TEST = PAI.relative_to(REPO_ROOT) / "test"
+# 整個 repo 當輸入時唯一不計入的檔：沒有任何一條驗證指令讀它（validate.py 零次；test_validate.py 只在檔頭
+# docstring 提到它；它讀的 lint 原始碼只在註解裡提到）。量測完回填 CHANGELOG 的數字是每一輪的最後一步——
+# 計入的話，那一步會讓兩組共一百多個靶的快取全部失效。新增一條會讀它的測試時要把它從這裡拿掉。
+_NOT_READ = frozenset({str(_PAI_TEST.parent / "CHANGELOG.md")})
+SUITE_INPUTS = {
+    "lint": [(REPO_ROOT, [str(_PAI_TEST / "fixtures" / "*")])],
+    "oracle": [(REPO_ROOT, [str(_PAI_TEST / "fixtures" / "*"), str(_PAI_TEST / "oracle-probes" / "*"),
+                            str(_PAI_TEST / "oracle_selfcheck.py"), str(_PAI_TEST / "lint-ci-log-filter.sh")])],
+    "validate": [(REPO_ROOT, ["**/*"], _NOT_READ)],
+    "neutralise": [(REPO_ROOT, ["**/*"], _NOT_READ)],
+}
+SUITE_INPUTS["oracle-inverted"] = SUITE_INPUTS["oracle"]
+
+
+def _strip_docstrings(tree):
+    for node in ast.walk(tree):
+        body = getattr(node, "body", None)
+        if (isinstance(body, list) and body and isinstance(body[0], ast.Expr)
+                and isinstance(body[0].value, ast.Constant) and isinstance(body[0].value.value, str)):
+            body[0] = ast.Pass()
+    return tree
+
+
+def _py_norm(src):
+    try:
+        return ast.dump(_strip_docstrings(ast.parse(src)), include_attributes=False)
+    except SyntaxError:
+        return "RAW\0" + src                    # 突變體可能讓程式碼不合法：照原文比
+
+
+def normalized_source(path, text):
+    """快取 key 用的正規化內容：`.py` 用剝掉註解與 docstring 的 AST；內嵌 Python 的 bash（lint）外殼照原文、內嵌那段
+    用 AST；其他照原文。只改註解時 key 不變，改一個字面值 key 就變。"""
+    if path.suffix == ".py":
+        return _py_norm(text)
+    if "<<'PY'\n" in text and "\nPY" in text:
+        head, rest = text.split("<<'PY'\n", 1)
+        py, tail = rest.rsplit("\nPY", 1)
+        return head + "\0" + _py_norm(py) + "\0" + tail
+    return text
+
+
+def inputs_digest(spec, exclude=frozenset()):
+    """輸入檔的雜湊：路徑與（正規化後的）內容都計入，所以改內容、增刪檔案都會換 digest。"""
+    h = hashlib.sha256()
+    files = set()
+    for root, pats, *skip in spec:
+        skip = skip[0] if skip else ()
+        for pat in pats:
+            for f in root.glob(pat):
+                if f.is_file() and ".git" not in f.relative_to(root).parts and "__pycache__" not in f.parts \
+                        and f.resolve() not in exclude and str(f.relative_to(root)) not in skip:
+                    files.add((root, f))
+    for root, f in sorted(files, key=lambda x: str(x[1])):
+        raw = f.read_bytes()
+        try:
+            body = normalized_source(f, raw.decode("utf-8")).encode("utf-8", "surrogatepass")
+        except UnicodeDecodeError:
+            body = raw
+        h.update(str(f.relative_to(root)).encode() + b"\0" + hashlib.sha256(body).digest())
+    return h.hexdigest()
+
+
+def tool_versions():
+    """python 與 bash 的版本（還有 PyYAML，神諭用它）——換版本就不沿用。"""
+    v = [sys.version]
+    try:
+        v.append(subprocess.run(["bash", "--version"], capture_output=True, text=True).stdout.split("\n")[0])
+    except OSError:
+        v.append("no-bash")
+    try:
+        import yaml
+        v.append("yaml " + yaml.__version__)
+    except ImportError:
+        v.append("no-yaml")
+    return "\n".join(v)
+
+
+def target_key(suite, path, mutated, digest, tools):
+    return hashlib.sha256("\0".join([suite, normalized_source(path, mutated), digest, tools]).encode(
+        "utf-8", "surrogatepass")).hexdigest()
+
+
+def load_cache(path):
+    try:
+        d = json.loads(path.read_text(encoding="utf-8"))
+        return d.get("results", {}) if d.get("version") == 1 else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_cache(path, results):
+    path.write_text(json.dumps({"version": 1, "results": results}, ensure_ascii=False, indent=0, sort_keys=True) + "\n",
+                    encoding="utf-8")
+
 
 # (名稱, 要替換的字串, 替換成什麼)。每個 old 必須在 validate.py 中**恰好出現一次**。
 # `None` 的 new 代表特殊處理（見 _apply）。
@@ -376,7 +490,7 @@ MUTATIONS += [
      'r"[^|\\s;&(]\\s*\\|(?!\\|)&?\\s*python3',
      'r"\\|(?!\\|)&?\\s*python3', "lint"),
     ("lint: 邏輯行只在續行運算子後接續（R30 H-6 的另一半 → bypass-leading-pipe-literal）",
-     "            if logical and CONT_RE.search(logical[-1]):", "            if logical and True:", "lint"),
+     "        if logical and CONT_RE.search(logical[-1]):", "        if logical and True:", "lint"),
     ("lint: explicit_pad 只取標頭本身的指示子（R30 MB-1 → good-block-header-comment-digit）",
      "            ind = m_hdr.group(1) or m_hdr.group(2)      # 只取標頭本身的指示子，不碰行尾註解",
      '            ind = (re.search(r"[1-9]", inline) or [None] and None) and re.search(r"[1-9]", inline).group()', "lint"),
@@ -528,6 +642,13 @@ MUTATIONS += [
     ('lint: --strict：群組外（前綴、`{` 之前、`}` 之後）必須是字面（#59／#60 → bypass-strict-group-expansion-before-opener）',
      '    if not all(src[i] is not None and src[i][a:b] == code[i][a:b] for i, a, b in spans):',
      '    if False:', "lint"),
+    ('lint: --strict：群組前的每一個實體行都做字面比對，不只非空白碼行（R39，R38 第 2 列 → '
+     'bypass-r39-strict-group-blank-code-before、-after-set、-eval…）',
+     '    spans = ([(i, 0, len(code[i])) for i in range(opener)]',
+     '    spans = ([(i, 0, len(code[i])) for i in lines[:k]]', "lint"),
+    ('lint: --strict：群組後的每一個實體行都做字面比對（R39，R38 第 2 列 → bypass-r39-strict-group-blank-code-after）',
+     '             + [(i, 0, len(code[i])) for i in range(closer + 1, len(code))])',
+     '             + [(i, 0, len(code[i])) for i in lines if i > closer])', "lint"),
     ('lint: --strict：群組只收恰好一對大括號（#59／#60 → bypass-strict-group-case-pattern-brace）',
      '    if (flat.count("{"), flat.count("}")) != (1, 1):',
      '    if False:', "lint"),
@@ -605,8 +726,8 @@ MUTATIONS += [
      '                out["groups"][segs[k]["gid"]] = True',
      '                pass', "lint"),
     ('豁免只給接管線的群組',
-     '    fd = [why for why, stack in out["hits"] if not any(out["groups"][g] for g in stack)]',
-     '    fd = [why for why, stack in out["hits"] if not stack]', "lint"),
+     '    fd = [why for why, stack, safe in out["hits"] if not (safe and any(out["groups"][g] for g in stack))]',
+     '    fd = [why for why, stack, safe in out["hits"] if not (safe and stack)]', "lint"),
     ('set 的 x／v',
      '                elif on and ch in "xv":\n                    self.hit("`set %s` 開了 %s"',
      '                elif False:\n                    self.hit("`set %s` 開了 %s"', "lint"),
@@ -671,11 +792,11 @@ MUTATIONS += [
      '                if nm == "pipefail":\n                    pf = on',
      '                if nm == "pipefail":\n                    pf = False', "lint"),
     ('pipefail：子脈絡不算',
-     '        if ev["k"] == "pf" and (not ev.get("sub") or not ev["on"]):',
-     '        if ev["k"] == "pf":', "lint"),
+     '            if e["k"] == "pf" and ev["scope"][:len(e["scope"])] == e["scope"] and not (e["fn"] and e["on"]):',
+     '            if e["k"] == "pf":', "lint"),
     ('pipefail：子殼層裡的「關」也算數（R37 移植 #61 時查到 → bypass-strict-group-pipefail-off-inside）',
-     '        if ev["k"] == "pf" and (not ev.get("sub") or not ev["on"]):',
-     '        if ev["k"] == "pf" and not ev.get("sub"):', "lint"),
+     '            if e["k"] == "pf" and ev["scope"][:len(e["scope"])] == e["scope"] and not (e["fn"] and e["on"]):',
+     '            if e["k"] == "pf" and not e["scope"] and not (e["fn"] and e["on"]):', "lint"),
     ('pipefail：set +o 關掉',
      '                    elif nm == "pipefail":\n                        self.pf_event(on, ctx)',
      '                    elif nm == "pipefail":\n                        self.pf_event(True, ctx)', "lint"),
@@ -899,10 +1020,10 @@ MUTATIONS += [
      '            sub, p = _lex(C, S, p + 2, ")")\n            subs.append(sub)',
      '            sub, p = _lex(C, S, p + 2, ")")', "lint"),
     ('子殼層群組 `( … )` 不再當子脈絡（R37 pipefail → bypass-r37b-strict-pipefail-set-in-subshell）',
-     'self.parse_list(dict(ctx, stack=ctx["stack"] + (gid,), sub=True), lambda x: self.op(x, ")"))',
-     'self.parse_list(dict(ctx, stack=ctx["stack"] + (gid,)), lambda x: self.op(x, ")"))', "lint"),
+     'self.parse_list(dict(ctx, stack=ctx["stack"] + (gid,), scope=self.new_scope(ctx)),',
+     'self.parse_list(dict(ctx, stack=ctx["stack"] + (gid,)),', "lint"),
     ('`f() …` 的本體不再當子脈絡（R37 → bypass-r37b-strict-pipefail-set-in-function）',
-     '                self.skip_nl()\n                self.parse_command(dict(ctx, sub=True), end)',
+     '                self.skip_nl()\n                self.parse_command(dict(ctx, fn=True), end)',
      '                self.skip_nl()\n                self.parse_command(ctx, end)', "lint"),
     ('子 shell 的 `-x`／`-v` 不再算 trace（R37 → bypass-r37b-xtrace-child-bash-x）',
      '                elif on and ch in "xv":\n                    self.hit("子 shell',
@@ -1004,7 +1125,7 @@ MUTATIONS += [
      '                                 or re.match(r"/dev/(tcp|udp)/", posixpath.normpath(t["lit"]))):',
      '                                 ):', "lint"),
     ('`function f { …; }` 的本體不當子脈絡（R37 → bypass-r37t8-strict-pipefail-in-function-keyword）',
-     '            self.skip_nl()\n            self.parse_command(dict(ctx, sub=True), end)\n            return {"kind": "func", "trail": [], "neut": False}\n        words, rs',
+     '            self.skip_nl()\n            self.parse_command(dict(ctx, fn=True), end)\n            return {"kind": "func", "trail": [], "neut": False}\n        words, rs',
      '            self.skip_nl()\n            self.parse_command(ctx, end)\n            return {"kind": "func", "trail": [], "neut": False}\n        words, rs', "lint"),
     ('`_Sh.subs` 的 bad_sub fail-closed 拿掉（R37 → bypass-r37t8-dq-cmdsub-unparsed-stderr）',
      '        if w.get("bad_sub"):',
@@ -1040,8 +1161,8 @@ MUTATIONS += [
      '            return [] if inline[:1] in ("{", "[") else ["?"]',
      '            return []', "lint"),
     ('env 規則不把 `?` 算成命中（R37 → bypass-r37t8-step-env-inline-expression）',
-     '        env_hit = [k for k in env_names if k in ENV_TRACE_KEYS or k == "?"]',
-     '        env_hit = [k for k in env_names if k in ENV_TRACE_KEYS]', "lint"),
+     'if k in ENV_TRACE_KEYS or k == "?" or ENV_EXPR_RE',
+     'if k in ENV_TRACE_KEYS or ENV_EXPR_RE', "lint"),
     ('`_analyse` 外層 try（規則層自己的錯 fail-closed）拿掉（R37 → bypass-r37t8-rule-layer-recursion-limit）',
      '        except (IndexError, KeyError, ValueError, RecursionError) as e:',
      '        except (ZeroDivisionError,) as e:', "lint"),
@@ -1141,7 +1262,8 @@ MUTATIONS += [
      "known-stderr-cmd-error-missing-2to1）",
      'if base_mlines[k] - ml[k]]', 'if not (ml[0] or ml[1])]', "oracle"),
     ("oracle: G 差分關掉語法完整性守衛（R37，R36 第 1 列 → known-r37a-mustfail-g-diff-syntax-break）",
-     '    if pn[0] != 0 and pn != _bash_n(run, bash):', '    if False:', "oracle"),
+     '    if not _syntax_ok(_neutralised(lines, spans), base_n, bash):\n        # **多行群組**',
+     '    if False:\n        # **多行群組**', "oracle"),
     ("oracle: G 差分關掉『出現原本沒有的外流行』守衛（R37，R36 第 1 列 → "
      "known-r37a-mustfail-g-diff-heredoc-feeds-pipe）",
      '    if any(ml[k] - base_mlines[k] for k in (0, 1)):', '    if False:', "oracle"),
@@ -1154,8 +1276,8 @@ MUTATIONS += [
      'elif False:', "oracle"),
     ("oracle: 類別閘門『歸了類卻沒宣告』方向關掉（R37，R36 第 2 列 → known-r37a-mustfail-undeclared-g）",
      '        elif s_ > d_:', '        elif False:', "oracle"),
-    ("oracle: 類別閘門『KNOWN-CLASS 過期』方向關掉（R37，R36 第 2 列 → "
-     "known-r37a-mustfail-g-diff-syntax-break、known-r37a-mustfail-g-diff-heredoc-feeds-pipe）",
+    ("oracle: 類別閘門『KNOWN-CLASS 過期』方向關掉（R37，R36 第 2 列 → known-r39-mustfail-class-stale-only；"
+     "R39 把分類失敗改判繞過之後，原本的兩張 g-diff 探針光憑繞過就以宣告的理由失敗，殺不掉它了）",
      '        if d_ > s_:', '        if False:', "oracle"),
     ("oracle: pipefail 排除條件改成『任一條 RULE 是 pipefail 就不可比』（R37，R36 第 18 列 → "
      "bypass-r37a-mustfail-strict-pipefail-hides-2to1）",
@@ -1163,8 +1285,8 @@ MUTATIONS += [
      'if any(PIPEFAIL_RULE_MSG in m for m in step_rules):', "oracle"),
     ("oracle: YAML env 三層覆蓋不帶進腳本（R37，R36 第 8 列 → good-r37a-oracle-env-three-layers）",
      '        env = dict(yaml_env or {})', '        env = {}', "oracle"),
-    ("oracle: 續行判定關掉 bash 剖析那一支（R37 → known-r37a-g-continued-pipeline 的註解續行 step）",
-     '    return _bash_n(line, bash)[0] != 0 and _bash_n(line + "\\n:", bash)[0] == 0',
+    ("oracle: 續行判定關掉 bash 剖析那一支（R37 → known-r37a-g-continued-pipeline 的註解續行 step；R39 的差分往上擴範圍後那一張不再變色，改由 known-r39-g-two-continued-pipelines 殺）",
+     '    return (_bash_n(line, bash)[0] != 0 and _bash_n(line + "\\n:", bash)[0] == 0\n            and _dangling_op(line) != "andor")',
      '    return False', "oracle"),
     ("oracle: 續行判定關掉行尾反斜線那一支（R37 → known-r37a-g-continued-pipeline 的反斜線續行 step）",
      '    if re.search(r"(?<!\\\\)(?:\\\\\\\\)*\\\\$", line):\n        return True',
@@ -1177,12 +1299,135 @@ MUTATIONS += [
     ("oracle: 關掉 oracle↔lint 的 RULE 字面耦合檢查（R37 合併 r37a／r37b 時加 → test/oracle_selfcheck.py 第 2 項）",
      'for _msg in (PIPEFAIL_RULE_MSG, STRICT_GROUP_RULE_MSG):\n    if _msg not in _LINT_SRC:',
      'for _msg in (PIPEFAIL_RULE_MSG, STRICT_GROUP_RULE_MSG):\n    if False:', "oracle-inverted"),
+    # R39 把這個判斷改寫成 `if not strict_blocks(in_step):`（先排除 STRICT_MISS，再做原因檢查），替換方向跟著對調。
     ("oracle: G 的 --strict 查核恆真（R37 自 #61 移植 → known-r37-mustfail-g-strict-not-blocking）",
-     '                    if strict_blocks(in_step):',
-     '                    if True:', "oracle"),
-    ("oracle: G 的 --strict 查核恆假（R37 自 #61 移植 → known-granularity-* 等 G 範例的 KNOWN-CLASS 過期）",
-     '                    if strict_blocks(in_step):',
+     '                    if not strict_blocks(in_step):',
      '                    if False:', "oracle"),
+    ("oracle: G 的 --strict 查核恆假（R37 自 #61 移植 → known-granularity-* 等 G 範例的 KNOWN-CLASS 過期）",
+     '                    if not strict_blocks(in_step):',
+     '                    if True:', "oracle"),
+]
+
+# ── R39（#33 verify R38 第 4、8、11 列）：`_Sh` 的前綴詞、非字面命令名、`$"…"`、pipefail 的範圍 ──────────────
+MUTATIONS += [
+    ("lint: 前綴詞的選項不剝（R39，R38 第 4、8 列 → bypass-r39-xtrace-prefix-command-p、-builtin-dashdash…）",
+     '            while k < len(words) and w["code"] in _LEAD_OPTS and words[k]["lit"] in _LEAD_OPTS[w["code"]]:',
+     '            while False:', "lint"),
+    ("lint: `command -v` 也當成執行（R39 → good-r39-command-v-describes-only）",
+     '                if words[k]["lit"] in ("-v", "-V"):\n                    return',
+     '                if False:\n                    return', "lint"),
+    ("lint: `time` 的選項不剝（R39，R38 第 4 列 → bypass-r39-xtrace-prefix-time-p）",
+     '            while self.word(self.tok(-1), "time") and self.tok() is not None and self.tok().get("lit") in _LEAD_OPTS["time"]:',
+     '            while False:', "lint"),
+    ("lint: `eval --` 不剝（R39，R38 第 4 列 → bypass-r39-xtrace-prefix-eval-dashdash）",
+     '        if name == "eval" and args[:1] and args[0]["lit"] == "--":',
+     '        if False:', "lint"),
+    ("lint: 非字面命令名的 pipefail 不 fail-closed（R39，R38 第 8 列 → bypass-r39-strict-pipefail-off-nonliteral-name）",
+     '        if "pipefail" in lits:\n            self.pf_event(False, ctx)',
+     '        if False:\n            self.pf_event(False, ctx)', "lint"),
+    ("lint: 非字面命令名的 `-x` 不 fail-closed（R39，R38 第 4 列 → bypass-r39-xtrace-prefix-nonliteral-name）",
+     '        if (any(l is not None and re.fullmatch(r"-[%s]+" % _SET_LETTERS, l) and set(l[1:]) & set("xv") for l in lits)',
+     '        if (False', "lint"),
+    ("lint: 非字面命令名的 `-o xtrace` 不 fail-closed（R39 → bypass-r39-xtrace-prefix-nonliteral-name-o-xtrace）",
+     '                or ("-o" in lits and any(l in _TRACE_OPTS for l in lits))):',
+     '                or False):', "lint"),
+    ("lint: 非字面命令名的選項字母不限 `set` 的（R39 → good-r39-nonliteral-name-option-not-set-letters）",
+     're.fullmatch(r"-[%s]+" % _SET_LETTERS, l)', 're.fullmatch(r"-[A-Za-z]+", l)', "lint"),
+    ("lint: `$\"…\"` 的 `$` 當字面（R39，R38 第 4 列 → bypass-r39-xtrace-prefix-dollar-dq、bypass-r39-fd-dollar-dq-target）",
+     '        if c == "$" and C[p + 1:p + 2] == \'"\':',
+     '        if False:', "lint"),
+    ("lint: 背景執行不開新範圍（R39，R38 第 8 列 → bypass-r39-strict-pipefail-set-in-background）",
+     '            if self.op(self.tok(), "&"):         # 背景執行',
+     '            if False:         # 背景執行', "lint"),
+    ("lint: 管線的段不開新範圍（R39，R38 第 11 列 → good-r39-strict-pipefail-off-inside-group-no-inner-pipe）",
+     '            for a, b in zip(bounds, bounds[1:]):\n                self.rescope(a, b, ctx, skip=own)',
+     '            for a, b in ():\n                self.rescope(a, b, ctx, skip=own)', "lint"),
+    ("lint: 管線自己的 `|` 也搬進段的範圍（R39 → good-r39-strict-pipefail-off-inside-group-no-inner-pipe）",
+     '                self.rescope(a, b, ctx, skip=own)', '                self.rescope(a, b, ctx, skip=())', "lint"),
+]
+
+# ── R39（#33 verify R38 第 5、9、20 列）：群組豁免收窄、`..`、`PYTHON*` ──────────────
+MUTATIONS += [
+    ("lint: 群組豁免不分目標（R39，R38 第 5 列 → bypass-r39-strict-group-proc-pid-fd1、-dev-tty、-exec-proc-pid）",
+     '            self.hit(why, ctx, group_safe=_group_safe_target(r))', '            self.hit(why, ctx)', "lint"),
+    ("lint: 群組內寫 /dev/stderr 等也不豁免（R39 → good-r39-strict-group-dev-stderr）",
+     '    return ".." not in tl.split("/") and posixpath.normpath(tl) in _GROUP_SAFE_PATHS', '    return False', "lint"),
+    ("lint: 群組內的數字 fd 複製也不豁免（R39 → good-r39-strict-group-dev-stderr 的 `>&2`）",
+     '        return re.fullmatch(r"[0-9]+-?", tl) is not None', '        return False', "lint"),
+    ("lint: 含 `..` 的 /dev、/proc 目標不 fail-closed（R39，R38 第 20 列 → bypass-r39-fd-dotdot-dev-target）",
+     '    if t["lit"] is not None and ".." in t["lit"].split("/") and {"dev", "proc"} & set(t["lit"].split("/")):',
+     '    if False:', "lint"),
+    ("lint: env 的 `PYTHON*` 運算式值不標記（R39，R38 第 9 列 → bypass-r39-env-pythonwarnings-expression）",
+     'k_ + "=${{ … }}" if k_.startswith("PYTHON") and', 'k_ + "=${{ … }}" if False and', "lint"),
+    ("lint: env 規則不認 `PYTHON*` 運算式（R39 → bypass-r39-env-pythonwarnings-expression-default）",
+     ' or k == "?" or ENV_EXPR_RE.fullmatch(k)]', ' or k == "?"]', "lint"),
+    ("lint: run 裡非字面的 `PYTHON*` 不擋（R39 → bypass-r39-run-export-pythonwarnings）",
+     '        if m and w["lit"] is None:', '        if False:', "lint"),
+    ("lint: run 裡字面的 `PYTHON*` 也擋（R39 → good-r39-run-export-python-literal）",
+     '        if m and w["lit"] is None:', '        if m:', "lint"),
+]
+
+# ── R39（#33 verify R38 第 10、11、14 列）：群組規則的放寬與 PR 可控運算式 ──────────────
+MUTATIONS += [
+    ("lint: 群組計數不遮 runner 運算式（R39，R38 第 10 列 → good-r39-strict-group-github-expression-unquoted）",
+     '        for m in (GH_EXPR_RE.finditer(s) if s is not None else ()):', '        for m in ():', "lint"),
+    ("lint: 群組尾巴後的 `;` 不收（R39，R38 第 11 列 → good-r39-strict-group-trailing-semicolon）",
+     '    if tail[-1:] == [";"]:\n        tail = tail[:-1]', '    if False:\n        tail = tail[:-1]', "lint"),
+    ("lint: `set` 前綴不收 `-E`（R39，R38 第 11 列 → good-r39-strict-group-set-E-prefix）",
+     'r"-(?=.)([euE]*)(o?)"', 'r"-(?=.)([eu]*)(o?)"', "lint"),
+    ("lint: `set` 前綴不收 `-o errtrace`（R39 → good-r39-strict-group-set-E-prefix）",
+     '"pipefail", "errexit", "nounset", "errtrace"))', '"pipefail", "errexit", "nounset"))', "lint"),
+    ("lint: run 裡的 PR 可控運算式不擋（R39，R38 第 14 列 → bypass-r39-github-event-expression-in-run）",
+     '        elif not declared and any(GH_EXPR_UNTRUSTED_RE.search(l) for l in scan_in if l is not None):',
+     '        elif False:', "lint"),
+    ("lint: `set` 前綴行尾的 `;` 不收（R39，R38 第 11 列 → good-r39-strict-set-prefix-semicolon）",
+     '    if toks[-1:] == [";"]:\n        toks = toks[:-1]', '    if False:\n        toks = toks[:-1]', "lint"),
+    ("lint: PR 可控運算式不認 `github.head_ref`（R39 → bypass-r39-github-head-ref-in-run-default）",
+     r'(?:event\.|head_ref\b)', r'(?:event\.)', "lint"),
+]
+
+# ── R39（mutation 全輪的存活者追到的兩件事）──────────────
+MUTATIONS += [
+    ("lint: neutralise 之後還接管線的一段不擋（R39 → bypass-r39-segment-after-neutralise、-continued）",
+     '        if neut and neut[-1] < len(segs) - 1:', '        if False:', "lint"),
+    ("oracle: `&&`／`||` 懸空也當成同一條管線（R39 → known-r39-g-andand-continuation 被錯判成管線自己印的）",
+     '            and _dangling_op(line) != "andor")', '            and True)', "oracle"),
+]
+
+# ── R39（#33 verify R38 第 3、6、7 列）：神諭的歸類 ──────────────────────────────
+# 前六條由 `test/oracle_selfcheck.py` 的第 3–8 項殺（`oracle-inverted`：那些探針用假 lint 讓神諭走到歸類分支）；
+# 後兩條由 fixture 集的已知類別殺。
+MUTATIONS += [
+    ("oracle: xtrace 外流不另判（R39，R38 第 4、6 列 → oracle_selfcheck「xtrace 外流不歸 S-2」）",
+     '                if any(XTRACE_LINE_RE.match(l) for c in mlines for l in c):',
+     '                if False:', "oracle-inverted"),
+    ("oracle: 多行群組不往上擴範圍（R39，R38 第 3 列 → oracle_selfcheck「已觀察到外流而差分語法壞掉」）",
+     '            for s2 in range(s - 1, lo - 1, -1):', '            for s2 in ():', "oracle-inverted"),
+    ("oracle: 分類失敗退回「量不到」（R39，R38 第 3 列 → oracle_selfcheck「已觀察到外流而分類失敗、沒有類別宣告」）",
+     '                    verdict = "不一致：繞過（PR 文字已經外流，來源分類量不到：',
+     '                    verdict = "量不到（PR 文字已經外流，來源分類量不到：', "oracle-inverted"),
+    ("oracle: G 不做原因檢查（R39，R38 第 7 列 → oracle_selfcheck「已知類別 G 被與外流無關的原因擋下」）",
+     '                        if why is None:\n                            verdict = CAUSE_MISS % "G"',
+     '                        if False:\n                            verdict = CAUSE_MISS % "G"', "oracle-inverted"),
+    ("oracle: S-2 不做原因檢查（R39，R38 第 7 列 → oracle_selfcheck「已知類別 S-2 被與外流無關的原因擋下」）",
+     '                        elif why is None:\n                            verdict = CAUSE_MISS % "S-2"',
+     '                        elif False:\n                            verdict = CAUSE_MISS % "S-2"', "oracle-inverted"),
+    ("oracle: 縮減從不刪行（R39，R38 第 7 列 → oracle_selfcheck「已知類別 G 被與外流無關的原因擋下」）",
+     '        if v == "piped" and (leaked[0] or leaked[1]):\n            cur = trial',
+     '        if False:\n            cur = trial', "oracle-inverted"),
+    ("oracle: S-2 機制差分恆成立（R39，R38 第 6 列 → oracle_selfcheck「S-2 的機制差分」）",
+     '    if gone("\\n".join(a)):\n        return "missing-2to1"',
+     '    if True:\n        return "missing-2to1"', "oracle-inverted"),
+    ("oracle: S-2「展開期錯誤」機制不要求外流行是 bash 的錯誤訊息（R39，R38 第 6 列 → oracle_selfcheck「S-2 的機制差分」）",
+     '    if not all(BASH_DIAG_RE.match(l) for l in contrib):\n        return None',
+     '    if False:\n        return None', "oracle-inverted"),
+    ("oracle: S-2「缺 2>&1」機制恆不成立（R39，R38 第 6 列 → known-stderr-cmd-error-missing-2to1、"
+     "known-r37a-g-plus-s2-same-step 的 KNOWN-CLASS 過期）",
+     '    if gone("\\n".join(a)):\n        return "missing-2to1"',
+     '    if False:\n        return "missing-2to1"', "oracle"),
+    ("oracle: 原因檢查的合成 lint 恆判擋下（R39，R38 第 7 列 → oracle_selfcheck「已知類別 G 被與外流無關的原因擋下」）",
+     '    return "PARSE" if ": PARSE: " in rs.stderr else None',
+     '    return "PARSE"', "oracle-inverted"),
 ]
 
 EXPECTED_SURVIVE = {
@@ -1294,32 +1539,108 @@ def main():
         description="量測 test_validate.py 的鑑別力：逐一關掉 validate.py 的判定條件。")
     ap.add_argument("--check-targets", action="store_true",
                     help="只驗每個靶是否恰好命中一次（秒級，CI 會跑），不執行 mutation")
+    ap.add_argument("--only", metavar="I,J,…",
+                    help="只跑這些靶（MUTATIONS 的 0-based 索引，逗號分隔）；每個靶另印一行 `RESULT\\t<索引>\\t<結果>`")
+    ap.add_argument("--jobs", type=int, default=1, metavar="N",
+                    help="平行跑 N 個 worker（R39）：各自在一份 repo 副本（不含 .git）裡改寫與驗證，本樹不被改動")
+    ap.add_argument("--cache", metavar="PATH", help="結果快取檔（預設 scripts/mutation-cache.json）")
+    ap.add_argument("--no-cache", action="store_true", help="不讀快取、全部重跑（結果仍寫回）——發版前的量測用這個")
+    ap.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)   # `--jobs` 內部用：不做前置檢查
     try:
         args = ap.parse_args()
     except SystemExit as e:
         return e.code if isinstance(e.code, int) else 2
     if args.check_targets:
         return check_targets_only()
+    if args.jobs < 1:
+        print("✗ --jobs 必須 ≥ 1", file=sys.stderr)
+        return 2
+    try:
+        sel = (list(range(len(MUTATIONS))) if not args.only
+               else sorted({int(x) for x in args.only.split(",") if x.strip()}))
+    except ValueError:
+        print("✗ --only 要逗號分隔的整數索引", file=sys.stderr)
+        return 2
+    if any(not 0 <= i < len(MUTATIONS) for i in sel):
+        print("✗ --only 的索引超出範圍（0..%d）" % (len(MUTATIONS) - 1), file=sys.stderr)
+        return 2
+    t0 = time.monotonic()
+    # **快取**（R39，使用者提議）：key 是「突變後被改寫檔的正規化內容（Python 用剝掉註解與 docstring 的 AST）＋ 守備單位
+    # 讀得到的輸入檔 ＋ 工具版本」。key 相同 ⇒ 驗證指令看到的東西逐位元組相同（註解除外）⇒ 結果相同，直接沿用。
+    # 判斷「有沒有改變」的是雜湊，不是人對「是不是大改版」的判斷——一行 `#` 就可能改變某個靶的生死（R37 S29-6）。
+    # key 若漏了某個輸入，快取會安靜地給出舊答案：所以發版前的量測用 `--no-cache`，摘要也分開印「重跑」與「沿用」。
+    cache_path = pathlib.Path(args.cache) if args.cache else CACHE
+    use_cache = not args.worker
+    # `--no-cache` 只是「這一輪不沿用」：舊紀錄照樣讀進來，存檔時併回去（R39 實際踩到：`--only 389 --no-cache` 讓 433 筆
+    # 只剩 1 筆）。key 對**所有**靶都算——存檔時只留現行 key，過期的清掉，快取大小以靶數為上限（前一版一輪後長到 868 筆）。
+    stored = load_cache(cache_path) if use_cache else {}
+    cache = {} if args.no_cache else stored
+    keys, results = {}, {}
+    if use_cache:
+        originals = {k: f.read_text(encoding="utf-8") for k, (f, _c, _d) in SUITES.items()}
+        digests, tools = {}, tool_versions()
+        for i in range(len(MUTATIONS)):
+            entry = MUTATIONS[i]
+            where = suite_of(entry)
+            try:
+                mutated = _apply(entry[0], entry[1], entry[2], originals[where])
+            except (ValueError, IndexError):
+                continue                         # 靶壞：不快取，照常跑到那條路徑去報
+            if where not in digests:
+                digests[where] = inputs_digest(SUITE_INPUTS.get(where, []), exclude={cache_path.resolve()})
+            keys[i] = target_key(where, SUITES[where][0], mutated, digests[where], tools)
+            if i in sel and keys[i] in cache:
+                results[i] = tuple(cache[keys[i]]) + (True,)
+    run_sel = [i for i in sel if i not in results]
     # #33 verify R9 M15：先前沒有綠底線前置檢查。測試套件本身是紅的時候（例如有人正在
     # 改 validate.py 改到一半），**每一個 mutation 都會被判為「殺掉」** —— harness 回報
     # 漂亮的「0 存活」，而它其實什麼都沒量到。這是它自己版本的「肯定式綠燈」。
     # R28 D9（G-R29-4）：前置檢查先前只跑 `test_validate.py`。R27 把守備範圍擴到 lint 之後，lint 靶的
     # 生死由 `--selftest` 判——而 selftest 紅的時候每個 lint 靶都被判「殺掉」，同一個洞換個 suite 又開了。
     # 現在對 SUITES 裡每一條不同的驗證指令各跑一次，任一紅就整輪不跑、點名是哪個 suite。
-    print("前置：確認每個守備單位未 mutate 的驗證指令都是綠的 …", flush=True)
-    t0 = time.monotonic()
-    failures = precheck_suites(SUITES)
-    for name, rc, tail in failures:
-        print(f"✗ 守備單位 `{name}` 的基準驗證就沒過（rc={rc}）—— 先修綠再量 mutation，"
-              "否則它的每個靶都會被誤判為『殺掉』。\n" + tail)
-    if failures:
+    # 全部命中快取時不跑（那些結果是在綠底線下量的）；worker 由父行程檢查過。
+    if not args.worker and (run_sel or not sel) and not precheck_ok():
         return 1
+    for i in sel:
+        if i in results:
+            kind = results[i][0]
+            print({"killed": "  沿用 殺掉 ", "survived": "  沿用 存活 "}.get(kind, "  沿用 靶壞 ") + MUTATIONS[i][0], flush=True)
+    if args.jobs > 1 and run_sel:
+        fresh = run_parallel(run_sel, args.jobs)
+    else:
+        fresh = run_serial(run_sel, emit=bool(args.only))
+    current = set(keys.values())
+    merged = {k: v for k, v in stored.items() if k in current}
+    for i, (kind, why) in fresh.items():
+        results[i] = (kind, why, False)
+        if use_cache and i in keys and kind != "broken":
+            merged[keys[i]] = [kind, why]
+    if use_cache and (fresh or merged != stored):
+        save_cache(cache_path, merged)
+    killed = [MUTATIONS[i][0] for i in sel if results[i][0] == "killed"]
+    survived = [MUTATIONS[i][0] for i in sel if results[i][0] == "survived"]
+    broken = [(MUTATIONS[i][0], results[i][1]) for i in sel if results[i][0] == "broken"]
+    if args.worker:
+        return 1 if broken else 0
+    reused = sum(1 for i in sel if results[i][2])
+    rc = report(killed, survived, broken, time.monotonic() - t0, args.jobs)
+    if use_cache:
+        why = ("（--no-cache：這一輪不沿用，結果仍寫回快取）" if args.no_cache
+               else "（沿用的條件：key 相同——突變後的程式碼、守備單位的輸入、工具版本都沒變；發版前的量測請加 --no-cache）")
+        print(f"\n快取：沿用 {reused} 靶、重跑 {len(sel) - reused} 靶{why}。快取檔：{cache_path}")
+    return rc
 
+
+def run_serial(sel, emit):
+    """就地改寫本樹、逐一跑驗證指令，回傳 {索引: (結果, 說明)}。`emit`：每個靶另印 `RESULT` 行（`--only`／worker 用）。"""
+    results = {}
+    if not sel:
+        return results
     originals = {k: f.read_text(encoding="utf-8") for k, (f, _c, _d) in SUITES.items()}
     install_restore_signals()
-    survived, killed, broken = [], [], []
     try:
-        for entry in MUTATIONS:
+        for i in sel:
+            entry = MUTATIONS[i]
             name, old, new = entry[0], entry[1], entry[2]
             where = suite_of(entry)
             target, cmd, cwd = SUITES[where]
@@ -1327,20 +1648,22 @@ def main():
             try:
                 mutated = _apply(name, old, new, original)
             except (ValueError, IndexError) as e:
-                broken.append((name, str(e)))
-                print(f"  靶壞 {name} | {e}", flush=True)
-                continue
-            if mutated == original:
-                broken.append((name, "替換後檔案沒變"))
-                print(f"  靶壞 {name} | 替換後檔案沒變", flush=True)
-                continue
-            target.write_text(mutated, encoding="utf-8")
-            try:
-                rc = subprocess.run(cmd(), cwd=cwd, capture_output=True, text=True).returncode
-            finally:
-                target.write_text(original, encoding="utf-8")
-            (survived if rc == 0 else killed).append(name)
-            print(("  存活 " if rc == 0 else "  殺掉 ") + name, flush=True)
+                results[i] = ("broken", str(e))
+            else:
+                if mutated == original:
+                    results[i] = ("broken", "替換後檔案沒變")
+                else:
+                    target.write_text(mutated, encoding="utf-8")
+                    try:
+                        rc = subprocess.run(cmd(), cwd=cwd, capture_output=True, text=True).returncode
+                    finally:
+                        target.write_text(original, encoding="utf-8")
+                    results[i] = ("survived" if rc == 0 else "killed", "")
+            kind, why = results[i]
+            print({"killed": "  殺掉 ", "survived": "  存活 "}.get(kind, "  靶壞 ") + name
+                  + (" | " + why if kind == "broken" else ""), flush=True)
+            if emit:
+                print(f"RESULT\t{i}\t{kind}" + ("\t" + why if why else ""), flush=True)
     except BaseException:
         # #33 verify R9 M16：只有 finally 保護時，SIGINT/SIGTERM 或當機會把 `if False:`
         # 留在正式的 validate.py 裡 —— 一個被 mutate 過的 validator 看起來完全正常。
@@ -1353,14 +1676,69 @@ def main():
     finally:
         for k, (f, _c, _d) in SUITES.items():
             f.write_text(originals[k], encoding="utf-8")
+    return results
 
+def precheck_ok():
+    print("前置：確認每個守備單位未 mutate 的驗證指令都是綠的 …", flush=True)
+    failures = precheck_suites(SUITES)
+    for name, rc, tail in failures:
+        print(f"✗ 守備單位 `{name}` 的基準驗證就沒過（rc={rc}）—— 先修綠再量 mutation，"
+              "否則它的每個靶都會被誤判為『殺掉』。\n" + tail)
+    return not failures
+
+
+RESULT_RE = re.compile(r"^RESULT\t(\d+)\t(killed|survived|broken)(?:\t(.*))?$", re.M)
+
+
+def run_parallel(sel, jobs):
+    """`--jobs N`（R39）：串行一輪 433 靶在高負載下要 6 小時以上，每改一版就等半天。每個 worker 拿一份 repo 副本
+    （不含 `.git`——與 `git archive` 的量測副本同一個條件），在副本裡以 `--only i --worker` 跑單一個靶；副本同一時間只給
+    一個靶用（`queue` 借還），本樹從頭到尾不被改寫。結果依 MUTATIONS 原順序彙整，摘要與串行相同。
+    worker 沒回報結果（當掉、被砍）一律算「靶壞」——fail-loud，不當成殺掉或存活。"""
+    root = PACK.parent.parent
+    script = pathlib.Path(__file__).resolve().relative_to(root)
+    tmp = pathlib.Path(tempfile.mkdtemp(prefix="mutation-jobs-"))
+    trees = queue.Queue()
+    results = {}
+    try:
+        for k in range(jobs):
+            d = tmp / ("w%d" % k)
+            shutil.copytree(root, d, symlinks=True, ignore=shutil.ignore_patterns(".git"))
+            trees.put(d)
+
+        def one(i):
+            d = trees.get()
+            try:
+                r = subprocess.run([sys.executable, str(d / script), "--only", str(i), "--worker"],
+                                   capture_output=True, text=True)
+            finally:
+                trees.put(d)
+            m = RESULT_RE.search(r.stdout)
+            if not m or int(m.group(1)) != i:
+                return i, "broken", "worker 沒有回報結果（rc=%d）：%s" % (r.returncode, (r.stdout + r.stderr)[-300:])
+            return i, m.group(2), m.group(3) or ""
+
+        with concurrent.futures.ThreadPoolExecutor(jobs) as ex:
+            for fut in concurrent.futures.as_completed([ex.submit(one, i) for i in sel]):
+                i, kind, why = fut.result()
+                results[i] = (kind, why)
+                name = MUTATIONS[i][0]
+                print({"killed": "  殺掉 ", "survived": "  存活 "}.get(kind, "  靶壞 ") + name
+                      + (" | " + why if kind == "broken" else ""), flush=True)
+                print(f"RESULT\t{i}\t{kind}" + ("\t" + why if why else ""), flush=True)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return results
+
+
+def report(killed, survived, broken, elapsed, jobs):
     # R17 DA-H：耗時別再手填。散文裡的區間會漂（R14→R17 連四輪被抓到低估），所以這一輪起
-    # **由程式自己量並印出**；文件只保留粗估並指向這一行。
-    elapsed = time.monotonic() - t0
+    # **由程式自己量並印出**；文件只保留粗估並指向這一行。`--jobs` 時印的是牆鐘時間。
     n_run = len(killed) + len(survived) + len(broken)
     if n_run:
         print(f"\n本輪實測耗時：{elapsed/60:.1f} 分鐘 / {n_run} 靶 = 每靶 {elapsed/n_run:.1f} s"
-              "（把這個數字填回 test_validate.py 檔頭與 CHANGELOG，不要沿用舊區間）")
+              + (f"（--jobs {jobs}，牆鐘）" if jobs > 1 else "")
+              + "（把這個數字填回 test_validate.py 檔頭與 CHANGELOG，不要沿用舊區間）")
     expected = [n for n in survived if n in EXPECTED_SURVIVE]
     survived = [n for n in survived if n not in EXPECTED_SURVIVE]
     print(f"\n殺掉 {len(killed)} / 存活 {len(survived)} / 預期存活 {len(expected)} / 靶壞 {len(broken)}")

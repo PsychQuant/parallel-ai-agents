@@ -1,0 +1,16 @@
+# R39 opsweep 存活者（`--since c53ac22`）：`parse_pipeline` 裡 `time` 選項的第一個運算元（前一個詞是 `time`）。`! -p set -x`：`!` 之後的 `-p` 是命令名（bash 找不到它），
+# 不是 `time -p`——`set -x` 沒有執行。拿掉那個運算元，`-p` 被當成 `time` 的選項剝掉、`set -x` 被看見而誤擋。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: bang then dash p
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          ! -p set -x || true
+          echo "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py

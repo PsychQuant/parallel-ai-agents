@@ -1,0 +1,19 @@
+# R39 opsweep 存活者（`--since c53ac22`）：`opaque_cmd` 的三個運算元：`-e`（`set` 的選項字母、但不含 x／v）、單獨的 `xtrace`（前面沒有 `-o`）、`-o out.txt`（`-o` 後面不是 trace 名稱）
+# 都不像 `set -x`／`set -o xtrace`，照常放行。拿掉任何一個運算元，其中一行就被誤擋。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: nonliteral name with benign args
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          CMD=true
+          "$CMD" -e
+          "$CMD" xtrace
+          "$CMD" -o out.txt
+          echo "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py

@@ -1,0 +1,17 @@
+# R39：neutralise 之後還接了管線的一段，一律擋（`bypass-r39-segment-after-neutralise`）。這個寫法（`| cat`）其實安全——`cat` 只把
+# 已經過濾的輸出原樣印出——但 lint 分不出「只轉印 stdin 的段」與「自己印出 PR 文字的段」：`printenv PR_TITLE`、`sh -c 'echo $PR_TITLE'`
+# 的詞全是字面也照樣外流。`--strict`（CI 用的模式）本來就要求 neutralise 是最後一段。保守擋、揭露。
+# 原本是 `good-r37m-neutralise-glued-follower-unobservable` 的 `pipe-on` step（`neutralise.py|` 黏著寫）。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: pipe-on
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py| cat

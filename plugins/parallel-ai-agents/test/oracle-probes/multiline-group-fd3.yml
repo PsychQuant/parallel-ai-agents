@@ -1,0 +1,17 @@
+# R38 第 3 列：多行群組裡 fd 3 外流（stdout）。假 lint 兩種模式都放行。換掉接 neutralise 的那一行只換到 `}`，`{` 留著
+# ⇒ 語法壞掉 ⇒ 前一版判「量不到」、rc=0。必須判繞過。
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          exec 3>&1
+          {
+            echo "$PR_TITLE" >&3
+          } 2>&1 | python3 scripts/neutralise.py

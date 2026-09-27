@@ -1,0 +1,14 @@
+# R38 第 6 列：管線自己把 PR 文字寫到 /dev/fd/2——帶了 `2>&1`，每一段再補 `2>&1` 也不會消失，不是 S-2。
+# KNOWN-CLASS: S-2
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$PR_TITLE" >/dev/fd/2 2>&1 | python3 scripts/neutralise.py

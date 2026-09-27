@@ -15,17 +15,22 @@
 mutation」。**那三句話會讓下一個維護者以為改動 `validate.py` 有測試網接著。**
 
 現在用 `scripts/mutation_check.py` 量：跑一次就知道哪些閘門沒有測試網。
-**最近一次完整量測（R37 最終，於 `git archive d1014e6` 副本上跑）：394 個靶 → 391 殺 / 0 存活 / 3 預期存活 / 0 靶壞**，
-實測 **327.7 分鐘 / 394 靶 = 每靶 49.9 s**（醒著的時間；牆鐘另含約 4 小時 40 分的系統休眠——電量耗盡強制睡眠，所有行程凍結，
-工具以單調時鐘計時所以不算進去。開跑時一分鐘平均負載 11.9，量測期間一度超過 100（opsweep 與它同時跑，同機另有其他 session 的編譯）；lint 靶跑的是
-selftest、神諭靶跑的是 `test/oracle.py` 全集（反向單位跑 `oracle_selfcheck.py`），都比純 python 套件重——**它不是效能指標，只是
-「這一輪真的跑了多久」**）。之後的改動只有：散文、docstring 與靶名稱裡的工作包代號收斂（AST 比對確認只差 docstring 與字串常數）、`run.sh` 的
-形狀普查改為兩組語料都產生——都不在任何靶的錨點內；`--check-targets` 秒級可確認靶還對得上。
-**上一次（R37 移植 #61 之前，`git archive 5367d9a`）**：390 個靶 → 387 殺 / 0 存活 / 3 預期存活 / 0 靶壞，265.8 分鐘 / 390 靶 =
+**最近一次完整量測（R39 最終，於 `git archive c99e4c5` 副本上跑，`--jobs 8`）：435 個靶 → 432 殺 / 0 存活 / 3 預期存活 / 0 靶壞**，
+牆鐘 **60.6 分鐘 / 435 靶 = 每靶 8.4 s**（8 個 worker 各一份不含 `.git` 的副本；開跑時一分鐘平均負載 19.0，同機另有其他 session）。
+同一棵樹立刻重跑：435 靶**全部沿用** `mutation-cache.json`、16 秒——快取的 key 是「突變後的正規化程式碼＋守備單位讀得到的
+輸入＋工具版本」，之後只改了 docstring、CHANGELOG 與快取檔本身（三者都不進 key：`.py` 以剝掉 docstring 的 AST 計算、
+CHANGELOG 在 `_NOT_READ`、快取檔在 `inputs_digest` 的 exclude 裡）。發版前的量測用 `--no-cache`。
+R39 之前那一輪（`bf961d1`）：殺 431 / 存活 1 / 預期存活 3——存活的是神諭續行判定的 bash 那一支，我原本想列成等價，
+實際它只在同一個 run 區塊有兩條註解續行的管線時分岔（`known-r39-g-two-continued-pipelines`，見 CHANGELOG 的 R38 段）。
+**R37 最終（`git archive d1014e6`，串行）**：394 個靶 → 391 殺 / 0 存活 / 3 預期存活 / 0 靶壞，327.7 分鐘 / 394 靶 = 每靶 49.9 s
+（醒著的時間；牆鐘另含約 4 小時 40 分的系統休眠——電量耗盡強制睡眠，工具以單調時鐘計時所以不算進去）。
+lint 靶跑的是 selftest、神諭靶跑的是 `test/oracle.py` 全集，都比純 python 套件重（反向單位跑的 `oracle_selfcheck.py` 反而很輕）——
+**耗時不是效能指標，只是「這一輪真的跑了多久」**。
+**R37 移植 #61 之前（`git archive 5367d9a`）**：390 個靶 → 387 殺 / 0 存活 / 3 預期存活 / 0 靶壞，265.8 分鐘 / 390 靶 =
 每靶 40.9 s；當時列在 `EXPECTED_SURVIVE` 的 4 條裡，lint 的 `<<<` here-string 那一條**被殺掉了**——它的「依構造等價」論證
 是錯的（見 `mutation_check.py` 那個靶旁邊的更正），已從集合移除，所以現在是 3 條。
-**再上一次（R35，`git archive d135f13`）**：193 個靶 → 189 殺 / 0 存活 / 4 預期存活 / 0 靶壞，146.8 分鐘 / 193 靶 = 每靶 45.6 s。
-**靶清單 R35 161 → 193、R37 193 → 394（移植 #61 之前 390）。零存活本身不是新的**——R27 的 125 靶就是 121 殺 / 0 存活 / 4 預期存活，守備範圍當時
+**R35（`git archive d135f13`）**：193 個靶 → 189 殺 / 0 存活 / 4 預期存活 / 0 靶壞，146.8 分鐘 / 193 靶 = 每靶 45.6 s。
+**靶清單 R35 161 → 193、R37 193 → 394（移植 #61 之前 390）、R39 394 → 435。零存活本身不是新的**——R27 的 125 靶就是 121 殺 / 0 存活 / 4 預期存活，守備範圍當時
 已經是三個檔（見 CHANGELOG 的 R27 段）；變的是靶的密度，不是「第一次做到」。**寫這一段時我自己寫錯過四次**
 （宣稱「第一次三檔零存活」、把 62.6 s 記成別輪的數字——這兩次當場回原文核到；每靶秒數的低端寫成 29.4 s——那個數只出現在
 被這一段取代的舊檔頭、從沒進過 CHANGELOG；「被 mutate 的三個檔一行都沒動」——lint 的門檻改了四行。後兩次是發 commit 前的
@@ -47,8 +52,8 @@ R18 抽樣三個粗靶，三個都藏著細顆粒缺口；R19 拆了三處，R20
 「換回 splitlines()」（LineSanitiser 對每一段獨立判定，過度切段只會過度消毒）。R27 到 R35 另有 lint 的 `<<<` here-string 分支
 （理由是「關掉後落到 `<<` 分支而 delim 為空」）——R37 全輪 mutation 殺掉它：拿掉這個分支後，`<<<<<EOF` 後面的 `<<` 會被登記成 heredoc、對齊錯位，那個論證是錯的。
 **注意這三個是 `mutation_check.py` 的具名靶集合**；`test/opsweep.py`（作者無關的運算子掃描）另有自己的
-`EXPECTED_SURVIVE`（R33：7 條——R32 DA-2 把 `fold_block` 的四條全部撤掉，理由本身就是那個 bug），兩者是不同的集合、不同的判準，不要混著數。R31 起 opsweep 那一組的
-「依構造等價」由 `--verify-expected` 在 468 檔產生語料上逐檔跑出來，不是散文。規則明寫在 mutation_check.py：每一條
+`EXPECTED_SURVIVE`（R39：46 條；R33 時是 7 條——R32 DA-2 把 `fold_block` 的四條全部撤掉，理由本身就是那個 bug），兩者是不同的集合、不同的判準，不要混著數。R31 起 opsweep 那一組的
+「依構造等價」由 `--verify-expected` 在產生語料（R39：預設組 624＋`--strict` 組 85＝709 檔；R31 時 468 檔）上逐檔跑出來，不是散文。規則明寫在 mutation_check.py：每一條
 進來的靶都要能回答「關掉它，哪一行輸出會變」（R14 把「pack_name 讀取的 containment」放進去的理由是假的——
 dirty worktree 到得了那行 print——現在它有測試網）。
 R13 修法的 `main()` 逐閘門隔離曾讓一輪跑出 8 個假存活（守衛被刪掉後只剩一條「validator 內部錯誤」），修在
@@ -2270,20 +2275,143 @@ class ValidateTest(unittest.TestCase):
                 or (isinstance(n, ast.Import) and any(a.asname and a.name in V.READ_MODULES for a in n.names))]
         self.assertEqual(len(hits), 2)
 
+    def test_mutation_cache_key_ignores_comments_but_not_code(self):
+        """R39（使用者提議：沒改變就沿用 JSON 記錄）：快取 key 用「剝掉註解與 docstring 的 AST」，所以 lint 嵌入的 Python
+        只改註解時 key 不變；改一個字面值 key 就變。bash 外殼照原文比（它很短，而且 `--selftest` 的門檻就寫在那裡）。"""
+        sys.path.insert(0, str(HERE)); import mutation_check as M
+        base = "#!/bin/bash\nx=1\npython3 - <<'PY'\ndef f():\n    \"\"\"doc\"\"\"\n    return 1\nPY\n"
+        comment = base.replace("def f():\n", "def f():\n    # 新註解\n").replace('"""doc"""', '"""另一段說明"""')
+        code = base.replace("return 1", "return 2")
+        shell = base.replace("x=1", "x=2")
+        k = lambda s: M.normalized_source(pathlib.Path("lint-ci-log-filter.sh"), s)
+        self.assertEqual(k(base), k(comment), "只改註解與 docstring，key 不該變")
+        self.assertNotEqual(k(base), k(code), "改了程式碼，key 必須變")
+        self.assertNotEqual(k(base), k(shell), "bash 外殼改了，key 必須變")
+        kp = lambda s: M.normalized_source(pathlib.Path("oracle.py"), s)
+        self.assertEqual(kp("x = 1  # a\n"), kp("x = 1  # b\n"))
+        self.assertNotEqual(kp("x = 1\n"), kp("x = 2\n"))
+
+    def test_mutation_cache_inputs_digest_tracks_every_input_file(self):
+        """快取 key 的另一半是守備單位讀得到的輸入檔（fixture、測試檔…）。任何一個改了、增加或刪除，digest 都要變——
+        漏掉一個輸入，快取就會安靜地給出舊答案。"""
+        sys.path.insert(0, str(HERE)); import mutation_check as M
+        with tempfile.TemporaryDirectory() as td:
+            td = pathlib.Path(td); (td / "fx").mkdir()
+            (td / "fx" / "a.yml").write_text("a\n"); (td / "t.py").write_text("t\n")
+            spec = [(td, ["fx/*.yml", "t.py"])]
+            d0 = M.inputs_digest(spec)
+            self.assertEqual(d0, M.inputs_digest(spec), "同樣的輸入，digest 要穩定")
+            (td / "fx" / "a.yml").write_text("a2\n")
+            d1 = M.inputs_digest(spec); self.assertNotEqual(d0, d1, "改了 fixture 內容")
+            (td / "fx" / "b.yml").write_text("b\n")
+            d2 = M.inputs_digest(spec); self.assertNotEqual(d1, d2, "多了一張 fixture")
+            (td / "fx" / "b.yml").unlink()
+            self.assertEqual(d1, M.inputs_digest(spec), "刪回原樣，digest 回到原值")
+            # 第三欄是「不計入的檔名」：只給沒有任何驗證指令讀的檔（CHANGELOG.md——量測完回填數字不該讓快取失效）
+            (td / "CHANGELOG.md").write_text("v1\n")
+            spec2 = [(td, ["**/*"], {"CHANGELOG.md"})]
+            e0 = M.inputs_digest(spec2)
+            (td / "CHANGELOG.md").write_text("v2\n")
+            self.assertEqual(e0, M.inputs_digest(spec2), "排除的檔名改了，digest 不變")
+            (td / "t.py").write_text("t2\n")
+            self.assertNotEqual(e0, M.inputs_digest(spec2), "其他檔改了，digest 照樣變")
+        # 真的排除清單每一條都要指到存在的檔：路徑寫錯或檔案搬家，排除就安靜地變成什麼都沒排除
+        for rel in M._NOT_READ:
+            self.assertTrue((M.REPO_ROOT / rel).is_file(), rel)
+
+    def test_mutation_cache_reuses_result_and_no_cache_reruns(self):
+        """同一個 key 第二次不跑驗證指令、回報「沿用」；`--no-cache` 一定重跑。靶的結果與快取裡的一致。"""
+        import contextlib, io, json
+        sys.path.insert(0, str(HERE)); import mutation_check as M
+        with tempfile.TemporaryDirectory() as td:
+            td = pathlib.Path(td)
+            log = td / "calls.log"; log.write_text("")
+            chk = td / "chk.sh"
+            chk.write_text('#!/bin/sh\necho run >> "%s"\ngrep -q MUT "%s" && exit 1\nexit 0\n' % (log, td / "t.py"))
+            chk.chmod(0o755)
+            (td / "t.py").write_text("x = 1\n")
+            suites = {"validate": (td / "t.py", lambda: [str(chk)], td)}
+            muts = [("靶一", "x = 1", "x = 'MUT'")]
+            cache = td / "cache.json"
+            keep = (M.SUITES, M.MUTATIONS, M.SUITE_INPUTS, sys.argv)
+
+            def run(*extra):
+                buf = io.StringIO()
+                try:
+                    M.SUITES, M.MUTATIONS, M.SUITE_INPUTS = suites, muts, {"validate": [(td, ["chk.sh"])]}
+                    sys.argv = ["mutation_check.py", "--cache", str(cache), *extra]
+                    with contextlib.redirect_stdout(buf):
+                        rc = M.main()
+                finally:
+                    M.SUITES, M.MUTATIONS, M.SUITE_INPUTS, sys.argv = keep
+                return rc, buf.getvalue()
+
+            rc, out = run()
+            n_first = len(log.read_text().split())
+            self.assertEqual(rc, 0); self.assertIn("殺掉 1", out)
+            self.assertTrue(json.loads(cache.read_text())["results"], "第一次要寫入快取")
+            rc, out = run()
+            self.assertEqual(len(log.read_text().split()), n_first, "同一個 key 第二次不該再跑驗證指令")
+            self.assertIn("殺掉 1", out); self.assertIn("沿用", out)
+            rc, out = run("--no-cache")
+            self.assertGreater(len(log.read_text().split()), n_first, "--no-cache 一定重跑")
+            self.assertIn("殺掉 1", out)
+
+    def test_mutation_cache_no_cache_subset_keeps_other_entries_and_prunes_stale(self):
+        """R39（實際踩到）：`--only 389 --no-cache` 跑完，快取從 433 筆變成 1 筆——`--no-cache` 不讀舊檔，存檔時只寫這一輪。
+        `--no-cache` 的意思是「這一輪不沿用」，不是「丟掉別人的紀錄」。另一面：舊 key 從來不清，一輪完整量測後快取長到
+        868 筆。存檔時只留**目前每個靶的現行 key**。摘要一律印「沿用 N」——連 0 也印，否則看不出快取有沒有作用。"""
+        import contextlib, io, json
+        sys.path.insert(0, str(HERE)); import mutation_check as M
+        with tempfile.TemporaryDirectory() as td:
+            td = pathlib.Path(td)
+            chk = td / "chk.sh"
+            chk.write_text('#!/bin/sh\ngrep -q MUT "%s" && exit 1\nexit 0\n' % (td / "t.py"))
+            chk.chmod(0o755)
+            (td / "t.py").write_text("x = 1\ny = 2\n")
+            suites = {"validate": (td / "t.py", lambda: [str(chk)], td)}
+            muts = [("靶一", "x = 1", "x = 'MUT'"), ("靶二", "y = 2", "y = 'MUT'")]
+            cache = td / "cache.json"
+            keep = (M.SUITES, M.MUTATIONS, M.SUITE_INPUTS, sys.argv)
+
+            def run(*extra):
+                buf = io.StringIO()
+                try:
+                    M.SUITES, M.MUTATIONS, M.SUITE_INPUTS = suites, muts, {"validate": [(td, ["chk.sh"])]}
+                    sys.argv = ["mutation_check.py", "--cache", str(cache), *extra]
+                    with contextlib.redirect_stdout(buf):
+                        rc = M.main()
+                finally:
+                    M.SUITES, M.MUTATIONS, M.SUITE_INPUTS, sys.argv = keep
+                return rc, buf.getvalue()
+
+            entries = lambda: json.loads(cache.read_text())["results"]
+            rc, out = run()
+            self.assertEqual(len(entries()), 2)
+            self.assertIn("沿用 0", out, "沒有沿用任何靶時也要明說")
+            rc, out = run("--only", "0", "--no-cache")
+            self.assertEqual(len(entries()), 2, "--no-cache 跑一個靶，另一個靶的紀錄不能被丟掉")
+            (td / "t.py").write_text("x = 1\ny = 2\nz = 3\n")        # 兩個靶的 key 都換了
+            rc, out = run("--only", "0")
+            self.assertEqual(len(entries()), 1, "過期的 key 要清掉：只剩靶一的新 key（靶二這輪沒跑、它的舊 key 已過期）")
+
     def test_mutation_check_main_installs_restore_signals(self):
         """R16 logic LOW：R15 的 SIGTERM 修法 wiring 無網——把 main() 裡那行 `install_restore_signals()` 換成 `pass`，
         118 條仍全綠。靜態網：main 的 AST 裡必須有那個呼叫，且在 mutate 迴圈之前。"""
         import ast
         src = (PACK / "scripts/mutation_check.py").read_text(encoding="utf-8")
         tree = ast.parse(src)
-        main = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main")
+        # R39：就地改寫的迴圈連同 handler 一起搬進 `run_serial()`（`main()` 只負責快取與派工）——保護的性質不變：
+        # **就地改寫開始之前**先掛上 handler。`--jobs` 的 worker 也走 `run_serial()`。
+        main = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "run_serial")
         calls = [n.lineno for n in ast.walk(main)
                  if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "install_restore_signals"]
-        self.assertTrue(calls, "main() 沒有呼叫 install_restore_signals()")
-        # R29：認**mutate 迴圈**（iter 是 `MUTATIONS`），不是「main 裡第一個 for」——D9 的前置檢查在它前面
-        # 多了一個印失敗 suite 的 for，第一版這樣寫就把那個當成 mutate 迴圈而誤紅。
+        self.assertTrue(calls, "run_serial() 沒有呼叫 install_restore_signals()")
+        # R29：認**mutate 迴圈**，不是「main 裡第一個 for」——D9 的前置檢查在它前面多了一個印失敗 suite 的 for，
+        # 第一版這樣寫就把那個當成 mutate 迴圈而誤紅。R39 加 `--only` 之後迴圈走選出來的索引（iter 是 `sel`）；
+        # `--jobs` 的平行路徑不在本樹就地改寫，不需要還原 handler（每個 worker 自己走這條串行路徑、自己掛）。
         loop = next(n.lineno for n in ast.walk(main)
-                    if isinstance(n, ast.For) and getattr(n.iter, "id", None) == "MUTATIONS")
+                    if isinstance(n, ast.For) and getattr(n.iter, "id", None) == "sel")
         self.assertLess(calls[0], loop, "handler 必須在 mutate 迴圈開始前掛上")
 
     def test_external_strings_in_annotations_are_always_wrapped(self):

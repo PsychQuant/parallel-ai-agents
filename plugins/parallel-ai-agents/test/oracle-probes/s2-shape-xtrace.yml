@@ -1,0 +1,15 @@
+# R38 第 4、6 列：`command -p set -x` 之後的 xtrace 外流——xtrace 規則兩種模式都要求，不是 S-2。
+# KNOWN-CLASS: S-2
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          command -p set -x
+          echo "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py
