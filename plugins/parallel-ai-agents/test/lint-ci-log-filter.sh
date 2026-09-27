@@ -814,7 +814,7 @@ def shell_scan(lines):
       * `((`／`))` 整個 token 消費：前一版 `$((` 在兩個位置各命中一次而 `))` 只減一次，深度卡住。
       * `run: |N` 的顯式縮排指示子由呼叫端算成 `explicit_pad` 交給 `dedent_block()`（見該函式）。
       * 續行重掃前還原 `pending` 快照：前一版只還原 quote／prev_sig，同一個 heredoc 被排兩次。
-    **已知不涵蓋，第二組（這一組是封閉列舉，只有三條，不得依性質相似類推第四條；R32 抓到它們不在檔內）**：
+    **已知不涵蓋，第二組（這一組是封閉列舉，只有四條，不得依性質相似類推第五條；R32 抓到前三條不在檔內，第 4 條 R39 加）**：
       1. **stderr（預設模式）**：預設模式的 `PIPED_RE` 只要求管線存在，不要求 `2>&1`／`|&`（已知類別 S-2，範例
          `known-stderr-cmd-error-missing-2to1`）。**`--strict` 的群組規則擋它**——CI 與 run.sh 對真 workflow 用 `--strict`，
          所以這一條只剩 fixture／產生語料（它們量的是詞法）。另：把輸出轉到 stderr 或開 xtrace 的寫法（`>&2`、
@@ -841,6 +841,10 @@ def shell_scan(lines):
       3. **多行分隔字**：`cat <<"A` ⏎ `B" | python3 …` 在 bash 是引號跨行、heredoc 永不終止但**管線照建**；
          本 lint 的分隔字是單行字串、表示不了它，一律 `PARSE:`（誤擋方向，源頭在 R33、該回合無 Codex leg；產生語料的
          `d-delimword-unterm-*` 四檔由神諭歸「不可比（fail-closed）」）。
+      4. **過濾器的身分**（#33 verify R38 第 21 列）：`NEUT_PATH_RE` 只比對「以 `neutralise.py` 結尾、不加引號、不帶變數的路徑」。
+         本 lint 檢查的是 **shell 接線**——PR 文字有沒有經過那個過濾器——不驗證那個檔案的內容：前一個 step 寫出一個同名的
+         `cat`，或 PR 直接改掉過濾器本身，lint 都看不到。test.yml 的威脅模型寫明每個 job 本來就執行 PR 的程式碼；這條 lint
+         防的是維護者的無心之失（接線漏掉），不是對抗性的替換。過濾器自己的啟動環境（`PYTHON*` 的值是運算式）另有規則（R39）。
     **已知不涵蓋，第三組——預設模式的假設（封閉列舉，只有五條，不得依性質相似類推第六條；R35 新增前三條，
     R37 新增第 4、5 條）**：
       1. **shell 是 bash**：預設模式不讀 `shell:`／`defaults.run.shell`／container／runs-on，照 bash 的詞法判。
@@ -2419,7 +2423,8 @@ def _bash_template(sh):
 # **`--strict` 的群組規則**（#59／#60；R37 自 PR #61 移植）：靠管線過濾的 step，整個 run 區塊必須是
 #     [若干行 `set -e`／`-u`／`-o pipefail`]
 #     { …整個區塊… ; } 2>&1 | python3 <路徑>/neutralise.py        （或 `} |& python3 …`）
-# R36 的 `--strict` 只要求「接 neutralise 的管線，每一段都把 stderr 併進管線」，關不掉兩類：
+# R36 的 `--strict` 只要求「緊鄰 `python3 …neutralise.py` 的那一段把 stderr 併進管線」（`STRICT_NEUT_RE`；「每一段」是 R37 WIP
+# 的規則、從沒出貨——#33 verify R38 regression LOW-8 更正），關不掉兩類：
 #   · #59（已知類別 G）：同一個區塊裡**另一條命令**印的 PR 文字不經任何管線；
 #   · #60 第 2 類：bash 先展開詞、再由左到右套用重導向——`echo "${!PR_TITLE}" 2>&1 | …` 的展開期錯誤、
 #     `echo x > "$PR_TITLE" 2>&1 | …` 的重導向錯誤，都在那一段的 `2>&1` 生效**之前**寫到當下的 stderr。
@@ -2433,8 +2438,10 @@ def _bash_template(sh):
 #     是 bash 保留字的超集；多出任何一個 ⇒ 拒絕。
 #   · 唯一的 `{` 是 `set` 前綴之後第一個詞 ⇒ bash 一定把它當群組開頭。
 #   · 唯一的 `}` 若因為某個沒收的構造（`case`、陣列、`$(`）而不被 bash 當成保留字，群組就到檔尾都沒關——
-#     bash 在執行群組裡任何東西之前就報語法錯誤（它先讀完整個複合命令），什麼都不會印。
-# `set` 前綴只收 `-e`／`-u`／`-o pipefail|errexit|nounset`：`set -v` 會把原始碼（含 runner 代入的 `${{ … }}`）
+#     bash 在執行群組裡任何東西之前就報語法錯誤（它先讀完整個複合命令），群組裡的命令一個都不執行。bash 仍會把**語法診斷**
+#     印到群組外的 stderr（#33 verify R38 codex 第 10 條：「命令沒執行」推不出「沒有輸出」）——診斷引用的是原始碼；原始碼裡
+#     PR 可控的 `${{ github.event.* }}` 由 `GH_EXPR_UNTRUSTED_RE` 那條規則另外擋（R39）。
+# `set` 前綴只收 `-e`／`-u`／`-E`／`-o pipefail|errexit|nounset|errtrace`（`-E`／errtrace：R39，只影響 ERR trap 的繼承）：`set -v` 會把原始碼（含 runner 代入的 `${{ … }}`）
 # 印到群組外的 stderr，`-x` 同理；裸 `set` 把所有變數（含 PR 可控的 env）印到群組外的 stdout。
 # **子殼層 `( … ) 2>&1 |` 不收**：`(`／`)` 也出現在 `$(`、`$((`、陣列、`case` 模式裡，同一套「恰好一對」的論證不成立。
 # 斷詞只認 ASCII 空白與 tab——bash 的詞界就是這兩個加上 metachar。Python 的 `\s` 還認 NBSP 等 Unicode 空白：
@@ -2550,7 +2557,7 @@ REQUIRE_RUN_STEPS = "--require-run-steps" in sys.argv
 #       頂層地 `set -o pipefail`（之後不得再關掉）——R33 的形狀普查 step 缺它，閘門在 CI 上結構上紅不了（R34 security S-1／
 #       regression H-3／requirements F1）；R36 第 4 列：`bash -e {0}`、`bash -l {0}` 這類樣板**沒有** pipefail。
 #   (2) 靠管線過濾的 step，整個 run 區塊必須是**一個群組** `{ …; } 2>&1 | python3 …neutralise.py`（見 `strict_group_violation`；
-#       #59／#60，R37 自 PR #61 移植）。R35／R36 的前一版只要求「接 neutralise 的管線，每一段都把 stderr 併進管線」——
+#       #59／#60，R37 自 PR #61 移植）。R35／R36 的前一版只要求「緊鄰 neutralise 的那一段把 stderr 併進管線」——
 #       已知類別 S-2 在那個模式下是規則，G（同區塊另一條命令）與展開期／重導向錯誤不是；群組形式三者都關。
 #   (3) shell 只能是 bash 樣板（不得開 xtrace／verbose）；container 或 Windows／運算式 runs-on 的 job 必須明寫 shell
 #       （R35 從預設模式移過來：預設模式假設 shell 是 bash，見 `shell_scan` 已知不涵蓋第三組第 1 條）。

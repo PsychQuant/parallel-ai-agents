@@ -67,7 +67,15 @@ stdin `/dev/null`、逾時 5 秒。但那不是沙箱——fixture 寫絕對路�
 **`env:` 會帶進去**（R37，R36 第 8 列）：workflow／job／step 三層的純量值依序覆蓋（step 最後），`SHELLOPTS: xtrace`、
 `BASHOPTS`、`BASH_XTRACEFD` 因此量得到；含 `${{` 的值 runner 才知道，不設。PATH、HOME、`PR_TITLE` 永遠用神諭自己的值。
 **盲區**：`BASH_ENV`／`ENV` 指向的檔案在臨時 cwd 裡不存在（神諭不把 repo 的檔案帶進去），那些檔案的內容量不到；
-`/proc/self/fd/2` 在 macOS 上不存在，那一類 fd 轉向在本機量不到外流、在 Linux runner 上量得到。
+`/proc/self/fd/2` 在 macOS 上不存在，那一類 fd 轉向在本機量不到外流、在 Linux runner 上量得到（R39 起這幾張
+fixture 的誤擋只在沒有 /proc 的平台列為已知，見 `KNOWN_DISAGREE_WITHOUT_PROC`）；`/bin/sh` 在 macOS 是 bash、在 ubuntu
+是 dash——依賴 `sh` 的外流兩個平台不同（R38 第 1 列：CI 紅、本機綠）。**本機的神諭數字要註明平台，CI（Linux）為準。**
+PR 文字固定是 `ORACLE-PR-TITLE-MARKER`：算術展開（`$(( PR_TITLE ))` 在這個值下是 0）與寫檔（神諭的 cwd 可寫）這兩種
+#60 第 2 類形狀在神諭裡不出錯、量不到外流，會把群組規則正確的擋判成誤擋（R38 第 19 列；fixture 改用 `1 $PR_TITLE` 這類
+一定出錯的寫法）。`python3` 是 shell stub，不讀 `PYTHON*`（R39 那三張 fixture 因此列在 `KNOWN_DISAGREE`）。
+**差分的中性替換會改變 `$?`**（R38 codex 第 5 條）：換掉接 neutralise 的那一行，之後依賴 `$?` 的分支可能不再印，差分因此把
+「管線外的命令外流」看成管線自己的外流。R39 起 S-2 另外要求機制差分成立（補 `2>&1` 後外流消失），這一類因此判繞過、
+不再被收進已知類別——方向是 fail-closed，但歸類的**原因**仍可能寫錯。
 
 依賴：PyYAML（`python3 -m pip install pyyaml`）。缺就 fail-loud，不靜默跳過。
 用法：test/oracle.py [FILE…]   不給檔案 → 全部 test/fixtures/ci-log-filter-*.yml
