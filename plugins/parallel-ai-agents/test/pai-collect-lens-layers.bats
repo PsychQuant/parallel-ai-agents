@@ -326,7 +326,7 @@ assert P["version"]=="1.1.0", P
 ' "$output"
 }
 
-@test "#56 semver 與 validate.py 逐對同序：regex 逐字、函式本體 AST、corpus ＋ 定種子 fuzz（兩份規格的機械對帳）" {
+@test "#56 semver 與 validate.py 逐對同序：regex 逐字、函式本體 AST、corpus ＋ 定種子 fuzz、呼叫端傳原始目錄名（兩份規格的機械對帳）" {
   VALIDATOR="${BATS_TEST_DIRNAME}/../../pai-lenses/scripts/validate.py"
   MKT="${BATS_TEST_DIRNAME}/../../../.claude-plugin/marketplace.json"
   if [ ! -f "$VALIDATOR" ]; then
@@ -433,6 +433,40 @@ pairs += [(rng.choice(ok), rng.choice(ok)) for _ in range(100000)]
 for a, b in pairs:
     if sign(key(a), key(b)) != sign(tup(a), tup(b)):
         fail("order", (a, b))
+# (d) 呼叫端：find_pack_dir 餵給 version_key 的必須是**原始目錄名** —— 恰好是 `<X>.name`，X 是
+# `for X in ...` 的迴圈變數、且迴圈內沒有重新賦值 X。(a)–(c) 只比兩邊的比較器；呼叫端若先
+# `.strip().lower()` 再比，(a)–(c) 全綠、選版語意卻已分岔（#56 verify R2）。
+fpd = [n for n in ast.parse(open(sys.argv[1], encoding="utf-8").read()).body
+       if isinstance(n, ast.FunctionDef) and n.name == "find_pack_dir"]
+if len(fpd) != 1:
+    fail("callsite", "find_pack_dir 不是恰好一個頂層函式")
+else:
+    calls = []
+    def walk(node, loopvars):
+        if isinstance(node, (ast.For, ast.AsyncFor)) and isinstance(node.target, ast.Name):
+            loopvars = loopvars + [node.target.id]
+            for sub in ast.walk(node):
+                tgts = []
+                if isinstance(sub, ast.Assign): tgts = sub.targets
+                elif isinstance(sub, (ast.AugAssign, ast.AnnAssign, ast.NamedExpr)): tgts = [sub.target]
+                elif isinstance(sub, (ast.For, ast.AsyncFor)) and sub is not node: tgts = [sub.target]
+                for t in tgts:
+                    if any(isinstance(x, ast.Name) and x.id == node.target.id for x in ast.walk(t)):
+                        fail("callsite", "迴圈變數 %s 在迴圈內被重新賦值（line %d）" % (node.target.id, sub.lineno))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "version_key":
+            calls.append((node, list(loopvars)))
+        for ch in ast.iter_child_nodes(node):
+            walk(ch, loopvars)
+    walk(fpd[0], [])
+    if not calls:
+        fail("callsite", "find_pack_dir 沒有呼叫 version_key")
+    for call, lv in calls:
+        a = call.args
+        ok_arg = (len(a) == 1 and not call.keywords and isinstance(a[0], ast.Attribute)
+                  and a[0].attr == "name" and isinstance(a[0].value, ast.Name) and a[0].value.id in lv)
+        if not ok_arg:
+            fail("callsite", "line %d: version_key(%s) —— 必須恰好是 version_key(<迴圈變數>.name)"
+                 % (call.lineno, ", ".join(ast.unparse(x) for x in a + call.keywords)))
 n_valid = len(ok)
 print("strings=%d valid=%d pairs=%d" % (len(strings), n_valid, len(pairs)))
 for k in bad:
@@ -570,6 +604,174 @@ assert [x["key"] for x in d["lenses"]]==["good"], d["lenses"]
   [ "$status" -eq 2 ]
   run "$BIN" "$(printf 'a%.0s' $(seq 1 64))"
   [ "$status" -eq 0 ]
+}
+
+# ── #56 verify R2：呼叫端正規化、不可搜尋目錄、symlink、懸空標記、多份打平的補救 ──────────────────
+
+@test "#56 大小寫是 prerelease 的一部分：1.0.0-A 與 1.0.0-a 並存 → 1.0.0-a 勝（ASCII 'A' < 'a'），不打平" {
+  # 呼叫端若先 lower() 目錄名再比（對帳 (a)–(c) 仍綠），兩者 key 相同 → 假 ambiguous
+  mkpack psychquant 1.0.0-A
+  printf 'key,focus\nupper,大寫\n' > "${PACK}/lenses/code.csv"
+  mkpack psychquant 1.0.0-a
+  printf 'key,focus\nlower,小寫\n' > "${PACK}/lenses/code.csv"
+  run "$BIN" code
+  [ "$status" -eq 0 ]
+  jq_py "$pack_layer"'
+assert P["status"]=="ok", P
+assert P["version"]=="1.0.0-a", P
+assert [x["key"] for x in d["lenses"]]==["lower"], d["lenses"]
+' "$output"
+}
+
+# 不可搜尋目錄的測試要一個**非 root** 的執行者：root 無視 DAC 權限，chmod 600 擋不住它，EACCES 重現不了。
+# 非 root（CI runner）→ 直接跑。root（本機 sandbox／容器）→ 用 setpriv 降成 nobody 跑 collector，fixture 放在
+# nobody 走得進的 mktemp 目錄（BATS_TEST_TMPDIR 的上層可能是 0700）。兩者都做不到才 skip —— 而 run.sh／CI 的
+# TAP 守衛把 skip 當失敗，所以「sandbox 是 root」不會安靜地讓這兩條空轉。
+unpriv_setup() {
+  UNPRIV=""
+  if [ "$(id -u)" -ne 0 ]; then return 0; fi
+  command -v setpriv >/dev/null 2>&1 || skip "以 root 執行且沒有 setpriv：無法降權重現 EACCES"
+  id nobody >/dev/null 2>&1 || skip "以 root 執行且沒有 nobody 使用者：無法降權重現 EACCES"
+  PERMROOT=$(mktemp -d /tmp/pai-perm.XXXXXX)
+  chmod 755 "$PERMROOT"
+  UNPRIV=1
+  CACHE="${PERMROOT}/cache"; USERDIR="${PERMROOT}/userlens"
+  export PAI_LENS_CACHE_ROOT="$CACHE" PAI_USER_LENS_DIR="$USERDIR"
+  as_collector test -x "$BIN" || skip "nobody 執行不到 $BIN（checkout 的上層目錄不可搜尋）"
+}
+as_collector() {
+  if [ -n "$UNPRIV" ]; then
+    setpriv --reuid=nobody --regid="$(id -g nobody)" --clear-groups "$@"
+  else
+    "$@"
+  fi
+}
+teardown() {
+  if [ -n "${PERMROOT:-}" ]; then chmod -R u+rwx "$PERMROOT" 2>/dev/null; rm -rf "$PERMROOT"; fi
+}
+
+@test "#56 不可搜尋的版本目錄（chmod 600）→ 略過並警告、exit 0，較高的可讀版本與 user 層照常" {
+  unpriv_setup
+  mkpack psychquant 1.0.0
+  printf 'key,focus\ngood,可讀\n' > "${PACK}/lenses/code.csv"
+  mkpack psychquant 0.9.0
+  printf 'key,focus\nlocked,不可讀\n' > "${PACK}/lenses/code.csv"
+  LOCKED="$PACK"
+  chmod 600 "$LOCKED"
+  mkdir -p "$USERDIR"
+  printf 'key,focus\nu,fu\n' > "${USERDIR}/code.csv"
+  run as_collector "$BIN" code
+  chmod 700 "$LOCKED"                      # 讓 bats 清得掉 tmpdir
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [ "${output#*Traceback}" = "$output" ]
+  jq_py "$pack_layer"'
+assert P["status"]=="ok" and P["version"]=="1.0.0", P
+assert [(x["key"],x["_layer"]) for x in d["lenses"]]==[("good","pack"),("u","user")], d["lenses"]
+w=" ".join(d["warnings"])
+assert "/0.9.0" in w and "孤兒" in w and "略過" in w, w
+' "$output"
+}
+
+@test "#56 最高版本不可搜尋 → 選較低的可讀版本，但警告點名被略過的那個（選版改變要看得見）" {
+  unpriv_setup
+  mkpack psychquant 1.0.0
+  printf 'key,focus\nlow,較低\n' > "${PACK}/lenses/code.csv"
+  mkpack psychquant 2.0.0
+  LOCKED="$PACK"
+  chmod 600 "$LOCKED"
+  run as_collector "$BIN" code
+  chmod 700 "$LOCKED"
+  echo "$output"
+  [ "$status" -eq 0 ]
+  jq_py "$pack_layer"'
+assert P["status"]=="ok" and P["version"]=="1.0.0", P
+assert any("/2.0.0" in w for w in d["warnings"]), d["warnings"]
+' "$output"
+}
+
+@test "#56 symlink 版本目錄（或 marketplace 目錄解析到 cache 外）→ 略過並警告，不跟出 cache" {
+  mkpack psychquant 1.0.0
+  printf 'key,focus\ngood,cache 內\n' > "${CACHE}/psychquant/pai-lenses/1.0.0/lenses/code.csv"
+  EVIL="${BATS_TEST_TMPDIR}/evilpack"
+  mkdir -p "${EVIL}/lenses"
+  printf 'key,focus\nevil,cache 外\n' > "${EVIL}/lenses/code.csv"
+  ln -s "$EVIL" "${CACHE}/psychquant/pai-lenses/9.0.0"
+  # marketplace 目錄本身是指向 cache 外的 symlink
+  mkdir -p "${BATS_TEST_TMPDIR}/outside/pai-lenses/8.0.0/lenses"
+  printf 'key,focus\nout,cache 外 marketplace\n' > "${BATS_TEST_TMPDIR}/outside/pai-lenses/8.0.0/lenses/code.csv"
+  ln -s "${BATS_TEST_TMPDIR}/outside" "${CACHE}/rogue"
+  run "$BIN" code
+  echo "$output"
+  [ "$status" -eq 0 ]
+  jq_py "$pack_layer"'
+assert P["status"]=="ok" and P["version"]=="1.0.0", P
+assert [x["key"] for x in d["lenses"]]==["good"], d["lenses"]
+w=" ".join(d["warnings"])
+assert "/psychquant/pai-lenses/9.0.0" in w and "symlink" in w, w
+assert "/rogue/pai-lenses/8.0.0" in w and "cache 之外" in w, w
+' "$output"
+}
+
+@test "#56 只剩被略過的目錄 → unversioned，警告說的是「被略過」而不是「plugin.json 缺 version」" {
+  mkdir -p "${CACHE}/psychquant/pai-lenses" "${BATS_TEST_TMPDIR}/evilpack/lenses"
+  printf 'key,focus\nevil,cache 外\n' > "${BATS_TEST_TMPDIR}/evilpack/lenses/code.csv"
+  ln -s "${BATS_TEST_TMPDIR}/evilpack" "${CACHE}/psychquant/pai-lenses/9.0.0"
+  run "$BIN" code
+  [ "$status" -eq 0 ]
+  jq_py "$pack_layer"'
+assert P["status"]=="unversioned", P
+assert d["lenses"]==[], d["lenses"]
+w=" ".join(d["warnings"])
+assert "全部被略過" in w and "plugin.json" not in w, w
+' "$output"
+}
+
+@test "#56 懸空的 .orphaned_at symlink 仍算孤兒標記（lexists 語意）" {
+  mkpack alpha 2.0.0
+  printf 'key,focus\norphan,孤兒\n' > "${PACK}/lenses/code.csv"
+  ln -s "${BATS_TEST_TMPDIR}/no-such-file" "${PACK}/.orphaned_at"
+  mkpack alpha 1.0.0
+  printf 'key,focus\nlive,現役\n' > "${PACK}/lenses/code.csv"
+  run "$BIN" code
+  [ "$status" -eq 0 ]
+  jq_py "$pack_layer"'
+assert P["status"]=="ok" and P["version"]=="1.0.0", P
+assert [x["key"] for x in d["lenses"]]==["live"], d["lenses"]
+assert d["warnings"]==[], d["warnings"]
+' "$output"
+}
+
+@test "#56 三個 marketplace 同版本 → 補救是「保留一個、其餘每一個都 uninstall、直到只剩一份」" {
+  for m in alpha beta gamma; do
+    mkpack "$m" 3.0.0
+    printf 'key,focus\n%s,f\n' "$m" > "${PACK}/lenses/code.csv"
+  done
+  run "$BIN" code
+  [ "$status" -eq 0 ]
+  jq_py "$pack_layer"'
+assert P["status"]=="ambiguous", P
+w=" ".join(d["warnings"])
+for m in ("alpha","beta","gamma"):
+    assert "/plugin uninstall pai-lenses@"+m in w, (m, w)
+assert "3 個 marketplace" in w and "其餘每一個" in w and "直到只剩一份" in w, w
+assert "擇一" not in w, w          # 先前「擇一執行…只留一份即可」只在恰好兩份時成立
+' "$output"
+}
+
+@test "#56 混合打平（alpha 兩個 build 變體 + beta 一份）→ 分組列出，並說明 alpha 內的多份要再移除" {
+  mkpack alpha 1.0.0+a
+  mkpack alpha 1.0.0+b
+  mkpack beta 1.0.0
+  run "$BIN" code
+  [ "$status" -eq 0 ]
+  jq_py "$pack_layer"'
+assert P["status"]=="ambiguous", P
+w=" ".join(d["warnings"])
+assert "alpha：2 份（1.0.0+a, 1.0.0+b）" in w and "beta：1 份（1.0.0）" in w, w
+assert "若保留的 marketplace 內仍有多份（alpha）" in w and "scope" in w, w
+assert "直到只剩一份" in w, w
+' "$output"
 }
 
 @test "無參數 → exit 2（用法）" {

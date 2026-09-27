@@ -34,6 +34,8 @@ status 語意（對應 spec D5「缺席與損壞分開處理」）：
 孤兒目錄：Claude Code 在版本目錄**不再被任何安裝引用**時（update 換版、uninstall）會在該目錄
 **正下方**寫一個 `.orphaned_at` 檔（內容是毫秒時間戳），約 7 天後才刪。它不是一個安裝，所以
 不參與選版、也不參與打平判定；只剩孤兒的 pai-lenses 等於沒裝（absent，靜默）。
+標記以 lstat 探測（懸空 symlink 也算標記在）。探不了（目錄不可搜尋等 OSError）、版本目錄是 symlink、
+或解析後落在 cache 之外 → 該目錄略過並警告，不中斷（#56 verify R2）。
 
 version 是被選中的**實際目錄名**（含 prerelease／build 後綴），不是重組字串（#56）。
 版本目錄名以 semver 2.0.0 **整串**比對，排序依 §11 —— 與 pai-lenses 的 validate.py 同一套。
@@ -68,7 +70,10 @@ PARSER = Path(__file__).resolve().parent / "pai-parse-lens-csv"
 # validator import 這支 runtime 腳本，則是 CI 閘門依賴一個無副檔名的 bin 檔的內部函式名。所以兩邊
 # 各留一份，**分岔由機械對帳擋**：`test/pai-collect-lens-layers.bats` 的「逐對同序」測試直接載入兩邊，
 # 斷言 (a) `SEMVER.pattern` 與 `SEMVER.flags` 相同、(b) `version_key` 與 `version_tuple` 的 AST 本體相同、
-# (c) 固定 corpus ＋ 定種子隨機字串上「是否合法」與比較結果相同。改任何一邊而不改另一邊 → 那條測試紅。
+# (c) 固定 corpus ＋ 定種子隨機字串上「是否合法」與比較結果相同、(d) `find_pack_dir` 呼叫 `version_key` 時
+# 傳的是**原始目錄名**（`<迴圈變數>.name`，不經 strip／lower 等前處理）。對帳的範圍就是這四項：regex 或
+# 比較函式本體只改一邊 → 紅；呼叫端先把目錄名正規化再比 → 紅（另有 `1.0.0-A`／`1.0.0-a` 並存的 bats）。
+# 呼叫端的其餘邏輯（選版、打平、孤兒、略過）**不在對帳內**，由各自的行為測試守。
 # 數字寫 `[0-9]` 不寫 `\d`：Python 的 `\d` 對 str 是 Unicode 數字（`9９.0.0` 會 fullmatch、`int()` 收成 99）。
 SEMVER = re.compile(
     r"(?P<major>0|[1-9][0-9]*)\.(?P<minor>0|[1-9][0-9]*)\.(?P<patch>0|[1-9][0-9]*)"
@@ -105,25 +110,66 @@ def version_key(v):
     return core + (0, tuple(ids))
 
 
-def find_pack_dir(cache_root):
+def find_pack_dir(cache_root, warnings):
     """回傳 (dir, version, status, detail)。跨 marketplace glob —— lens pack 註冊在哪個
-    marketplace 是使用者端的事，不該寫死在這裡。
+    marketplace 是使用者端的事，不該寫死在這裡。略過某個目錄的理由 append 進 `warnings`。
 
     version 一律是**實際的目錄名**（#56），不是由比較 key 重組的字串。最高版本若有兩個以上
     非孤兒目錄同序（只差 build metadata，或不同 marketplace 裝了同一版）→ status `ambiguous`、
     detail 列出它們，本層略過 —— 挑哪一個不能交給 readdir 順序或 marketplace 名的字母序決定。
 
-    帶 `.orphaned_at` 的版本目錄是 Claude Code 留著待刪的舊版，不是安裝 → 完全略過。"""
+    帶 `.orphaned_at` 的版本目錄是 Claude Code 留著待刪的舊版，不是安裝 → 完全略過。
+    以下目錄也略過、但**不靜默**（#56 verify R2）：
+      - 版本目錄本身是 symlink，或解析後的真實路徑落在 cache 之外 —— Claude Code 不會這樣建目錄，
+        跟著走等於讓 cache 外的任意目錄供給 reviewer 指令；
+      - 無法判斷是否為孤兒（目錄不可搜尋 → 探 `.orphaned_at` 得 EACCES 等 OSError）—— 先前是未捕捉的
+        traceback、exit 1，連層 ③ 都沒蒐集到。
+    略過會改變選版（被略過的可能正是最高版），所以每個都印警告。"""
     candidates = []
-    live_seen = orphan_seen = False
-    homes = sorted(Path(cache_root).glob(f"*/{PACK_PLUGIN}")) if cache_root.exists() else []
+    live_seen = orphan_seen = skipped_seen = False
+
+    def skip(path, why):
+        nonlocal skipped_seen
+        skipped_seen = True
+        warnings.append(f"{PACK_PLUGIN} 版本目錄 {path} {why}，略過（不參與選版）。")
+
+    try:
+        cache_real = cache_root.resolve()
+        homes = sorted(cache_root.glob(f"*/{PACK_PLUGIN}")) if cache_root.is_dir() else []
+    except OSError as e:
+        warnings.append(f"無法讀取 plugin cache（{cache_root}）：{e} —— 層 ② 已略過。")
+        return None, None, "absent", None
     for home in homes:
-        if not home.is_dir():
-            continue
-        for child in home.iterdir():
-            if not child.is_dir():
+        try:
+            if not home.is_dir():
                 continue
-            if (child / ORPHAN_MARKER).exists():
+            children = list(home.iterdir())
+        except OSError as e:
+            skip(home, f"無法列出內容（{e.strerror or e}）")
+            continue
+        for child in children:
+            try:
+                if child.is_symlink():
+                    skip(child, "是 symlink（Claude Code 不會建立這種版本目錄）")
+                    continue
+                if not child.is_dir():
+                    continue
+                try:
+                    child.resolve().relative_to(cache_real)
+                except ValueError:
+                    skip(child, f"解析後落在 plugin cache 之外（{child.resolve()}）")
+                    continue
+                # lstat 而非 exists()：懸空的 `.orphaned_at` symlink 也算標記在（lexists 語意），
+                # 而且 EACCES 之類要**看得見**（os.path.lexists 會把它吞成 False = 誤判成現役）。
+                try:
+                    os.lstat(child / ORPHAN_MARKER)
+                    orphan = True
+                except FileNotFoundError:
+                    orphan = False
+            except OSError as e:
+                skip(child, f"無法判斷是否為孤兒（{e.strerror or e}；多半是權限）")
+                continue
+            if orphan:
                 orphan_seen = True
                 continue
             live_seen = True
@@ -137,26 +183,43 @@ def find_pack_dir(cache_root):
             return None, None, "ambiguous", winners
         return winners[0], winners[0].name, "ok", None
     # 只剩孤兒 = Claude Code 已解除安裝、還沒清掉的殘留 → 沒裝（靜默）
-    if orphan_seen and not live_seen:
+    if orphan_seen and not live_seen and not skipped_seen:
         return None, None, "absent", None
-    # 有 pai-lenses 目錄卻挑不出 semver 版本 = 裝了但不可用，不是沒裝
+    # 有 pai-lenses 目錄卻挑不出 semver 版本 = 裝了但不可用，不是沒裝。
+    # detail "skipped"：唯一的現役候選都被上面略過了（理由已在 warnings），不是 plugin.json 缺 version。
     if homes:
-        return None, None, "unversioned", None
+        return None, None, "unversioned", ("skipped" if skipped_seen and not live_seen else None)
     return None, None, "absent", None
 
 
 def ambiguous_warning(tied):
-    """`ambiguous` 的警告文字。tied = 同序的非孤兒版本目錄（cache/<marketplace>/pai-lenses/<version>）。"""
-    markets = sorted({p.parent.parent.name for p in tied})
+    """`ambiguous` 的警告文字。tied = 同序的非孤兒版本目錄（cache/<marketplace>/pai-lenses/<version>）。
+
+    補救要對任意份數成立（#56 verify R2）：先前「擇一執行 uninstall 只留一份即可」只在恰好兩份時對 ——
+    三個 marketplace 同版本時照做還剩兩份；`alpha/1.0.0+a`、`alpha/1.0.0+b`、`beta/1.0.0` 時移除 beta
+    仍然打平。所以依 marketplace 分組，逐組給指令，收斂條件寫成「直到只剩一份」。"""
+    groups = {}
+    for p in tied:
+        groups.setdefault(p.parent.parent.name, []).append(p)
+    markets = sorted(groups)
     head = (f"{PACK_PLUGIN} 的最高版本有 {len(tied)} 個已安裝目錄 semver 比較相等："
             f"{', '.join(str(p) for p in tied)} —— 無法決定載入哪一個，本層已略過。"
             f"（帶 {ORPHAN_MARKER} 的舊版殘留目錄不計入，這幾個都不是殘留。）")
-    if len(markets) > 1:
-        cmds = "、".join(f"`/plugin uninstall {PACK_PLUGIN}@{m}`" for m in markets)
-        return head + f"它們來自不同 marketplace（{', '.join(markets)}）：擇一執行 {cmds} 只留一份即可。"
-    return (head + f"它們在同一個 marketplace（{markets[0]}）且只差 build metadata —— 多半是不同 scope"
-            f"（user／project／local 等）各裝了一份：在不需要的那個 scope 執行 `/plugin uninstall "
-            f"{PACK_PLUGIN}@{markets[0]}`，或把兩邊更新到同一版。")
+    scope_hint = ("只差 build metadata，多半是不同 scope（user／project／local 等）各裝了一份：到不需要的 scope "
+                  "執行 `/plugin uninstall {plugin}@{m}`，或把各 scope 更新到同一版")
+    if len(markets) == 1:
+        m = markets[0]
+        return (head + f"它們在同一個 marketplace（{m}）且"
+                + scope_hint.format(plugin=PACK_PLUGIN, m=m) + "，直到只剩一份。")
+    parts = "；".join(f"{m}：{len(groups[m])} 份（{', '.join(p.name for p in groups[m])}）" for m in markets)
+    cmds = "、".join(f"`/plugin uninstall {PACK_PLUGIN}@{m}`" for m in markets)
+    msg = (head + f"它們分屬 {len(markets)} 個 marketplace —— {parts}。"
+           f"補救：選定要保留的那一個 marketplace，對**其餘每一個**執行 uninstall（候選指令：{cmds}）")
+    multi = [m for m in markets if len(groups[m]) > 1]
+    if multi:
+        msg += (f"；若保留的 marketplace 內仍有多份（{', '.join(multi)}）：它們"
+                + scope_hint.format(plugin=PACK_PLUGIN, m="<該 marketplace>"))
+    return msg + "。重複上述步驟直到只剩一份。"
 
 
 def parse_csv(path):
@@ -211,10 +274,14 @@ def main():
     lenses, layers, warnings = [], [], []
 
     # ── 層 ②：lens pack ──
-    pack_dir, pack_version, pack_status, tied = find_pack_dir(cache_root)
+    pack_dir, pack_version, pack_status, detail = find_pack_dir(cache_root, warnings)
     pack_csv = pack_dir / "lenses" / f"{profile}.csv" if pack_dir else None
     if pack_status == "ambiguous":
-        warnings.append(ambiguous_warning(tied))
+        warnings.append(ambiguous_warning(detail))
+    elif pack_status == "unversioned" and detail == "skipped":
+        warnings.append(
+            f"{PACK_PLUGIN} 的非孤兒版本目錄全部被略過（理由見上方警告），沒有可載入的版本。本層已略過。"
+        )
     elif pack_status == "unversioned":
         warnings.append(
             f"{PACK_PLUGIN} 已安裝但找不到 semver 版本目錄（{cache_root}）—— "

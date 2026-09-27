@@ -29,7 +29,9 @@ import sys
 # （全形 ９）會 fullmatch，`int()` 又照收成 99。semver 只允許 ASCII 數字。
 # **本 regex（pattern 與 flags）與 `plugins/parallel-ai-agents/bin/pai-collect-lens-layers` 的 `SEMVER`
 # 必須逐字相同**，`version_tuple` 與它的 `version_key` 的函式本體也是 —— 由
-# `test/pai-collect-lens-layers.bats` 的逐對同序測試機械比對，改一邊不改另一邊 → 紅。
+# `test/pai-collect-lens-layers.bats` 的逐對同序測試機械比對：regex 或函式本體只改一邊 → 紅。
+# 對帳另外只守 collector 的一個呼叫點（`find_pack_dir` 傳給 `version_key` 的是原始目錄名）；
+# 兩邊其餘的呼叫端邏輯不在對帳範圍內。
 SEMVER = re.compile(
     r"(?P<major>0|[1-9][0-9]*)\.(?P<minor>0|[1-9][0-9]*)\.(?P<patch>0|[1-9][0-9]*)"
     r"(?:-(?P<pre>(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"

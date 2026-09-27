@@ -131,28 +131,53 @@ Lens 來源：built-in <n> 條 · pack <version> +<a>/⊕<b> · user +<c>/⊕<d>
 `empty` 與 `unversioned` 是刻意加的防安靜失敗：前者會讓一個存在的檔案什麼都不貢獻，
 後者會讓「裝了但定位不到」看起來像「沒裝」。
 `ambiguous` 則是不讓排序替使用者決定載入哪一份 pack（修法前：同 marketplace 內的打平由 readdir 順序決定，
-跨 marketplace 的打平固定取 marketplace 名字母序第一個）。警告會列出同序的目錄與補救指令
-（跨 marketplace → 擇一 `/plugin uninstall pai-lenses@<marketplace>`；同 marketplace 只差 build metadata →
-多半是不同 scope 各裝一份，移除其一或更新到同一版）。
+跨 marketplace 的打平固定取 marketplace 名字母序第一個）。警告會列出同序的目錄、依 marketplace 分組的份數與補救指令：
+選定要保留的 marketplace，對**其餘每一個**執行 `/plugin uninstall pai-lenses@<marketplace>`；保留的那個若仍有多份
+（只差 build metadata —— 多半是不同 scope 各裝一份），再到多餘的 scope 移除或更新到同一版，**直到只剩一份**。
 
-provenance 行的 pack 段：status 為 `ok` 時印 `pack <version> +<a>/⊕<b>`；**其他 status 一律印 `pack <status>`**
-（例：`pack ambiguous（略過）`、`pack unversioned（略過）`）——`ambiguous`／`unversioned` 的 `version` 是 `null`，
-照模板硬印會變成 `pack null +0/⊕0`，看起來像「裝了、貢獻 0 條」而不是「這層沒載入」。警告本身照上表逐條印。
+provenance 行的 pack 段（補充 §4 的模板，依 `layers[]` 裡 pack 那一列的 `version` 與 `status`）：
+
+| `version` | `status` | 印法 | 例 |
+|---|---|---|---|
+| 有值 | `ok` | `pack <version> +<a>/⊕<b>`（§4 模板） | `pack 0.2.0 +3/⊕1` |
+| 有值 | `absent`／`empty`／`corrupt` | `pack <version>（<status>）` —— 裝了這一版，但這個 profile 沒有可用的 CSV | `pack 0.2.0（absent）` |
+| `null` | `absent` | 不印 pack 段（沒裝；§4「只會顯示 built-in」） | — |
+| `null` | `ambiguous`／`unversioned` | `pack <status>（略過）` | `pack ambiguous（略過）` |
+
+`version` 為 `null` 時**不可**照模板硬印 —— 會變成 `pack null +0/⊕0`，看起來像「裝了、貢獻 0 條」而不是
+「這層沒載入」；反過來，`version` 有值時也不可只印 `pack <status>`，會丟掉「裝了哪一版」。警告本身照上表逐條印。
 
 **孤兒目錄不算安裝**：Claude Code 在版本目錄不再被任何安裝引用時（update 換版、uninstall）會在
 `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/` **正下方**寫一個 `.orphaned_at` 檔，約 7 天後才刪。
-collector 略過帶這個檔的目錄：它不參與選版、不參與打平；只剩孤兒時層 ② 回 `absent`（已解除安裝，靜默）。
+collector 略過帶這個檔的目錄（以 lstat 探測，懸空的 symlink 也算）：它不參與選版、不參與打平；只剩孤兒時層 ② 回
+`absent`（已解除安裝，靜默）。
+
+**略過但會警告的目錄**（#56 verify R2）：版本目錄本身是 symlink、解析後落在 cache 之外（例如 marketplace 目錄是指向別處的
+symlink）、或無法判斷是否為孤兒（目錄不可搜尋 → 探 `.orphaned_at` 得 EACCES）。這些目錄不參與選版，所以**可能改變選到的版本**
+（被略過的也許正是最高版）—— 每一個都印警告點名。若非孤兒的目錄全被略過，status 是 `unversioned`、警告說明「全部被略過」。
+這些情況都不中斷：exit 0，層 ③ 照常蒐集。
 
 版本目錄以 semver 2.0.0 **整串**比對（`9.9.9.bak`、`01.0.0` 不是版本），排序依 §11（`0.3.0-rc.1` < `0.3.0`、
-`rc.9` < `rc.10`），與 `pai-lenses` 的 `scripts/validate.py` 同一套；`layers[].version` 回報的是**實際目錄名**。
+`rc.9` < `rc.10`、`1.0.0-A` < `1.0.0-a`），與 `pai-lenses` 的 `scripts/validate.py` 同一套；比較的是**原始目錄名**（不做
+大小寫或空白正規化），`layers[].version` 回報的也是實際目錄名。
 數字只收 ASCII `[0-9]`（`9９.0.0` 不是版本）。注意 `9.9.9-not-a-real-version-just-a-prefix` **是**合法 semver
 （prerelease `not-a-real-version-just-a-prefix`），依規則它就是高於 `1.0.0` —— 這不是缺陷，是 semver 本身。
 
-**已知限制（待決，#56 verify R1）：選版是「全 cache 最高者勝」，不看這台機器／這個專案實際啟用的是哪一份。**
-兩種情況下這會選到非預期的那份，且**不會**有任何警告：
+**已知限制（待決，追蹤見 #78）：選版是「全 cache 最高者勝」，不看這台機器／這個專案實際啟用的是哪一份。**
+cache 裡只要有非孤兒的版本目錄就會被納入挑選，不論是否啟用、屬於哪個 scope 或哪個 marketplace；版本較高者勝，
+且**不會**有任何警告。例：
 - 不同 marketplace 各裝了一份 `pai-lenses`、版本不同 → 版本較高者勝，不論哪一個是使用者想用的；
-- 同一 marketplace 在不同 scope（`managed`／`user`／`project`／`local`）各裝了不同版本 → 版本較高者勝，不論目前專案套用哪個 scope。
-改成讀 `~/.claude/plugins/installed_plugins.json` 的 `installPath`（依 scope 挑出目前生效的那份）是否值得、
+- 同一 marketplace 在不同 scope（`managed`／`user`／`project`／`local`）各裝了不同版本 → 版本較高者勝，不論目前專案套用哪個 scope；
+- `/plugin disable pai-lenses`（或 settings 的 `enabledPlugins` 設 `false`）只關掉啟用、不移除安裝紀錄，目錄不會被標成孤兒
+  → **停用的 pack 仍被載入**。
+
+**信任面後果**：pack 的 `focus` 是 **role 級的 reviewer 指令**，不經 `dataBlock()` sentinel 包裹（見本文件開頭的信任警告
+與 pack README）。而 `project`／`local` scope 的 `pai-lenses` 與其他 scope 共用同一個 `~/.claude/plugins/cache/`：
+某個 repo 在自己的 `.claude/settings.json` 宣告一個 marketplace、裝了版本號 `99.0.0` 的 `pai-lenses`，這份目錄從此在全 cache
+最高 —— **這台機器上每一個專案**的 ensemble 審閱都會載入它的 reviewer 指令，而不只宣告它的那個 repo。在上述產品決定落地前，
+對來源不明的 marketplace 不要安裝 `pai-lenses`，並以報表的 provenance 行確認 pack 的版本是預期的那一份。
+
+改成讀 `~/.claude/plugins/installed_plugins.json` 的 `installPath`（依 scope 與啟用狀態挑出目前生效的那份）是否值得、
 以及跨 marketplace 同版本時要不要改成「內容相同就任取、不同才 `ambiguous`」，都是尚未做的產品決定。
 
 ## Lens pack 的 CSV 格式

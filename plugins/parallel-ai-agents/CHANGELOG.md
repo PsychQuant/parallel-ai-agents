@@ -31,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   新 status `ambiguous` ＋ warning（列出所有同序目錄與補救指令）、本層略過。修法前：同 marketplace 內的打平
   由 `iterdir()` 順序決定；跨 marketplace 的打平是**確定的**（`sorted(glob)` 後 `max()` 取第一個 = marketplace
   名字母序第一個），但那個順序與使用者要哪一份無關。
+  退出碼契約不變（仍為 0）—— 與 `unversioned` 同屬「裝了但不可用」，照 D5 警告而不中斷審閱。
+  `references/lens-layers.md` 的 status 表補上這一列。
 - **Claude Code 的孤兒版本目錄不算安裝**：版本目錄不再被任何安裝引用時（update 換版、uninstall），Claude Code
   在該目錄正下方寫 `.orphaned_at`、約 7 天後才刪（對 CLI 本體的實作確認：標記路徑是
   `cache/<marketplace>/<plugin>/<version>/.orphaned_at`）。先前 collector 不看這個標記：孤兒與現役同版本 →
@@ -38,8 +40,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   完全略過；只剩孤兒時回 `absent`（靜默）。非孤兒之間的真打平仍是 `ambiguous`。
 - **`<profile>` 長度上限 64**：先前 300 字元的 profile 在目標目錄存在時讓 `is_file()` 丟 `ENAMETOOLONG`，
   未捕捉的 traceback、exit 1；現在 exit 2（用法錯）。
-  退出碼契約不變（仍為 0）—— 與 `unversioned` 同屬「裝了但不可用」，照 D5 警告而不中斷審閱。
-  `references/lens-layers.md` 的 status 表補上這一列。
 - **`<profile>` 字元集收成 `[a-z0-9][a-z0-9-]*`**：R23 已擋下 `..`／絕對路徑，但 (a) 放行 `_`，而 validator
   端以 `PROFILES` 成員資格判定、沒有任何 key 含 `_`；(b) **從來沒有測試** —— 把檢查整段拿掉 bats 仍全綠。
   現在兩條測試守住（逃逸路徑 × 8 種形狀、字元集 × 8 種非法 ＋ 8 個合法名）。
@@ -47,7 +47,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   runtime 去 import 它等於讓層 ② 的定位邏輯依賴層 ② 本身（沒裝就連「沒裝」都判斷不了），反向則讓 CI 閘門依賴
   無副檔名 bin 檔的內部函式名。新增的「逐對同序」測試直接載入兩邊，斷言 (a) `SEMVER` 的 pattern **與 flags**
   相同、(b) `version_key` 與 `version_tuple` 的函式本體 AST 相同（去 docstring、參數名正規化）、(c) 固定 corpus ＋
-  `random.Random(56)` 產生的 20000 個字串上合法性相同、corpus 全對＋依序相鄰對＋隨機 10 萬對的比較結果相同。
+  `random.Random(56)` 產生的 20000 個字串上合法性相同、corpus 全對＋依序相鄰對＋隨機 10 萬對的比較結果相同、
+  (d)（verify R2 補）`find_pack_dir` 呼叫 `version_key` 時傳的恰好是 `<迴圈變數>.name`、且迴圈內沒有重新賦值。
+  **對帳範圍就是這四項**：regex 或比較函式本體只改一邊 → 紅；collector 呼叫端先正規化目錄名 → 紅；
+  呼叫端其餘邏輯（選版、打平、孤兒、略過）不在對帳內，由各自的行為測試守。R1 版的敘述「改任何一邊而不改另一邊 → 紅」
+  比實際檢查的範圍寬 —— 把呼叫改成 `version_key(child.name.strip().lower())` 當時仍全綠；現在 (d) 與
+  `1.0.0-A`／`1.0.0-a` 並存的 bats 兩條都紅（`.lower()`、`str(...)`、`.strip()`、迴圈內 `child = child.with_name(...)` 各自至少一條紅）。
   初版只有 (c) 的 38 字串 corpus，verify 指出 6 種只改一邊的變異全部存活（validate.py 的 build 放行 `_`、
   collector 只比前 2 個 prerelease identifier、minor／patch 放行前導零、只在一邊加 `re.ASCII`、prerelease
   `lower()`、禁止以 `-` 開頭的 identifier）；現在 6 種各自讓這條紅（`re.ASCII` 在 `[0-9]` 之後行為上無差，只有
@@ -59,12 +64,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   「正式版高於同 core 的 prerelease」在修法前**依 readdir 順序而定**（三個目錄 key 相同、`max()` 取 iterdir 第一個：
   ext4 上實測紅，readdir 已排序的檔案系統上正式版恰好排第一而綠）——它守的是修法後的語意，不是修法前的確定性缺陷；
   路徑逃逸那條對 R23 之前的版本（`387effe^`）紅、對 R23 版綠（R23 已修、此前無網）；「較低版本的打平不影響唯一
-  最高者」是防過度修正的護欄，修法前後皆綠。孤兒 × 4、Unicode 數字、profile 長度與跨 marketplace 補救指令
-  那條對 `cb0c7ba`（verify R1 之前）也紅。另對修法本身跑了 8 個 mutation（`fullmatch→match`、前導零、prerelease
+  最高者」是防過度修正的護欄，修法前後皆綠。對 `cb0c7ba`（verify R1 之前）的 collector 也紅的：孤兒 × 4、Unicode 數字、
+  profile 長度、跨 marketplace 補救指令、只差 build metadata 的打平（補救指令的 `scope` 說明）、逐對同序（配本版 validate.py：
+  `\d` → `[0-9]` 使 pattern 不同；配 `cb0c7ba` 自己的 validate.py 則綠）。另對修法本身跑了 8 個 mutation（`fullmatch→match`、前導零、prerelease
   數字段、正式版 vs rc、打平判定、回報重組字串、放回 `_`、拿掉 profile 檢查），每個都至少讓一條測試紅。
-  本檔現為 28 個 case（`grep -c "^@test" test/pai-collect-lens-layers.bats`）。
+  本檔現為 36 個 case（`grep -c "^@test" test/pai-collect-lens-layers.bats`）。
   `../pai-lenses/scripts/test_validate.py` 新增 `test_semver_rejects_non_ascii_digits`，對 `cb0c7ba` 的 validate.py 紅；
   測試 144 → 145 條（`grep -c "    def test_" ../pai-lenses/scripts/test_validate.py`）。
+
+- **verify R2：略過目錄時不再 traceback、不跟出 cache**（`find_pack_dir`）：
+  - R1 的孤兒偵測對**每個**版本目錄 `(child / ".orphaned_at").exists()`；目錄不可搜尋（root 擁有的 0700、`chmod 600`）時
+    丟 `PermissionError` → 未捕捉的 traceback、exit 1，連層 ③（user lens）都沒蒐集。現在每個目錄的探測包在 `OSError` 裡：
+    探不了 → 該目錄略過並警告（點名目錄；被略過的可能正是最高版，選版改變要看得見），exit 0、層 ③ 照常。
+  - 孤兒標記改用 `os.lstat`（lexists 語意）：懸空的 `.orphaned_at` symlink 先前被 `exists()` 判成「沒有標記」→ 當現役載入。
+    不用 `os.path.lexists` 本身，因為它把 EACCES 也吞成 `False`（= 誤判成現役）。
+  - 版本目錄本身是 symlink（`cache/mp/pai-lenses/9.0.0 -> /tmp/evilpack` 先前勝出）或解析後落在 cache 之外（marketplace
+    目錄是 symlink）→ 略過並警告。若非孤兒目錄全被略過 → `unversioned`，警告說「全部被略過」而不是「plugin.json 缺 version」。
+- **verify R2：`ambiguous` 的補救對任意份數成立**：R1 的「擇一執行 … 只留一份即可」只在恰好兩份時對 —— 三個 marketplace
+  同版本照做還剩兩份；`alpha/1.0.0+a`、`alpha/1.0.0+b`、`beta/1.0.0` 移除 beta 仍打平。現在依 marketplace 分組列份數，
+  指示「保留一個、對其餘每一個 uninstall；保留的若仍有多份再移除多餘 scope」，收斂條件寫成「直到只剩一份」。
+- **verify R2：`references/lens-layers.md`**：
+  - provenance 行的 pack 段改成依 `version` 分四種印法：R1 的「非 `ok` 一律印 `pack <status>`」對 `absent`／`empty`／`corrupt`
+    （`version` 有值）是過度修正 —— `pack absent` 丟掉「裝了 0.2.0、但這個 profile 沒有 CSV」。現在只有 `version` 為 `null`
+    的 `ambiguous`／`unversioned` 印 `pack <status>（略過）`；有版本的印 `pack <version>（<status>）`；沒裝則照 §4 不印 pack 段。
+  - 已知限制從「兩種情況」的封閉清單改成性質陳述（cache 裡只要有非孤兒版本目錄就納入挑選，不論是否啟用、scope 或
+    marketplace），並補上第三例：`/plugin disable pai-lenses`／`enabledPlugins: false` 保留安裝紀錄、目錄不成孤兒 → 仍被載入。
+    待決的產品決定追蹤於 #78。
+  - **信任面後果**寫進已知限制：pack 的 `focus` 是不經 `dataBlock()` 包裹的 role 級指令，而 `project`／`local` scope 的
+    `pai-lenses` 共用同一個 cache —— 某個 repo 宣告的 marketplace 裝了 `99.0.0` 的 `pai-lenses`，這台機器上**每一個專案**
+    的 ensemble 都會載入它的 reviewer 指令。
+
+  verify R2 新增的 8 條 bats 對 `3144f21`（R1 版）的 collector：symlink／cache 外、全被略過、懸空標記、三 marketplace 打平、
+  混合打平 5 條紅；兩條不可搜尋目錄的測試對 `3144f21` 紅（`PermissionError` traceback）、對本版綠 —— root 無視 DAC、
+  EACCES 重現不了，所以以 root 執行時這兩條用 `setpriv --reuid=nobody` 降權跑 collector（fixture 放在 nobody 走得進的
+  `mktemp -d /tmp/pai-perm.XXXXXX`），做不到才 skip（而 TAP 守衛把 skip 當失敗）；root 與整檔以 `nobody` 執行兩種方式都實測過。
+  `1.0.0-A`／`1.0.0-a` 那條對 `3144f21` 綠 —— 它守的是呼叫端正規化這個變異，不是 R1 的缺陷。
 
 ## [2.24.0] - 2026-09-10
 
