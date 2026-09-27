@@ -89,12 +89,12 @@ if [ "${1:-}" = "--selftest" ]; then
   done
   # R24 regression F9：門檻寫成 `>=` 而實際值更高時，那個差額**沒有網**——刪掉一個 fixture 仍然綠。
   # 三個門檻一律改成**等於實測值**：要加 fixture 就同步改這裡，讓「少了一個」立刻紅。
-  if [ "${n_pass}" -ne 234 ]; then
-    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 234（改動 fixture 請同步改這個數字）" >&2
+  if [ "${n_pass}" -ne 239 ]; then
+    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 239（改動 fixture 請同步改這個數字）" >&2
     fail=1
   fi
-  if [ "${n_rule}" -ne 318 ]; then
-    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 318" >&2
+  if [ "${n_rule}" -ne 335 ]; then
+    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 335" >&2
     fail=1
   fi
   if [ "${fail}" -ne 0 ]; then exit 1; fi
@@ -1437,6 +1437,10 @@ ENV_TRACE_KEYS = ("SHELLOPTS", "BASHOPTS", "BASH_ENV", "ENV", "BASH_XTRACEFD")
 _RUN_ENV_KEYS = ("SHELLOPTS", "BASHOPTS", "BASH_ENV", "BASH_XTRACEFD")
 _ASSIGN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(\[[^\]]*\])?\+?=")
 _LEAD_WORDS = frozenset(("!", "time", "if", "then", "else", "elif", "do", "while", "until", "builtin", "command"))
+# 前綴詞自己的選項（R39，#33 verify R38 第 4、8 列）：封閉列舉，只有這三個詞的這些選項。
+_LEAD_OPTS = {"command": frozenset(("-p", "--", "-v", "-V")), "builtin": frozenset(("--",)), "time": frozenset(("-p", "--"))}
+# `set` 的單字母選項（bash 5.3 `help set`）——`opaque_cmd` 判「參數像 `set -x`」用。
+_SET_LETTERS = "abefhkmnptuvxBCEHPT"
 
 
 def _skip_delim_word(s, j):
@@ -1723,6 +1727,11 @@ def _word(C, S, p, stop):
             literal = False
             skel.append("\0")
             continue
+        if c == "$" and C[p + 1:p + 2] == '"':
+            # `$"…"`：locale 翻譯字串，沒有訊息目錄時就是雙引號字串（R39，#33 verify R38 第 4 列）——前一版把 `$` 當字面，
+            # `set $"-x"` 讀成 `set '$-x'`、`>&$"2"` 讀成 `>&$2`，兩個都看不出來。跳過 `$`，交給下面的雙引號分支。
+            p += 1
+            continue
         m = _PARAM_RE.match(C, p) if c == "$" else None
         if m:
             p, literal = m.end(), False
@@ -1948,6 +1957,21 @@ class _Sh:
     def word(t, *codes):
         return t is not None and t["k"] == "W" and t["code"] in codes
 
+    def new_scope(self, ctx):
+        """一個新的子殼層範圍：`ctx` 的範圍路徑再加一層（R39，#33 verify R38 第 8、11 列；見 `_pipefail_holds`）。"""
+        self.o["nscope"] += 1
+        return ctx["scope"] + (self.o["nscope"],)
+
+    def rescope(self, a, b, ctx, skip):
+        """事後才知道 events[a:b] 跑在子殼層裡（管線的一段、背景執行）：把它們的範圍路徑在 `ctx` 那一層之後插入一個新範圍。
+        `skip` 是這條管線自己的 `|` 事件——那些在所在的 shell 裡求值，不搬。"""
+        sid = self.new_scope(ctx)[-1]
+        n = len(ctx["scope"])
+        for j in range(a, b):
+            if j not in skip:
+                ev = self.o["events"][j]
+                ev["scope"] = ev["scope"][:n] + (sid,) + ev["scope"][n:]
+
     def skip_nl(self):
         while self.tok() is not None and self.tok()["k"] == "NL":
             self.i += 1
@@ -1967,8 +1991,10 @@ class _Sh:
                 continue
             if end(t):
                 return
-            i0 = self.i
+            i0, ev0 = self.i, len(self.o["events"])
             self.parse_andor(ctx, end)
+            if self.op(self.tok(), "&"):         # 背景執行：整條 and-or 串在子殼層裡跑（R39，R38 第 8 列：`set -o pipefail &`）
+                self.rescope(ev0, len(self.o["events"]), ctx, skip=())
             if self.i == i0:                     # 語法錯誤的殘渣（孤立的 `)`、`;;`…）：略過一個，不讓迴圈卡死
                 self.i += 1
 
@@ -1985,19 +2011,25 @@ class _Sh:
         ev0, segs, conns = len(self.o["events"]), [], []
         while self.word(self.tok(), "!", "time"):
             self.i += 1
+            while self.word(self.tok(-1), "time") and self.tok() is not None and self.tok().get("lit") in _LEAD_OPTS["time"]:
+                self.i += 1                      # `time -p set -x`（R39，R38 第 4 列）
+        bounds, own = [len(self.o["events"])], set()
         seg = self.parse_command(ctx, end)
         while seg is not None:
             segs.append(seg)
             if not self.op(self.tok(), "|", "|&"):
                 break
             conns.append(self.tok()["op"])
-            self.o["events"].append({"k": "pipe"})
+            own.add(len(self.o["events"]))
+            self.o["events"].append({"k": "pipe", "scope": ctx["scope"]})
+            bounds.append(len(self.o["events"]))
             self.i += 1
             self.skip_nl()
             seg = self.parse_command(ctx, end)
-        if len(segs) > 1:                        # 管線的每一段都在子殼層：裡面的 `set -o pipefail` 不作用在外面
-            for ev in self.o["events"][ev0:]:
-                ev["sub"] = True
+        if len(segs) > 1:                        # 管線的每一段各自在一個子殼層：裡面的設定不作用在外面、也不作用在別段
+            bounds.append(len(self.o["events"]))
+            for a, b in zip(bounds, bounds[1:]):
+                self.rescope(a, b, ctx, skip=own)
         if segs:
             self.o["pipelines"].append((segs, conns))
 
@@ -2010,7 +2042,8 @@ class _Sh:
                 return None
             gid = self.group()
             self.i += 1
-            self.parse_list(dict(ctx, stack=ctx["stack"] + (gid,), sub=True), lambda x: self.op(x, ")"))
+            self.parse_list(dict(ctx, stack=ctx["stack"] + (gid,), scope=self.new_scope(ctx)),
+                            lambda x: self.op(x, ")"))
             if self.op(self.tok(), ")"):
                 self.i += 1
             return {"kind": "group", "gid": gid, "trail": self.redirs(ctx), "neut": False}
@@ -2030,7 +2063,7 @@ class _Sh:
             if self.op(self.tok(), "(") and self.op(self.tok(1), ")"):
                 self.i += 2
             self.skip_nl()
-            self.parse_command(dict(ctx, sub=True), end)
+            self.parse_command(dict(ctx, fn=True), end)
             return {"kind": "func", "trail": [], "neut": False}
         words, rs = [], []
         while self.tok() is not None and self.tok()["k"] in ("W", "R"):
@@ -2045,7 +2078,7 @@ class _Sh:
             if len(words) == 1 and not rs and self.op(self.tok(), "(") and self.op(self.tok(1), ")"):
                 self.i += 2                      # `f() …`：本體要呼叫才執行——子脈絡
                 self.skip_nl()
-                self.parse_command(dict(ctx, sub=True), end)
+                self.parse_command(dict(ctx, fn=True), end)
                 return {"kind": "func", "trail": [], "neut": False}
         self.simple(words, ctx)
         neut = (len(words) >= 2 and words[0]["code"] == "python3"
@@ -2101,7 +2134,7 @@ class _Sh:
         if w.get("bad_sub"):
             self.hit("引號或 `${…}` 裡的命令替換對不到收尾（或掃描器不解析它）——裡面的重導向看不到，不解析就不放行", ctx)
         for sub in w["subs"]:                    # 命令替換、process substitution：子殼層，fd 繼承自所在的位置
-            _Sh(sub, self.o).parse_list(dict(ctx, sub=True), lambda x: False)
+            _Sh(sub, self.o).parse_list(dict(ctx, scope=self.new_scope(ctx)), lambda x: False)
 
     def simple(self, words, ctx):
         k = 0
@@ -2112,10 +2145,21 @@ class _Sh:
             elif w["code"] not in _LEAD_WORDS:
                 break
             k += 1
+            # 前綴詞自己的選項（R39，#33 verify R38 第 4、8 列）：`command -p set -x`、`builtin -- set +o pipefail`、`time -p …`——
+            # 前一版只剝裸詞，選項被當成命令名，後面的 `set` 就看不到了（380e4a4 的 `FD_RE` 擋這幾種，回歸）。
+            # `command -v`／`-V` 只印命令的描述、不執行它。
+            while k < len(words) and w["code"] in _LEAD_OPTS and words[k]["lit"] in _LEAD_OPTS[w["code"]]:
+                if words[k]["lit"] in ("-v", "-V"):
+                    return
+                k += 1
         if k >= len(words):
             return
         name = words[k]["lit"] if words[k]["lit"] is not None else words[k]["code"]
         args = words[k + 1:]
+        if words[k]["lit"] is None:
+            self.opaque_cmd(args, ctx)
+        if name == "eval" and args[:1] and args[0]["lit"] == "--":
+            args = args[1:]                      # `eval -- set -x`（R38 第 4 列）
         if name == "eval" and args and all(a["lit"] is not None for a in args):
             # `eval` 後面全是字面詞：bash 執行的就是那幾個詞接起來（`eval set -x`）
             self.simple([dict(_opaque("", 0, 0), code=x, lit=x, skel=x) for x in " ".join(a["lit"] for a in args).split()], ctx)
@@ -2131,6 +2175,19 @@ class _Sh:
             if w["lit"] is not None and w["lit"].rsplit("/", 1)[-1] in _SHELL_NAMES:
                 self.shell_opts(words[j + 1:], ctx)
 
+    def opaque_cmd(self, args, ctx):
+        """命令名不是字面（`${X:-set} +o pipefail`、`"$CMD" -x`）：看不出是不是 `set`／`shopt`（R39，#33 verify R38 第 4、8 列）。
+        只在參數**像** `set` 的選項時 fail-closed，否則 `$MAKE -j4`、`"$TAR" -xzf a` 這類常見寫法會被一起擋掉：
+          · 字面參數裡有 `pipefail` ⇒ 當成關掉 pipefail；
+          · 字面參數裡有 `-o xtrace|verbose`，或一個只由 `set` 的單字母選項組成、含 `x`／`v` 的 `-…` ⇒ 當成開了 trace。
+        封閉列舉，只有這兩類，不得依「看起來像選項」類推。"""
+        lits = [a["lit"] for a in args]
+        if "pipefail" in lits:
+            self.pf_event(False, ctx)
+        if (any(l is not None and re.fullmatch(r"-[%s]+" % _SET_LETTERS, l) and set(l[1:]) & set("xv") for l in lits)
+                or ("-o" in lits and any(l in _TRACE_OPTS for l in lits))):
+            self.hit("命令名不是字面、參數像 `set -x`／`set -o xtrace`——看不出是不是開了 trace", ctx)
+
     def env_word(self, w, ctx, bare):
         text = w["skel"] if w["skel"] is not None else w["code"]
         for key in _RUN_ENV_KEYS:
@@ -2138,7 +2195,7 @@ class _Sh:
                 self.hit("run 裡設定 `%s`——bash（含子行程）啟動時會讀它，依鍵不同可能開 xtrace、執行別的程式碼，或把已開啟的 trace 輸出轉向到別的 fd（`BASH_XTRACEFD` 單獨設定不會自己打開 xtrace，需要 `-x`／verbose 已經開著）" % key, ctx)
 
     def pf_event(self, on, ctx):
-        self.o["events"].append({"k": "pf", "on": on, "sub": ctx["sub"]})
+        self.o["events"].append({"k": "pf", "on": on, "scope": ctx["scope"], "fn": ctx.get("fn", False)})
 
     def set_cmd(self, args, ctx):
         i = 0
@@ -2237,8 +2294,8 @@ def _analyse(logical, logical_src):
     S = "\n".join(s if s is not None else "\0" * len(c) for c, s in zip(logical, logical_src))
     _COVERED.clear()
     toks, _ = _lex(C, S)
-    out = {"groups": [], "hits": [], "events": [], "pipelines": []}
-    _Sh(toks, out).parse_list({"stack": (), "sub": False}, lambda t: False)
+    out = {"groups": [], "hits": [], "events": [], "pipelines": [], "nscope": 0}
+    _Sh(toks, out).parse_list({"stack": (), "scope": ()}, lambda t: False)
     for segs, conns in out["pipelines"]:
         last = max((k for k, sg in enumerate(segs) if sg["neut"]), default=0)
         for k in range(last):
@@ -2252,18 +2309,25 @@ def _analyse(logical, logical_src):
 
 
 def _pipefail_holds(events, on):
-    """照詞元順序模擬 pipefail：頂層（不在子殼層、命令替換、函式本體、管線的一段裡）的設定才改變它；
-    每一個管線運算子出現時它都要是開的。非字面的 `set` 參數當成關掉（fail-closed）。
+    """照詞元順序模擬 pipefail：每一個管線運算子出現時，建立那條管線的 shell 裡 pipefail 都要是開的。
+    非字面的 `set` 參數當成關掉（fail-closed）。
 
-    **子殼層裡的「關」也算數**（R37，移植 #61 群組規則時查到）：`{ set +o pipefail; false | true; } 2>&1 | python3 …`
-    的群組是管線的一段、在子殼層裡跑——裡面的 `set +o pipefail` 管不到外層，卻會關掉群組內之後的管線（bash 實測失敗被吞、
-    外層 rc=0）。前一版把子殼層裡的 pf 事件整個忽略，這一步在關鍵字 `bash` 下放行。本 lint 不追蹤子殼層的範圍在哪裡結束，
-    所以「關」一出現就一路關到底（`( set +o pipefail ); a | b` 因此誤擋，方向是 fail-closed；函式本體裡的關在呼叫後本來就作用
-    在全域）。子殼層裡的「開」照舊不算數——它確實管不到外面。"""
-    for ev in events:
-        if ev["k"] == "pf" and (not ev.get("sub") or not ev["on"]):
-            on = ev["on"]
-        elif ev["k"] == "pipe" and not on:
+    **範圍**（R39，#33 verify R38 第 8、11 列）：每個事件帶一條範圍路徑——子殼層（`( … )`、管線的每一段、命令替換、
+    背景執行）各開一層。一個設定只作用在**同一個範圍或更內層**、而且在它之後出現的管線上：
+      · `{ set +o pipefail; false | true; } 2>&1 | python3 …`：群組是管線的一段，裡面的「關」作用在群組內之後的管線（R37）；
+      · `( set +o pipefail )` 之後的管線在外層範圍 ⇒ 不受影響（R37 版「關一出現就一路關到底」在這裡誤擋，R38 第 11 列）；
+      · 同一範圍裡先關再開 ⇒ 之後是開的（R37 版忽略子殼層裡的「開」，誤擋同一個寫法）；
+      · `set -o pipefail &` 在背景子殼層裡 ⇒ 管不到外面（R37 版把 `&` 當 `;`，R38 第 8 列）。
+    **函式本體**不開新範圍：本體要呼叫才執行，所以裡面的「開」不算數（可能沒被呼叫），「關」照樣作用在定義所在的範圍
+    （可能被呼叫）——兩個方向都是 fail-closed。"""
+    for j, ev in enumerate(events):
+        if ev["k"] != "pipe":
+            continue
+        st = on
+        for e in events[:j]:
+            if e["k"] == "pf" and ev["scope"][:len(e["scope"])] == e["scope"] and not (e["fn"] and e["on"]):
+                st = e["on"]
+        if not st:
             return False
     return True
 

@@ -1,0 +1,20 @@
+# R38 第 11 列（codex 第 7 條，協調者核對）：`( set +o pipefail )` 只作用在已經結束的子殼層，群組內之後的管線仍在 pipefail 之下。
+# R37 的 `_pipefail_holds` 讓子殼層裡的「關」一路關到底，誤擋這個寫法。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: pipefail off only in a finished subshell
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            ( set +o pipefail )
+            false | true
+            echo "$PR_TITLE"
+          } 2>&1 | python3 scripts/neutralise.py
