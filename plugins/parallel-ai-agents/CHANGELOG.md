@@ -632,7 +632,7 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
     16 個神諭靶；條件 7 點名的正規式分支已不存在，對應閘門是差分 G 的 `if not contrib`。神諭工作包原本把三個靶列為「無網／預期存活」，
     其中耦合檢查一條的理由是「harness 的『未突變＝綠』前提與它結構上互斥」——不成立：寫成「期待失敗」的斷言（`test/oracle_selfcheck.py`）就滿足那個前提；
     三個都在副本上看過未突變綠、突變紅。
-  - **`--strict` 與 fd 流向（第 3、4、8、9、12、13、22、25 列）**：R35 的五條正規式整組刪掉，改讀 run 區塊的**結構**——修法包先做成逐條管線、每一段都要把 stderr
+  - **`--strict` 與 fd 流向（第 3、4、8、9、12、13、22、25 列）**：R35 的六條正規式（R36 在其中五條找到相鄰輸入）整組刪掉，改讀 run 區塊的**結構**——修法包先做成逐條管線、每一段都要把 stderr
     併進管線（或整段包成 `{ …; } 2>&1 |`），這一條後來由 PR #61 的群組規則取代（見下）；pipefail 只認關鍵字 `bash` 或樣板自帶 `-o pipefail`，頂層的 `set ±o pipefail` 依序模擬；fd 流向按流向判
     （複製到 2 或另存的 fd、/dev 與 /proc 底下的目標、xtrace／verbose 的各種拼法、子 shell 的選項），並讀 workflow／job／step 三層的 `env:`；
     群組寫法 `{ …; } 2>&1 |` 不再誤擋；`_scalar` 的 `.strip()` 照 YAML 引號解碼後才判；根層級 flow 形式的 `defaults:` 看得到。
@@ -655,8 +655,8 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
     （逐拼法列舉正是 R36 批評的形狀；完整解是只接受群組寫法），開 #60 追蹤——PR #61 就是那個完整解，本輪併入（見下），`--strict` 下這一類關掉了。
   - `test/corpus/foldcheck.py` 進 repo：e 包在 `opsweep.py` 寫的「窮舉 5,838 組、0 組不符」引用了一支沒進 repo、合併時已找不到的指令碼。新工具窮舉
     22 種行形（含 tab 前導、行尾空白、真正的空行）的所有組合：現行 lint 4 行 `run: |`／`run: >` 各 136,660 組整字串全部相等；負對照 380e4a4 在 3 行
-    就有 462／588 組內容承載行不符。e 包寫的「空白行另有一個既有的簡化」在這個構造下重現不出來、指向的說明也不存在，刪掉。
-  **量測時發現的三個 `opsweep.py` 缺陷，R28 這支工具進 repo 起就在**（三個都先寫測試看過紅）：
+    的 6,518 組裡就有 literal 462 組、folded 588 組內容承載行不符。e 包寫的「空白行另有一個既有的簡化」在這個構造下重現不出來、指向的說明也不存在，刪掉。
+  **量測時發現的三個 `opsweep.py` 缺陷，R28 這支工具進 repo 起就在**（三個都先寫了測試，是 repo 外的一次性腳本）：
   - **欄位是 UTF-8 位元組、不是字元**：ast 的 `col_offset` 是位元組位置，`_span` 當字元位置用，同一行節點前面有中文就切錯。
     查過的四個版本（d278e99、d8340a6、6cf6864、380e4a4）各有 3 個這樣的突變體（`縮排含 tab` 那行的 `i += 1`、`cur["name"]` 那行的 `or`、`而不解析就不放行` 那行的
     `.strip()`）；`i += 1` 那個實際換掉的是前一行 `if seq_at[i]:` 的冒號（在 d278e99 與 380e4a4 上重算），R29 的兩份掃描記錄與
@@ -731,7 +731,7 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
   lint 行為是設計（逐段形式擋的是 #60 第 2 類；子殼層同 `restrict-r37-strict-subshell-group`），逐檔記進 `KNOWN_DISAGREE` 並寫理由；
   shellgen 只改說明，產生的 678 檔前後逐位元組相同。
   **我在這一輪自己的錯**：移植群組規則後只重跑了 fixture 神諭，沒重跑產生語料神諭——CI 的那個 step 兩組都跑，推上去會紅；加 `shellgen.py --strict` 組時只改了 CI，`run.sh` 的形狀普查仍只產生預設組，R37 的 10 列裡有 7 列（R37-1、2、4–8）恆為 0、本機必紅（最終量測跑 `run.sh` 時才抓到，已改成兩組都產生）；R36 報告第 16 列的「協調者核對」（見上面的勘誤）；`bypass-r37m-backtick-comment-hides-rest` 的檔頭我第一版寫「380e4a4 放行」，實測 380e4a4 判 RULE（commit 前量到、已改）；一次 grep 把常數名拼錯（`FIXTURE_MUST_FAIL_TOTAL`，實際沒有中間那個底線），`&&` 讓後面寫 fixture 的指令沒執行，我對著一張不存在的檔讀了一輪神諭結果才發現；缺陷 c 的第一版把「找不到收尾」改成 fail-closed，誤擋了 `good-cond-like-command-word`（`[[x` 是命令名）——selftest 抓到，才改成與掃描器同一個判準。
-  數字（`d1014e6`（推上 `r37-fix` 分支備份；最終 commit 與它只差註解、mutation 靶名稱、`run.sh` 的語料產生與 `test_validate.py` 檔頭——剝掉 docstring 後嵌入 Python 的 AST 相同；`run.sh` 在最終樹上跑） 上實跑，負載 開跑時一分鐘平均 11.9–12.5；量測期間一分鐘平均一度超過 100（兩項量測同時在跑，同機另有其他 session 的編譯），`run.sh` 時約 31）：selftest 233 正向／310 rule-red／143 parse-red（686 張 fixture），另有 4 張訊息斷言；`--strict` 對本 repo 的 workflow rc=0。`mutation_check.py --check-targets` 394 靶；全輪（`git archive` 副本）391 殺／0 存活／3 預期存活／0 靶壞，327.7 分鐘（每靶 49.9 s，醒著的時間）。opsweep 見上。`--verify-expected`（突變體全集、678 檔產生語料，其中 `--strict` 組 54 檔）47／47 條成立。神諭：fixture 829 個 step——一致 596、不一致 26（全為已知）、不可比 190、量不到 17；產生語料 678 個 step——一致 547、不一致 70（全為已知）、不可比 61、量不到 0；`oracle_selfcheck.py` rc=0。`run.sh` rc=0（15.7 分鐘；TAP `ok` 254 行、`not ok` 0 行；形狀普查 R3* 每列 > 0）。
+  數字（`d1014e6`（推上 `r37-fix` 分支備份；最終 commit 與它只差註解、docstring、mutation 靶名稱、`run.sh` 的語料產生與文件（CHANGELOG、`test_validate.py` 檔頭）——lint 嵌入的 Python 剝掉 docstring 後 AST 相同；`run.sh` 在 `d1d2637` 上跑，最終 commit 只再改了它的註解） 上實跑，負載 開跑時一分鐘平均 11.9–12.5；量測期間一分鐘平均一度超過 100（兩項量測同時在跑，同機另有其他 session 的編譯），`run.sh` 時約 31）：selftest 233 正向／310 rule-red／143 parse-red（686 張 fixture），另有 4 張訊息斷言；`--strict` 對本 repo 的 workflow rc=0。`mutation_check.py --check-targets` 394 靶；全輪（`git archive` 副本）391 殺／0 存活／3 預期存活／0 靶壞，327.7 分鐘（每靶 49.9 s，醒著的時間）。opsweep 見上。`--verify-expected`（突變體全集、678 檔產生語料，其中 `--strict` 組 54 檔）47／47 條成立。神諭：fixture 829 個 step——一致 596、不一致 26（全為已知）、不可比 190、量不到 17；產生語料 678 個 step——一致 547、不一致 70（全為已知）、不可比 61、量不到 0；`oracle_selfcheck.py` rc=0。`run.sh` rc=0（15.7 分鐘；TAP `ok` 254 行、`not ok` 0 行；形狀普查 R3* 每列 > 0）。
 - **verify R34（4 lens + DA 前半；Codex 因 OpenAI 429 缺席、使用者決定不等）— 7 HIGH（其中 3 條 R33 回歸）、7 MEDIUM blocking。**（R34 發文時寫成 8 MEDIUM，但它自己的表只有 #8–#14 七條——
   協調者合併時算錯；這裡原本照抄了那個數，R35 發 commit 前的宣稱查核抓到。）
   R33 換的證據標準確認是真的：點名的 7 個機制還原後 selftest 全部轉紅，R33 的每個數字逐條重跑吻合。**缺的是另一半**：
