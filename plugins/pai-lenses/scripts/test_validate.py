@@ -1133,6 +1133,16 @@ class ValidateTest(unittest.TestCase):
         self.assertLess(v.version_tuple("1.0.0-beta.2"), v.version_tuple("1.0.0-beta.11"))
         self.assertLess(v.version_tuple("1.0.0-alpha"), v.version_tuple("1.0.0-alpha.1"))
 
+    def test_semver_rejects_non_ascii_digits(self):
+        """#56 verify R1：`\\d` 對 str 是 Unicode 數字 —— `9９.0.0`（全形 ９）先前會 fullmatch、
+        `int()` 收成 99，一個非 semver 字串就這樣過了閘門而且排得比 `10.0.0` 還高。semver 只收 ASCII。"""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("v", str(PACK / "scripts/validate.py"))
+        v = importlib.util.module_from_spec(spec); spec.loader.exec_module(v)
+        for bad in ("9９.0.0", "１.0.0", "1.٣.0", "1.0.٣", "1.0.0-rc.９", "1.0.0-٣", "1.0.0-rc.1+٣"):
+            self.assertIsNone(v.version_tuple(bad), f"{bad!r} 含非 ASCII 數字，不該被當成合法 semver")
+        self.assertIsNotNone(v.version_tuple("99.0.0"))
+
     def test_check_bumped_json_sites_also_guard_type(self):
         """#33 verify R10 H2/M11：R9 把三個 JSON 讀取點改走 `load_obj`，漏了 `check_bumped`
         裡的兩個。而先前那條「型別不對不 crash」的測試**結構上到不了那裡** —— 它不帶
