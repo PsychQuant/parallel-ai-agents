@@ -1248,9 +1248,9 @@ MUTATIONS += [
     ("lint: env 規則不認 `PYTHON*` 運算式（R39 → bypass-r39-env-pythonwarnings-expression-default）",
      ' or k == "?" or ENV_EXPR_RE.fullmatch(k)]', ' or k == "?"]', "lint"),
     ("lint: run 裡非字面的 `PYTHON*` 不擋（R39 → bypass-r39-run-export-pythonwarnings）",
-     '        if m and (w["lit"] is None or "\\0" in text):', '        if False:', "lint"),
+     '        if m and w["lit"] is None:', '        if False:', "lint"),
     ("lint: run 裡字面的 `PYTHON*` 也擋（R39 → good-r39-run-export-python-literal）",
-     '        if m and (w["lit"] is None or "\\0" in text):', '        if m:', "lint"),
+     '        if m and w["lit"] is None:', '        if m:', "lint"),
 ]
 
 # ── R39（#33 verify R38 第 10、11、14 列）：群組規則的放寬與 PR 可控運算式 ──────────────

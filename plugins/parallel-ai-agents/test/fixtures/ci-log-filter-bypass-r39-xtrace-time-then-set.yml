@@ -1,0 +1,16 @@
+# R39 opsweep 存活者（`--since c53ac22`）：`parse_pipeline` 裡 `time` 選項的 `in _LEAD_OPTS["time"]`。`time set -x`：`set` 不是 `time` 的選項；拿掉那個運算元，`set` 被剝掉、
+# 只剩 `-x` 當命令名，xtrace 看不到。bash 5.3：`time set -x` 開了 xtrace，之後管線那一段的 `+ echo …` 寫到管線外。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: time then set -x
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          time set -x
+          echo "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py

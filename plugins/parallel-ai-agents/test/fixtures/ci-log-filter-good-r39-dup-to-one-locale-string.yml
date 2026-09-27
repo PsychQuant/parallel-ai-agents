@@ -1,0 +1,15 @@
+# R39 opsweep 存活者（`--since c53ac22`）：`_word` 跳過 `$"` 的 `p += 1`。`>&$"1"` 就是 `>&1`（沒有訊息目錄時 `$"…"` 等於雙引號
+# 字串），no-op、照常放行；跳兩格會把引號一起吃掉，目標讀不出來而誤擋。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: dup to fd 1 spelled with a locale string
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$PR_TITLE" >&$"1" 2>&1 | python3 scripts/neutralise.py

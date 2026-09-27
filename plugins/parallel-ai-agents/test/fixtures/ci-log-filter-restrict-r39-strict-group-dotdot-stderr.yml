@@ -1,0 +1,18 @@
+# R39 opsweep 存活者（`--since c53ac22`）：`_group_safe_target` 的 `".." not in` 運算元。群組內寫 `/dev/fd/../stderr`：`..` 經過 /dev，不給群組豁免（fail-closed）；
+# 拿掉那個運算元，normpath 成 `/dev/stderr` 就被豁免。bash 在兩個平台都寫不出去或寫到群組自己的 stderr——保守擋、KNOWN_DISAGREE。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: group writes through dotdot
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            echo "$PR_TITLE" > /dev/fd/../stderr
+          } 2>&1 | python3 scripts/neutralise.py

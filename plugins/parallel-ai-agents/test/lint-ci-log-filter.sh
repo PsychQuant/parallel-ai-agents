@@ -89,12 +89,12 @@ if [ "${1:-}" = "--selftest" ]; then
   done
   # R24 regression F9：門檻寫成 `>=` 而實際值更高時，那個差額**沒有網**——刪掉一個 fixture 仍然綠。
   # 三個門檻一律改成**等於實測值**：要加 fixture 就同步改這裡，讓「少了一個」立刻紅。
-  if [ "${n_pass}" -ne 248 ]; then
-    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 248（改動 fixture 請同步改這個數字）" >&2
+  if [ "${n_pass}" -ne 256 ]; then
+    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 256（改動 fixture 請同步改這個數字）" >&2
     fail=1
   fi
-  if [ "${n_rule}" -ne 355 ]; then
-    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 355" >&2
+  if [ "${n_rule}" -ne 359 ]; then
+    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 359" >&2
     fail=1
   fi
   if [ "${fail}" -ne 0 ]; then exit 1; fi
@@ -2219,7 +2219,7 @@ class _Sh:
     def env_word(self, w, ctx, bare):
         text = w["skel"] if w["skel"] is not None else w["code"]
         m = re.match(r"(PYTHON\w*)\+?=", text)
-        if m and (w["lit"] is None or "\0" in text):
+        if m and w["lit"] is None:                # skel 裡有 `\0`（展開）時 lit 必為 None——前一版多寫的 `"\0" in text` 被它蘊含（R39 opsweep）
             # 過濾器 `python3` 啟動時讀 `PYTHON*`（R39，#33 verify R38 第 9 列）：值不是字面就可能是 PR 文字，`PYTHONWARNINGS` 的
             # 不合法值原樣印到管線右端的 stderr。
             self.hit("run 裡把 `%s` 設成不是字面的值——過濾器 python3 啟動時就讀它（`PYTHONWARNINGS` 的不合法值會原樣印到"
