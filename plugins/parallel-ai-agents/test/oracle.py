@@ -201,11 +201,6 @@ KNOWN_DISAGREE = {
         "神諭的 `python3` 是 shell stub，不解析 `PYTHONWARNINGS`；真的 CPython 會把不合法的值印到管線右端的 stderr（協調者實跑）。",
     ("ci-log-filter-bypass-r39-env-pythonwarnings-expression-default.yml", "PYTHONWARNINGS from the PR title"): "同上：stub。",
     ("ci-log-filter-bypass-r39-run-export-pythonwarnings.yml", "export PYTHONWARNINGS in run"): "同上：stub。",
-    ("ci-log-filter-bypass-r39-github-event-expression-in-run.yml", "event expression in the group"):
-        "神諭不代換 runner 運算式（值只有 runner 知道）：`${{ … }}` 在 bash 眼中是錯誤的替換，量不到代換之後的注入（R38 第 14 列）。",
-    ("ci-log-filter-bypass-r39-github-head-ref-in-run-default.yml", "head_ref expression in a piped line"): "同上：不代換運算式。",
-    ("gen-d-yaml-ghexpr-plain.yml", "d-yaml-ghexpr-plain"):
-        "同上：產生語料 d 組的 `echo \"${{ github.event.pull_request.title }}\" | …`——真的注入形狀，R39 起兩種模式都擋；神諭不代換運算式。",
     # ── R39（R38 第 11 列）：群組規則的保守誤擋，逐條揭露（放寬會動到「恰好一對大括號、前綴只收 `set`」的論證）──
     ("ci-log-filter-restrict-r39-strict-function-def.yml", "function def"):
         "群組內定義函式：多一對大括號。群組規則只收恰好一對（`case` 模式、陣列裡的大括號不是保留字，計深度要判斷那個）。",
@@ -249,6 +244,82 @@ TIMEOUT_S = 5
 # 只說明「沒過濾」；要構成繞過還得真的把 fork 可控的文字印出去。少了這一條，任何「lint 以為有管線、
 # 但那一行根本沒執行」的構造都會被誤報成繞過（R31 自查：產生語料上 60 筆假指控全屬此類）。
 PR_MARKER = "ORACLE-PR-TITLE-MARKER"
+
+
+# ── runner 運算式的代換（R40，#33 verify R39 第 1 列、DA N3）─────────────────────────────────────────────────────────────
+# 前一版不代換 `${{ … }}`：bash 看到的是錯誤的替換，量不到代換之後的注入——R39 的 `${{ }}` 規則只認兩種拼法，其餘寫法在
+# `--strict` 放行而真的外流，神諭卻看不見（三條 KNOWN_DISAGREE 寫的就是「神諭不代換運算式」，R40 刪掉）。現在：純字面常數換成它的值；
+# 其餘每一個運算式都當成 PR 可控，依序換成下面這組 payload 各跑一次，**任何一組外流就算外流**，後續的差分與歸類都用那一份。
+# payload 的集合是封閉的：純標記（值直接被印出來）＋三種引號脈絡（不加引號、雙引號、單引號）× 兩種位置（收掉群組、群組外的
+# 同一行）。不在這張表上的脈絡（例如 heredoc 內文、`$'…'`）神諭不保證逃得出去——那時它判的是「沒看到外流」，方向是寬。
+RUNNER_PAYLOADS = (
+    PR_MARKER,
+    "x; }; echo %s; { :" % PR_MARKER,
+    'x"; }; echo %s; { : "' % PR_MARKER,
+    "x'; }; echo %s; { : '" % PR_MARKER,
+    "x; echo %s >&2; :" % PR_MARKER,
+    'x"; echo %s >&2; : "' % PR_MARKER,
+    "x'; echo %s >&2; : '" % PR_MARKER,
+)
+GH_LITERAL_RE = re.compile(r"\s*(?:'(?:[^']|'')*'|-?\d+(?:\.\d+)?|true|false|null)\s*")
+
+
+def runner_exprs(s):
+    """`s` 裡每一個 `${{ … }}` 的 (起點, 終點, 內容)——與 lint 的 `runner_exprs` 同一套邊界：單引號字串（`''` 跳脫）裡的 `}}`
+    不收尾；沒收尾的延伸到結尾。"""
+    out, i = [], 0
+    while True:
+        a = s.find("${{", i)
+        if a < 0:
+            return out
+        j, q = a + 3, False
+        while j < len(s):
+            if s[j] == "'":
+                if q and s[j + 1:j + 2] == "'":
+                    j += 2
+                    continue
+                q = not q
+            elif not q and s.startswith("}}", j):
+                break
+            j += 1
+        end = min(j + 2, len(s))
+        out.append((a, end, s[a + 3:j]))
+        i = end
+
+
+# GitHub 產生、PR 作者控制不了的純量欄位（R40，#33 verify R39 第 12 列）。**封閉列舉，只有這八個**，點號寫法、大小寫不分（Actions 的
+# context 名稱不分大小寫）；索引寫法、函式呼叫、同一物件的其他欄位（`head.ref`、`title`…）不在裡面、照擋。lint 與神諭共用同一份（神諭把它們換成數值，不換成 payload）。
+GH_SAFE_EXPRS = frozenset((
+    "github.event.pull_request.number", "github.event.number",
+    "github.event.pull_request.base.sha", "github.event.pull_request.head.sha",
+    "github.sha", "github.run_id", "github.run_number", "github.run_attempt",
+))
+
+
+def _literal_value(inner):
+    v = inner.strip()
+    return v[1:-1].replace("''", "'") if v.startswith("'") else ("" if v == "null" else v)
+
+
+def substitute_runner_exprs(run, payload):
+    """把 `run` 裡的運算式換成 runner 會代入的東西：字面常數換成值，其餘換成 `payload`（None ⇒ 只換字面、非字面原樣留著）。"""
+    parts, last = [], 0
+    for a, b, inner in runner_exprs(run):
+        parts.append(run[last:a])
+        if GH_LITERAL_RE.fullmatch(inner):
+            parts.append(_literal_value(inner))
+        elif inner.strip().lower() in GH_SAFE_EXPRS:
+            parts.append("123")
+        else:
+            parts.append(run[a:b] if payload is None else payload)
+        last = b
+    parts.append(run[last:])
+    return "".join(parts)
+
+
+def has_nonliteral_expr(run):
+    return any(not GH_LITERAL_RE.fullmatch(inner) and inner.strip().lower() not in GH_SAFE_EXPRS
+               for _a, _b, inner in runner_exprs(run))
 # 判定表的**種類**（#33 verify R34 requirements F3）：每一列的判定都必須以其中之一開頭（`main()` 逐列 assert）。
 # CHANGELOG 的「判定表有 N 種」由 `lint-changelog-counts.sh` 讀這個常數驗——前一版那一句量的是 CHANGELOG 自己打的字面清單，
 # 永遠抓不到 CHANGELOG 與神諭分岔。「不一致」的兩種各自帶後綴（繞過／誤擋），所以這裡列的是完整前綴。
@@ -816,7 +887,18 @@ def check_file(f, text, bash, stub_bin):
         if shell_note:
             rows.append((f.name, name, "-", "-", "不可比（%s——神諭只會用 bash 跑）" % shell_note))
             continue
-        o, obs, leaked, mlines = run_script(run, bash, stub_bin, yenv)
+        if has_nonliteral_expr(run):
+            # 依序試 RUNNER_PAYLOADS，取第一個外流的那一份（沒有任何一份外流就用第一份）；下游的差分、機制與原因檢查都用它。
+            tried = []
+            for payload in RUNNER_PAYLOADS:
+                cand = substitute_runner_exprs(run, payload)
+                tried.append((cand, run_script(cand, bash, stub_bin, yenv)))
+                if tried[-1][1][2][0] or tried[-1][1][2][1]:
+                    break
+            run, (o, obs, leaked, mlines) = next((c for c in tried if c[1][2][0] or c[1][2][1]), tried[0])
+        else:
+            run = substitute_runner_exprs(run, None)
+            o, obs, leaked, mlines = run_script(run, bash, stub_bin, yenv)
         # step 範圍外的 PARSE 是**結構性**的（整檔不可信）→ 所有 step 都不可比；
         # 範圍內的 PARSE 只影響那一個 step。前一版對整檔一視同仁，於是
         # `bypass-duplicate-key` 的合規對照 step 被算成「PARSE ∧ piped」＝誤擋（R31 自查）。

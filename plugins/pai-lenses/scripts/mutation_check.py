@@ -1356,21 +1356,27 @@ MUTATIONS += [
 
 # ── R39（#33 verify R38 第 10、11、14 列）：群組規則的放寬與 PR 可控運算式 ──────────────
 MUTATIONS += [
-    ("lint: 群組計數不遮 runner 運算式（R39，R38 第 10 列 → good-r39-strict-group-github-expression-unquoted）",
-     '        for m in (GH_EXPR_RE.finditer(s) if s is not None else ()):', '        for m in ():', "lint"),
+    ("lint: 群組計數不遮 runner 運算式（R39，R38 第 10 列；R40 起遮的是帶 `}` 的字面值 → good-r39-strict-group-github-expression-unquoted）",
+     '        for a, b, _inner in (runner_exprs(s) if s is not None else ()):', '        for a, b, _inner in ():', "lint"),
     ("lint: 群組尾巴後的 `;` 不收（R39，R38 第 11 列 → good-r39-strict-group-trailing-semicolon）",
      '    if tail[-1:] == [";"]:\n        tail = tail[:-1]', '    if False:\n        tail = tail[:-1]', "lint"),
     ("lint: `set` 前綴不收 `-E`（R39，R38 第 11 列 → good-r39-strict-group-set-E-prefix）",
      'r"-(?=.)([euE]*)(o?)"', 'r"-(?=.)([eu]*)(o?)"', "lint"),
     ("lint: `set` 前綴不收 `-o errtrace`（R39 → good-r39-strict-group-set-E-prefix）",
      '"pipefail", "errexit", "nounset", "errtrace"))', '"pipefail", "errexit", "nounset"))', "lint"),
-    ("lint: run 裡的 PR 可控運算式不擋（R39，R38 第 14 列 → bypass-r39-github-event-expression-in-run）",
-     '        elif not declared and any(GH_EXPR_UNTRUSTED_RE.search(l) for l in scan_in if l is not None):',
-     '        elif False:', "lint"),
+    ("lint: run 裡的非字面運算式不擋（R39 第 14 列；R40，R39 verify 第 1 列 → bypass-r40-ghexpr-*）",
+     '        elif not declared and any(not gh_literal(inner) for _a, _b, inner in\n',
+     '        elif False and any(not gh_literal(inner) for _a, _b, inner in\n', "lint"),
     ("lint: `set` 前綴行尾的 `;` 不收（R39，R38 第 11 列 → good-r39-strict-set-prefix-semicolon）",
      '    if toks[-1:] == [";"]:\n        toks = toks[:-1]', '    if False:\n        toks = toks[:-1]', "lint"),
-    ("lint: PR 可控運算式不認 `github.head_ref`（R39 → bypass-r39-github-head-ref-in-run-default）",
-     r'(?:event\.|head_ref\b)', r'(?:event\.)', "lint"),
+    # R40：R39 的「不認 `github.head_ref`」靶隨拼法清單一起退場——規則不再列拼法。換成新規則的三個判定點：
+    ("lint: 字面判定一律成立（任何運算式都當成常數，R40 → bypass-r40-ghexpr-*）",
+     '    return GH_LITERAL_RE.fullmatch(inner) is not None or inner.strip().lower() in GH_SAFE_EXPRS',
+     '    return True', "lint"),
+    ("lint: GH_SAFE_EXPRS 的比對分大小寫（R40 → good-r40-ghexpr-github-generated-scalars 的 `GITHUB.SHA`）",
+     'inner.strip().lower() in GH_SAFE_EXPRS', 'inner.strip() in GH_SAFE_EXPRS', "lint"),
+    ("lint: 運算式邊界不認單引號（第一個 `}}` 收尾，R40 → good-r40-ghexpr-literal-constants 的 `'a}}b'`）",
+     '            if s[j] == "\'":\n                if q and', '            if False:\n                if q and', "lint"),
 ]
 
 # ── R39（mutation 全輪的存活者追到的兩件事）──────────────

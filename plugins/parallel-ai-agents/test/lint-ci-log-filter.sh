@@ -89,12 +89,12 @@ if [ "${1:-}" = "--selftest" ]; then
   done
   # R24 regression F9：門檻寫成 `>=` 而實際值更高時，那個差額**沒有網**——刪掉一個 fixture 仍然綠。
   # 三個門檻一律改成**等於實測值**：要加 fixture 就同步改這裡，讓「少了一個」立刻紅。
-  if [ "${n_pass}" -ne 259 ]; then
-    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 259（改動 fixture 請同步改這個數字）" >&2
+  if [ "${n_pass}" -ne 261 ]; then
+    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 261（改動 fixture 請同步改這個數字）" >&2
     fail=1
   fi
-  if [ "${n_rule}" -ne 362 ]; then
-    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 362" >&2
+  if [ "${n_rule}" -ne 367 ]; then
+    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 367" >&2
     fail=1
   fi
   if [ "${fail}" -ne 0 ]; then exit 1; fi
@@ -2449,14 +2449,16 @@ def _bash_template(sh):
 #   · 唯一的 `}` 若因為某個沒收的構造（`case`、陣列、`$(`）而不被 bash 當成保留字，群組就到檔尾都沒關——
 #     bash 在執行群組裡任何東西之前就報語法錯誤（它先讀完整個複合命令），群組裡的命令一個都不執行。bash 仍會把**語法診斷**
 #     印到群組外的 stderr（#33 verify R38 codex 第 10 條：「命令沒執行」推不出「沒有輸出」）——診斷引用的是原始碼；原始碼裡
-#     PR 可控的 `${{ github.event.* }}` 由 `GH_EXPR_UNTRUSTED_RE` 那條規則另外擋（R39）。
+#     非字面的 runner 運算式由 run 內運算式那條規則另外擋（R39 只認兩種拼法，R40 改成除了字面常數一律擋）。
 # `set` 前綴只收 `-e`／`-u`／`-E`／`-o pipefail|errexit|nounset|errtrace`（`-E`／errtrace：R39，只影響 ERR trap 的繼承）：`set -v` 會把原始碼（含 runner 代入的 `${{ … }}`）
 # 印到群組外的 stderr，`-x` 同理；裸 `set` 把所有變數（含 PR 可控的 env）印到群組外的 stdout。
 # **代價：保守誤擋**（#33 verify R38 第 11 列：R37 只揭露了前兩類）。封閉列舉，只有這七類，每一類都在 oracle.py 的 KNOWN_DISAGREE
 # 登記（逐段 `2>&1` 登記的是產生語料 `gen-f-*` 的五檔，其餘六類各有一張以上的 `restrict-*` fixture）：逐段 `2>&1`（不是群組形式）、`( … )` 子殼層、群組內定義函式、群組內的巢狀群組
 # （`{ …; } >> "$GITHUB_ENV"`）、一個 step 兩個群組、群組前的 `cd`／`export`、命令替換裡不在命令起點的 `case` 普通參數
 # （這一類是掃描器的 fail-closed，不是群組規則）。R39 放寬了四類（未加引號的 `${{ … }}`、尾巴後的 `;`、`set -E`／errtrace、
-# `set` 前綴行尾的 `;`）。
+# `set` 前綴行尾的 `;`）；其中第一類 R40 收回（#33 verify R39 第 1 列）：群組計數仍遮掉運算式，但 run 裡任何非字面的運算式
+# （`matrix.*`、`inputs.*`、`runner.*`、函式呼叫…，字面常數與 GH_SAFE_EXPRS 除外）改由運算式規則擋——改經 step 的 `env:` 傳進來，
+# `restrict-r40-ghexpr-*` 兩張釘住。這一條不是群組規則的代價、兩種模式都適用，所以不算進上面七類。
 # **子殼層 `( … ) 2>&1 |` 不收**：`(`／`)` 也出現在 `$(`、`$((`、陣列、`case` 模式裡，同一套「恰好一對」的論證不成立。
 # 斷詞只認 ASCII 空白與 tab——bash 的詞界就是這兩個加上 metachar。Python 的 `\s` 還認 NBSP 等 Unicode 空白：
 # `{<NBSP>true` 在 `\s` 下斷成 `{`、`true`，bash 卻讀成一個詞（不存在的命令），群組根本沒開
@@ -2488,10 +2490,47 @@ def _set_prefix_line(toks):
     return True
 
 
-GH_EXPR_RE = re.compile(r"\$\{\{.*?\}\}")
-# PR 可控的 runner 運算式（R39，#33 verify R38 第 14 列）：封閉列舉，只有這兩種——`github.event.*`（標題、內文、分支名…）
-# 與 `github.head_ref`。`inputs.*`、`matrix.*`、`steps.*` 不列：它們的值由 workflow 作者或前面的 step 決定。
-GH_EXPR_UNTRUSTED_RE = re.compile(r"\$\{\{[^}]*?\bgithub\.(?:event\.|head_ref\b)")
+def runner_exprs(s):
+    """`s` 裡每一個 runner 運算式 `${{ … }}` 的 (起點, 終點, 內容)。邊界照運算式語言本身找：單引號字串（`''` 是跳脫的單引號）
+    裡的 `}}` 不收尾（前一版用正規式在第一個 `}}`／`}` 收尾，`format('{0}', …)` 因此切錯位置，#33 verify R39 第 1 列）。
+    沒收尾的 `${{` 延伸到字串結尾——呼叫端把它當成非字面（fail-closed）。"""
+    out, i = [], 0
+    while True:
+        a = s.find("${{", i)
+        if a < 0:
+            return out
+        j, q = a + 3, False
+        while j < len(s):
+            if s[j] == "'":
+                if q and s[j + 1:j + 2] == "'":
+                    j += 2
+                    continue
+                q = not q
+            elif not q and s.startswith("}}", j):
+                break
+            j += 1
+        end = min(j + 2, len(s))
+        out.append((a, end, s[a + 3:j]))
+        i = end
+
+
+# 純字面常數（引號字串、數字、true／false／null）：不帶任何 context，值是作者寫死的。它與下面的 GH_SAFE_EXPRS 是不受 R40 運算式規則管的**全部**；
+# 其餘每一個運算式——`github.*`、`env.*`、`steps.*`、`inputs.*`、`matrix.*`、函式呼叫、索引——都當成可能帶 PR 文字。
+GH_LITERAL_RE = re.compile(r"\s*(?:'(?:[^']|'')*'|-?\d+(?:\.\d+)?|true|false|null)\s*")
+
+
+# GitHub 產生、PR 作者控制不了的純量欄位（R40，#33 verify R39 第 12 列）。**封閉列舉，只有這八個**，點號寫法、大小寫不分（Actions 的
+# context 名稱不分大小寫）；索引寫法、函式呼叫、同一物件的其他欄位（`head.ref`、`title`…）不在裡面、照擋。lint 與神諭共用同一份。
+GH_SAFE_EXPRS = frozenset((
+    "github.event.pull_request.number", "github.event.number",
+    "github.event.pull_request.base.sha", "github.event.pull_request.head.sha",
+    "github.sha", "github.run_id", "github.run_number", "github.run_attempt",
+))
+
+
+def gh_literal(inner):
+    """不受運算式規則管的運算式：純字面常數，或 GH_SAFE_EXPRS 裡的欄位。"""
+    return GH_LITERAL_RE.fullmatch(inner) is not None or inner.strip().lower() in GH_SAFE_EXPRS
 
 
 def _logical_lines(code_lines):
@@ -2514,9 +2553,9 @@ def strict_group_violation(logical, code, src):
     # 可接受的寫法（R32 HIGH-1 修過的那一類）。計數與定位用遮掉運算式的程式碼；字面檢查仍比原本的程式碼（群組外的運算式照樣拒絕）。
     masked = list(code)
     for i, s in enumerate(src):
-        for m in (GH_EXPR_RE.finditer(s) if s is not None else ()):
-            if m.end() <= len(masked[i]):
-                masked[i] = masked[i][:m.start()] + " " * (m.end() - m.start()) + masked[i][m.end():]
+        for a, b, _inner in (runner_exprs(s) if s is not None else ()):
+            if b <= len(masked[i]):
+                masked[i] = masked[i][:a] + " " * (b - a) + masked[i][b:]
     if masked != list(code):
         logical = _logical_lines(masked)
     toks = [GROUP_TOK_RE.findall(l) for l in logical]
@@ -3134,9 +3173,15 @@ for path in [a for a in sys.argv[1:] if a not in FLAGS]:
                   "可以開 xtrace、在 run 之前執行別的程式碼，或把值印在管線右端的 stderr，那些輸出不經過管線" % (s["name"], "、".join(
                       "`%s`" % k if k != "?" else "看不到鍵名的運算式" for k in env_hit)), file=sys.stderr)
             rc = 1
-        elif not declared and any(GH_EXPR_UNTRUSTED_RE.search(l) for l in scan_in if l is not None):
-            print(where + "step '%s' 靠管線過濾，而 run 裡直接寫了 PR 可控的運算式（`${{ github.event.* }}`／`${{ github.head_ref }}`）"
-                  "——runner 在 bash 解析之前代換，PR 文字可以收掉引號與群組；改經 step 的 `env:` 傳進來" % s["name"], file=sys.stderr)
+        elif not declared and any(not gh_literal(inner) for _a, _b, inner in
+                                  runner_exprs("\n".join(l for l in scan_in if l is not None))):
+            # R40（#33 verify R39 第 1 列）：前一版只認點號的 `github.event.`／`github.head_ref`，檔內還寫成「封閉列舉，只有這兩種」——
+            # 那是拼法清單：`toJSON(github.event)`、`format('{0}', …)`、`github['event']…`、`env.X`、`steps.*.outputs.*`、大寫的
+            # `GITHUB.EVENT…` 同樣由 runner 在 bash 之前代換，全部放行。現在反過來：只有純字面常數不管，其餘一律擋。
+            # 代價：`matrix.*`、`inputs.*`、`runner.*` 這類作者控制的值也擋（它們可以經 `fromJSON(needs.*.outputs…)` 帶進 PR 文字）——
+            # 改經 step 的 `env:` 傳進來。本 repo 的 test.yml 在任何 run 裡都沒有 `${{`。
+            print(where + "step '%s' 靠管線過濾，而 run 裡直接寫了 runner 運算式 `${{ … }}`（純字面常數與 GitHub 產生的編號／SHA 除外）——runner 在 bash 解析之前"
+                  "代換，值裡的 PR 文字可以收掉引號與群組；改經 step 的 `env:` 傳進來" % s["name"], file=sys.stderr)
             rc = 1
         elif STRICT and not declared and group_why:
             # 訊息不得含 pipefail 這個字：oracle.py 以它辨認「只因退出碼遮蔽而紅」的列。
