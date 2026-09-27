@@ -1,0 +1,19 @@
+# R39 群組豁免收窄後的對照：群組內寫 `/dev/stderr`、`/proc/self/fd/2`、`>&2` 仍然豁免——群組的 fd 2 就是管線。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: group writes to its own stderr
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            echo "$PR_TITLE" >/dev/stderr
+            echo "$PR_TITLE" >/proc/self/fd/2
+            echo "$PR_TITLE" >&2
+          } 2>&1 | python3 scripts/neutralise.py

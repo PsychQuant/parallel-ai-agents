@@ -89,12 +89,12 @@ if [ "${1:-}" = "--selftest" ]; then
   done
   # R24 regression F9：門檻寫成 `>=` 而實際值更高時，那個差額**沒有網**——刪掉一個 fixture 仍然綠。
   # 三個門檻一律改成**等於實測值**：要加 fixture 就同步改這裡，讓「少了一個」立刻紅。
-  if [ "${n_pass}" -ne 239 ]; then
-    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 239（改動 fixture 請同步改這個數字）" >&2
+  if [ "${n_pass}" -ne 243 ]; then
+    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 243（改動 fixture 請同步改這個數字）" >&2
     fail=1
   fi
-  if [ "${n_rule}" -ne 335 ]; then
-    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 335" >&2
+  if [ "${n_rule}" -ne 343 ]; then
+    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 343" >&2
     fail=1
   fi
   if [ "${fail}" -ne 0 ]; then exit 1; fi
@@ -1434,6 +1434,7 @@ _SHELL_NAMES = frozenset(("bash", "sh", "dash", "ksh", "zsh", "mksh", "ash", "po
 _SAFE_TARGETS = frozenset(("/dev/null", "/dev/stdout", "/dev/fd/1", "/proc/self/fd/1"))
 # bash 啟動時讀、會開 xtrace 或執行別的程式碼的環境變數（`env:` 三層都查；ENV 只有 `env:` 層——run 裡 `ENV=prod make` 是常見寫法）。
 ENV_TRACE_KEYS = ("SHELLOPTS", "BASHOPTS", "BASH_ENV", "ENV", "BASH_XTRACEFD")
+ENV_EXPR_RE = re.compile(r"PYTHON\w*=\$\{\{ … \}\}")     # `_env_names` 對值是運算式的 `PYTHON*` 鍵的記法（R39，R38 第 9 列）
 _RUN_ENV_KEYS = ("SHELLOPTS", "BASHOPTS", "BASH_ENV", "BASH_XTRACEFD")
 _ASSIGN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(\[[^\]]*\])?\+?=")
 _LEAD_WORDS = frozenset(("!", "time", "if", "then", "else", "elif", "do", "while", "until", "builtin", "command"))
@@ -1925,6 +1926,10 @@ def _redir_hit(r):
         return "`%s` 的目標看不到原文（本 lint 對不齊這一行）——不解析就不放行" % shown
     if t["glob"]:
         return "`%s` 的目標含萬用字元——bash 會對它做路徑展開" % shown
+    if t["lit"] is not None and ".." in t["lit"].split("/") and {"dev", "proc"} & set(t["lit"].split("/")):
+        # `..` 經過 /dev 或 /proc（R39，#33 verify R38 第 20 列）：Linux 的 `/dev/fd` 是指向 `/proc/self/fd` 的 symlink，
+        # `/dev/fd/../../self/fd/2` 字面 normpath 成 `/self/fd/2`、實際是 stderr。symlink 讓字面的 `..` 不可信 ⇒ fail-closed。
+        return "`%s` 的目標含 `..` 又經過 /dev 或 /proc——那底下有 symlink，字面的 `..` 算不出實際寫到哪裡" % shown
     if t["lit"] is not None and (posixpath.normpath(t["lit"]) in _SAFE_TARGETS
                                  or re.match(r"/dev/(tcp|udp)/", posixpath.normpath(t["lit"]))):
         return None                                      # `/dev/tcp/host/port`：bash 的網路 socket，不是 log（野外語料 3 處）
@@ -1932,6 +1937,23 @@ def _redir_hit(r):
         return "`%s` 寫到 /dev 或 /proc 底下（去引號後是 `%s`）" % (
             shown, t["lit"] if t["lit"] is not None else sk.replace("\0", "$…"))
     return None
+
+
+# 群組裡**可以**豁免的目標（R39，#33 verify R38 第 5 列）：群組的 fd 1、fd 2 是管線，所以寫到自己的 fd 1／2 是安全的。
+# 封閉列舉，只有這些：數字 fd 的複製（`>&2`、`>&3`——群組裡的 fd 都是群組自己開的或繼承自管線）與下面六個路徑。
+# `/proc/$$/fd/1`（`$$` 在子殼層裡仍是外層 shell 的 PID——Linux 上就是 step log）、`/proc/<別的>`、`/dev/tty`、`/dev/console`
+# 都不在其中：前一版把群組內的所有 fd 命中一起豁免，五條 leg 都指出這一格。
+_GROUP_SAFE_PATHS = frozenset(("/dev/stdout", "/dev/stderr", "/dev/fd/1", "/dev/fd/2", "/proc/self/fd/1", "/proc/self/fd/2"))
+
+
+def _group_safe_target(r):
+    t = r["t"]
+    tl = t["lit"] if t is not None else None
+    if tl is None:
+        return False
+    if r["op"] in (">&", "<&"):
+        return re.fullmatch(r"[0-9]+-?", tl) is not None
+    return ".." not in tl.split("/") and posixpath.normpath(tl) in _GROUP_SAFE_PATHS
 
 
 class _Sh:
@@ -1976,8 +1998,10 @@ class _Sh:
         while self.tok() is not None and self.tok()["k"] == "NL":
             self.i += 1
 
-    def hit(self, why, ctx):
-        self.o["hits"].append((why, ctx["stack"]))
+    def hit(self, why, ctx, group_safe=True):
+        """`group_safe`：這個命中在「收尾後緊接 `2>&1 |` 進 neutralise 的群組」裡可以豁免——豁免的論證是群組裡 fd 1、fd 2
+        都是管線，所以只涵蓋寫到 fd 1／2 的東西（見 `_group_safe_target`）。"""
+        self.o["hits"].append((why, ctx["stack"], group_safe))
 
     def group(self):
         self.o["groups"].append(False)
@@ -2126,7 +2150,7 @@ class _Sh:
     def redir(self, r, ctx):
         why = _redir_hit(r)
         if why:
-            self.hit(why, ctx)
+            self.hit(why, ctx, group_safe=_group_safe_target(r))
         if r["t"] is not None:
             self.subs(r["t"], ctx)
 
@@ -2190,6 +2214,12 @@ class _Sh:
 
     def env_word(self, w, ctx, bare):
         text = w["skel"] if w["skel"] is not None else w["code"]
+        m = re.match(r"(PYTHON\w*)\+?=", text)
+        if m and (w["lit"] is None or "\0" in text):
+            # 過濾器 `python3` 啟動時讀 `PYTHON*`（R39，#33 verify R38 第 9 列）：值不是字面就可能是 PR 文字，`PYTHONWARNINGS` 的
+            # 不合法值原樣印到管線右端的 stderr。
+            self.hit("run 裡把 `%s` 設成不是字面的值——過濾器 python3 啟動時就讀它（`PYTHONWARNINGS` 的不合法值會原樣印到"
+                     "管線右端的 stderr）" % m.group(1), ctx)
         for key in _RUN_ENV_KEYS:
             if text.startswith((key + "=", key + "+=")) or (bare and text == key):
                 self.hit("run 裡設定 `%s`——bash（含子行程）啟動時會讀它，依鍵不同可能開 xtrace、執行別的程式碼，或把已開啟的 trace 輸出轉向到別的 fd（`BASH_XTRACEFD` 單獨設定不會自己打開 xtrace，需要 `-x`／verbose 已經開著）" % key, ctx)
@@ -2304,7 +2334,7 @@ def _analyse(logical, logical_src):
                     (conns[k] == "|&" and not segs[k]["trail"])
                     or (conns[k] == "|" and len(segs[k]["trail"]) == 1 and _is_2to1(segs[k]["trail"][0]))):
                 out["groups"][segs[k]["gid"]] = True
-    fd = [why for why, stack in out["hits"] if not any(out["groups"][g] for g in stack)]
+    fd = [why for why, stack, safe in out["hits"] if not (safe and any(out["groups"][g] for g in stack))]
     return {"fd": fd, "events": out["events"]}
 
 
@@ -2832,7 +2862,11 @@ for path in [a for a in sys.argv[1:] if a not in FLAGS]:
         inline = _uncomment(KEY_RE.match(norm[l0]).group(3) or "").strip()
         if inline:
             return [] if inline[:1] in ("{", "[") else ["?"]
-        return [k_ for _l, _i, k_ in _kids(l0, _end(l0, ind0), ind0)]
+        # `PYTHON*` 的值是 runner 運算式（R39，#33 verify R38 第 9 列）：過濾器 `python3` 啟動時就讀它——`PYTHONWARNINGS` 的值不合法時
+        # 原樣印到**管線右端**的 stderr，不經左端的 `2>&1`。記成 `KEY=${{ … }}`，由 `ENV_EXPR_RE` 認出來；字面值（`PYTHONPATH: src`）
+        # 不可能帶 PR 文字，照常放行。
+        return [k_ + "=${{ … }}" if k_.startswith("PYTHON") and "${{" in " ".join(raw[_l:_end(_l, _i) + 1]) else k_
+                for _l, _i, k_ in _kids(l0, _end(l0, ind0), ind0)]
 
     def _defaults_shell(l0, ind0):
         for l1, i1, k1 in _kids(l0, _end(l0, ind0), ind0):
@@ -3033,7 +3067,7 @@ for path in [a for a in sys.argv[1:] if a not in FLAGS]:
         # env 帶進的 shell 設定（R36 第 8 列）：workflow／job（含 container.env）／step 三層；`?` ＝值是運算式、鍵名看不到
         env_names = wf_env + (job["env"] if job else []) + (
             _env_names(s["keys"]["env"], s["kindent"]) if "env" in s["keys"] else [])
-        env_hit = [k for k in env_names if k in ENV_TRACE_KEYS or k == "?"]
+        env_hit = [k for k in env_names if k in ENV_TRACE_KEYS or k == "?" or ENV_EXPR_RE.fullmatch(k)]
         where = "%s:%d: RULE: " % (path, s["start"] + 1)
         if not ok:
             print(where + "step '%s' 的 run 區塊既沒有經 neutralise.py，也沒有 `# LOG-FILTER:` 註解說明為何不過濾"
@@ -3049,8 +3083,8 @@ for path in [a for a in sys.argv[1:] if a not in FLAGS]:
                   file=sys.stderr)
             rc = 1
         elif not declared and env_hit:
-            print(where + "step '%s' 靠管線過濾，而 env（workflow／job／step）帶了 %s——bash 啟動時就讀它們：可以開 xtrace、"
-                  "或在 run 之前執行別的程式碼，那些輸出不經過管線" % (s["name"], "、".join(
+            print(where + "step '%s' 靠管線過濾，而 env（workflow／job／step）帶了 %s——bash（或過濾器 python3）啟動時就讀它們："
+                  "可以開 xtrace、在 run 之前執行別的程式碼，或把值印在管線右端的 stderr，那些輸出不經過管線" % (s["name"], "、".join(
                       "`%s`" % k if k != "?" else "看不到鍵名的運算式" for k in env_hit)), file=sys.stderr)
             rc = 1
         elif STRICT and not declared and group_why:

@@ -182,7 +182,29 @@ KNOWN_DISAGREE = {
         "同 `restrict-r37-strict-subshell-group`：群組規則只收 `{ …; }`，子殼層包裹安全但被連帶擋下。",
     ("gen-f-wrap-subshell-saved-fd-wrapped.yml", "subshell wrapped saved-fd"): "同上：子殼層包裹。",
     ("gen-f-wrap-subshell-xtrace-wrapped.yml", "subshell wrapped xtrace"): "同上：子殼層包裹。",
+    # ── R39（#33 verify R38 第 5、9 列）：神諭結構上量不到的外流 ──
+    ("ci-log-filter-bypass-r39-strict-group-proc-ppid-fd1.yml", "group writes to proc-ppid-fd1"):
+        "`/proc/$PPID/fd/1` 在 runner 上是 runner 自己的 log；在神諭裡 `$PPID` 是神諭行程，它的 fd 1 不在神諭擷取的輸出裡。",
+    ("ci-log-filter-bypass-r39-strict-group-dev-tty.yml", "group writes to dev-tty"):
+        "`/dev/tty` 是控制終端；神諭與 GitHub runner 都沒有，寫入失敗、錯誤訊息在群組裡進管線。lint 擋下是保守的方向"
+        "（控制終端存在的 runner——自架、互動式——寫進去的東西不經過濾）。",
+    ("ci-log-filter-bypass-r39-env-pythonwarnings-expression.yml", "PYTHONWARNINGS from the PR title"):
+        "神諭的 `python3` 是 shell stub，不解析 `PYTHONWARNINGS`；真的 CPython 會把不合法的值印到管線右端的 stderr（協調者實跑）。",
+    ("ci-log-filter-bypass-r39-env-pythonwarnings-expression-default.yml", "PYTHONWARNINGS from the PR title"): "同上：stub。",
+    ("ci-log-filter-bypass-r39-run-export-pythonwarnings.yml", "export PYTHONWARNINGS in run"): "同上：stub。",
 }
+# **只在沒有 /proc 的平台上成立**的已知分歧（R39，#33 verify R38 第 1、5 列）：macOS 沒有 `/proc`，`/dev/fd` 也不是指向
+# `/proc/self/fd` 的 symlink，這幾個外流在本機量不到、判誤擋。Linux（CI）上**不列入**——在那裡神諭必須看到外流、判一致，
+# 否則就是 lint 擋錯了或 fixture 寫錯了。R38 的教訓：ground truth 在 CI 的平台上量，本機數字要註明平台。
+KNOWN_DISAGREE_WITHOUT_PROC = {
+    ("ci-log-filter-bypass-r39-strict-group-proc-pid-fd1.yml", "group writes to proc-pid-fd1"):
+        "`/proc/$$/fd/1`：本機沒有 /proc。Linux 上 `$$` 是外層 shell，那個 fd 就是 step log。",
+    ("ci-log-filter-bypass-r39-strict-group-exec-proc-pid.yml", "group writes to exec-proc-pid"): "同上：`exec >/proc/$$/fd/2`。",
+    ("ci-log-filter-bypass-r39-fd-dotdot-dev-target.yml", "dotdot path under /dev"):
+        "`/dev/fd/../../self/fd/2`：Linux 的 `/dev/fd` 是指向 `/proc/self/fd` 的 symlink，實際是 stderr；本機沒有那個 symlink。",
+}
+if not os.path.isdir("/proc/self/fd"):
+    KNOWN_DISAGREE.update(KNOWN_DISAGREE_WITHOUT_PROC)
 
 # lint 自己的宣告正規式（與 `lint-ci-log-filter.sh` 的 `LOGFILTER_RE` 同形）。這裡只用它判**文字長相**；
 # 「那段文字是不是真的不會被執行」由差分決定，不靠任何一支的詞法分析。

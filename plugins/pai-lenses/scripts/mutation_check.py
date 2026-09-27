@@ -612,8 +612,8 @@ MUTATIONS += [
      '                out["groups"][segs[k]["gid"]] = True',
      '                pass', "lint"),
     ('豁免只給接管線的群組',
-     '    fd = [why for why, stack in out["hits"] if not any(out["groups"][g] for g in stack)]',
-     '    fd = [why for why, stack in out["hits"] if not stack]', "lint"),
+     '    fd = [why for why, stack, safe in out["hits"] if not (safe and any(out["groups"][g] for g in stack))]',
+     '    fd = [why for why, stack, safe in out["hits"] if not (safe and stack)]', "lint"),
     ('set 的 x／v',
      '                elif on and ch in "xv":\n                    self.hit("`set %s` 開了 %s"',
      '                elif False:\n                    self.hit("`set %s` 開了 %s"', "lint"),
@@ -1047,8 +1047,8 @@ MUTATIONS += [
      '            return [] if inline[:1] in ("{", "[") else ["?"]',
      '            return []', "lint"),
     ('env 規則不把 `?` 算成命中（R37 → bypass-r37t8-step-env-inline-expression）',
-     '        env_hit = [k for k in env_names if k in ENV_TRACE_KEYS or k == "?"]',
-     '        env_hit = [k for k in env_names if k in ENV_TRACE_KEYS]', "lint"),
+     'if k in ENV_TRACE_KEYS or k == "?" or ENV_EXPR_RE',
+     'if k in ENV_TRACE_KEYS or ENV_EXPR_RE', "lint"),
     ('`_analyse` 外層 try（規則層自己的錯 fail-closed）拿掉（R37 → bypass-r37t8-rule-layer-recursion-limit）',
      '        except (IndexError, KeyError, ValueError, RecursionError) as e:',
      '        except (ZeroDivisionError,) as e:', "lint"),
@@ -1230,6 +1230,27 @@ MUTATIONS += [
      '            for a, b in ():\n                self.rescope(a, b, ctx, skip=own)', "lint"),
     ("lint: 管線自己的 `|` 也搬進段的範圍（R39 → good-r39-strict-pipefail-off-inside-group-no-inner-pipe）",
      '                self.rescope(a, b, ctx, skip=own)', '                self.rescope(a, b, ctx, skip=())', "lint"),
+]
+
+# ── R39（#33 verify R38 第 5、9、20 列）：群組豁免收窄、`..`、`PYTHON*` ──────────────
+MUTATIONS += [
+    ("lint: 群組豁免不分目標（R39，R38 第 5 列 → bypass-r39-strict-group-proc-pid-fd1、-dev-tty、-exec-proc-pid）",
+     '            self.hit(why, ctx, group_safe=_group_safe_target(r))', '            self.hit(why, ctx)', "lint"),
+    ("lint: 群組內寫 /dev/stderr 等也不豁免（R39 → good-r39-strict-group-dev-stderr）",
+     '    return ".." not in tl.split("/") and posixpath.normpath(tl) in _GROUP_SAFE_PATHS', '    return False', "lint"),
+    ("lint: 群組內的數字 fd 複製也不豁免（R39 → good-r39-strict-group-dev-stderr 的 `>&2`）",
+     '        return re.fullmatch(r"[0-9]+-?", tl) is not None', '        return False', "lint"),
+    ("lint: 含 `..` 的 /dev、/proc 目標不 fail-closed（R39，R38 第 20 列 → bypass-r39-fd-dotdot-dev-target）",
+     '    if t["lit"] is not None and ".." in t["lit"].split("/") and {"dev", "proc"} & set(t["lit"].split("/")):',
+     '    if False:', "lint"),
+    ("lint: env 的 `PYTHON*` 運算式值不標記（R39，R38 第 9 列 → bypass-r39-env-pythonwarnings-expression）",
+     'k_ + "=${{ … }}" if k_.startswith("PYTHON") and', 'k_ + "=${{ … }}" if False and', "lint"),
+    ("lint: env 規則不認 `PYTHON*` 運算式（R39 → bypass-r39-env-pythonwarnings-expression-default）",
+     ' or k == "?" or ENV_EXPR_RE.fullmatch(k)]', ' or k == "?"]', "lint"),
+    ("lint: run 裡非字面的 `PYTHON*` 不擋（R39 → bypass-r39-run-export-pythonwarnings）",
+     '        if m and (w["lit"] is None or "\\0" in text):', '        if False:', "lint"),
+    ("lint: run 裡字面的 `PYTHON*` 也擋（R39 → good-r39-run-export-python-literal）",
+     '        if m and (w["lit"] is None or "\\0" in text):', '        if m:', "lint"),
 ]
 
 # ── R39（#33 verify R38 第 3、6、7 列）：神諭的歸類 ──────────────────────────────

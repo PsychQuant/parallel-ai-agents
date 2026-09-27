@@ -1,0 +1,19 @@
+# R39 PYTHON* 規則的對照：值是字面（`PYTHONPATH: src`、`PYTHONUNBUFFERED: "1"`）不可能帶 PR 文字，照常放行。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: literal python env
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PYTHONPATH: src
+          PYTHONUNBUFFERED: "1"
+        run: |
+          {
+            echo "$PR_TITLE"
+          } 2>&1 | python3 scripts/neutralise.py
