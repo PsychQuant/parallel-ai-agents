@@ -1271,8 +1271,8 @@ MUTATIONS += [
      'elif False:', "oracle"),
     ("oracle: 類別閘門『歸了類卻沒宣告』方向關掉（R37，R36 第 2 列 → known-r37a-mustfail-undeclared-g）",
      '        elif s_ > d_:', '        elif False:', "oracle"),
-    ("oracle: 類別閘門『KNOWN-CLASS 過期』方向關掉（R37，R36 第 2 列 → "
-     "known-r37a-mustfail-g-diff-syntax-break、known-r37a-mustfail-g-diff-heredoc-feeds-pipe）",
+    ("oracle: 類別閘門『KNOWN-CLASS 過期』方向關掉（R37，R36 第 2 列 → known-r39-mustfail-class-stale-only；"
+     "R39 把分類失敗改判繞過之後，原本的兩張 g-diff 探針光憑繞過就以宣告的理由失敗，殺不掉它了）",
      '        if d_ > s_:', '        if False:', "oracle"),
     ("oracle: pipefail 排除條件改成『任一條 RULE 是 pipefail 就不可比』（R37，R36 第 18 列 → "
      "bypass-r37a-mustfail-strict-pipefail-hides-2to1）",

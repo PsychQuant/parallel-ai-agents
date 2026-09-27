@@ -1,0 +1,19 @@
+# #33 verify R39（mutation 量測抓到）：**must-fail 探針**——唯一的失敗理由是「KNOWN-CLASS 過期」。
+# 檔頭宣告了已知類別 G，但這個 step 一致、沒有外流，神諭根本不做歸類 ⇒ 宣告 1、歸類 0。
+# 為什麼需要這張：原本殺「類別閘門的過期方向」的是 `known-r37a-mustfail-g-diff-syntax-break`，但 R39 把「分類失敗」
+# 改判成繞過之後，那張探針光憑繞過就以宣告的理由失敗——關掉過期閘門也照樣過，那個突變體就沒有網了。
+# KNOWN-CLASS: G
+# ORACLE-MUST-FAIL: KNOWN-CLASS 過期
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: consistent step with a stale class declaration
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py
