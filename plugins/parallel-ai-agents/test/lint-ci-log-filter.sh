@@ -89,12 +89,12 @@ if [ "${1:-}" = "--selftest" ]; then
   done
   # R24 regression F9：門檻寫成 `>=` 而實際值更高時，那個差額**沒有網**——刪掉一個 fixture 仍然綠。
   # 三個門檻一律改成**等於實測值**：要加 fixture 就同步改這裡，讓「少了一個」立刻紅。
-  if [ "${n_pass}" -ne 233 ]; then
-    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 233（改動 fixture 請同步改這個數字）" >&2
+  if [ "${n_pass}" -ne 234 ]; then
+    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 234（改動 fixture 請同步改這個數字）" >&2
     fail=1
   fi
-  if [ "${n_rule}" -ne 310 ]; then
-    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 310" >&2
+  if [ "${n_rule}" -ne 318 ]; then
+    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 318" >&2
     fail=1
   fi
   if [ "${fail}" -ne 0 ]; then exit 1; fi
@@ -2401,13 +2401,16 @@ def strict_group_violation(logical, code, src):
     # 群組**內**可以有任何東西；群組**外**這三段（`set` 前綴、`{` 之前、`}` 之後）必須逐字就是 lint 讀到的字。
     # 對不齊的行（`_aligned_sources` 給 None）⇒ 拒絕（fail-closed）。`set` 前綴的邏輯行各自就是一個實體行
     # （它們不以 `|`／`&&`／`||` 結尾）。
+    # **群組外的每一個實體行都比**，不只程式碼非空白的行（R38 第 2 列）：`${PR_TITLE}`、`\e\c\h\o …`、`$'\x65cho' …`、
+    # `${X:-eval} $'…'` 整行挖空後程式碼是一串空白——上面的詞元檢查（`logical` 丟掉空白碼行）看不到它，只收非空白行的
+    # 字面檢查也看不到，bash 卻照樣執行。純註解行與空行不受影響：註解在程式碼半邊被**截掉**、不是挖空，對齊原文只剩縮排。
     lines = [i for i, l in enumerate(code) if l.strip()]
     opener = lines[k]
     closer = max(i for i in lines if CLOSE_AT_RE.search(code[i]))
-    spans = ([(i, 0, len(code[i])) for i in lines[:k]]
+    spans = ([(i, 0, len(code[i])) for i in range(opener)]
              + [(opener, 0, OPEN_AT_RE.search(code[opener]).end()),
                 (closer, CLOSE_AT_RE.search(code[closer]).start(), len(code[closer]))]
-             + [(i, 0, len(code[i])) for i in lines if i > closer])
+             + [(i, 0, len(code[i])) for i in range(closer + 1, len(code))])
     if not all(src[i] is not None and src[i][a:b] == code[i][a:b] for i, a, b in spans):
         return ("群組外的 `set` 前綴、`{` 之前、`}` 之後必須是字面文字——裡面有引號、逃脫或 `${…}` 展開"
                 "（挖空後看不見，bash 會展開成命令名、選項或路徑）")
