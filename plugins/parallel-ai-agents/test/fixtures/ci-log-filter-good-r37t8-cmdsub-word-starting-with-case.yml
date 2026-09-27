@@ -1,0 +1,15 @@
+# t8 C10（`CASE_KW_RE` 的詞界：`case`／`esac` 後面要是詞界）：`$(echo casefold)` 的 `casefold` 是普通引數；少了詞界時它被當成命令替換裡不在命令起點的 `case`、fail-closed 成 PARSE 而誤擋。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          x=$(echo casefold)
+          echo "$x $PR_TITLE" 2>&1 | python3 scripts/neutralise.py

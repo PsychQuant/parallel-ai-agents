@@ -1,0 +1,49 @@
+# #33 verify R37 opsweep 補件（最終 lint）：一張 fixture 殺 `parse_case` 收尾附近的 4 個突變體
+# （構造：`case x in x) echo "$PR_TITLE" ;; esac >&2 | python3 scripts/neutralise.py`——真正的洩漏是
+# `esac` 後面、管線之前的 `>&2`，把管線的過濾繞過去；這個 hit 只有在「正確吃掉 `esac`、正確呼叫
+# `self.redirs(ctx)` 掃它後面緊接的重導向詞元」時才找得到，剛好把下面 4 個突變體串在同一條因果鏈上）。
+#
+# 原版：outer while 在看到 `esac` 時 `if self.tok() is None or self.word(self.tok(), "esac"):
+# break`（`;;`／`esac` 兩個判斷都正常）→ 跳出迴圈 → `if self.word(self.tok(), "esac"):
+# self.i += 1` 吃掉 `esac`（`parse_case` 內第 7 個裸 `self.i += 1`）→
+# `return {..., "trail": self.redirs(ctx), ...}`，`redirs()` 從目前游標（恰好是 `>&2`）開始收集
+# 連續的 `R` 詞元、呼叫 `self.redir()` → `_redir_hit` 判定 `>&2` 是「複製 fd」、登記 hit。
+#
+# 1) `drop-operand|...if self.tok() is None or self.word(self.tok(), "esac"):|2|L1900`
+#    （拿掉 `self.word(self.tok(), "esac")`，只剩 `if self.tok() is None: break`）：
+#    看到 `esac` 時 `tok()` 不是 `None`，guard 為假、不跳出——`esac` 被 pattern-scan 迴圈當成普通
+#    模式詞吃掉（`subs()` 對它是空操作），接著吃到 `>&2`（`R` 詞元，pattern-scan 只認 `"W"` 才呼叫
+#    `subs()`，`R` 詞元被直接跳過、**不會呼叫 `self.redir()`**）、再吃到 `|`、`python3`、
+#    `scripts/neutralise.py`，直到詞元流耗盡（沒有 `)` 可收尾）——`>&2` 從未被當成重導向處理，
+#    hit 永遠不會登記，整份判定從 `rule-red` 變成 `pass`。
+# 2) `±1→±2|parse_case|self.i += 1|5|L1912`（`;;` 收尾那行 `self.i += 1` 改成 `+= 2`）：
+#    吃 `;;` 時多跳一格，把 `esac` 一起吞掉，游標落在 `esac` 後面的 `>&2` 上。outer while 下一輪
+#    在 `>&2` 這個 `R` 詞元上檢查 `tok() is None or word(tok,"esac")`——兩者皆假（`>&2` 既非
+#    `None` 也非 `"esac"` 這個詞）——不跳出，把 `>&2` 送進 pattern-scan 當模式詞元吃掉（`R` 種類，
+#    同樣不呼叫 `redir()`），hit 消失。
+# 3) `==↔!=|parse_case|if self.i == i0:|1|L1913`（stuck-guard 的 `==` 改成 `!=`）：
+#    這行的原意是「這輪完全沒有進度時才強制往前一格」；反轉成「這輪**有**進度時才多跳一格」。
+#    每個正常處理完的子句（`x) echo "$PR_TITLE" ;;`）結尾一定「有進度」，於是這一輪額外
+#    `self.i += 1`，把緊接在 `;;` 後面的 `esac` 吃掉——效果與 (2) 相同：游標落在 `>&2`
+#    上，被 pattern-scan 誤吞、不呼叫 `redir()`，hit 消失。
+# 4) `±1→±2|parse_case|self.i += 1|7|L1916`（吃 `esac` 那行 `self.i += 1` 改成 `+= 2`）：
+#    直接命中本檔設計的靶心——吃 `esac` 時多跳一格，把緊接的 `>&2` 一起跳過，
+#    `return` 時 `self.redirs(ctx)` 從 `|` 開始找（不是 `R` 詞元），什麼都收集不到，hit 消失。
+#
+# bash 5.3 實測（真的外流，非 fail-closed；`>&2` 在管線建立**之後**才套用，由左到右生效，
+# 把 case 的 fd 1 改指回原本的 stderr、繞過管線）：
+#   PR_TITLE=LEAKED bash -c 'case x in x) echo "$PR_TITLE" ;; esac >&2 | sed "s/^/PIPE:/"'
+#   stdout 空、stderr 印出 `LEAKED`（沒有 `PIPE:` 前綴，證明沒有經過管線）。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          case x in x) echo "$PR_TITLE" ;; esac >&2 | python3 scripts/neutralise.py

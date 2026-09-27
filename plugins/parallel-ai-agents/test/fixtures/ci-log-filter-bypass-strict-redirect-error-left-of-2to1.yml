@@ -1,0 +1,13 @@
+# #60 第 2 類：重導向由左到右套用——`> "$PR_TITLE"` 在 `2>&1` 之前出錯，錯誤寫到原本的 stderr。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: redirection error left of 2>&1
+        shell: bash
+        run: |
+          echo x > "$PR_TITLE/y" 2>&1 | python3 scripts/neutralise.py

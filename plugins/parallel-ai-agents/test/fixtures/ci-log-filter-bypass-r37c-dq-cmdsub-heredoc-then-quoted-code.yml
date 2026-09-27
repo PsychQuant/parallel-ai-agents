@@ -1,0 +1,18 @@
+# #33 verify R36 第 6 列（logic HIGH-1 p15）：R35 的雙引號 heredoc 修法只修到登記那一點——heredoc 讀完回到雙引號，
+# 命令替換裡下一行的 `"…"` 又被當成外層的收尾與開頭，字串裡的假管線變 code ⇒ 放行。bash 5.3：那一行是命令替換裡
+# 的 echo 引數，沒有管線，最後一行裸印 PR 文字。R37：命令替換的內容照 code 掃到它的 `)` 才回雙引號 ⇒ RULE。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: dq-cmdsub-heredoc-then-quoted-code
+        run: |
+          x="$(cat <<'EOF'
+          data
+          EOF
+          echo "2>&1 | python3 scripts/neutralise.py "
+          )"
+          echo "$PR_TITLE"

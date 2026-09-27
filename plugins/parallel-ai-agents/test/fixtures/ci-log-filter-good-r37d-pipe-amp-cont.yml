@@ -1,0 +1,15 @@
+# #33 verify R36 第 21 列 LOW（logic／codex 第 2 條）：`echo "$PR_TITLE" |&` 換行接 `python3 …neutralise.py`
+# 是**真的**管線（`|&` 是 bash 的 stderr 管線，等同 `2>&1 |`），只是分兩行寫。前一版 `CONT_RE` 不含 `|&`，
+# 兩行沒被接成同一個邏輯行，於是真管線被誤判成「未過濾」——這是誤擋（誤判成 RULE），不是繞過。
+# 加 `|&` 進 `CONT_RE` 之後，兩行正確接成一條，`PIPED_RE` 找得到那條真管線。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: pipe-amp-cont
+        run: |
+          echo "$PR_TITLE" |&
+          python3 scripts/neutralise.py

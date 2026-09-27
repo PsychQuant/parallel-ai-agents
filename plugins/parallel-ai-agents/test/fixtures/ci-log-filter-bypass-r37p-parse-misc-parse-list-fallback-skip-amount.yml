@@ -1,0 +1,32 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺 `±1→±2|parse_list|self.i += 1|2`（parse-misc 組，
+# 去掉 `|L行號`）。
+#
+# `parse_list` 每輪迴圈先試 `parse_andor`；碰到剖不動的殘渣（孤立、沒有對應開頭的運算子詞元，例如
+# 落單的 `)`——`parse_command` 對 `t["k"] == "OP"` 且 `op != "("` 直接回 `None`，不吃任何詞元）時，
+# `parse_andor`／`parse_pipeline`／`parse_command` 一路往下都不會前進 `self.i`，靠 `parse_list` 自己的
+# 安全網 `if self.i == i0: self.i += 1` 跳過整整一個詞元、不讓迴圈卡死。把這裡的 `1` 換成 `2` 會多跳過
+# 一個詞元——如果殘渣後面緊接著的是一條**真正的指令**（不是分隔字），那條指令的第一個詞（通常是指令名）
+# 會被一起吞掉，剩下的詞從第二個開始被剖成一條新指令，指令名對不上就分析不到。
+#
+# 這個 step 先用一行安全的管線讓 `via_pipe` 成立（`ok = via_pipe or declared` 為真，之後的紅完全是
+# fd 外流那一支，不是「沒接濾網」那一支），第二行是落單的 `)` 後面緊接 `bash -x -c '...'`：原版跳過
+# 恰好一個詞元（`)`），從 `bash` 開始正常剖成一條簡單指令，`_Sh.simple` 掃到 `bash` 在 `_SHELL_NAMES`
+# 裡，呼叫 `shell_opts` 認出 `-x` 開了 xtrace，記一筆 fd 外流命中，判 `[RULE] ... 靠管線過濾，卻有 ... 開了
+# xtrace`；突變體多跳一個詞元，從 `-x` 開始剖，`bash` 這個詞已經被吞掉、簡單指令的第一個詞變成
+# `"-x"`，`simple()` 掃不到任何 shell 名稱、`shell_opts` 從沒被呼叫，這筆命中憑空消失，這個 step 沒有
+# 任何 RULE，整份判定變成 pass。bash 5.3 實測（`printf 'echo hi | true\n) bash -x -c '"'"'echo
+# "$PR_TITLE"'"'"'\n' > t.sh`）：`bash -n t.sh` rc=2、`line 2: syntax error near unexpected token )`——
+# 落單的 `)` 本來就是語法錯誤（不是刻意的 fail-closed 佈局，只是拿來讓剖析器吃到「零前進的殘渣」這個
+# 分支最省事的寫法）；神諭把它歸成 `called-unpiped`（`bash -x` 那條指令確實被呼叫、也確實不經管線），
+# 與 lint 的 RULE-red 判定一致。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: stray close-paren before an xtrace bash call
+        run: |
+          echo hi | python3 scripts/neutralise.py
+          ) bash -x -c 'echo "$PR_TITLE"'

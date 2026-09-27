@@ -13,9 +13,11 @@ jobs:
         shell: bash
     steps:
       - name: job a is fine
-        run: echo hi 2>&1 | python3 scripts/neutralise.py
+        run: |
+          { echo hi; } 2>&1 | python3 scripts/neutralise.py
   b:
     runs-on: ubuntu-latest
     steps:
       - name: job b has no bash default
-        run: echo hi 2>&1 | python3 scripts/neutralise.py
+        run: |
+          { echo hi; } 2>&1 | python3 scripts/neutralise.py

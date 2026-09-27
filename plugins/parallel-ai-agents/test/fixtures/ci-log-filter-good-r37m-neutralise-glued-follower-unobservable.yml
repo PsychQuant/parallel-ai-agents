@@ -1,0 +1,32 @@
+# #33 verify R37 合併時協調者發現：同 `good-r37m-neutralise-glued-follower`，換成 `neutralise.py)`、`neutralise.py|`、反引號、`neutralise.py&`。bash 5.3 以標記值實測：四種都經過濾。**神諭量不到這四種**：它的 stub 只在頂層管線裡記得到「接在管線上」，子殼層、命令替換、背景、以及 neutralise 不在管線末端時只記得到「有被呼叫」，判「量不到」（不改 rc、逐項印出）——所以分開放，讓那四列的歸屬清楚。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: subshell-close
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          ( echo "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py)
+      - name: pipe-on
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py| cat
+      - name: backtick
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          t=`echo "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py`; echo "$t"
+      - name: background
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py& wait

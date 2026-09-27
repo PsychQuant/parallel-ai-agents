@@ -8,4 +8,5 @@ runs:
   using: composite
   steps:
     - name: composite step without a shell
-      run: echo hi 2>&1 | python3 scripts/neutralise.py
+      run: |
+        { echo hi; } 2>&1 | python3 scripts/neutralise.py

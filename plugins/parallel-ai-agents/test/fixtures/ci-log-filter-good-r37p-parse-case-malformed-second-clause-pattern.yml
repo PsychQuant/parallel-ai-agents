@@ -1,0 +1,47 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺 `parse_case` 子句 body 收尾判斷
+# `self.parse_list(ctx, lambda x: self.op(x, ";;", ";&", ";;&") or self.word(x, "esac"))`
+# 的 drop-operand 第 1 個突變體（拿掉 `self.op(x, ";;", ";&", ";;&")`，body 收尾只剩
+# `lambda x: self.word(x, "esac")`——不再認得 `;;` 是子句結尾）。
+#
+# 原版：第一個子句 `a) : ;;` 的 body（`:`）解析完，`parse_list` 在 `;;` 這個詞元上呼叫
+# `end(x)`：`self.op(x,";;",...)` 為真，正確 `return`（不消費 `;;`）。回到 outer while，
+# `if self.op(self.tok(), ";;", ";&", ";;&"): self.i += 1` 吃掉 `;;`，開始第二個子句：pattern-scan
+# 迴圈接手 `b>&2` 這個「模式」——`b` 是 `"W"` 種類、`subs()` 空操作；`>&2` 是 `R` 種類，
+# pattern-scan **只認 `"W"` 才呼叫 `subs()`**、對 `R` 詞元完全不處理（也不呼叫
+# `self.redir()`）——`>&2` 被靜靜跳過，不登記 hit，正確反映「case 模式裡放不了真正的重導向」這件
+# 事（bash 對這種寫法本身就是語法錯誤，不會執行到任何東西）。`)` 正常收尾，第二個子句的 body `:` 安全，
+# `esac` 正常收尾。整份判定 `pass`。
+#
+# 突變體：`;;` 不再讓第一個子句的 `parse_list` 提早返回——`parse_list` 自己對 `;;` 沒有特別處理，
+# 落到 `parse_command`：`;;` 是運算子但不是 `"("`，`parse_command` 直接回傳 `None`，`parse_list`
+# 的 stuck-guard（`if self.i == i0: self.i += 1`）把它當「語法殘渣」跳過一格——這只是把 `;;`
+# 降級成無效果的分隔符，**繼續同一個 `parse_list` 呼叫**往下解析，於是第二個子句的「模式」
+# `b>&2` 被當成**一般命令**解析（`parse_command` 的詞元收集迴圈 `while tok().k in ("W","R"):`
+# 不分「模式」還是「命令」，`b` 進 words、`>&2` 是 `R` 種類、**呼叫 `self.redir()`**）——
+# `_redir_hit` 判定 `>&2` 命中，登記一個原版不會有的假陽性 hit！之後 `)` 因為不是 `(` 被
+# `parse_command` 當殘渣跳過，`:`、第二個 `;;`（同樣被降級跳過）、最後 `esac` 才讓
+# `end(x)`（仍保留 `word(x,"esac")` 這一半）正確擋下、`parse_list` 返回。整份判定從 `pass`
+# 變成 `rule-red`。
+#
+# 為什麼是 fail-closed 的反向測試（驗證「不誤判」）：`b>&2)` 這種模式頭部帶重導向符號的寫法，本身
+# 就是 bash 語法錯誤，實際上不會有任何東西外流；原版正確地不判它紅，這裡驗證突變體會錯誤地判紅。
+# bash 5.3 實測：
+#   bash -n -c 'case x in
+#   a) : ;;
+#   b>&2) : ;;
+#   esac'
+#   syntax error near unexpected token `>&'
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        run: |
+          case x in
+            a) : ;;
+            b>&2) : ;;
+          esac | python3 scripts/neutralise.py

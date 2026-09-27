@@ -1,0 +1,60 @@
+# #33 verify R37 opsweep 補件：反駁 _aligned_sources 的 while 迴圈守衛（L1335 位置 2，砍掉整個
+# `(e is None or e > len(s))`、只留 `s.endswith("\\") and joined(tail) is not None`）「依構造不可達」
+# 的等價主張——heredoc 分隔字詞只有兩個字元寬（兩個反斜線）、第一次就成功算出 `e`（不需要續行）時，
+# 被砍掉守衛的 while 仍會因為「行尾是反斜線、且下一行存在」而誤進迴圈，把已經對齊好的原文毀掉。
+#
+# 原版判定：pass。
+#
+# 構造：`cat 2>/dev/null <<\\`（分隔字詞是兩個反斜線）。`shell_scan()` 自己讀這個分隔字詞：
+# 第一個反斜線不在行尾（後面還有第二個反斜線）⇒ 走「逃脫下一個字元」分支，把第二個反斜線當成
+# 被逃脫的資料收進 `delim`、`j` 跳兩格到行尾——**不需要續行**，分隔字詞＝一個字面反斜線。
+# `_skip_delim_word` 對同一段文字的計算：第一個反斜線觸發「跳兩格」的逃逸分支，同樣直接跳到
+# `j == len(s)`——兩者一次就吻合，`e == len(s)`，既非 `None` 也不 `> len(s)`。
+#
+# 後面接一個**空白行**（YAML 字面純量裡中間的空行照樣保留，不受尾端 chomping 影響），再接一行
+# 恰好是**一個反斜線**的終止字（真的把這個 heredoc 收掉），再接一行正常指令 `echo done`。
+#
+# 原版 while 守衛：`(e is None or e > len(s)) and s.endswith("\\") and joined(tail) is not None:`
+# ——第一項已經是 `False`（`e` 合法）⇒ 整個 and 為 False ⇒ **不進迴圈**，直接用第一次算出的 `e`
+# 對齊，`2>/dev/null` 的目標正常對到 `/dev/null`（`_SAFE_TARGETS` 白名單），`an["fd"]` 是空的。
+#
+# 若砍掉這個 while 守衛的第一項（只剩 `s.endswith("\\") and joined(tail) is not None:`）：這一行
+# 確實以反斜線收尾、下一行（空白行，code 側因 heredoc 未收尾而恆為空字串）也確實存在 ⇒ 不看 `e`
+# 有沒有算對就進迴圈：把 `s` 的最後一個反斜線砍掉、接上空字串，重新呼叫 `_skip_delim_word`——
+# 這次 `s` 少了一個字元，逃脫掉僅剩的那個反斜線時往後多跳一格，`e` 溢出成 `len(s) + 1`（超界）。
+# `s` 這時仍以單一反斜線收尾，迴圈再檢查一次：下一行（單一反斜線的終止字行）code 側依然是空字串
+# （在 heredoc 真正收掉之前，shell_scan 對每一行都先印出空字串），於是**再進一次迴圈**：砍掉那個
+# 反斜線、接上終止字行的原文（也是一個反斜線）——長度不變，但這次 `_skip_delim_word` 用同一個固定
+# 起點重新掃描已經縮短過的 `s`，算出的 `e` 依然落在縮短後的 `len(s)` 之外。第三行（真正的下一行、
+# heredoc 已在 shell_scan 眼中收掉）code 側是 `echo done`（非空字串）⇒ `joined()` 回 `None`，
+# 迴圈終於停止——但 `e` 已經定格在超界狀態，`if e is None or e > len(s): ok = False; break` 成立，
+# `2>/dev/null` 的目標因整行對不齊被 fail-closed 判定看不到原文，`an["fd"]` 非空，本 fixture 的
+# 判定從 pass 掉成 rule-red。
+#
+# 已用抽出的同一份原始碼直接對照、且已用完整 YAML 經真正的 lint 腳本核驗（見下方對照組摘要，
+# 非本檔內容）：
+#   scan_in = ['', 'echo "$PR_TITLE" | python3 scripts/neutralise.py',
+#              'cat 2>/dev/null <<\\\\', '', '\\', 'echo done']
+#   shell_scan(scan_in) → unparsed=None，code[4]=='echo done'（heredoc 確實在第 4 行收掉）
+#   原版 _aligned_sources(...)[2] → 原文本身（對齊成功）；只改 L1335 while 守衛（砍第一項）
+#   → _aligned_sources(...)[2] → None（對齊失敗）；`bash test/lint-ci-log-filter.sh --require-run-steps`
+#   對原版是 rc=0，對砍掉這一項的突變體是 rc=1（`RULE:` ... `2>/dev/null` 的目標看不到原文）。
+#   這條反例是先用 40000 組隨機構造的差分測試在一般情境下找到（40000 個「E/E 前綴」變體大多沒有
+#   分歧，換成不帶前綴、只兩個反斜線的最小分隔字詞才穩定重現），再收斂成這裡的最小可重現 YAML；
+#   純隨機模糊測試（20000 組、無此形狀）找不到反例，不代表分支不可達，只代表隨機生成器沒撞到
+#   這個窄構造。
+#
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: heredoc delimiter is exactly two trailing backslashes, followed by a blank line and a matching terminator
+        run: |
+          echo "$PR_TITLE" | python3 scripts/neutralise.py
+          cat 2>/dev/null <<\\
+
+          \
+          echo done

@@ -1,0 +1,17 @@
+# t8 C1（`_cmdsub_end_case`：命令替換裡的 `<<` ⇒ 回 None，讓掃描器改照 code 掃、登記 heredoc）：`x="$(cat <<EOF)"` 在 bash 5.3 從下一行起讀 heredoc 內文（警告 unterminated here-document、內文照吃）；同一行就把它當不透明內容收掉時 heredoc 沒登記、內文的假管線被當 code 而放行，bash 實測第一行裸印 PR 文字、neutralise 沒被呼叫。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$PR_TITLE"
+          x="$(cat <<EOF)"
+          a | python3 scripts/neutralise.py
+          EOF

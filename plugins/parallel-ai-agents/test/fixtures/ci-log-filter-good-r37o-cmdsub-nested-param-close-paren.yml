@@ -1,0 +1,13 @@
+# #33 verify R37 opsweep 補件：`_cmdsub_end` 遇到 `${` 要整段交給 `_param_end`，拿掉那個運算元（或 `startswith("${")` →
+# False）的突變體存活。這裡 `${X%)}` 的 `)` 是模式、不是收尾：原版整段跳過、放行；突變體把它算成命令替換的收尾，
+# 後面的 `})}` 對不上。bash 5.3：`X="a)"; echo ${PR_TITLE:-$(echo ${X%)})}` 印 a。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: nested-param-close-paren
+        run: |
+          echo ${PR_TITLE:-$(echo ${X%)})} 2>&1 | python3 scripts/neutralise.py

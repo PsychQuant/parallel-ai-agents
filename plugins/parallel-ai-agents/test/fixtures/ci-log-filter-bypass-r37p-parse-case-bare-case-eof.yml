@@ -1,0 +1,27 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺 `parse_case` 主詞 guard
+# `if self.tok() is not None and self.tok()["k"] == "W":` 的 drop-operand 第 1 個突變體
+# （拿掉 `self.tok() is not None`，只剩 `if self.tok()["k"] == "W":`）。
+# 原版：`run:` 區塊只有 `case` 一個詞、後面什麼都沒有——吃掉 `case` 之後 `self.tok()` 是 `None`，
+# guard 的第一個子句為假、短路，不呼叫 `self.subs()`。接著 `self.skip_nl()`、`self.word(...,"in")`
+# 都對 `None` 安全（各自的實作都先判斷 `t is not None`）。outer while 的條件
+# `while self.tok() is not None:` 也是假，迴圈一輪都不跑，直接進最後的
+# `if self.word(self.tok(), "esac"): ...`（同樣對 `None` 安全）並回傳——整段優雅地收尾、不丟例外。
+# 因為這個 step 從頭到尾沒有接 `neutralise.py` 也沒有 `# LOG-FILTER:` 宣告，最終仍是
+# `rule-red`（原因是「沒有過濾聲明」，與 case 解析本身無關）。
+# 突變體：guard 只剩 `self.tok()["k"] == "W"`——此時 `self.tok()` 是 `None`，`None["k"]` 直接丟
+# `TypeError`。這個例外型別**不在** `_analyse()` 外層 `except (IndexError, KeyError, ValueError,
+# RecursionError)` 的名單裡，不會被接住，整支 Python 直接以未捕捉例外終止（非 0 的結束碼，stderr 是
+# traceback，沒有 `: RULE: ` 也沒有 `: PARSE: ` 字樣）——與原版的 `rule-red` 不同。
+# bash 5.3 實測：`case` 單獨一個詞本身就是語法錯誤（等待主詞與 `in`），不會執行到任何內容；
+# 本檔測的是 lint 自己詞法層對「詞元流耗盡」的容錯，不依賴這個 step 真的被 bash 執行。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        run: |
+          case

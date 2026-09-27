@@ -1,0 +1,16 @@
+# #33 verify R36 第 8 列 → R37：`env:`（workflow／job／step 三層，以及 job 的 container.env）帶進 SHELLOPTS、BASHOPTS、BASH_ENV、ENV、BASH_XTRACEFD ⇒ RULE。
+# 相鄰輸入（R36 沒點名）：job 的 `container.env`——step 在容器裡用 docker exec 跑，繼承容器的環境。神諭不跑容器（不可比）。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:24.04
+      env:
+        SHELLOPTS: xtrace
+    steps:
+      - name: container env enables xtrace
+        run: |
+          printf '%s\n' "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py

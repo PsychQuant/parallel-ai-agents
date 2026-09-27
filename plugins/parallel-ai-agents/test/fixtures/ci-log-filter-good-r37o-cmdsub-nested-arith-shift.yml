@@ -1,0 +1,14 @@
+# #33 verify R37 opsweep 補件：`_cmdsub_end` 遇到 `$((` 要整段交給 `_arith_end`，拿掉那個運算元（或 `startswith("$((")` →
+# False）的突變體存活——`good-r37c-param-arith-shift` 的 `$((` 直接在 `${…}` 裡，走的是 `_cmdsub_end` 開頭的轉交，不是迴圈裡這一支。
+# 這裡 `$((1 << 2))` 在 `$(…)` 裡面：原版交給 `_arith_end`、放行；突變體逐字掃，把 `<<` 當 heredoc 回 None → PARSE。
+# bash 5.3：`echo ${PR_TITLE:-$(echo $((1 << 2)))}` 印 4。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: nested-arith-shift
+        run: |
+          echo ${PR_TITLE:-$(echo $((1 << 2)))} 2>&1 | python3 scripts/neutralise.py

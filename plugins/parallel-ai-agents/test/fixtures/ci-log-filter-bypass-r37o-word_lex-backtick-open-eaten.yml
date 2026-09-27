@@ -1,0 +1,46 @@
+# #33 verify R37 opsweep 補件：word_lex 群「依構造等價」反駁——同一張 fixture 殺兩個突變體：
+#   drop-operand|_word|if (c in _WORD_END and not hollow) or (c == "`" and stop == "`"):|6|L1534
+#   （拿掉 and 的第二個運算元，只留 `c == "`"`，條件變成無論 stop 是什麼、見到字面反引號就 break）
+#   ==↔!=|_word|if (c in _WORD_END and not hollow) or (c == "`" and stop == "`"):|2|L1534
+#   （把 `stop == "`"` 反過來變 `stop != "`"`，條件變成「不在反引號內」才 break）
+#
+# 這兩個突變體共同的破法：頂層（stop 不是 "`"`）讀一個詞、詞緊貼著一個**要開啟**新反引號替換的
+# 字元（`x\`…\`` 沒有空格）時，原版 `c == "`" and stop == "`"` 在 stop 不是 "`" 時是 False，
+# 不 break，落到下一行 `if c == "\`":` 正確地遞迴進去剖析替換內容。id6／==↔!= 兩者的條件在
+# stop 不是 "`" 時都變成 True（id6 是 `c=="\`"` 本身無條件成立；==↔!= 是 `stop!="\`"` 在頂層
+# 恆真），於是 `_word` 立刻 break——但這是在**詞的第一個字元就撞見反引號**（`_lex` 剛把上一個詞
+# 讀完、緊接著重新呼叫 `_word` 從反引號本身開始），break 條件在還沒前進任何字元時就成立，
+# `_word` 回傳一個**零長度**的詞；`_lex` 的防呆分支 `if w["e"] == p: w = _opaque(C, p, p + 1)`
+# 接手，把這個反引號整顆當成**一個看不懂的 1 字元不透明詞**吞掉、前進一格，然後從反引號**後面**
+# 那個位置重新當成一般的頂層 token 繼續掃——也就是說，本來應該被辨識成「開啟一層子殼層」的
+# 反引號被當垃圾吃掉，它包住的內容整段**沒有被辨識成子殼層**，直接攤平變成頂層的一般 token
+# （包含另一顆本來要收尾的反引號，同一個 bug 對它再犯一次，一樣被當垃圾吃掉）。
+#
+# 探針一樣挑 pipefail 狀態（見並排的 good-r37o-word_lex-backtick-stop-drop.yml 開頭說明：重導向
+# 可見度那條路殺不掉，因為 `_Sh.subs()` 不管巢多深都會走訪到）：把 `set -o pipefail` 放進一對
+# 「反引號…反引號」裡（真正 bash 語義上這是子殼層，裡面開 pipefail 不影響外層），原版正確辨識成
+# 子殼層（`ctx.sub=True`），`_pipefail_holds()` 不採信這個 `pf` 事件，外層 pipefail 仍是關的，
+# `--strict` 對後面的管線判紅（RULE）。id6／==↔!= 因為上述 bug，兩顆反引號都被當 1 字元垃圾吃掉，
+# `set -o pipefail` 整句變成**貨真價實的頂層陳述**（`ctx.sub=False`，因為根本沒有遞迴進
+# `_Sh.subs()`），`_pipefail_holds()` 因此判定成立，後面的管線通過 → 假 pass（`mutcheck.py`
+# 驗證，KILL）。
+#
+# bash 5.3 實測：`bash -n` 語法通過（rc=0）；`bash -c` 實際執行時 `x` 因為不是真指令印
+# `command not found`（無害，純粹當佔位字面詞，不影響本 lint 要驗的管線／pipefail 結構）、
+# 反引號子殼層裡的 `set -o pipefail` 確實不影響外層（後面 `echo ok 2>&1 | cat` 照樣正常印
+# `ok`，rc=0）——與原版「外層 pipefail 沒開」的判定一致。
+# EXPECT: rule-red
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: t1
+        shell: bash -e {0}
+        run: |
+          x`
+          set -o pipefail
+          `
+          echo ok 2>&1 | python3 scripts/neutralise.py

@@ -1,0 +1,49 @@
+# #33 verify R37 opsweep 補件：delim_align 群組——殺 `±1→±2|_aligned_sources|m += 1|2`
+# （`_aligned_sources` 內部 `joined(m)` 的 `while m < len(src_lines) and src_lines[m] is
+# None: m += 1` 迴圈本體，改成 `m += 2`）。
+#
+# 這個迴圈是專為 `run: >`（folded block scalar）而存在：YAML 折疊時，兩個 flush（無額外
+# 縮排）內容行之間若夾了**一個**空行，那個空行本身「換來那一個換行、自己不留下」
+# （`fold_block` 把它記成 `None` 佔位——行數不變，但 runner 眼中沒有這一行）。`joined()`
+# 要跳過這種佔位、找到**真正**的下一個實體行，才能正確判斷「原始檔案裡緊接在反斜線
+# 續行之後的那一行是不是 shell 也把它接走了」。
+#
+# 場景：第一段內容 `cat foo \`（flush，行尾反斜線＝bash 的續行）後面夾一個空行，
+# 再接 `bar >/tmp/out`（flush）。YAML 折疊後 runner 看到的是「`cat foo \` 換行
+# `bar >/tmp/out`」（空行只提供那一個換行，自己消失）——bash 對這個換行做的是**續行**
+# （反斜線＋換行一起消失），所以 runner 實際執行的是 `cat foo bar >/tmp/out`
+# 一條命令。`_aligned_sources` 要複製同一個判斷：`src_lines` 在這裡是
+# `['cat foo \\', None, 'bar >/tmp/out']`，`joined(0)` 要跳過中間那個 `None`、
+# 正確落在 `bar >/tmp/out`（index 2）。
+#
+# 原版：迴圈一次跳一格，`m` 從 1（`None` 的位置）跳到 2（真正的下一實體行），
+# 停在正確位置，`_aligned_sources` 正確判定這是一次真續行，把兩行接起來對齊。
+#
+# 突變體：迴圈一次跳兩格，`m` 從 1 直接跳到 3——**越過**真正的下一實體行、落在它
+# 後面。這個位置若剛好也不是 `None`（本例是區塊裡再下一行、其實不存在或屬於別的
+# 內容），`joined()` 就把**錯的**索引當成「下一實體行」回傳，`_aligned_sources` 因此
+# 對不齊，這個 run 區塊的整體判定翻紅（原本 pass 的安全流程被誤判成規則違反）。
+#
+# 原版為什麼是 pass：整段折疊後等於 `cat foo bar >/tmp/out`（`foo`／`bar` 只是兩個不
+# 存在的檔名參數，寫入的目標 `/tmp/out` 不落在 `/dev`／`/proc`），下一個 step 再把它讀出來
+# 餵給 neutralise.py，整個流程沒有未過濾的外流路徑。
+#
+# bash 5.3.15 實測：`bash -c 'cat foo \' 換行 `'bar >/tmp/out'` 確實把 `foo`／`bar`
+# 當成同一條 `cat` 命令的兩個參數（`cat: foo: No such file or directory` /
+# `cat: bar: No such file or directory`，證明反斜線＋換行被當成續行、兩個檔名都被
+# 讀成 `cat` 的引數，不是兩條獨立命令）。
+#
+# EXPECT: pass
+name: t
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: folded run block joins a backslash-continued line across an intervening blank line, then neutralises the safe target
+        run: >
+          cat foo \
+
+          bar >/tmp/out
+
+          cat /tmp/out | python3 scripts/neutralise.py

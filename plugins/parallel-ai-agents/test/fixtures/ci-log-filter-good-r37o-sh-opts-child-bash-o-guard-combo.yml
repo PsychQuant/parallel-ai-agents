@@ -1,0 +1,27 @@
+# #33 verify R37 opsweep 補件（sh-opts I1）：`_Sh.shell_opts` 的
+# `if ch == "o" and on and (nm is None or nm in _TRACE_OPTS):` 外層三個運算元各拿掉一個，
+# 用三行各自獨立的輸入殺掉（第四個運算元——內層 `nm is None` 的等價突變另開一張 bypass fixture，
+# 因為原版對那個輸入的判定是 rule-red 不是 pass，混進同一張 pass fixture 會讓原版自己先翻紅）：
+#   1) 拿掉 `ch == "o"`——`-O xtrace`：`-O` 是大寫，對應 `shopt -s <name>`（bash 5.3 實測
+#      `-O xtrace` 不是合法 shopt 選項名，不會開 trace；子行程 `echo "$-"` 不含 `x`），原版靠
+#      `ch == "o"` 把大寫 `O` 擋在外面；拿掉後 `on and (nm in _TRACE_OPTS)` 在 `nm="xtrace"` 上
+#      仍然成立，誤判成開了 trace。
+#   2) 拿掉 `on`——`+o xtrace`：`+` 開頭 ⇒ `on=False`，這是**關閉**（bash 5.3 實測
+#      `bash +o xtrace -c 'echo $-'` 不含 `x`）；原版靠 `on` 擋掉 `+o`，拿掉後
+#      `(ch == "o") and (nm in _TRACE_OPTS)` 仍然成立，誤判 `+o xtrace` 開了 trace。
+#   3) 拿掉整個 `(nm is None or nm in _TRACE_OPTS)`——`-o posix`：`posix` 不是 trace 選項
+#      （bash 5.3 實測 `-o posix` 只切換 posix 模式，`echo "$-"` 不含 `x`／`v`），原版靠這個
+#      子運算式排除非 trace 的合法 `-o` 選項名；拿掉後只看 `(ch == "o") and (on)`，任何
+#      `-o <任意選項名>` 都會誤判成開了 trace。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        run: |
+          bash -O xtrace -c 'true' 2>&1 | python3 scripts/neutralise.py || true
+          bash +o xtrace -c 'true' 2>&1 | python3 scripts/neutralise.py || true
+          bash -o posix -c 'true' 2>&1 | python3 scripts/neutralise.py || true

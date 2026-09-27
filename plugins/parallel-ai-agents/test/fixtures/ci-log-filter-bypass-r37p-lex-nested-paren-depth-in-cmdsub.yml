@@ -1,0 +1,53 @@
+# #33 verify R37 opsweep 補件（最終 lint，lex 群）：殺兩個突變體，都出在 `_lex` 判斷「這是不是命令替換／
+# process substitution 自己的收尾 `)`」那句：
+#   drop-operand|_lex|if stop == ")" and c == ")" and not depth and not cased:|3
+#     （四個運算元的 `and`：`stop==")"`、`c==")"`、`not depth`、`not cased`——拿掉第 3 個 `not depth`）
+#   ==↔!=|_lex|if op == "(":|1
+#     （管「遇到裸 `(` 該不該把這一層呼叫自己的 `depth` 加一」那句，`==` 換成 `!=`）
+#
+# `depth` 是**這一次遞迴呼叫 `_lex` 自己的區域變數**：在遞迴剖析 `$(…)`／`<(…)` 的內容時，用來追蹤
+# 內容裡巢狀的裸子殼層 `( … )`，讓真正屬於這個構造的收尾 `)` 不被巢狀群組自己的收尾誤判成終點。
+#
+# --- `not depth`（第一個突變體）：拿掉這個運算元後，條件只剩 `stop==")" and c==")" and not cased`——
+#     一遇到**任何** `)` 字元（不管是不是還在巢狀群組裡）、只要不在 `case` 區塊中，就當成這次呼叫的
+#     終點提早收尾。構造 `X=$( (true); set -o pipefail )`：裡面先開一個裸群組 `(true)`，原版靠
+#     `depth`（先 +1 再在它自己的 `)` 上 -1）正確跳過群組自己的收尾、繼續往下讀到 `; set -o
+#     pipefail`，最後在**真正的**外層 `)` 上收尾——整個 `set -o pipefail` 因此正確落在 `$(…)` 的
+#     `subs` 裡（`sub=True`，不影響外層 pipefail 狀態）。突變體在群組自己的 `)`（`depth` 明明還是 1）
+#     就提早收尾，`; set -o pipefail )` 這一截被吐回給呼叫端（`_word()`），最終落到**頂層**
+#     （`sub=False`）——這個原本應該被安全忽略的 `set -o pipefail` 現在真的把外層 pipefail 狀態
+#     打開了。
+#
+# --- `op == "("`→`op != "("`（第二個突變體）：`if op != "(": depth += 1 elif op == ")" and depth:
+#     depth -= 1`──裸 `(` 反而不加一、裸 `)`（以及其他任何運算子）反而加一，`)` 自己原本該減一的
+#     `elif` 分支永遠走不到。同一個構造下：`(` 不加一（`depth` 停在 0），`)`（群組自己的收尾）卻
+#     觸發 `op != "("` 為真而加一（`depth` 變 1）──等到真正的外層 `)` 出現時 `depth` 已經是 1，
+#     `not depth` 為假，一樣提早收尾失敗，`set -o pipefail` 一樣被吐到頂層、一樣把外層 pipefail
+#     狀態打開。
+#
+# 兩個突變體對同一個構造的效果相同：外層原本沒有任何 `set -o pipefail`（`shell: bash -e {0}` 樣板
+# 本身不帶 `-o pipefail`），照規則第二行的管線（`echo ok | cat`）在 `--strict` 下應該因為「沒有跑在
+# pipefail 之下」判紅；突變體讓巢狀裡的 `set -o pipefail` 誤判成頂層設定，pipefail 狀態被打開，
+# 這條 RULE 消失，PASS（誤放行）。
+#
+# LOG-FILTER 宣告讓這個 step 跳過「有沒有接管線」「fd 流向」「群組規則」三條（宣告只豁免這三條，
+# pipefail 規則照樣套用）——這樣才能單獨看到 pipefail 模擬本身的差異，不必湊出真正符合群組寫法的
+# run 區塊（這個構造本來就寫不成 `{ …; } 2>&1 | python3 …` 的群組形狀）。
+#
+# bash 5.3 實測：`bash -e {0}` 底下 `X=$( (true); set -o pipefail )` 執行完，`set -o pipefail`
+# 只在這個命令替換的子殼層裡生效、對外層完全沒有作用；緊接著的 `echo ok | cat` 仍然跑在**沒有**
+# pipefail 的狀態下──原版判紅（缺 pipefail）與這個事實一致，突變體判過是錯的方向。
+# EXPECT: rule-red
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: t1
+        shell: bash -e {0}
+        run: |
+          # LOG-FILTER: none — fixture 只測 `_lex` 對 `$(…)` 裡巢狀裸括號的 depth 追蹤，不測群組／fd 規則
+          X=$( (true); set -o pipefail )
+          echo ok | cat

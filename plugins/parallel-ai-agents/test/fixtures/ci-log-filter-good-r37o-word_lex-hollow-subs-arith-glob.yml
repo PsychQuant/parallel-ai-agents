@@ -1,0 +1,43 @@
+# #33 verify R37 opsweep 補件（word_lex 群）：五個存活突變體共用一組「安全但長得危險」的算術／條件式構造，
+# 原版都正確判定安全（pass）；每個突變體各自讓其中一步冒出假的 RULE 紅：
+#   - `startswith→F|_hidden_subs|if S.startswith("$((", k):`：拿掉這個跳過後，`_hidden_subs` 把 `$((…))`
+#     整段誤當 `$(…)` 命令替換剖析，`_cmdsub_end` 對 `$((` 會轉給 `_arith_end`（未受影響）算出正確的收尾位置，
+#     但取內容的切片仍用 `$(…)` 的偏移（少切兩端各一個字元）；`echo ${PR_TITLE:-$((1>2*3))}` 的算術本文
+#     被當成 `(1>2*3)` 這段「shell 文字」重新剖析，`>` 被讀成重導向、`2*3` 的 `*` 讓目標帶萬用字元 → 假 RULE。
+#   - `startswith→F|_interior_subs|if S.startswith("$((", k):`：同一個跳過但在 `_interior_subs`（`[[ … ]]`
+#     內部用），`[[ 1 -eq $((1>2*3)) ]]` 裡巢狀的 `$((…))` 被誤剖析成同一種假重導向。
+#   - `==↔!=|_interior_subs|e = _cmdsub_end(S, k) if c == "$" else _backtick_end(S, k)`：把 `c=="$"` 反過來，
+#     `[[ ]]` 裡一個乾淨的 `$(echo safe)`（沒有反引號）改呼叫 `_backtick_end` 找收尾反引號——找不到就回 None，
+#     呼叫端 fail-closed（bad_sub=True）→ 假 RULE。
+#   - `==↔!=|_interior_subs|sub = _sub_tokens(S[k + (2 if c == "$" else 1):e - 1])`：同一行的偏移運算式反過來，
+#     `$(echo safe)` 的內容被切成 `(echo safe`（多切一個左括號、少切一個右括號，括號不平衡）——
+#     `shell_scan(["(echo safe"])` 剖不出來、`_sub_tokens` 回 None、一樣 fail-closed → 假 RULE。
+#   - `drop-operand|_word|while e < n and d:`（拿掉 `d`，只留 `e < n`）：`_word` 對舊式算術 `$[…]` 的收尾用
+#     `while e < n and d: d += ("["==…) - ("]"==…); e += 1` 數括號深度、`d` 歸零就停。拿掉 `d` 後迴圈不再提早停，
+#     一路掃到這個 run 區塊「接起來的整段原文」結尾（`_analyse` 把所有邏輯行用 `\n` 接成一個字串）才停，
+#     沿路遇到的每個 `[`／`]`（包括後面完全無關的字面 `]`）都會被算進同一個 `d`。第四步 `echo $[1]` 後面
+#     緊接著一個獨立的 `echo "]"`：原版在 `$[1]` 的 `]` 就把 `d` 歸零、正常收尾；拿掉 `d` 的突變體會把後面那個
+#     孤立的 `]` 也算進來，`d` 收尾時變成 -1（非零）→ `hs = None`（`not d` 為假）→ `_word` 把整個 `$[1]` 設成
+#     `bad_sub=True`，`_Sh.subs` 對 `bad_sub` 一律印「不解析就不放行」→ 假 RULE。
+# bash 5.3 實測：四步都印出安全結果（`0`、`yes`、`yes`、`1`／`]`），原版對四步都判 pass；
+# 上列五個突變體套用後，對應那一步的判定各自變成 rule-red（`python3 mutcheck.py` 逐一驗證，KILL）。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: arith-comparison-glob-chars
+        run: |
+          echo ${PR_TITLE:-$((1>2*3))} 2>&1 | python3 scripts/neutralise.py
+      - name: nested-arith-in-cond
+        run: |
+          [[ 1 -eq $((1>2*3)) ]] && echo yes 2>&1 | python3 scripts/neutralise.py
+      - name: cmdsub-in-cond-no-backtick
+        run: |
+          [[ -n $(echo safe) ]] && echo yes 2>&1 | python3 scripts/neutralise.py
+      - name: bare-legacy-arith-then-lone-bracket
+        run: |
+          echo $[1] 2>&1 | python3 scripts/neutralise.py
+          echo "]" 2>&1 | python3 scripts/neutralise.py

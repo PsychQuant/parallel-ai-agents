@@ -1,0 +1,15 @@
+# #33 verify R36 第 8 列 → R37：`env:`（workflow／job／step 三層，以及 job 的 container.env）帶進 SHELLOPTS、BASHOPTS、BASH_ENV、ENV、BASH_XTRACEFD ⇒ RULE。
+# 相鄰輸入（R36 沒點名）：workflow 層 `BASHOPTS: extglob` 在 bash 啟動時就改了詞法——`@(… | python3 …)` 變成一個詞、管線不存在。
+# 沒有這個 env 時 bash 對那一行報語法錯誤（也不建管線），所以神諭載不載 env 都判得出「lint 擋下 ∧ 沒有管線」。
+# EXPECT: rule-red
+name: t
+on: pull_request
+env:
+  BASHOPTS: extglob
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: workflow env changes the lexer
+        run: |
+          echo "$PR_TITLE" @(x 2>&1| python3 scripts/neutralise.py )

@@ -1,0 +1,40 @@
+# #33 verify R37 opsweep 補件（最終 lint，lex 群）：殺
+#   drop-operand|_lex|if (prev is not None and prev["k"] == "W" and prev["e"] == p - len(op) and prev["lit"] is not None|1
+# （拿掉 `prev is not None`）。
+#
+# 這句判斷「緊貼在重導向運算子前面的那個詞是不是 fd 前綴」（`2>&1` 的 `2`）。`prev` 是「目前為止已經讀出
+# 的最後一個詞元」；如果重導向運算子是**整個 run 區塊的第一個字元**，`toks` 這時還是空的，
+# `prev = toks[-1] if toks else None` 得到 `None`。
+#
+# 原版：`prev is not None` 短路，後面 `prev["k"]`……都不會被求值，`pre=""`（沒有前綴）。突變體拿掉這個
+# 短路後，直接對 `None["k"]` 取值──`TypeError: 'NoneType' object is not subscriptable`。這個例外
+# 不在 `except (IndexError, KeyError, ValueError, RecursionError)` 的封閉列舉裡，不會被接成
+# `PARSE:`，整支 lint 對這個 fixture 崩潰；`mutcheck.py` 的 `verdict()` 得到 `rc=%d`，不等於
+# `EXPECT` 的 `rule-red`，KILL。
+#
+# 構造：`>&2 echo "$PR_TITLE"` 是整個 run 區塊（第一個 step 的第一行）的開頭，重導向運算子 `>&` 之前
+# 沒有任何詞元，觸發 `prev is None` 這條路（bash 容許「重導向在命令名之前」的寫法）。原版對這一行本身
+# 的判定：`>&2`（`pre=""`、目標字面 `"2"`）不符合 `_redir_hit` 的安全例外（`op==">&" and tl=="1"
+# and pre in ("","1","2")` 要求目標恰好是 `"1"`，這裡目標是 `"2"`），判定「複製 fd」回報洩漏，
+# RULE-red——這是真的洩漏：`>&2 echo "$PR_TITLE"` 讓 `echo` 把 `$PR_TITLE` 印到 fd 1、而 fd 1 已經
+# 被這個重導向指到 fd 2，PR 文字因此真的流向未過濾的 stderr。第二行
+# `echo ok | python3 …neutralise.py` 只是用來滿足「這個 step 有接管線」的閘門，真正觸發規則的是
+# 第一行。
+#
+# bash 5.3 實測：`bash -n` 對 `>&2 echo "$PR_TITLE"` 語法通過（rc=0）；`bash -c` 執行後 `$PR_TITLE`
+# 的值確實出現在 stderr（fd 1 先被導向 fd 2，`echo` 再把值寫到 fd 1）——與原版「複製 fd」的判定方向
+# 一致，是真外流，不是 fail-closed。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: t1
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          >&2 echo "$PR_TITLE"
+          echo ok | python3 scripts/neutralise.py

@@ -1,0 +1,23 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺 drop-operand|_redir_hit|if op == "<&" or tl is None or
+# t.get("psub"):|1（拿掉 `op == "<&"`）。
+# `echo "$PR_TITLE" 2<&somefile`：`<&` 接非數字、非 process-substitution 的字面字，bash 對這種寫法直接報
+# 語法／執行期錯誤——bash 實測（`bash -c 'echo SECRET 2<&somefile | cat'`）：stdout 空、
+# stderr 印 `bash: line 1: somefile: ambiguous redirect`，SECRET 沒有印到任何被擷取的地方，
+# 屬 fail-closed、無外流。原版：`tl` 不是數字（落不進上面 isdigit 分支），這一行的 `op == "<&"` 為真
+# → 判命中「複製到看不出值的 fd」→ RULE 紅。
+# 突變體拿掉 `op == "<&"` 這個 guard 後,只剩 `tl is None or t.get("psub")`——`tl` 是字面 `"somefile"`
+# （非 None）、也不是 process substitution，兩者皆假 → 這個 if 不成立，往下掉到目標檢查（純檔名、
+# 非 glob、非 `/dev`／`/proc`）→ 最終 `return None` → 突變體放行。
+# **不是繞過，是限制**（fail-closed；神諭記在 KNOWN_DISAGREE）：這個輸入 bash 實際跑起來不會外流 PR 文字，lint 依設計保守地拒絕它；
+# 這張 fixture 釘住的是那個拒絕（突變體放寬後會放行）。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: input-direction fd dup to a literal non-digit word
+        shell: bash
+        run: |
+          echo "$PR_TITLE" 2<&somefile | python3 scripts/neutralise.py

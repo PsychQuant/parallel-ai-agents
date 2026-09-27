@@ -1,0 +1,38 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺一個 wave3-strict 存活突變體：
+#   drop-operand|_bash_template|if i >= len(rest) or rest[i] not in _BASH_O:|2
+#
+# `shell: "/bin/bash -o badopt {0}"`——`-o` 後面接的是一個**不在** `_BASH_O` 白名單裡的選項名
+# （`badopt` 不是 `pipefail`／`xtrace`／`verbose`……任何一個）。原版：`i >= len(rest)` 為假（後面
+# 確實還有一個 token），落到 `rest[i] not in _BASH_O`——`"badopt"` 不在白名單裡，為真，整個
+# `or` 為真，`_bash_template` 回 `None`（本 lint 不認得這個樣板）；呼叫端因此在 run 區塊解析
+# 之前就 PARSE-red 拒絕。拿掉 `rest[i] not in _BASH_O` 這個運算元後只剩 `i >= len(rest)`——
+# 對這個輸入為假（`i < len(rest)`），`or` 整個為假，於是**不**回 `None`，反而繼續往下把
+# `"badopt"` 當成一個普通、不影響 pipefail／trace 的 token 吃掉（`nm == "pipefail"` 與
+# `nm in _TRACE_OPTS` 都不成立，什麼都不設），樣板被誤判成合法，回
+# `{"pipefail": False, "trace": False}`。run 區塊的 `echo "$PR_TITLE"` 沒有接 neutralise 的
+# 管線、也沒有 `# LOG-FILTER:` 宣告——樣板一旦被誤判成「認得」，這一步就會落到「run 區塊既沒有
+# 經 neutralise.py，也沒有 LOG-FILTER」那條 RULE 檢查，印出 RULE-red（不是 pass，但同樣不等於
+# 宣告的 `parse-red`，`mutcheck.py` 判 KILL）。
+#
+# `shell:` 的值是樣板字串，不是要交給 `bash -c`／`bash -n` 執行的腳本；已用抽出的同一份原始碼
+# 直接呼叫驗證：`_bash_template("/bin/bash -o badopt {0}")` 原版回 `None`，突變體回
+# `{"pipefail": False, "trace": False}`。
+#
+# 神諭對帳：這個另類 shell 樣板神諭只會用 bash 跑，判「不可比」（已知類別）；run 區塊本身
+# `echo "$PR_TITLE"` 若真的被執行（樣板被誤判合法、且 lint 沒有另外因為缺 neutralise 管線而
+# 擋下）會把 PR 文字印到未過濾的 stdout——但本檔案在**原版**下就已經因為樣板本身不認得而
+# PARSE-red，不依賴這條路徑。
+# LINT-ARGS: --strict
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: bash template with an unrecognised -o option name is rejected, not silently accepted
+        shell: "/bin/bash -o badopt {0}"
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$PR_TITLE"

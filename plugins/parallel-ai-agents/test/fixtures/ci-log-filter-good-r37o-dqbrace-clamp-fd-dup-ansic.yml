@@ -1,0 +1,22 @@
+# #33 verify R37 opsweep 補件：殺 `_clamp` 的兩個存活突變體——`==↔!=|_clamp|while q < min(e, len(C)) and C[q] == " ":`
+# 與 `±1→±2|_clamp|q += 1`。兩個突變體都動到 `_clamp` 用來把游標推過「原文算出的挖空區段」的那個小迴圈：
+#   - `==↔!=`：條件反向成 `C[q] != " "`，而呼叫端進入 `_clamp` 時 `C[p]` 必定是空白（呼叫點都在 `hollow` 分支裡），
+#     於是迴圈第一次就不成立，恆定只前進 1 格——`$'\x31'` 這種 7 個字元的 ANSI-C 字串構造只被推過 1 格，
+#     剩下 6 個字元被當成全新的（非 `$'…'`）挖空構造逐格重新處理，`literal` 因此被錯誤地清成 `False`。
+#   - `±1→±2`：步進從 1 改成 2，對 7 個字元（奇數長）的挖空區段會多跨 1 格，越過真正的邊界。
+# 兩者的共同後果：`$'\x31'`（ANSI-C 逃脫，解碼後是字面 `"1"`）的 `lit` 從正確的 `"1"` 變成 `None`（未知）。
+# 這個字面值正是 `>&$'\x31'` 這個 fd 複製重導向的目標——`_redir_hit` 的判定完全看 `t["lit"]`：
+#   - 原版：`lit=="1"` 且 `pre==""`，命中 `if op==">&" and tl=="1" and pre in ("","1","2"): return None`（fd1→fd1 是
+#     no-op，安全）。
+#   - 突變體：`lit is None`，落進 `if op=="<&" or tl is None or t.get("psub"): return "…複製到看不出值的 fd"`——RULE。
+# bash 5.3 實測：`echo hi >&$'\x31' 2>&1` 印出 `hi`、rc=0，是貨真價實的 no-op（`bash -n` 同樣 parse rc=0）。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe
+        run: |
+          echo hi >&$'\x31' 2>&1 | python3 scripts/neutralise.py

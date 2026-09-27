@@ -1,0 +1,27 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺 `±1→±2|parse_andor|self.i += 1|1`（parse-misc 組，
+# 去掉 `|L行號`）。
+#
+# `parse_andor` 認出 `&&`／`||` 接頭後：`self.i += 1`（吃掉接頭本身）、`self.skip_nl()`、再剖下一段
+# `parse_pipeline`。把 `self.i += 1` 換成 `self.i += 2` 會在吃掉接頭的同時多吃一個詞元——如果接頭後面
+# 緊接著一條真正的指令，那條指令的第一個詞（指令名）會被一起吞掉，跟 fixC 同一族的「指令名被吞、
+# 剩下的詞從第二個開始被剖成新指令」缺陷，只是觸發點換成 `&&`／`||` 而不是殘渣安全網。
+#
+# 這個 step 第一行用安全管線讓 `ok = via_pipe or declared` 成立，第二行 `true && bash -x -c '...'`：
+# 原版吃掉 `&&` 之後從 `bash` 開始剖，`_Sh.simple` 認出 `bash` 在 `_SHELL_NAMES` 裡、`shell_opts` 抓到
+# `-x` 開 xtrace，記一筆 fd 外流命中，判 RULE-red；突變體吃掉 `&&` 的同時把 `bash` 也吞了，第二段
+# 指令從 `-x` 開始剖，`simple()` 掃不到任何 shell 名稱，這筆命中消失，整份判定變成 pass。bash 5.3
+# 實測（`printf 'echo hi | true\ntrue && bash -x -c '"'"'echo "$PR_TITLE"'"'"'\n' > t.sh`）：
+# `bash -n t.sh` rc=0（合法語法）；神諭把它歸成 `piped`（第一行的管線）而這一整份判定與神諭一致
+# （第二行的 `bash -x` 才是要驗的重點，被機械對帳判「一致」，不落在已知類別，不需要
+# `# KNOWN-CLASS:`）。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: and-or connector before an xtrace bash call
+        run: |
+          echo hi | python3 scripts/neutralise.py
+          true && bash -x -c 'echo "$PR_TITLE"'

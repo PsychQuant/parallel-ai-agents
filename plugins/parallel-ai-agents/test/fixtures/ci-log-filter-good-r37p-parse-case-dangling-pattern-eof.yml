@@ -1,0 +1,31 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺 pattern-scan 迴圈 3 元 `and` 條件
+# `while self.tok() is not None and self.tok()["k"] != "NL" and not self.op(self.tok(), ")"):`
+# 的 drop-operand 第 1 個突變體（拿掉 `self.tok() is not None`，只剩
+# `while self.tok()["k"] != "NL" and not self.op(self.tok(), ")"):`）。
+# 原版：`run:` 區塊是 `case x in *`（模式 `*` 後面沒有 `)`、也沒有換行——是這個 step 唯一、也是最後
+# 一段邏輯行，joined 之後**沒有**結尾換行字元）。pattern-scan 迴圈吃掉 `*` 之後，`self.tok()` 變成
+# `None`（詞元流真的耗盡，不是換行也不是 `)`）——原版迴圈條件第一個子句 `self.tok() is not None`
+# 為假，正常跳出，不丟例外。之後 `if self.op(...): ...`、`self.parse_list(...)`、
+# `if self.i == i0: ...` 全部對 `None` 安全，`parse_case` 優雅收尾、沒有任何 hit。本 step 宣告了
+# `# LOG-FILTER:`，`declared=True`，即使真的有 hit 也不會被判紅——最終 `pass`。
+# 突變體：拿掉 `is not None` 之後，迴圈條件變成先做 `self.tok()["k"]`——這時 `self.tok()` 已經是
+# `None`，`None["k"]` 直接丟 `TypeError`。這個例外型別不在 `_analyse()` 外層
+# `except (IndexError, KeyError, ValueError, RecursionError)` 的名單裡，不會被接住，整支 Python
+# 以未捕捉例外終止（非 0 結束碼、stderr 是 traceback，既沒有 `: RULE: ` 也沒有 `: PARSE: `）——
+# 與原版的 `pass` 不同。
+# bash 5.3 實測：`case x in *` 缺 `)`、缺 `esac`，本身就是不完整的語法（等 stdin 更多輸入），不會
+# 真的執行——本檔測的是 lint 自己詞法層對「模式一路吃到詞元流盡頭、且盡頭不是換行」的容錯，
+# 不依賴這個 step 真的被 bash 執行；宣告的 step 本來就不受 fd／env 規則約束（只是不能讓
+# **解析本身**崩潰）。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        # LOG-FILTER: none — dangling unterminated case, prints nothing
+        run: |
+          case x in *

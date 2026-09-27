@@ -1,0 +1,15 @@
+# #33 verify R36 第 14 列（logic）：同一個缺陷，換成 `$[…]`（舊式算術展開）而不是 `${…}`。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: delim-legacy-arith
+        run: |
+          echo "$PR_TITLE"
+          cat <<\x$[1 + 2]
+          x$[1
+          echo hi 2>&1 | python3 scripts/neutralise.py
+          x$[1 + 2]

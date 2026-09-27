@@ -1,0 +1,46 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺 drop-operand|parse_command|neut = (len(words) >= 2 and words[0]["code"] == "python3"|3。
+# 同一組三個條件，這次拿掉最後一個（`re.fullmatch(r"\S*neutralise\.py", words[1]["code"]) is
+# not None`，檔名比對）。`{ echo "$PR_TITLE" >&2; } |& python3 x/other.py`：直譯器正確是
+# `python3`，但跑的腳本是 `x/other.py`，根本不是 neutralise 腳本。
+#
+# 原版：檔名比對正確判定 `x/other.py` 不符合 `*neutralise.py`，`neut=False`，群組不被豁免，
+# `>&2` 那個 hit 留在 `an["fd"]` 裡 → RULE。
+#
+# 拿掉檔名比對這個 operand 後，`neut` 只看直譯器是不是 `python3`（且至少兩個字），
+# `python3 x/other.py` 滿足，`neut` 被誤判成 `True`，群組被誤豁免，`>&2` 那個 hit 消失，
+# `an["fd"]` 變空 → 突變體放行。
+#
+# 接了 `true | python3 scripts/neutralise.py` 讓整個 step 的 `ok=True`，逼 lint 走到 fd
+# 檢查那一支。
+#
+# bash 5.3 實測（本機真的裝了 python3，PATH 完整）：`bash -c '{ echo SECRET >&2; } |& python3
+# x/other.py' 2>/tmp/e; cat /tmp/e`——`PIPESTATUS` 長度是 2（真的建立了管線），`$PR_TITLE`
+# 的內容進了一個既不是 neutralise 腳本、也沒人保證會消毒它的程式——原版判 RULE 是對的：
+# 跑的不是被信任的消毒腳本，直譯器對不代表內容安全。
+#
+# **fail-closed、量不到外流（誠實記錄）**：test/oracle.py 用受限 PATH 真的跑過這個 step，結果是
+# 「lint RULE-red ∧ piped ∧ 無外流」→「不一致：誤擋」，不是「一致」。根因在 oracle 自己的
+# `python3` stub（`test/oracle.py` 的 `STUB` 常數）：它對**任何** `python3 ...` 呼叫都無條件
+# `cat >/dev/null 2>&1`，只在參數符合 `*neutralise.py` 時才多印一行 marker——換句話說，stub
+# 對「跑對腳本」跟「跑錯腳本」的**消費行為完全一樣**（都把 stdin 吞進 `/dev/null`），差別只在
+# marker 有沒有印。oracle 用來判定「有沒有外流」的訊號是「PR 文字有沒有出現在它捕捉到的輸出
+# 裡」，而這裡 `x/other.py` 這個腳本名字本身就已經讓 stub 照樣把內容吞掉、不會印到任何 oracle
+# 看得到的地方——**這不是內容沒有外流，是 oracle 的 stub 對「跑錯腳本」這個情境沒有鑑別力**
+# （它本來就是為了量「有沒有建立管線」設計的通用 stub，不是逐腳本驗證消毒邏輯的沙箱）。
+# 本規則要攔的正是「檔名比對」這件事本身——拿掉它會讓 lint 對任何 `python3 <隨便什麼檔案>`
+# 都照樣豁免，而 CI 的 runner 若真的裝了一個叫這名字、卻沒做消毒的腳本，那份文字就會被那個
+# 腳本自己的邏輯（不是 oracle 的通用 stub）處理成任何結果，lint 沒有能力也不該假設那個腳本
+# 一定安全。那份不一致留給協調者按 oracle 的 KNOWN_DISAGREE 機制另行處置。
+# **不是繞過，是限制**（fail-closed；神諭記在 KNOWN_DISAGREE）：這個輸入 bash 實際跑起來不會外流 PR 文字，lint 依設計保守地拒絕它；
+# 這張 fixture 釘住的是那個拒絕（突變體放寬後會放行）。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: group piped through python3 running the wrong script
+        run: |
+          { echo "$PR_TITLE" >&2; } |& python3 x/other.py
+          true | python3 scripts/neutralise.py

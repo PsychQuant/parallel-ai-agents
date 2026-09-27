@@ -1,0 +1,25 @@
+# #33 verify R37 opsweep 補件：殺 `_case_head` 的 drop-operand 突變體（拿掉第二個 while 迴圈的邊界守衛
+# `k < n`，`while k < n and line[k] not in " \t;&|()<>":` 只剩 `while line[k] not in " \t;&|()<>":`）。
+# 原版：跳過 `case` 後的空白之後，這個迴圈讀「詞」本身，直到遇到分隔字元或行尾。這裡 `run:` 區塊裡的
+# 實體行是 `x=$(case foo`，`foo` 是行裡最後的字元、後面沒有分隔字元也沒有更多字元（`n = len(line)`）。
+# 原版：讀完 `foo` 三個字元後 `k` 剛好等於 `n`，`k < n` 讓迴圈安全停下；接著判斷 `foo` 後面是不是
+# `in`——沒有（行已經結束），`_case_head` 回 `False`，主掃描器判定這不是合法的 case 起頭，fail-closed
+# （`PARSE:`）。
+# 突變體拿掉 `k < n` 這道邊界後，迴圈只看 `line[k] not in " \t;&|()<>"`：讀完 `foo` 之後在 `k == n` 時
+# 繼續對長度剛好 `n` 的字串取 `line[n]`——直接丟 `IndexError: string index out of range`，整個 lint
+# 當掉（非零 rc，訊息裡沒有 `RULE:`／`PARSE:`／`VACUOUS`）——與原版的 parse-red 判定不同，殺得掉。
+# bash 5.3 實測：`x=$(case foo` 命令替換沒收尾，是懸置的語法錯誤；本 fixture 測的是本 lint 自己的邊界
+# 守衛，不依賴這段命令實際執行的語意。
+# EXPECT: parse-red
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: cmdsub-case-word-runs-to-eol
+        shell: bash
+        run: |
+          x=$(case foo
+          echo "$x" 2>&1 | python3 scripts/neutralise.py

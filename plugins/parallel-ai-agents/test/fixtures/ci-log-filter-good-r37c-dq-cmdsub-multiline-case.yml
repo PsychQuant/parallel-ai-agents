@@ -1,0 +1,22 @@
+# #33 verify R37（野外寫法，openclaw 兩檔的形狀）：跨行的雙引號命令替換裡有 while 迴圈與 case。R37 第一版照工作包對
+# `$(…)` 裡的 `case` 一律 fail-closed，語料對照量到這兩檔新增 PARSE（`bash -n` rc=0 的合法 bash）——連 `# LOG-FILTER:`
+# 都救不了。改成追蹤模式括號後放行。380e4a4 在模式裡的 `"it's.md"` 把引號狀態錯到區塊結尾 ⇒ PARSE 誤擋。
+# bash 5.3 實跑接到 neutralise。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: dq-cmdsub-multiline-case
+        run: |
+          bad_paths="$(
+            printf '%s\n' docs/a.md src/x.c | while IFS= read -r path; do
+              case "$path" in
+                docs/*|"it's.md") ;;
+                *) printf '%s\n' "$path" ;;
+              esac
+            done
+          )"
+          printf '%s\n' "$bad_paths" 2>&1 | python3 scripts/neutralise.py
