@@ -193,6 +193,22 @@ PR_MARKER = "ORACLE-PR-TITLE-MARKER"
 # 永遠抓不到 CHANGELOG 與神諭分岔。「不一致」的兩種各自帶後綴（繞過／誤擋），所以這裡列的是完整前綴。
 # 形狀像已知類別、`--strict` 卻放行 ⇒ 不是已知，是真繞過（計入不一致、rc=1）。
 STRICT_MISS = "不一致：繞過（形狀像已知類別 %s，但 `--strict` 也放行——已知類別的定義是 CI 模式擋得下）"
+# **擋下的原因必須是外流本身**（R39，#33 verify R38 第 7 列）：前一版只查「`--strict` 擋下這個 step」。DA 的反例是
+# `set -Eeuo pipefail`（`-E` 是一個沒揭露的誤擋）＋ 群組外一行外流：`--strict` 擋它只因為 `-E`，改成 `set -euo` 就放行，
+# 外流仍在——誰修掉那個誤擋，繞過就重新打開，而沒有任何一張網會紅。所以已知類別另外要求：刪掉與外流無關的行之後，
+# `--strict` 仍然擋下（見 `reduce_leaking_run`、`strict_blocks_text`）。
+CAUSE_MISS = ("不一致：繞過（形狀像已知類別 %s，但 `--strict` 擋下這個 step 的原因與外流無關——刪掉與外流無關的行之後 "
+              "`--strict` 放行）")
+# xtrace 的外流行以 PS4 開頭。神諭把 PS4 設成自己的標記（run 區塊自己改 PS4 時認不出來——那時照一般外流歸類）。
+# bash 依巢狀層數重複 PS4 的**第一個字元**，所以開頭是一個以上的 `+`。
+PS4_MARK = "+ORACLE-XT "
+XTRACE_LINE_RE = re.compile(r"^\++ORACLE-XT ")
+XTRACE_LEAK = ("不一致：繞過（外流行是 xtrace 的輸出——xtrace 規則兩種模式都要求，不是 G 也不是 S-2）")
+# bash 自己的錯誤訊息（展開期、重導向錯誤）：`<腳本路徑>: line N: …`。`run_script` 把臨時目錄換成 `<TMP>`。
+# 「line」會被在地化（macOS 上實測是「列 5」），所以不比那個字，只比「腳本路徑: 一個字 行號: 」的形狀。
+BASH_DIAG_RE = re.compile(r"^<TMP>/s\.sh: [^:\s]+ \d+: ")
+# 接 neutralise 的那個 `|`／`|&`（S-2 的「包成群組」差分從這裡切開）。
+NEUT_TAIL_RE = re.compile(r"\|&?[ \t]*python3[ \t]+[^\n]*neutralise\.py")
 VERDICT_KINDS = ("一致", "不一致：繞過", "不一致：誤擋", "不可比", "量不到")
 # **已知類別的判定不含任何 lint 規則的正規式副本**（R37，#33 verify R36 第 1 列）。前一版在這裡放了
 # `STDERR_ROUTE_RE`（≈ lint 的 `FD_RE`）與 `NEUT_WITH_STDERR_RE`（≈ `STRICT_NEUT_RE`），分類「外流是誰印的」
@@ -274,7 +290,7 @@ def run_script(run, bash, stub_bin, yaml_env=None):
             fh.write(PRELUDE); fh.write(run); fh.write("\n")
         env = dict(yaml_env or {})
         env.update({"PATH": stub_bin + ":/usr/bin:/bin", "ORACLE_MARK": mark,
-                    "PR_TITLE": PR_MARKER, "HOME": d})
+                    "PR_TITLE": PR_MARKER, "HOME": d, "PS4": PS4_MARK})
         try:
             # stdin **一定要**是 /dev/null：繼承呼叫端的 stdin 會讓任何讀 stdin 的指令卡住，
             # 於是「量不到」變成隨呼叫環境而定的東西（R31 自查：同一個 fixture 在終端機下逾時、
@@ -376,33 +392,169 @@ def classify_piped_leak(run, bash, stub_bin, yaml_env, base_mlines):
       ("pipeline", (streams, g_part))  有一部分跟著管線消失 ⟹ **管線自己外流**；streams ⊆ {"stdout","stderr"}，
                                        g_part = 換掉之後仍有外流（同一 step 裡另有別的命令也印了）
       ("unmeasured", 原因)             差分不可比——**絕不歸 G**（fail-closed 的方向），由呼叫端記成「量不到」
-    判準只有 bash 的行為與 `neutralise.py` 這個子字串，**沒有**任何以 `>&2`、`/dev/stderr`、`xtrace` 為字面的正規式。"""
+    判準只有 bash 的行為與 `neutralise.py` 這個子字串，**沒有**任何以 `>&2`、`/dev/stderr`、`xtrace` 為字面的正規式。
+
+    第三個回傳值是差分用到的範圍與換掉之後的外流行（`(spans, ml)`；"unmeasured" 時是 None）——S-2 的機制差分與
+    已知類別的原因檢查要用。"""
     spans = neutralise_spans(run, bash)
     if not spans:
-        return "unmeasured", "找不到含 neutralise.py 的行可以換掉"
+        return "unmeasured", "找不到含 neutralise.py 的行可以換掉", None
     lines = run.split("\n")
-    for s, e in spans:
-        lines[s] = NEUTRAL_CMD
-        for k in range(s + 1, e + 1):
-            lines[k] = ""
-    probe = "\n".join(lines)
+    base_n = _bash_n(run, bash)
     # 換掉之後必須語法完整，或與原腳本**同一個**語法錯誤（那個錯誤不是換掉造成的）。只比 rc 為 0 的那一邊不看訊息：
     # 原腳本的 heredoc 沒有內文時 `bash -n` 會印「here-document delimited by end-of-file」警告而 rc=0，換掉之後警告消失——
     # 那是換掉的本意，不是語法被切斷（R37 在產生語料的 60 個折疊 heredoc 檔上實測到這一點）。
-    pn = _bash_n(probe, bash)
-    if pn[0] != 0 and pn != _bash_n(run, bash):
-        return "unmeasured", "換掉接 neutralise 的邏輯行後語法壞掉（heredoc、if/fi、引號被切斷）——差分不可比"
-    v, _obs, _leak, ml = run_script(probe, bash, stub_bin, yaml_env)
+    if not _syntax_ok(_neutralised(lines, spans), base_n, bash):
+        # **多行群組**（R39，#33 verify R38 第 3 列）：`{` ⏎ … ⏎ `} 2>&1 | python3 …` 的邏輯行只有 `}` 那一行，
+        # 換掉它 `{` 就沒收——前一版因此判「量不到」，而「量不到」不改 rc：lint 與神諭兩張網同時看不到那個外流。
+        # 把範圍往上擴到語法完整為止（取最短的那個）；擴進來的是那條管線的上游（群組本體），差分量的仍是「整條管線」。
+        for j in range(len(spans)):
+            s, e = spans[j]
+            lo = spans[j - 1][1] + 1 if j else 0
+            for s2 in range(s - 1, lo - 1, -1):
+                trial = spans[:j] + [(s2, e)] + spans[j + 1:]
+                if _syntax_ok(_neutralised(lines, trial), base_n, bash):
+                    spans = trial
+                    break
+            if _syntax_ok(_neutralised(lines, spans), base_n, bash):
+                break
+        else:
+            return "unmeasured", "換掉接 neutralise 的邏輯行後語法壞掉（heredoc、if/fi、引號被切斷）——差分不可比", None
+    v, _obs, _leak, ml = run_script(_neutralised(lines, spans), bash, stub_bin, yaml_env)
     if v == "timeout":
-        return "unmeasured", "換掉之後的腳本逾時 %ds" % TIMEOUT_S
+        return "unmeasured", "換掉之後的腳本逾時 %ds" % TIMEOUT_S, None
     if v != "not-invoked":
-        return "unmeasured", "換掉之後 neutralise 仍被呼叫（%s）——範圍沒涵蓋到那條管線，差分不可比" % v
+        return "unmeasured", "換掉之後 neutralise 仍被呼叫（%s）——範圍沒涵蓋到那條管線，差分不可比" % v, None
     if any(ml[k] - base_mlines[k] for k in (0, 1)):
-        return "unmeasured", "換掉之後出現原本沒有的外流行——控制流被改變，差分不可比"
+        return "unmeasured", "換掉之後出現原本沒有的外流行——控制流被改變，差分不可比", None
     contrib = [name for k, name in ((0, "stdout"), (1, "stderr")) if base_mlines[k] - ml[k]]
     if not contrib:
-        return "G", None
-    return "pipeline", (contrib, bool(ml[0] or ml[1]))
+        return "G", None, (spans, ml)
+    return "pipeline", (contrib, bool(ml[0] or ml[1])), (spans, ml)
+
+
+def _neutralised(lines, spans):
+    """把每個範圍換成 `NEUTRAL_CMD`（範圍內其餘行清空，行數不變）。"""
+    out = list(lines)
+    for s, e in spans:
+        out[s] = NEUTRAL_CMD
+        for k in range(s + 1, e + 1):
+            out[k] = ""
+    return "\n".join(out)
+
+
+def _syntax_ok(probe, base_n, bash):
+    pn = _bash_n(probe, bash)
+    return pn[0] == 0 or pn == base_n
+
+
+def _pipe_to_pipeamp(line):
+    """引號外的單一 `|`（不是 `||`、`|&`、`>|`）換成 `|&`——等於在管線的每一段尾端補 `2>&1`。
+    只做引號與逃脫的追蹤：換錯（`case` 模式、`$(…)` 裡）會讓 `bash -n` 報錯，呼叫端就不當成 S-2（fail-closed）。"""
+    out, q, i = [], None, 0
+    while i < len(line):
+        c = line[i]
+        if c == "\\" and q != "'":
+            out.append(line[i:i + 2]); i += 2; continue
+        if q:
+            if c == q:
+                q = None
+        elif c in "'\"":
+            q = c
+        elif (c == "|" and line[i + 1:i + 2] not in ("|", "&") and (i == 0 or line[i - 1] not in "|>")):
+            out.append("|&"); i += 1; continue
+        out.append(c); i += 1
+    return "".join(out)
+
+
+def s2_mechanism(run, spans, bash, stub_bin, yaml_env, base_ml, neutral_ml):
+    """S-2 的**機制**（R39，#33 verify R38 第 6 列）。前一版的 S-2 只看「管線自己只從 stderr 外流 ∧ `--strict` 的群組規則
+    擋下」，而群組規則擋下所有非群組管線，後半幾乎恆真——`>/dev/fd/2 2>&1 |`、`>&02`、`set -eo xtrace` 這些 fd／xtrace 規則
+    該擋的外流，只要那條規則失效，就被收進 S-2（R36 第 1 列的問題從 G 搬到了 S-2）。現在 S-2 是兩種機制之一
+    （封閉列舉，只有這兩種，不得依症狀相似類推）：
+      "missing-2to1"  管線每一段尾端補上 `2>&1`（`|` → `|&`）之後，管線貢獻的 stderr 外流行全部消失，stdout 沒有多出外流。
+      "early-error"   管線貢獻的外流行**全部**是 bash 自己的錯誤訊息（`<腳本>: line N: …`：展開期或重導向錯誤），
+                      把 `|` 左邊整段包成群組 `{ …; } 2>&1 |` 之後全部消失——`2>&1` 在那些錯誤**之後**才生效（#60 第 2 類）。
+    都不成立回 None：那不是「缺 `2>&1`」，而是補上也擋不住的外流（fd 轉向、另存的 fd…），由呼叫端判繞過。"""
+    contrib = base_ml[1] - neutral_ml[1]
+    lines = run.split("\n")
+    base_n = _bash_n(run, bash)
+
+    def gone(probe):
+        if not _syntax_ok(probe, base_n, bash):
+            return False
+        v, _o, _l, ml = run_script(probe, bash, stub_bin, yaml_env)
+        return v != "timeout" and not (contrib & ml[1]) and not (ml[0] - base_ml[0])
+
+    a = list(lines)
+    for s, e in spans:
+        for k in range(s, e + 1):
+            a[k] = _pipe_to_pipeamp(a[k])
+    if gone("\n".join(a)):
+        return "missing-2to1"
+    if not all(BASH_DIAG_RE.match(l) for l in contrib):
+        return None
+    b = list(lines)
+    for s, e in spans:
+        text = "\n".join(b[s:e + 1])
+        tails = list(NEUT_TAIL_RE.finditer(text))
+        if not tails:
+            return None
+        m = tails[-1]
+        b[s] = "{ " + text[:m.start()] + "\n} 2>&1 " + text[m.start():]
+        for k in range(s + 1, e + 1):
+            b[k] = ""
+    return "early-error" if gone("\n".join(b)) else None
+
+
+def reduce_leaking_run(run, spans, bash, stub_bin, yaml_env):
+    """刪掉與外流無關的行（R39，#33 verify R38 第 7 列）：由上而下逐行試著清空範圍外的每一行，語法仍完整（或同一個錯誤）、
+    neutralise 仍在管線上、PR 文字仍然外流，就保留這個刪除。貪婪、一輪——結果不一定最小，但每一行被留下都有原因
+    （刪掉它外流就消失，或語法壞掉）。"""
+    lines = run.split("\n")
+    base_n = _bash_n(run, bash)
+    keep = {k for s, e in spans for k in range(s, e + 1)}
+    cur = list(lines)
+    for i in range(len(lines)):
+        if i in keep or not cur[i].strip():
+            continue
+        trial = cur[:i] + [""] + cur[i + 1:]
+        p = "\n".join(trial)
+        if not _syntax_ok(p, base_n, bash):
+            continue
+        v, _o, leaked, _ml = run_script(p, bash, stub_bin, yaml_env)
+        if v == "piped" and (leaked[0] or leaked[1]):
+            cur = trial
+    return "\n".join(cur)
+
+
+SYNTH_WORKFLOW = """name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: reduced
+        shell: bash
+        run: |2
+"""
+
+
+def strict_blocks_text(run_text):
+    """`--strict` 擋不擋這段 run 文字：包成最小的 workflow（`shell: bash`、沒有 env；`|2` 顯式縮排，內文開頭的空白
+    才不會被當成縮排）跑 lint。回傳擋下的理由（第一則非 pipefail 的 RULE 訊息，或 "PARSE"），沒擋回 None；
+    lint fail-loud（rc=2）當成沒擋（fail-closed：量不到擋下就不給已知類別）。"""
+    with tempfile.TemporaryDirectory() as d:
+        p = pathlib.Path(d) / "reduced.yml"
+        p.write_text(SYNTH_WORKFLOW + "".join(("          " + l if l else "") + "\n" for l in run_text.split("\n")),
+                     encoding="utf-8")
+        rs = run_lint(["--strict"], p)
+    if rs.returncode == 2:
+        return None
+    msgs = [m for _ln, m in RULE_LINE_RE.findall(rs.stderr) if PIPEFAIL_RULE_MSG not in m]
+    if msgs:
+        return msgs[0]
+    return "PARSE" if ": PARSE: " in rs.stderr else None
 
 
 def _env_of(node):
@@ -618,30 +770,50 @@ def check_file(f, text, bash, stub_bin):
             if not (leaked[0] or leaked[1]):
                 verdict = "一致"
             else:
-                kind, detail = classify_piped_leak(run, bash, stub_bin, yenv, mlines)
-                if kind == "unmeasured":
-                    verdict = "量不到（%s）" % detail
-                    res["unmeasured"].append(key)
+                kind, detail, ctx = classify_piped_leak(run, bash, stub_bin, yenv, mlines)
+                if any(XTRACE_LINE_RE.match(l) for c in mlines for l in c):
+                    # xtrace 的外流（R39，#33 verify R38 第 4、6 列）：前一版把 `command -p set -x` 之後的 `+ echo …` 收進 S-2，
+                    # 訊息還說「缺 `2>&1`」——那條管線帶了 `2>&1`。xtrace 是 lint 兩種模式都要求的 fd 規則，漏了就是繞過。
+                    verdict = XTRACE_LEAK
+                elif kind == "unmeasured":
+                    # **已觀察到外流、只是分類失敗 ⇒ 繞過，不是量不到**（R39，#33 verify R38 第 3 列）。前一版判「量不到」，
+                    # 而量不到不改 rc：Codex 的多行群組輸入讓 lint 與神諭同時 rc=0。外流是 baseline 的事實，分類是額外的歸屬；
+                    # 歸屬失敗不抵銷事實。
+                    verdict = "不一致：繞過（PR 文字已經外流，來源分類量不到：%s——分類失敗不抵銷已觀察到的外流）" % detail
                 elif kind == "G":
                     # 換掉接 neutralise 的邏輯行，外流原封不動 ⇒ 印它的是**另一條命令**——lint 明寫的「已知不涵蓋，第二組」第 2 條
                     # 「一條管線＝整個區塊已過濾」（Codex R32 第 4 條）。按類別記已知：整類在「什麼算已過濾」改掉的那一天一起翻。
-                    if strict_blocks(in_step):
-                        verdict = ("不一致：繞過（已知類別 G：一條管線＝整個區塊已過濾——差分：換掉接 neutralise 的邏輯行後外流原封不動，"
-                                   "限制第 2 條；`--strict` 的群組規則擋）")
-                        classes = ["G"]
-                    else:
+                    if not strict_blocks(in_step):
                         verdict = STRICT_MISS % "G"
+                    else:
+                        why = strict_blocks_text(reduce_leaking_run(run, ctx[0], bash, stub_bin, yenv))
+                        if why is None:
+                            verdict = CAUSE_MISS % "G"
+                        else:
+                            verdict = ("不一致：繞過（已知類別 G：一條管線＝整個區塊已過濾——差分：換掉接 neutralise 的邏輯行後外流原封不動，"
+                                       "限制第 2 條；刪掉與外流無關的行之後 `--strict` 仍擋：%s）" % why[:80])
+                            classes = ["G"]
                 else:
                     streams, g_part = detail
                     if "stdout" in streams:
                         verdict = "不一致：繞過（接 neutralise 的管線自己把 PR 文字印到 stdout——不是 G 也不是 S-2）"
                     elif any(in_step(ln) and STRICT_GROUP_RULE_MSG in m for ln, m in strict_out()[0]):
-                        # S-2 的定義就是這句話本身：管線自己只從 stderr 外流，預設模式不要求 `2>&1`，而 `--strict` 的群組規則
-                        # **真的**擋下這個 step。檔案本身是 `--strict` 時，這裡查的就是剛才放行它的同一次 lint ⇒ 結構上不可能
-                        # 成立——所以不需要另外的「模式是不是 strict」判斷（那會是一條等價突變）。
-                        verdict = ("不一致：繞過（已知類別 S-2%s：管線自己只從 stderr 外流、缺 `2>&1`——預設模式不要求，"
-                                   "`--strict` 確實擋下這個 step）" % ("＋G（同一 step 另有別的命令也印）" if g_part else ""))
-                        classes = ["S-2"] + (["G"] if g_part else [])
+                        # 檔案本身是 `--strict` 時，這裡查的就是剛才放行它的同一次 lint ⇒ 結構上不可能成立——所以不需要另外的
+                        # 「模式是不是 strict」判斷（那會是一條等價突變）。S-2 另外要求**機制**成立（`s2_mechanism`）與原因檢查。
+                        mech = s2_mechanism(run, ctx[0], bash, stub_bin, yenv, mlines, ctx[1])
+                        why = mech and strict_blocks_text(reduce_leaking_run(run, ctx[0], bash, stub_bin, yenv))
+                        if not mech:
+                            verdict = ("不一致：繞過（接 neutralise 的管線自己把 PR 文字印到 stderr，但每一段補上 `2>&1`、"
+                                       "或（bash 自己的錯誤訊息時）左邊包成群組，外流都不消失——不是 S-2）")
+                        elif why is None:
+                            verdict = CAUSE_MISS % "S-2"
+                        else:
+                            verdict = ("不一致：繞過（已知類別 S-2%s：管線自己只從 stderr 外流——%s；預設模式不要求，"
+                                       "刪掉與外流無關的行之後 `--strict` 仍擋：%s）"
+                                       % ("＋G（同一 step 另有別的命令也印）" if g_part else "",
+                                          "缺 `2>&1`（每一段補上就消失）" if mech == "missing-2to1"
+                                          else "展開期／重導向錯誤早於 `2>&1` 生效（左邊包成群組就消失）", why[:80]))
+                            classes = ["S-2"] + (["G"] if g_part else [])
                     else:
                         verdict = ("不一致：繞過（接 neutralise 的管線自己把 PR 文字印到 stderr，而 `--strict` 的群組規則"
                                    "沒有擋下這個 step——不是預設模式獨有的缺口，不是 S-2）")
