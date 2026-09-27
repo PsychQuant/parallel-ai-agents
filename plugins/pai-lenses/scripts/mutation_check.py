@@ -1281,7 +1281,7 @@ MUTATIONS += [
     ("oracle: YAML env 三層覆蓋不帶進腳本（R37，R36 第 8 列 → good-r37a-oracle-env-three-layers）",
      '        env = dict(yaml_env or {})', '        env = {}', "oracle"),
     ("oracle: 續行判定關掉 bash 剖析那一支（R37 → known-r37a-g-continued-pipeline 的註解續行 step）",
-     '    return _bash_n(line, bash)[0] != 0 and _bash_n(line + "\\n:", bash)[0] == 0',
+     '    return (_bash_n(line, bash)[0] != 0 and _bash_n(line + "\\n:", bash)[0] == 0\n            and _dangling_op(line) != "andor")',
      '    return False', "oracle"),
     ("oracle: 續行判定關掉行尾反斜線那一支（R37 → known-r37a-g-continued-pipeline 的反斜線續行 step）",
      '    if re.search(r"(?<!\\\\)(?:\\\\\\\\)*\\\\$", line):\n        return True',
