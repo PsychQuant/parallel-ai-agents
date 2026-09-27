@@ -1,0 +1,13 @@
+# **不是繞過，是限制**（fail-closed；神諭記在 KNOWN_DISAGREE）：群組裡不得再有群組——恰好一對大括號的論證不判斷哪個 `{` 是保留字。要短路就用 `if`。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: nested group
+        shell: bash
+        run: |
+          { true || { echo "::notice::$PR_TITLE"; }; } 2>&1 | python3 scripts/neutralise.py

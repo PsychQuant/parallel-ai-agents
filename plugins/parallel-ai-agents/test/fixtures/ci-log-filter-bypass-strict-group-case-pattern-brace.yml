@@ -1,0 +1,20 @@
+# 群組規則為什麼是「恰好一對大括號」而不是計深度：`case` 的模式 `{)` 不是保留字，計深度會把它當成開群組、
+# 以為下一個 `}` 之後群組還開著——bash 其實已經關了，`echo` 在群組外執行（bash 5.2 實測印出 PR 文字）。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: case pattern brace fools a depth counter
+        shell: bash
+        run: |
+          {
+          case x in
+          {) : ;;
+          esac
+          }
+          echo "::notice::$PR_TITLE"
+          } 2>&1 | python3 scripts/neutralise.py

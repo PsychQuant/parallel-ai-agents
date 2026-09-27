@@ -1,0 +1,14 @@
+# #33 verify R37 完整性審查（缺陷 c）：同上，算術**展開** `$((…))` 裡的命令替換（也是展開期錯誤／輸出的 E 類形狀，但這裡寫的是 `>&2`，fd 流向規則本來就該擋）。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo $(( $(echo "$PR_TITLE" >&2; echo 1) )) 2>&1 | python3 scripts/neutralise.py

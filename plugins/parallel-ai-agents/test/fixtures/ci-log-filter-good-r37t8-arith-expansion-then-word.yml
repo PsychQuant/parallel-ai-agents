@@ -1,0 +1,14 @@
+# #33 verify R37 完整性審查（缺陷 b 修法的邊界）：算術**展開** `$(( 1 ))` 後面的 `then` 是 echo 的引數、不是保留字——fail-closed 只套用在算術**命令** `((…))` 與 `]]` 之後。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$PR_TITLE" $(( 1 )) then 2>&1 | python3 scripts/neutralise.py

@@ -1,0 +1,23 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺 drop-operand|_is_2to1|...|4（拿掉 `r["t"]["lit"] == "1"`）。
+# 群組收尾寫成 `2>&-`（關閉 fd2，不是複製到 fd1）。bash 實測（`bash -c '{ echo SECRET >&2; } 2>&- | cat' >/tmp/o 2>/tmp/e; cat /tmp/o /tmp/e`）：
+# stdout／stderr 都是空的——群組內 `echo SECRET >&2` 寫進被關掉的 fd2 直接失敗，PR_TITLE 沒有印到
+# 任何被擷取到的地方，也沒有真的進管線（原版判紅屬 fail-closed、無外流：見下）。`_redir_hit` 對 `2>&-`
+# 這個 trailing redir 本身直接放行（`tl == "-"` 的第一條分支就 `return None`，不判定為命中），
+# 但原版 `_is_2to1` 要求目標字面是 `"1"`——`"-"` 不是 `"1"` → 正確判「不是 2>&1」→ 群組不豁免 →
+# 群組內 `>&2` 的命中留在 `an["fd"]` → RULE 紅。
+# 突變體拿掉 `t["lit"] == "1"` 這個 guard 後，只要 `op == ">&"` 且 `pre == "2"` 且有目標，
+# 不管目標字面是什麼都被誤判成等同 `2>&1`（含關 fd 的 `2>&-`）→ 群組被誤豁免 → 群組內 `>&2`
+# 的命中被吞掉 → 突變體放行。
+# **不是繞過，是限制**（fail-closed；神諭記在 KNOWN_DISAGREE）：這個輸入 bash 實際跑起來不會外流 PR 文字，lint 依設計保守地拒絕它；
+# 這張 fixture 釘住的是那個拒絕（突變體放寬後會放行）。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: group trailer closes fd2, does not dup to fd1
+        shell: bash
+        run: |
+          { echo "$PR_TITLE" >&2; } 2>&- | python3 scripts/neutralise.py

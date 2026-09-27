@@ -1,0 +1,14 @@
+# t8 C5（`_cmdsub_end_case`：`esac` 收掉 case，之後的 `)` 才收命令替換）：`"$(case a in a) echo x | python3 … ;; esac)"` 同一行收得掉、整段是一個不透明的詞——裡面那條管線只過濾命令替換自己的輸出，外層 `echo "$PR_TITLE"` 照樣裸印；不收 case 時收尾的 `)` 被當成模式括號、配不起來，掃描器改照 code 掃、把裡面的管線當成這一行的過濾而放行。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$PR_TITLE" "$(case a in a) echo x | python3 scripts/neutralise.py ;; esac)"

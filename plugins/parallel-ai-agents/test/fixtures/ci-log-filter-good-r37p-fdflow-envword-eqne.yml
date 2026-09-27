@@ -1,0 +1,22 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺 ==↔!=|env_word|if text.startswith((key + "=", key + "+="))
+# or (bare and text == key):|1（`text == key` 換成 `text != key`）。
+# `export FOO`（裸名，不接 `=`，`FOO` 不在 `_RUN_ENV_KEYS` 之列）：bash 實測就是把一個未設定／既有的
+# 一般變數標記匯出，跟 bash 的 xtrace／`BASH_ENV` 之類啟動行為完全無關，PR_TITLE 不會外流。原版對
+# `_RUN_ENV_KEYS` 的四個 key（`SHELLOPTS`／`BASHOPTS`／`BASH_ENV`／`BASH_XTRACEFD`）逐一比對：
+# `A`（startswith）皆假，`B`（`bare and text == key`）因為 `"FOO" == key` 對四個 key 都假 → 沒有任何
+# 一個 key 命中 → `an["fd"]` 空 → 放行（`EXPECT: pass`，與 bash 實測一致）。
+# 突變體把 `text == key` 換成 `text != key` 後，`B` 變成 `bare and text != key`——`bare` 是 `True`，而
+# `"FOO"` 剛好跟四個 key **沒有一個相等**，於是 `text != key` 對四個 key 全部為真 → 每個 key 都命中
+# （訊息內容還會誤指是 `SHELLOPTS`／`BASHOPTS`……，其實出口的是 `FOO`）→ `an["fd"]` 非空 → 突變體誤判紅。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: bare export of an unrelated var name
+        shell: bash
+        run: |
+          export FOO
+          echo "$PR_TITLE" | python3 scripts/neutralise.py

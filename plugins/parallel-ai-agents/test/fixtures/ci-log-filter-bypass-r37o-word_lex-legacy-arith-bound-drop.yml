@@ -1,0 +1,48 @@
+# #33 verify R37 opsweep 補件：word_lex 群「依構造等價」反駁——殺
+#   drop-operand|_word|while e < n and d:|1|L1623
+# （拿掉 `e < n` 這個邊界，只留 `while d:`，`_word` 對舊式算術 `$[…]` 找收尾 `]` 的括號深度計數
+# 迴圈不再受長度限制）。
+#
+# 這條 `d` 計數本身跟 shell_scan 自己在 `brk` 狀態下追蹤 `[`／`]` 深度的規則**字面相同**
+# （都是見 `[` 加一、見 `]` 減一），但兩邊對「引號內的 `[`／`]` 該不該算進深度」不一致：shell_scan
+# 進入 `brk` 狀態後見到引號字元（`'`／`"`）會切去專門的引號分支（`quote == "'"`／`quote == '"'`），
+# 那個分支只逐字元搬字面、**完全不碰 `brk`**——引號內的中括號不計數；而 `_word` 這裡的 `d` 計數是
+# 對 `S[e]` 逐字元裸掃，**不分辨是否在引號內**，引號裡的 `[`／`]` 一樣被算進去。
+#
+# 於是可以構造出 shell_scan 判定平衡（`brk` 收回 0、整個 run 區塊不 `unparsed`，會走到 `_word`）
+# 但 `_word` 自己裸算卻不平衡的輸入：`$[1 + "["]`——shell_scan 進 `brk=1` 後遇到 `"` 進雙引號
+# 分支，裡面的 `[` 被引號分支吃掉、不算 `brk`；收尾雙引號之後遇到真正的 `]` 才把 `brk` 收回 0，
+# 判定平衡。`_word` 的 `d` 從 `p+2` 裸掃同一段文字：先數到引號內那個 `[`（`d` 變 2），再數到
+# 真正的 `]`（`d` 變回 1，**不是 0**）——因為原文裡再也沒有別的 `[`／`]` 了，`d` 永遠回不到 0。
+#
+# 原版：`while e < n and d:` 靠 `e < n` 這個邊界在耗盡整個 run 區塊文字後強制停下，`d` 仍非 0，
+# `hs = None`（`not d` 為假），`_word` 把這個 `$[…]` 標成 `bad_sub=True`；`_Sh.subs()` 對
+# `bad_sub` 一律印「引號或 `${…}` 裡的命令替換對不到收尾…不解析就不放行」的 RULE——這正是原版
+# 這個既有、與本次突變無關的裸掃 quote-blind 瑕疵本身固有的 fail-closed 行為（不是本次要修的東西，
+# 只是拿它當探針：這一步兩版原本就會判定同一種 RULE，探針的目的是看拿掉邊界之後判定會不會變成
+# **另一種**紅）。
+#
+# 突變體拿掉 `e < n` 後，`while d:` 永遠不會因為邊界而停，會一路把 `e` 推到超出 `S` 長度、
+# 對 `S[e]` 索引時丟出 `IndexError`。這個例外被外層 `try: an = _analyse(rl_code, rl_src) except
+# (IndexError, KeyError, ValueError, RecursionError) as e: reject(r, "規則層剖析這個 run 區塊時
+# 出錯（%s: %s）——不解析就不放行" % …)` 接住，印的是 `PARSE:`（`reject()` 最終落到
+# `print("%s:%d: PARSE: %s" % …)`）——與原版印 `RULE:`（經 `bad_sub` → `self.hit()` →
+# `an["fd"]`）是**不同的紅色來源標記**。`mutcheck.py` 對 `# EXPECT: rule-red` 判定原版
+# `original=rule-red`、突變體 `mutant=parse-red` → KILL。
+#
+# bash 5.3 實測：`bash -n -c 'echo $[1 + "["] | cat'` 語法通過（rc=0，`$[…]` 本身不需要真的算得出
+# 值就能通過語法檢查）；`bash -c 'echo $[1 + "["]'` 實際執行時因為 `"["` 不是合法的算術運算元而
+# 印出 `arithmetic syntax error: operand expected`（rc=1）——但那是**算術語意**錯誤、不是外流
+# PR 文字，本 fixture 只是拿這個裸掃 quote-blind 的既有瑕疵當探針，不代表這段是真的危險輸入。
+# 神諭對帳（R37 移植 #61 時補）：算術式裡加 `$PR_TITLE`——bash 的算術錯誤訊息帶著展開後的式子印到 stderr，
+# lint 的紅因此是「一致」而不是「誤擋」；殺掉的突變體重驗仍然殺。
+# EXPECT: rule-red
+name: t
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: t1
+        run: |
+          echo $[1 + "[" + $PR_TITLE] | python3 scripts/neutralise.py

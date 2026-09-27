@@ -1,0 +1,14 @@
+# #33 verify R37 合併時協調者發現（上一張的邊界）：`neutralise.py(` 在 bash 是語法錯誤（實測「未預期的字組「(」」），不是詞尾——修法只收 bash 的詞尾 metacharacter，`(` 不在其中。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: glued-paren
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py(x)

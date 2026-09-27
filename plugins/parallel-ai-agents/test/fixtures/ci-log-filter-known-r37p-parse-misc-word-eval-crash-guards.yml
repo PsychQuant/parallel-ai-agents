@@ -1,0 +1,41 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺 `drop-operand|word|...|1` 與
+# `drop-operand|simple|if name == "eval" and args and all(...)|3`（parse-misc 組，各自去掉 `|L行號`）。
+#
+# 【word】`_Sh.word` 是 `t is not None and t["k"] == "W" and t["code"] in codes`；拿掉 `t is not None`
+# 只剩 `t["k"] == "W" and t["code"] in codes`。這個述詞唯一在 `parse_pipeline` 的
+# `while self.word(self.tok(), "!", "time"): self.i += 1` 當迴圈條件用——`self.tok()` 讀到最後一個
+# 詞元時回 `None`，原版的 `t is not None` 讓迴圈乾淨結束；突變體對 `None["k"]` 取值，`TypeError` 沒被
+# 下面 `except (IndexError, KeyError, ValueError, RecursionError)` 接住，直接把整支 lint 炸掉（uncaught
+# traceback，非 0 退出碼、且訊息裡沒有 `: RULE: `）。第一個 step 的 run 區塊安全地以裸 `!`（bash 的
+# 「否定空指令」，讀 STDIN 為空，不印任何東西）收尾，讓 `!` 變成整串內嵌 Python 剖析到的**最後一個詞元**、
+# 後面連換行都沒有——原版正常結束、判 pass；突變體在這裡 `TypeError`、整支腳本連 traceback 一起噴出、
+# 判定不再是 pass。bash 5.3 實測（`printf 'echo hi | true\n!\n' > t.sh`）：`bash -n t.sh` rc=0（合法語法）、
+# `bash t.sh` rc=1（`!` 否定空指令的退出碼，沒有任何輸出）——安全、也不是被刻意 fail-closed 擋下。
+#
+# 【eval 的第 3 個運算元】`if name == "eval" and args and all(a["lit"] is not None for a in args):` 拿掉
+# `all(...)` 只剩 `name == "eval" and args`。原版要求 **全部** 引數都是字面詞才把 `eval` 的內容當成新指令
+# 遞迴剖析（`eval set -x` 這類）；引數含非字面詞（如 `"$PR_TITLE"`）時原版整條跳過、`eval` 這行不再分析
+# （已知的保守留白，見下）。突變體只看 `args` 是否非空，不看是不是字面——碰到非字面引數時仍然進分支，
+# 執行 `" ".join(a["lit"] for a in args)`，`a["lit"]` 是 `None`，`str.join` 對 `None` 直接 `TypeError`，
+# 一樣沒被下面的 `except` 接住，整支腳本炸掉。第二個 step 的 `eval "$PR_TITLE"` 就是這個非字面引數；
+# 神諭把它歸進**已知類別 G**（一條管線＝整個 run 區塊視為已過濾——這一行跟接 neutralise 的那行不是同一條
+# 管線，`eval` 動態執行的內容本來就不在 lint 分析範圍內，是文件化的既知留白，不是這次要證的缺陷），故補
+# `# KNOWN-CLASS: G` 讓神諭的雙向閘門對得上。bash 5.3 實測：`PR_TITLE='not a real command xyz' bash -c
+# 'eval "$PR_TITLE"'` → stderr `bash: line 1: not: command not found`、rc=127——`eval` 的內容確實原封不動
+# 送進 shell 執行，字面文字外流到 stderr，不經任何管線。
+# KNOWN-CLASS: G
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: leading-bang loop ends the token stream
+        run: |
+          echo hi | python3 scripts/neutralise.py
+          !
+      - name: eval with a non-literal argument
+        run: |
+          echo hi | python3 scripts/neutralise.py
+          eval "$PR_TITLE"

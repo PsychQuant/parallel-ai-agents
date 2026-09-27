@@ -1,0 +1,26 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺 `parse_case` 消費 `in` 關鍵字那行的 `±1→±2` 突變體
+# （`self.word(self.tok(), "in"): self.i += 1` 改成 `self.i += 2`，`parse_case` 內第 1 個裸
+# `self.i += 1`）。
+# 原版：看到 `in` 後 `self.i += 1`，游標落在第一個模式詞（本檔是
+# `"$(echo "$PR_TITLE" >&2)"`），outer while 的第一輪把它當模式掃描、呼叫 `self.subs()`，命令替換裡
+# 的 `>&2` 被掃到、登記 hit。
+# 突變體：`self.i += 2` 多跳一格，直接跳過整個第一個模式詞，游標落在它後面的 `)`——pattern-scan 迴圈
+# 的條件 `not self.op(self.tok(), ")")` 立刻為假、跑 0 輪，模式詞的 `subs()` 從未被呼叫。之後
+# `if self.op(self.tok(), ")"): self.i += 1` 把這個 `)` 吃掉，body `echo ok` 照常解析（安全），
+# `;;`、`esac` 也都正常收尾——除了那個 hit 消失，其餘結構完好。
+# bash 5.3 實測（真的外流，非 fail-closed）：
+#   PR_TITLE=LEAK2 bash -c 'case x in "$(echo "$PR_TITLE" >&2)") echo ok ;; esac'
+#   stdout 空、stderr 印出 `LEAK2`。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          case x in "$(echo "$PR_TITLE" >&2)") echo ok ;; esac | python3 scripts/neutralise.py

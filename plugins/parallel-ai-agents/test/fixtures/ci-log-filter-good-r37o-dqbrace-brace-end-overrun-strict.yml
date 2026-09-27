@@ -1,0 +1,29 @@
+# #33 verify R37 opsweep 補件：殺 `_brace_end` 的三個存活突變體——`drop-operand|…|while k < n and d:`
+# （拿掉 `d` 的迴圈守衛）、`==↔!=|…|if c == "\\":`（backslash 判定反向）、`±1→±2|…|k += 1`（一般字元的步進
+# 改成 2）。三個都會讓 `_brace_end("A", 0)`（`${A}` 拿掉外層 `${` 之後的內容）算不出正確的收尾位置 2、
+# 而是失控地一路數到整個字串結尾（drop-operand／`==↔!=`）或因為隔格跳讀漏看那個 `}`（±1→±2，`_clamp`
+# 自己的字元計數平行驗證見 `probe_brace_funcs.py` 的 `oddlen` 案例）。
+# `_brace_end` 算出的錯誤終點本身不會外洩（`_clamp` 仍照 `C` 的挖空邊界自行停在正確位置），但它會回頭
+# 影響 `_Sh` 對這一段的**詞邊界**判定：`${A}` 與後面那個真正屬於 fd 前綴的字面 `2`（`2>&1`）之間只隔一個
+# 真正的空白字元，而空白在 `C` 裡與挖空佔位符**長得一模一樣**（都是 `" "`）——`_clamp` 分不出兩者，於是
+# 失控的大 `e` 讓它把那個空白也吞進同一個詞，`2` 不再是獨立的字面詞，`2>&1` 的 fd 前綴辨識（要求緊貼、
+# 獨立的數字詞）因此失敗，整段被判定成沒有把 fd 2 併進管線（`--strict` 底下的 `bad_segs`）。
+# 原版三個突變體都不影響：`_brace_end("A",0)` 正確地只吃 `A}`（2 個字元），`_clamp` 正常在空白處停下，
+# `2` 仍是獨立字面詞，`--strict` 判定 pipefail／fd2-併管線 皆通過。
+# `shell: bash` 用來滿足 `--strict` 對 pipefail 樣板的要求（否則連原版都會因為沒宣告 pipefail 而翻紅，
+# 見 fixture `ci-log-filter-good-r37b-strict-shell-quoted-bash.yml` 的同一手法）。
+# bash 5.3 實測：`echo ${A} 2>&1 | cat`（`A` 未設）安全地印出一個空行，`bash -n` parse rc=0。
+# **R37 移植 #61 群組規則後**：上面說的 `bad_segs`（逐段 `2>&1`）規則已拿掉，管線改寫成群組形式——這張原本的殺法失效，
+# 三個突變體是否仍被別的 fixture 殺掉，以移植後重跑的 opsweep 為準。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe
+        shell: bash
+        run: |
+          { echo ${A}; } 2>&1 | python3 scripts/neutralise.py

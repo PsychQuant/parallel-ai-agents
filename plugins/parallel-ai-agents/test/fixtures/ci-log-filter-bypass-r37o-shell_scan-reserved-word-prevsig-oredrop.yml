@@ -1,0 +1,28 @@
+# #33 verify R37 opsweep 補件：殺 drop-operand|shell_scan|if (cmd_pos and ch.isalpha() and (prev_sig is None or prev_sig in SHELL_WORD_BREAK)):|5|L983。
+# 這一行是「保留字整段消費」的觸發條件（`cmd_pos` 在命令位置、`ch` 是字母開頭、`prev_sig` 落在詞界）。
+# 第三個子句是內層 `or`：`prev_sig is None or prev_sig in SHELL_WORD_BREAK`。#5 拿掉的是
+# `prev_sig in SHELL_WORD_BREAK` 那一半，只留 `prev_sig is None`——於是**只有邏輯行的最開頭**
+# （這時 prev_sig 才是 None）才會被當成保留字候選；同一行裡「分號之後」「`[[` 之後」這類
+# 中途出現、prev_sig 是空白／`;`／`(` 等一般詞界字元（在 SHELL_WORD_BREAK 裡、但不是 None）的
+# `if`，反而不再被辨識成保留字。這條整段消費機制存在的目的正是保留 `cmd_pos=True` 讓緊接在
+# `if`／`while` 之後的 `[[`／`((` 能被正確認成條件式／算術命令；拿掉之後，這些 `if` 落回逐字元
+# 掃描，`cmd_pos` 在第一個字母就被清成 False，之後的 `[[` 因為 `cmd_pos` 不成立而不被承認成條件式，
+# 內容不再被當成算術/條件式吃掉，而是被當成**真正會執行的一般 code** 逐字元掃出來。
+# 本例把 `if [[ ... ]]` 放在 `true;` 之後（`prev_sig` 此時是 `;`，在 SHELL_WORD_BREAK 但不是
+# None）：原版正確辨認出 `if`、保留 `cmd_pos=True`，`[[ 1 | python3 scripts/neutralise.py ]]`
+# 被當成條件式內容整段吃掉（管線是假的、不算數）——沒有任何真管線、也沒有 LOG-FILTER 宣告 →
+# RULE:「既沒有經 neutralise.py」。突變體反而把 `if` 誤判成不是保留字、`[[…]]` 逐字元掃出來，
+# 裡面「1 | python3 scripts/neutralise.py」變成看起來真的接到 neutralise 的管線 → PASS，方向與
+# 原版相反。
+# bash 5.3 實測：`true; if [[ 1 | python3 -c 'pass' ]]; then :; fi` 是合法語法、`[[ 1 | python3 ]]`
+# 是條件式內容（`|` 在 `[[…]]` 裡不建管線），`rc=0`，沒有任何管線被真正建立過。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: if-after-semicolon-fake-cond-pipe
+        run: |
+          true; if [[ 1 | python3 scripts/neutralise.py ]]; then :; fi

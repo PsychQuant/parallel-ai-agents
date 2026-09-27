@@ -1,0 +1,28 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺 `parse_case` 消費模式收尾 `)` 那行的 `±1→±2`
+# 突變體（`if self.op(self.tok(), ")"): self.i += 1` 改成 `self.i += 2`；`parse_case` 內第 4 個
+# 裸 `self.i += 1`）。
+# 原版：模式 `x` 收尾的 `)` 被吃掉後，游標落在 body 的第一個詞元——本檔 body 是
+# `>&2 echo "$PR_TITLE"`（bash 允許重導向寫在命令名之前），`self.parse_list()` 接手、
+# `parse_command()` 的詞元收集迴圈 `while tok().k in ("W","R"):` 第一個就撿到 `>&2`
+# （`R` 種類）、呼叫 `self.redir()` → `_redir_hit` 判定命中，hit 正常登記；之後 `echo`、
+# `"$PR_TITLE"` 照常收進 words。
+# 突變體：`self.i += 2` 多跳一格，把 `)` 跟緊接的 `>&2` 一起跳過，`self.parse_list()` 從 `echo`
+# 開始接手——`echo "$PR_TITLE"` 單獨來看只是印到 fd 1（管線正常過濾），前導的 `>&2` 已經從詞元流
+# 裡消失、不會再被任何地方掃到，hit 永遠不會登記，整份判定從 `rule-red` 變成 `pass`。
+# bash 5.3 實測（真的外流，非 fail-closed；`>&2` 在命令名之前一樣先套用，把子殼層的 fd 1 指到
+# stderr）：
+#   bash -c 'case x in x) >&2 echo hi ;; esac | cat' 2>/tmp/e 1>/tmp/o
+#   /tmp/o 空、/tmp/e 印出 `hi`。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          case x in x) >&2 echo "$PR_TITLE" ;; esac | python3 scripts/neutralise.py

@@ -1,0 +1,15 @@
+# #33 verify R37 相鄰輸入（誤擋方向，R36 沒點名）：跨行的雙引號命令替換裡，內層字串帶撇號。380e4a4 把內層 `"` 當成
+# 外層收尾、撇號開了單引號，一路開到區塊結尾 ⇒ PARSE，而最後一行是真的過濾管線（bash 5.3 實跑接到 neutralise）。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: dq-cmdsub-multiline-apostrophe
+        run: |
+          X="$(
+            echo "it's multi-line"
+          )"
+          echo "$X" 2>&1 | python3 scripts/neutralise.py

@@ -1,0 +1,42 @@
+# #33 verify R37 opsweep 補件（最終 lint，scanner 群組）：殺兩個 `_word` 突變體（同一張 fixture 殺得掉兩個，
+# 兩者都改到同一行的同一個子條件）：
+#   drop-operand|_word|if (c in _WORD_END and not hollow) or (c == "`" and stop == "`"):|6
+#     （拿掉 `stop == "\`"`，只剩 `c == "\`"`——變成「只要看到反引號就結束這個詞」，不管呼叫這次
+#     `_word`/`_lex` 遞迴時的 `stop` 到底是不是 `` ` ``）
+#   ==↔!=|_word|if (c in _WORD_END and not hollow) or (c == "`" and stop == "`"):|2
+#     （同一行另一個 `==` 換 `!=`，效果相同：不再需要「這一層遞迴本來就是被反引號叫進來的」這個
+#     前提，任何反引號都會被誤判成「這個詞到此為止」）
+#
+# 原版：頂層讀一個詞時 `stop` 不是 `` ` ``，遇到詞裡面的反引號（`` `true` ``）不會在這裡 `break`，
+# 而是落到下一個分支 `if c == "\`": sub, p = _lex(C, S, p + 1, "\`")`——遞迴讀掉整個
+# `` `true` ``、拿到它的子詞元，然後**繼續讀同一個詞**剩下的字面部分（`/dev/stderr`），把
+# 字面文字正確接進 `lit`／`skel`。
+#
+# 兩個突變體都讓「看到反引號就結束詞」不再需要 `stop == "\`"` 這個前提：詞從第一個反引號的地方就
+# 整個中斷。目標詞是重導向目標 `` `true`/dev/stderr ``，反引號出現在**詞的最前面**（`` `true` ``
+# 展開成空字串），原版正確把它讀成一個詞、骨架含 `/dev/stderr`；突變體在遇到第一個反引號時就直接
+# `break`，讀到的詞是空字串——`/dev/stderr` 這段文字從未被當成這個重導向目標的一部分，`_redir_hit`
+# 看不到骨架裡的 `dev`，判定放行。
+#
+# bash 5.3.15 實測（`true` 無輸出，展開成空字串，目標變成絕對路徑 `/dev/stderr`）：
+#   bash -c 'true; echo hi > `true`/dev/stderr 2>&1 | { echo GOTPIPE; cat; }'
+#   印出 `hi`（先於 `GOTPIPE`，寫到終端機的 stderr）而不是被 `cat` 收到——資料真的沒有進管線。
+#   此 fixture 已用 test/oracle.py 核對（DEBUG trap + PIPESTATUS 量測）：lint=RULE-red、
+#   oracle=piped、一致——原版判定與 bash 實測相符，不是 fail-closed 誤擋。
+#
+# （附註：同一機制若把反引號換成字面 `foo` 前綴＋`` `true` ``＋`/dev/stderr`，`true` 展開成空字串
+# 後只會拼出相對路徑 `foo/dev/stderr`，不落在真正的 `/dev` 之下——oracle 對那種寫法回報「不一致：
+# 誤擋」，本 fixture 特意把反引號放在詞的**開頭**、讓展開後的目標是絕對路徑，避免踩到那個既有的
+# 誤擋類別。）
+#
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: redirect target starting with a backtick substitution then an absolute /dev path
+        shell: bash
+        run: |
+          echo "$PR_TITLE" > `true`/dev/stderr 2>&1 | python3 scripts/neutralise.py

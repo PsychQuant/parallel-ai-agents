@@ -1,0 +1,28 @@
+# #33 verify R37 opsweep 補件：殺
+# `drop-operand|<module>|if STRICT and _flow_value(l2):|2`
+# ——把根層級 `defaults.run` flow-形式檢查裡的 `_flow_value(l2)` 拿掉，變成 `if (STRICT):`。
+# 原版：`--strict` 底下，`defaults.run` 寫成**正常 block 形式**（`run:` 底下另起一行 `shell:`）
+# 完全可以解析，`_flow_value(l2)` 是 False，這個檢查因此不拒絕；`wf_shell` 正常讀到 `bash`，
+# 整個 workflow `pass`。
+# 突變體拿掉 `_flow_value(l2)` 之後，只剩 `STRICT`——只要帶了 `--strict`，**不論 `defaults.run`
+# 是不是 flow 形式**都會被這一行拒絕，變成 `parse-red`。兩者不同，這張 fixture 殺得掉它。
+# `shell: bash` 用關鍵字 `bash`（GitHub 對它套 `bash --noprofile --norc -eo pipefail {0}`），
+# 滿足 `--strict` 對 pipefail 樣板的要求，不必在每個 step 各自宣告。
+# bash 5.3 實測：`echo hi 2>&1 | python3 -c "import sys; sys.stdin.read()"` rc=0，
+# `bash -n` parse 正常；`bash --noprofile --norc -eo pipefail -c 'echo hi 2>&1 | python3 -c pass'`
+# rc=0（pipefail 樣板本身可執行，與本張 fixture 判定的爭點無關）。
+# R37 移植 #61 群組規則後管線改寫成群組形式（`--strict` 只收 `{ …; } 2>&1 | python3 …`）。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+defaults:
+  run:
+    shell: bash
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe
+        run: |
+          { echo hi; } 2>&1 | python3 scripts/neutralise.py

@@ -1,0 +1,33 @@
+# #33 verify R37 opsweep 補件：殺 ==↔!=|shell_scan|if dq_ret and ((ch == "`" and not bt) if dq_ret[-1] == 0 else (...)):|1|L1051。
+# 這行判斷「從雙引號進來、跨行沒收尾而改當 code 掃的反引號」該在**哪個字元**收尾、回到雙引號。
+# 對反引號（`dq_ret[-1]==0`）的判法是 `ch == "`" and not bt`：`bt` 的切換（`elif ch == "`":
+# cmd_pos = not bt; bt = not bt`）就緊接在這行**之前**、同一個字元的同一次迭代裡，所以每次
+# 走到這裡，「目前這格字元是收尾反引號」和「bt 剛剛被切成 False」永遠同時成立、同時失敗，
+# 兩者互為充要條件。突變體把 `==` 換成 `!=`，於是判法變成 `ch != "`" and not bt`——**收尾反引號
+# 自己那一格**反而不觸發（`ch != "`"` 在那一格是 False），改成**收尾反引號之後的下一個字元**
+# （只要 `not bt` 仍然成立，它確實成立，因為 bt 已經是 False 了）觸發。
+#
+# 觸發的動作（`dq_ret.pop(); quote = '"'; code.append(ch); i += 1; continue`）把「目前這格字元」
+# 原樣接回 code、然後**恢復成雙引號模式**。原版在收尾反引號那一格觸發，恢復雙引號模式後，
+# 反引號後面緊接的雙引號收尾字元 `"` 會被雙引號分支正常辨識、正確收掉整個字串。突變體晚一格
+# 觸發：收尾反引號那一格因為條件不成立而落到一般 code 逐字元處理（照樣把反引號字元原樣接回
+# code，**但沒有恢復雙引號模式**，`quote` 還是 None）；緊接著那個真正該收尾雙引號的 `"` 字元，
+# 因為 `quote` 不是 `'"'`，反而被當成**重新開啟**一個新雙引號（一般的「遇到引號字元就進入
+# 引號模式」分支）。這個誤開的雙引號從此吃掉後面所有內容（含真正的管線
+# `2>&1 | python3 scripts/neutralise.py`），到 run 區塊結尾都沒有對應的收尾引號 →
+# 「引號到 run 區塊結尾都沒收」→ PARSE。原版乾淨收尾、管線正常曝光、接到 neutralise.py → PASS。
+# bash 5.3 實測（反引號跨行、內容緊接雙引號收尾）：
+#   bash -c 'echo "before `echo mid
+#   `" 2>&1 | python3 -c "import sys;print(sys.stdin.read())"'
+#   印出 "before mid\n\n"，rc=0——乾淨執行，字串正確收尾、管線正常建立。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: dq-multiline-backtick-immediately-closed-by-dq
+        run: |
+          echo "before `echo mid
+          `" 2>&1 | python3 scripts/neutralise.py

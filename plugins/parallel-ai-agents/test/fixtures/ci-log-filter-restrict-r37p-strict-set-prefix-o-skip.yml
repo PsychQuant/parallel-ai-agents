@@ -1,0 +1,51 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺一個 wave3-strict 存活突變體：
+#   ±1→±2|_set_prefix_line|k += 1|1
+#
+# `set -o pipefail badtoken` 當群組前綴行，後面接一個合規的 `{ …; } 2>&1 | python3
+# …neutralise.py`。原版 `_set_prefix_line`：處理 `-o` 時 `k=1`，內層驗證
+# `toks[k+1]="pipefail"` 在 `SET_OPT_NAMES` 白名單裡（合規），內層 `k += 1` 把 `k` 推到
+# 2（指向 `"pipefail"`），外層固定的 `k += 1` 再推到 3（指向 `"badtoken"`）；下一輪迴圈對
+# `"badtoken"` 做 `re.fullmatch(r"-(?=.)([eu]*)(o?)", "badtoken")`——不是以 `-` 開頭，
+# 匹配失敗，`if not m: return False`——**原版正確地把 `badtoken` 這個多餘 token 檢查出來**，
+# 回 False（這一行不是合規的 `set` 前綴）。`strict_group_violation` 因此把這一行當成
+# body 的開頭，`body[0][:1] != ["{"]` 成立，回違規字串；本 fixture 沒有宣告
+# `# LOG-FILTER:`，印 RULE-red。
+#
+# 把內層 `k += 1` 改成 `k += 2` 後：處理完 `-o pipefail` 這對 token，`k` 從 1 直接跳到
+# 1+2=3（內層），外層固定的 `k += 1` 再推到 4——**跳過了原本該落在 `k=3` 的 `"badtoken"`
+# 這次檢查**！`toks` 長度剛好是 4，`k=4=len(toks)`，迴圈結束，回 `True`：`"set -o
+# pipefail badtoken"` 被誤判成合規前綴（`"badtoken"` 從未被 `re.fullmatch` 驗證過）。
+# `strict_group_violation` 把這一行吃成 prefix，`k` 前進到下一個邏輯行（真正的群組），
+# 群組本身寫法合規，`group_why` 回 `None`——整份判定從 RULE-red 掉成 `pass`。
+#
+# 這是 `_set_prefix_line` 的獨立函式邏輯，不是要交給 `bash -c`／`bash -n` 執行的腳本；
+# 已用抽出的同一份原始碼直接呼叫驗證：
+# `_set_prefix_line(["set","-o","pipefail","badtoken"])` 原版回 `False`，
+# 把內層 `k += 1` 改成 `k += 2` 後回 `True`。
+#
+# bash 5.3 實測（`shell: bash` 對應 GitHub 的 `bash --noprofile --norc -eo pipefail {0}`，
+# `-e` 在場）：`bash -c 'set -e; set -o pipefail badtoken; echo SHOULD_NOT_PRINT'` →
+# 印出 `SHOULD_NOT_PRINT`，rc=0——`badtoken` 在 `-o pipefail` 這個完整選項讀完之後，被
+# bash 自己的 `set` 內建當成**位置參數**（`$1="badtoken"`），不是非法選項，不會出錯、
+# 不會觸發 `-e` 中止，後面的群組正常照跑。神諭對這個 step 的判定是「誤擋」
+# （`oracle=piped`）：它判斷若放行，PR 文字最終仍會走經過濾的管線，不是真的外流。
+# **這是 fail-closed、無外流的一例**——本 lint 的字面驗證機制拒絕的理由是「這一行不是
+# `-e`／`-u`／`-o <選項>` 的合規前綴形狀」，不是因為它真的會讓 PR 文字外流；本檔案要
+# 證明的是 `_set_prefix_line` 自己對這個輸入判得對，不是「這個輸入若被接受會不會外流」。
+# LINT-ARGS: --strict
+# **不是繞過，是限制**（fail-closed；神諭記在 KNOWN_DISAGREE）：這個輸入 bash 實際跑起來不會外流 PR 文字，lint 依設計保守地拒絕它；
+# 這張 fixture 釘住的是那個拒絕（突變體放寬後會放行）。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: set -o pipefail followed by a bad token is not accepted as a group prefix line
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail badtoken
+          { echo "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py

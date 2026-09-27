@@ -1,0 +1,14 @@
+# #33 verify R37（缺陷 c 的相鄰形狀，協調者補）：舊式算術 `$[…]` 裡的命令替換寫到 stderr——規則層前一版同樣整段跳過、不找命令替換。bash 5.3 實測 PR 文字從 stderr 裸印。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo $[ $(echo "$PR_TITLE" >&2; echo 1) ] 2>&1 | python3 scripts/neutralise.py

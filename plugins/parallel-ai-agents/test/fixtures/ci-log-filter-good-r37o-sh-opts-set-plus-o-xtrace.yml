@@ -1,0 +1,16 @@
+# #33 verify R37 opsweep 補件（sh-opts A）：`_Sh.set_cmd` 的 `elif on and nm in _TRACE_OPTS:` 拿掉 `on`
+# 會讓 `set +o xtrace`（關掉 trace）被誤判成開了 trace。`set +o xtrace` 的 `on = (m.group(1) == "-")`，
+# `+` 開頭 ⇒ `on = False`；原版 `on and nm in _TRACE_OPTS` 因此為假、不觸發 hit——這是安全動作（把 trace
+# 關掉），不該算外流。bash 5.3 實測：`bash -c 'set +o xtrace; echo "$-"'` 輸出不含 `x`，確認 `+o xtrace`
+# 不會開 trace。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        run: |
+          set +o xtrace
+          echo hi 2>&1 | python3 scripts/neutralise.py

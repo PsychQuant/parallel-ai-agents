@@ -1,0 +1,16 @@
+# #33 verify R37 opsweep 補件（word_lex 群）：`drop-operand|_interior_subs|if S.startswith("$(", k) or c == "`":|2`
+# （拿掉第二個運算元 `c == "`"`）。`_interior_subs` 掃 `[[ … ]]`／`((…))`／`$((…))`／`$[…]` 內部「照樣會執行的
+# 命令替換」時，跟 `_hidden_subs` 一樣並列反引號與 `$(…)` 兩種形式；拿掉反引號判定後，`[[ -n \`echo leak >&2\` ]]`
+# 裡的反引號只被當普通字元跳過，裡面 `>&2` 的重導向永遠進不了 `subs`，`_Sh` 因此看不到它。
+# bash 5.3 實測：`[[ -n \`echo leak >&2\` ]] && echo yes` 印出 `leak`（來自反引號裡的 `>&2`）；`-n ""` 為假，
+# `&& echo yes` 不執行，但外流字元已經印出，與後續判定無關。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: backtick-in-cond
+        run: |
+          [[ -n `echo leak >&2` ]] && echo yes 2>&1 | python3 scripts/neutralise.py

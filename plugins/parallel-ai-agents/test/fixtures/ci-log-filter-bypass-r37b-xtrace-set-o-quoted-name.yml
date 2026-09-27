@@ -1,0 +1,13 @@
+# #33 verify R36 第 8 列 → R37：xtrace 的各種拼法（set 的捆綁選項、shopt -o、非字面參數、經由 env 帶進子行程）。
+# `set -o "xtrace"`：選項名加引號（相鄰輸入，R36 沒點名）
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: xtrace on a pipe-filtered step
+        run: |
+          set -o "xtrace"
+          printf '%s\n' "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py

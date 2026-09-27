@@ -1,0 +1,15 @@
+# #33 verify R37 完整性審查（缺陷 d，**已知限制、刻意保留**）：頂層 `case` 的模式文字被預設模式當成 code——模式 `a|python3\ scripts/neutralise.py` 的 `|` 是「或」、不建管線（bash -n 通過），`PIPED_RE` 卻算它接了 neutralise，預設模式放行；bash 實測第一行裸印。`--strict` 由「看得到管線、規則層剖析不出它」那條擋下（`bypass-r37t8-strict-case-pattern-looks-piped`）。修它得把 case 追蹤延伸到頂層並挖空模式文字——頂層 case 在 workflow 裡很常見，現有追蹤對表示不了的形狀一律 fail-closed，延伸過去會在野外產生新的誤擋，本輪不做（lint 已知不涵蓋第三組第 5 條）。神諭列在 KNOWN_DISAGREE；哪天修好了這一列會變一致、神諭 rc=1 逼人拿掉。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$PR_TITLE"
+          case x in a|python3\ scripts/neutralise.py ) ;; esac

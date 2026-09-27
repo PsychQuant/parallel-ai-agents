@@ -1,0 +1,16 @@
+# #33 verify R36 第 8 列 → R37：`env:`（workflow／job／step 三層，以及 job 的 container.env）帶進 SHELLOPTS、BASHOPTS、BASH_ENV、ENV、BASH_XTRACEFD ⇒ RULE。
+# step 層 `ENV`（R36 點名的鍵）。神諭量不到這一條（它只在互動 shell／配合 xtrace 時生效，神諭的 bash 看不到外流）：step 用帶 `-o pipefail` 的 bash 樣板，神諭只跑字面 `bash`、判不可比——這裡驗的只有 lint 的規則，不宣稱對帳過 runner。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: step env ENV
+        shell: bash -eo pipefail {0}
+        env:
+          ENV: ./ci/init.sh
+        run: |
+          printf 'ok\n' 2>&1 | python3 scripts/neutralise.py

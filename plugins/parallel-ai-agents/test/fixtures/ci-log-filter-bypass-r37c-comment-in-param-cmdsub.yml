@@ -1,0 +1,13 @@
+# #33 verify R36 第 7 列（logic HIGH-4 p2）：命令替換裡詞首的 `#` 起註解，註解裡的 `)` 不收尾；`_cmdsub_end` 照數括號 ⇒
+# 第一行的假管線變 code ⇒ 380e4a4 放行。bash 5.3：第一行 `#` 之後是註解，命令替換在第二行才收，第二行裸印 PR 文字。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: comment-in-param-cmdsub
+        run: |
+          echo ${X:-$(echo a #)} 2>&1 | python3 scripts/neutralise.py
+          )}; echo "$PR_TITLE"

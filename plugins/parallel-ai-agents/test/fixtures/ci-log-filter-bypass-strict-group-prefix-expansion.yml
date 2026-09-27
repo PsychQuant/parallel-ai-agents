@@ -1,0 +1,14 @@
+# 字面檢查（`set` 前綴）：`set -e ${PR_TITLE:+-v}` 挖空後是 `set -e`，bash 卻展開成 `set -e -v`——群組外的每個詞都要是字面。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: expansion inside the set prefix
+        shell: bash
+        run: |
+          set -e ${PR_TITLE:+-v}
+          { echo "ORACLE-PR-TITLE-MARKER"; } 2>&1 | python3 scripts/neutralise.py

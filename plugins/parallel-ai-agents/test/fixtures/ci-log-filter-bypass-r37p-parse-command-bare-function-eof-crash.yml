@@ -1,0 +1,22 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺 drop-operand|parse_command|if self.tok() is not None and self.tok()["k"] == "W":|1。
+# `function` 關鍵字後面接著檢查「下一格是不是名字（W 型別）」，那個檢查式的第一個 operand
+# 是 `self.tok() is not None`——防的是「`function` 就是整份輸入的最後一個 token」這種殘骸：
+# 消耗掉 `function` 之後 `self.tok()` 回傳 `None`，原版正確地不再往下標，直接跳過名字消耗，
+# 之後的 `()` 檢查與遞迴呼叫 `parse_command` 也都各自正確處理 `None`／`end(t)`，最終回傳一個
+# 空的函式定義——`ok=False`（沒有管線）→ RULE「既沒有經 neutralise.py」。
+# 拿掉 `self.tok() is not None` 這個 operand 後，條件變成 `self.tok()["k"] == "W"`——`self.tok()`
+# 明明是 `None`，卻直接取下標，`TypeError: 'NoneType' object is not subscriptable`，不在
+# `_analyse()` 呼叫處的白名單例外裡，整支 Python 崩潰，輸出沒有 `RULE:` 字樣。
+# bash 5.3 實測：`bash -n -c 'function'` → `bash: -c: line 1: syntax error: unexpected end of
+# file`——單獨一個 `function` 本來就不是合法的函式定義（缺名字與主體），不會執行、不會外流；
+# 原版判 RULE 是對讀不懂的殘骸 fail-closed。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: bare function keyword with nothing after it
+        run: |
+          function

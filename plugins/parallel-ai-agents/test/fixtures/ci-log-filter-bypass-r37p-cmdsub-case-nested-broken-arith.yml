@@ -1,0 +1,33 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺
+# `drop-operand|_cmdsub_end_case|if c == '"' or c == "`" or line.startswith("${", k) or line.startswith("$(", k):|4`（L570）與
+# `startswith→F|_cmdsub_end_case|if c == '"' or c == "`" or line.startswith("${", k) or line.startswith("$(", k):|2`（L570，
+# 同一行的第 4 個 operand，一個是拿掉、一個是逼成 False，效果相同，一併釘住）。
+#
+# `_cmdsub_end_case` 的內容裡再遇到一個 `$(` 時，L570 最後一個 operand 負責認出它、遞迴呼叫自己去把這個巢狀
+# 命令替換整段跳過（裡面的東西不影響外層的括號深度）。這份 fixture 的雙引號命令替換裡，在真正的 leak
+# （`echo "$PR_TITLE" >&2`）後面接了一個**巢狀且故意寫壞的算術替換** `$(()b))`——原版遇到這個內層 `$(` 時，
+# 遞迴呼叫 `_cmdsub_end_case`，該次呼叫一進去就發現 `line.startswith("$((", j)` 成立，轉給 `_arith_end` 處理
+# `(()b))` 這段算術；`_arith_end` 找不到合法的算術收尾（`(`、`)`、`b`、`)`、`)` 這串不是合法的巢狀括號＋`))`
+# 收尾），回 None——遞迴呼叫失敗，外層 `_cmdsub_end_case` 直接 `return None`（fail-closed），最終呼叫端整段
+# 雙引號到 run 區塊結尾都沒收，PARSE。
+#
+# 拿掉（或逼假）L570 最後一個 operand 後，遇到這個內層 `$(` 不再進遞迴分支，`$` 跟後面的 `(` 都被當成一般
+# 字元逐位掃描：`$` 直接吃掉，`(` 因為這裡沒有 `case`（`cases` 是空的）被當成一般裸括號讓 `depth` 加一，
+# 後面的 `(`、`)`、`)`、`)` 純靠裸括號計深度，剛好淨值收斂到 0——`_cmdsub_end_case` 回一個看似合法的收尾
+# 位置。真正存在的 `>&2` 因此被暴露給規則層當「已解析」內容重新掃過，判定從原版的 PARSE 變成 RULE——與宣告
+# 的 EXPECT 不同，構成殺點。
+#
+# bash 5.3 實測：`bash -n` 對這段話報語法錯誤（`syntax error near unexpected token ')'` 出在命令替換內部，
+# 但整體 `bash -c` 仍會先跑到那個內部錯誤之前的部分——`echo "$PR_TITLE" >&2` 先被執行、`$PR_TITLE` 印到當下
+# stderr，之後才在巢狀算術那段報錯；不論如何都不經過後面的 `| python3 scripts/neutralise.py`。PARSE 型判定
+# 不要求神諭逐項比對真實外流（本身就是本 lint 不解析的構造），fail-closed 的方向本來就是安全的一側。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: nested-broken-arith-cmdsub
+        run: |
+          echo "pre$(echo "$PR_TITLE" >&2 $(()b)))post" 2>&1 | python3 scripts/neutralise.py

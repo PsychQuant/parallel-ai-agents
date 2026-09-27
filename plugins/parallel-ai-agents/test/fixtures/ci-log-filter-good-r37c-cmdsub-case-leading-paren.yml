@@ -1,0 +1,12 @@
+# #33 verify R37：case 模式的前導括號 `(a)`。追蹤時等模式階段的 `(` 不計深度、由模式的 `)` 收掉。bash 5.3 實跑接到 neutralise。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: cmdsub-case-leading-paren
+        run: |
+          x=$(case "b" in (a) echo x;; (*) echo y;; esac)
+          echo "$x" 2>&1 | python3 scripts/neutralise.py

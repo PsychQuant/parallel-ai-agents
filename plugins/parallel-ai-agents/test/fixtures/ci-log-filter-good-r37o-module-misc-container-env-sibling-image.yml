@@ -1,0 +1,29 @@
+# #33 verify R37 opsweep 補件：殺
+# `==↔!=|<module>|job_env += [n_ for l3, i3, k3 in _kids(l2, _end(l2, i2), i2) if k3 == "env" for n_ in _env_names(l3, i3)]|1`
+# ——把 container job 收集 `container.env` 鍵名的推導式裡 `k3 == "env"` 換成 `k3 != "env"`。
+# 這裡 `container:` 底下有**兩個**同層子鍵：`image:`（純量）與 `env:`（block mapping，一個
+# 鍵 `FOO`）。
+# 原版：`k3 == "env"` 只挑出 `env` 這個子鍵餵給 `_env_names()`，正確讀到 `["FOO"]`；`FOO`
+# 不在 `ENV_TRACE_KEYS` 裡，`env_hit` 空，這個 step 靠管線過濾、沒有 env 疑慮，整體 `pass`。
+# 突變體把判準反過來，`k3 != "env"` 只挑出**不是** `env` 的子鍵——也就是 `image:`——餵給
+# `_env_names(l3, i3)`。`image:` 的值是 `"ubuntu:latest"`（非空、不是 flow），`_env_names()`
+# 判定成看不到鍵名的純量值，回傳 `["?"]`；真正的 `env:` 反而被排除、完全沒被讀到。
+# `job_env=["?"]`，`env_hit=["?"]` 非空，觸發「靠管線過濾卻帶了看不到鍵名的 env」規則，
+# 變成 `rule-red`。與原版的 `pass` 不同，這張 fixture 殺得掉它。
+# bash 5.3 實測：`echo hi 2>&1 | python3 -c "import sys; sys.stdin.read()"` rc=0，
+# `bash -n` parse 正常；`FOO`／`ubuntu:latest` 這兩個值都不影響 shell 語法本身，
+# 爭點純粹在 container 子鍵的挑選邏輯。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:latest
+      env:
+        FOO: bar
+    steps:
+      - name: probe
+        run: |
+          echo hi 2>&1 | python3 scripts/neutralise.py

@@ -1,0 +1,26 @@
+# #33 verify R37 opsweep 補件：殺 `startswith→F|_brace_end|if S.startswith("${", k):` 存活突變體——拿掉
+# `_brace_end` 對**巢狀** `${…}` 的深度加一。巢狀 `${ALSO_UNSET}` 出現在外層 `${UNSET_X:-…}` 的預設值裡：
+# 原版遇到內層的 `${` 會把深度 `d` 加到 2，之後第一個 `}`（其實是內層 `${ALSO_UNSET}` 自己的收尾）只把
+# `d` 減回 1，要等到**外層**真正的收尾 `}`（在 `$(…)` 之後）才讓 `d` 歸零——收尾位置正確地涵蓋整段，
+# 包含裡面的 `$(printf … >&2)`。
+# 突變體不承認巢狀 `${`，於是第一個 `}`（內層 `${ALSO_UNSET}` 的）就把 `d` 減到 0、`_brace_end` 提早收尾。
+# 外層 `_word` 之後用這個過短的 `e` 當 `_hidden_subs` 的上界去找命令替換——真正藏著 `>&2` 的
+# `$(printf … >&2)` 落在這個過短範圍**之外**，完全沒被掃到。`_clamp` 仍然照 `C` 的挖空邊界一個字一個字
+# 把剩下的內容吞完（因為那整段在 `C` 裡本來就是空白），但因為只有 `${…}` 分支才會呼叫 `_hidden_subs`，
+# 逐字吞掉的那些字元不會再觸發第二次掃描——藏在裡面的 fd 2 外流因此完全漏網、整條規則變成放行。
+# 這正是既有 `ci-log-filter-bypass-r37b-fd-in-param-cmdsub.yml`（無巢狀）補上巢狀 `${…}` 之後的變體：
+# 原版（無巢狀）已經殺得掉這三個 `_brace_end` 突變體之外的另一個（`startswith→F`）殺不掉，因為沒有巢狀
+# `${` 可以錯過——本檔補上這個巢狀情境。
+# bash 5.3 實測：`UNSET_X`／`ALSO_UNSET` 皆未設時，`printf '%s\n' ${UNSET_X:-${ALSO_UNSET}$(printf '%s\n' "hi" >&2)} 2>/tmp/x | cat`
+# 會在**真正的 stderr**（不是 `/tmp/x`）印出 `hi`——命令替換在外層 `2>…` 生效之前的展開階段就執行，繼承
+# 的是展開當下、尚未改寫的 fd 2，繞過了整條 `2>&1 | neutralise.py` 管線。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe
+        run: |
+          printf '%s\n' ${UNSET_X:-${ALSO_UNSET}$(printf '%s\n' "$PR_TITLE" >&2)} 2>&1 | python3 scripts/neutralise.py

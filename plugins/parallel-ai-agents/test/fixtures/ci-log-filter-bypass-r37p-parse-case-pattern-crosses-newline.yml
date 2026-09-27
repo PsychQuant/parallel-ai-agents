@@ -1,0 +1,44 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺 pattern-scan 迴圈 3 元 `and` 條件
+# `while self.tok() is not None and self.tok()["k"] != "NL" and not self.op(self.tok(), ")"):`
+# 的 drop-operand 第 2 個突變體（拿掉 `self.tok()["k"] != "NL"`，只剩
+# `while self.tok() is not None and not self.op(self.tok(), ")"):`）。fail-closed、無外流（見下）。
+#
+# 原版：模式 `a` 後面直接接一個裸換行（`case x in a` 換行 `echo "$PR_TITLE" >&2` 換行 `esac`——
+# 模式沒有用 `)` 收尾，中間夾了一個真正的換行字元）。pattern-scan 迴圈吃掉 `a` 之後遇到換行詞元，
+# 條件的第二個子句 `self.tok()["k"] != "NL"` 為假、迴圈正常停在換行上（不消費它）。接著
+# `if self.op(self.tok(), ")"): ...` 為假，`self.parse_list(ctx, end_lambda)` 從換行開始接手——
+# 換行被 `parse_list` 自己的頭幾行吃掉（`if t["k"] == "NL" ...: self.i += 1; continue`），下一個
+# 詞元是 `echo`，被當成**這個子句的 body** 用一般命令解析（`parse_command`）：`echo`、
+# `"$PR_TITLE"`、`>&2`（`R` 詞元）依序收集，`self.redir()` 被呼叫、`_redir_hit` 判定命中，
+# hit 正常登記。之後 body-parsing 在遇到 `esac` 時（`end_lambda` 認得 `word(x,"esac")`）正確停下、
+# 回到 outer while 收尾。
+#
+# 突變體：拿掉換行檢查後，pattern-scan 迴圈**不停在換行上**，直接把換行、`echo`、
+# `"$PR_TITLE"`、`>&2` 全部當成同一個模式的延伸內容繼續吃——pattern-scan 只認 `"W"` 種類才呼叫
+# `self.subs()`，`>&2` 是 `R` 詞元，被迴圈體 `if tok()["k"]=="W": ... ` 的 `else` 路徑（其實是
+# 直接跳過，pattern-scan 沒有 `else` 分支去呼叫 `redir()`）silently 吃掉、不留痕跡，一路吃到
+# `esac`（`"W"` 種類、`subs()` 空操作）也吃掉，最後詞元流耗盡才停。`>&2` 從未被當成重導向處理，
+# hit 永遠不會登記，整份判定從 `rule-red` 變成 `pass`。
+#
+# 為什麼是 fail-closed、無外流：case 模式中間夾一個沒有跳脫、沒有引號包住的裸換行，本身就是
+# bash 語法錯誤（模式必須在同一個邏輯行內用 `)` 收尾）。
+# bash 5.3 實測：
+#   bash -n -c 'case x in a
+#   echo "$PR_TITLE" >&2
+#   esac'
+#   syntax error near unexpected token `newline'
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          case x in a
+          echo "$PR_TITLE" >&2
+          esac | python3 scripts/neutralise.py
