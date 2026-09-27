@@ -1,0 +1,31 @@
+# #33 verify R37 opsweep 補件：殺
+# `drop-operand|<module>|if _flow_value(l_) and ":" in yaml_split_comment(KEY_RE.match(norm[l_]).group(3) or "")[0]:|1`
+# ——把根層級 `env:` flow-形式檢查裡的 `_flow_value(l_)` 拿掉，變成
+# `if (":" in yaml_split_comment(...)[0]):`。
+# 這裡根層級 `env:` 寫成 **非 flow** 的純量值、但值本身含冒號：`env: FOO:bar`（沒有空白緊接
+# 在內部冒號後，仍是合法的 plain scalar，不觸發 YAML 的 mapping 判定）。
+# 原版：`_flow_value(l_)` 是 False（值不是以 `{`／`[` 開頭），`and` 短路，這一行**不拒絕**，
+# 落到 `else: wf_env = _env_names(l_, ind_)`。`_env_names()` 看到 `inline="FOO:bar"`
+# 非空、不是 flow，回傳 `["?"]`（看不到鍵名的 fail-closed 標記）。這個 `"?"` 之後傳進每個
+# step 的 `env_hit`；本 fixture 的 step 靠管線過濾且沒有 `# LOG-FILTER:` 宣告，於是被
+# 「靠管線過濾卻帶了看不到鍵名的 env」規則擋下——`rule-red`。
+# 突變體拿掉 `_flow_value(l_)`，只剩 `":" in yaml_split_comment(...)[0]`——對 `"FOO:bar"`
+# 這個值直接判 True（含冒號），**在這一行自己就先拒絕**（PARSE：「根層級的 env 用 flow
+# 形式」，訊息文字雖然講錯了，但 tag 是 `PARSE`），`else` 分支（設定 `wf_env`）因此被跳過，
+# `wf_env` 維持初始的 `[]`，後面也就不會再觸發 `env_hit` 那條 `RULE`。整支程式最終只印出
+# 這一行自己的 `PARSE`，沒有任何 `RULE`——`verdict()` 依序看 RULE→VACUOUS→PARSE，判成
+# `parse-red`。與原版的 `rule-red` 不同，這張 fixture 殺得掉它。
+# bash 5.3 實測：`echo hi 2>&1 | python3 -c "import sys; sys.stdin.read()"` rc=0，
+# `bash -n` parse 正常；`FOO:bar` 這個 env 值本身在原版的判定裡從未真的傳進 shell 執行
+# （被 `"?"` fail-closed 標記攔在 lint 層），與 bash 語法無關，爭點純粹在 YAML 層的判定路徑。
+# EXPECT: rule-red
+name: t
+on: pull_request
+env: FOO:bar
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe
+        run: |
+          echo hi 2>&1 | python3 scripts/neutralise.py

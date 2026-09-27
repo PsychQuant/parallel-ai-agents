@@ -1,0 +1,21 @@
+# #33 verify R37（R36 第 1 列）：**must-fail 探針**——換掉之後出現原本沒有的外流，差分不可比，**絕不歸 G**。
+# 由構造這是 G（PR 文字由第一行印出，lint 限制第 2 條；heredoc 的內文經管線進了 neutralise，不外流）。
+# 差分把 `cat <<EOF | python3 …neutralise.py` 那一行換成中性命令後，heredoc 的內文 `$PR_TITLE` 變成一條命令被執行，
+# bash 的「command not found」錯誤訊息帶著 PR 文字出現在 stderr——那一行原本沒有，控制流被差分改變了 ⇒ 量不到 ⇒
+# 檔頭的 G 宣告過期。拿掉「換掉之後不得出現新外流」這道守衛，舊的外流仍在、新的被忽略 ⇒ 被歸 G、宣告相符、不再失敗 ⇒ rc=1。
+# 這也是差分目前的盲區（R37 明寫）：heredoc 餵進 neutralise 的管線，與同一 step 裡的 G 外流並存時，神諭量不到類別。
+# ORACLE-MUST-FAIL: 出現原本沒有的外流行
+# KNOWN-CLASS: G
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: a heredoc feeds the filtered pipeline, another command leaks
+        run: |
+          echo "::notice::$PR_TITLE"
+          cat <<EOF | python3 scripts/neutralise.py
+          $PR_TITLE
+          EOF

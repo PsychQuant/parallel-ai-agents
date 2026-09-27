@@ -1,0 +1,17 @@
+# #33 verify R36 第 12 列 → R37：`_scalar` 只用 `yaml_split_comment()` 找註解起點，解碼對**原文**做（前一版先挖空引號再解碼，值變成一串空白）。
+# 相鄰輸入：workflow 層 `defaults.run.shell: "sh"`——加引號的非 bash 值仍要 fail-closed。
+# LINT-ARGS: --strict
+# EXPECT: parse-red
+name: t
+on: pull_request
+defaults:
+  run:
+    shell: "sh"
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: quoted sh from workflow defaults
+        run: |
+          set -o pipefail
+          printf 'ok\n' 2>&1 | python3 scripts/neutralise.py

@@ -1,0 +1,46 @@
+# #33 verify R37 opsweep 補件：殺 drop-operand|shell_scan|if csub and (prev_sig is None or prev_sig in SHELL_WORD_BREAK):|1|L1018
+# 與 |2|L1018（同一行，兩個突變體，各拿掉一個運算元；兩步各自單獨殺一個）。
+# 這行是「`case`／`esac` 追蹤只在命令替換 `$(…)` 裡才生效」的總閘門：
+#   if csub and (prev_sig is None or prev_sig in SHELL_WORD_BREAK):
+#       kw = CASE_KW_RE.match(line, i); ...
+# `csub` 確保只在 `$(…)` 裡；`prev_sig` 那個 `or` 確保只在詞的開頭才嘗試比對（避免
+# `testcase`／`mycase` 這類詞的中段被誤認成關鍵字）。
+#
+# step 1（殺 |1|，拿掉 `csub`，只留 prevsig 檢查）：追蹤在**頂層**（不在任何 `$(…)` 裡）也生效。
+# 頂層 `case $x in (a) …;; esac` 用了選用的前導括號 `(a)`：原版（csub=0）整個追蹤機制關閉，
+# 開頭那個 `(` 落到一般裸括號計數（`bare_par += 1`），對應的 `)` 也落到裸括號減量，一加一減
+# 剛好收平——PASS。突變體在頂層也開啟追蹤，`case` 被推進 `cases` 堆疊，但開頭的 `(` 因為主迴圈
+# 「`(` 只在 `csub` 非零時才進 case 追蹤那條分支」（本行的鄰居，仍然要求 csub）**沒有**被追蹤機制
+# 認領，照樣落到裸括號 `bare_par += 1`；對應的 `)` 卻因為 `cases` 堆疊非空、深度剛好對上
+# （`csub+cpar` 頂層永遠是 0，`cases[-1][0]` 也是 0）而被 case 追蹤攔截、標成
+# `cases[-1][1] = "cmd"` 且 `paren_claimed = True`——**不會**落到裸括號減量。開的那個 `(` 因此
+# 永遠沒有對應的減量，`bare_par` 卡在 1，run 區塊結尾判「裸 `(` 未收尾」→ PARSE。
+#
+# step 2（殺 |2|，拿掉 prevsig 檢查，只留 `csub`）：追蹤不再要求「詞的開頭」，任何位置只要
+# `csub` 非零就嘗試比對關鍵字。`$(mycase; echo hi)` 裡的識別字 `mycase` 中段剛好含
+# 子字串 `case`（`CASE_KW_RE` 只檢查**後面**的邊界 `[\s;&|()<>]` 或行尾，不檢查前面），
+# `mycase` 後面接的是 `;`，滿足邊界，於是 `case` 被誤判成關鍵字。此時 code 目前為止是
+# "x=$(my"，不在命令起點（`_at_command` 用 `AT_CMD_RE` 比對失敗），`at_cmd=False`；
+# `kw.group(1)=="case"` 分支要求 `at_cmd and _case_head(...)` 才算合法，兩者皆非 → 直接
+# `unparsed = "命令替換 $(…) 裡的 case 不在命令起點…"`；break → PARSE。原版因為 prevsig
+# 檢查在 "case" 的 "c" 之前失敗（`prev_sig` 是 "y"，不在詞界）而完全不嘗試比對，
+# `mycase` 只是普通文字，管線乾淨接到 neutralise.py → PASS。
+# bash 5.3 實測兩者皆語法合法：
+#   bash -n -c 'case $x in (a) echo hi;; esac; echo "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py'
+#   bash -n -c 'x=$(mycase; echo hi) 2>&1 | python3 scripts/neutralise.py'
+# 兩者 rc=0（syntax OK）。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: toplevel-case-leading-paren
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          case $x in (a) echo hi;; esac; echo "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py
+      - name: cmdsub-word-contains-case-substring
+        run: |
+          x=$(mycase; echo hi) 2>&1 | python3 scripts/neutralise.py

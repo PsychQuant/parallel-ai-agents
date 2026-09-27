@@ -1,0 +1,13 @@
+# #33 verify R37（case 追蹤的命令起點判定）：case 子句的模式 `)` 之後緊接另一個 case——那裡是命令起點。`_at_command`
+# 若不認「追蹤中的模式 `)` 之後」，內層的 case 會被當成不在命令起點而 fail-closed。bash 5.3 實跑接到 neutralise。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: cmdsub-nested-case-after-pattern
+        run: |
+          x=$(case a in a) case b in b) echo ok;; esac;; esac)
+          echo "$x" 2>&1 | python3 scripts/neutralise.py

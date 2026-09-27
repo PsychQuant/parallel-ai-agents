@@ -1,0 +1,45 @@
+# #33 verify R37 opsweep 補件：word_lex 群「依構造等價」反駁——殺
+#   drop-operand|_word|if (c in _WORD_END and not hollow) or (c == "`" and stop == "`"):|4|L1534
+# （拿掉整個 or 的第二個運算元 `c == "`" and stop == "`"`）。
+#
+# 原版：`_word` 在讀一個「已經在反引號替換內部」的詞（呼叫時 stop=="`"`）時，逐字元掃到字面反引號
+# （不在 _WORD_END 裡）要靠這個第二運算元判斷「這是收尾、不是巢狀開頭」才 break——常見寫法就是
+# 詞緊貼著收尾反引號（`echo` `\`echo safe\`` 沒有空格）。
+#
+# 突變體拿掉這個運算元後，條件只剩 `c in _WORD_END and not hollow`，對反引號恆為 False——於是
+# `_word` 不 break，直接落到下一行 `if c == "\`":`，把「應該收尾」的反引號誤當成**又開了一層巢狀
+# 替換**，遞迴呼叫 `_lex(C, S, p+1, "\`")` 去找下一個反引號當收尾。若這一整個 run 區塊裡再也沒有
+# 別的反引號字元，這個遞迴會一路吃到區塊結尾（`_analyse` 把所有邏輯行用 `\n` 接成一個字串），
+# 把後面**所有**東西（包括跨行的 `set -o pipefail`）都吞進這一個詞的 `subs` 巢狀鏈裡。
+#
+# 這裡選的探針不是重導向可見度（那條路徑 `_Sh.subs()` 的遞迴走訪不管巢多深都會碰到重導向 token，
+# 兩版都會印同一個 RULE，殺不掉——這是已知的「重導向本身仍可見」死路，見本檔並排的
+# bypass-r37o-word_lex-backtick-open-eaten.yml 開頭的說明），而是 **pipefail 狀態追蹤對巢層敏感**：
+# `_Sh.subs()` 用 `dict(ctx, sub=True)` 進入巢狀替換，`set -o pipefail` 若被錯吞進巢層，記下的
+# `pf` 事件會帶 `sub=True`；`_pipefail_holds()` 明文「頂層（不在子殼層…）的設定才改變它」，
+# 只採信 `sub` 為假的 `pf` 事件。
+#
+# 本檔：`echo \`echo safe\`` 的 `safe` 緊貼收尾反引號（原版靠這個第二運算元正確收尾，之後
+# `set -o pipefail` 是貨真價實的頂層陳述、`sub=False`）→ `--strict` 下 pipefail 判定成立、
+# 後面 `echo ok 2>&1 | python3 …neutralise.py` 的管線通過，原版 pass。突變體遺漏這個運算元後
+# 不 break，`set -o pipefail` 連同後面整段都被錯收進反引號詞的巢狀 `subs`（`sub=True`），
+# `_pipefail_holds()` 因此判定管線發生時 pipefail 沒開 → 假 RULE（`mutcheck.py` 驗證，KILL）。
+#
+# bash 5.3 實測：`bash -n` 對整段語法通過（rc=0）；`bash -c` 實際執行印出 `safe`、`ok`（rc=0），
+# 行為與原版判定的「頂層 `set -o pipefail` 之後接安全管線」一致。
+# R37 移植 #61 群組規則後：這個形狀寫不成群組，step 改成宣告 `# LOG-FILTER:`——pipefail 規則對宣告的 step 照樣適用，殺法不變。
+# EXPECT: pass
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: t1
+        shell: bash -e {0}
+        run: |
+          # LOG-FILTER: none — fixture 只測 pipefail 的模擬（寫不成群組：群組外只收 `set` 前綴）
+          echo `echo safe`
+          set -o pipefail
+          echo ok | cat

@@ -1,0 +1,15 @@
+# #33 verify R37 opsweep 補件（sh-opts D，自 `good-r37o-sh-opts-shopt-pipefail-guard-combo` 拆出）：`_Sh.shopt_cmd` 選項名迴圈第二支
+# `elif "s" in flags and nm in _TRACE_OPTS:` 拿掉 `"s" in flags` 的突變體。`shopt -uo xtrace` 只給 `-u`（關掉），不是開 trace——
+# 原版不觸發 hit，這一步照常靠管線過濾、放行；突變體只看 `nm in _TRACE_OPTS`，誤判成開了 trace ⇒ fd 流向規則紅。
+# 預設模式（不帶 `--strict`）：`--strict` 的群組形式裡 trace 命中落在豁免群組內、看不到；宣告 `LOG-FILTER` 的 step 不套 fd 規則。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        run: |
+          shopt -uo xtrace
+          echo ok 2>&1 | python3 scripts/neutralise.py

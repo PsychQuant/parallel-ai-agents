@@ -1,0 +1,28 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺 ±1→±2|parse_command|self.i += 1|6。
+# `function` 之後正確消耗掉名字（W 型別的那格，這段程式碼裡第 6 次出現 `self.i += 1`）以後，
+# 下一格若是重導向：`function f >&2 { : ; }`——原版：名字 `f` 被 `self.i += 1` 正常消耗一格，
+# `self.tok()` 正確變成 `>&2`；`()` 檢查不成立（`>&2` 不是 `(`）；`skip_nl()`；遞迴呼叫
+# `parse_command`，這次把 `>&2` 當成函式主體收詞迴圈的第一個 token 正常吃掉、呼叫
+# `self.redir()`、記一筆 hit，接著繼續收 `{`／`:`／`;`（都落回一般字，不影響——這裡的重點只是
+# `>&2` 有沒有被看到）。
+#
+# 突變體把消耗名字那格的 `self.i += 1` 換成 `self.i += 2`：多跳一格，直接跳過 `>&2`，落到 `{`；
+# `()` 檢查不成立（`{` 不是 `(`）；`skip_nl()`；遞迴呼叫 `parse_command`，這次 `{` 剛好對齊、
+# 反而被**正確**辨識成群組開頭（純屬巧合的對齊，不代表跳過是對的）——但代價是 `>&2` 已經
+# 永遠沒被看到，`an["fd"]` 少了那一筆。
+#
+# 同樣接了 `true | python3 scripts/neutralise.py` 讓 `ok=True`，逼 lint 走到 fd 檢查那一支。
+# bash 5.3 實測：`bash -n -c 'function f >&2 { :; }'` → `syntax error near unexpected token
+# '>&'`——函式名字跟主體之間不能插重導向（bash 的函式定義重導向只能接在主體**之後**），
+# 本來就不是合法語法；原版判 RULE 是對讀不懂的殘骸 fail-closed。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: function name followed by a redirect before the body
+        run: |
+          function f >&2 { : ; }
+          true | python3 scripts/neutralise.py

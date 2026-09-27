@@ -1,0 +1,41 @@
+# #33 verify R37 opsweep 補件：delim_align 群組——殺兩個突變體：
+#   1. `==↔!=|_skip_delim_word|ansic = s[j] == "$"`
+#   2. `drop-operand|_skip_delim_word|while k < n and s[k] != q:|2`（拿掉 `s[k] != q`）
+#
+# `_skip_delim_word` 遇到引號字元時：`ansic = s[j] == "$"`（記錄這是不是 `$'…'`）、
+# `q = "'" if ansic else s[j]`、`k = j + (2 if ansic else 1)`。對一個**空的**單引號分隔字
+# `<<''`：s[j] 是開引號 `'`（不是 `$`），原版 `ansic=False`、`k=j+1`（直接落在收尾引號上，
+# 迴圈 `while k<n and s[k]!=q` 條件一開始就不成立，0 次迭代，k 停在收尾引號、正確）。
+#
+# 突變體1（`==`→`!=`）：`ansic = s[j] != "$"` 對這個位置永遠是 True（s[j] 是 `'` 不是
+# `$`），於是誤判成 ANSI-C 字串，`k=j+2`——多跳一格，越過收尾引號、落在**引號之後**的
+# 第一個字元。迴圈接著往後找下一個 `'`，在這一行找不到，回傳 `None`。
+#
+# 突變體2（拿掉 `s[k]!=q`）：迴圈條件退化成 `while k<n:`，收尾引號在 `k=j+1` 就已經
+# 命中卻不會被迴圈認出來停下（迴圈只認 `k<n`），於是一路吃到行尾（`k=n`），回傳
+# `None`（`k>=n` 判成沒收尾）。
+#
+# 兩個突變體都讓這個 heredoc 的分隔字對不齊，之後接的安全重導向目標 `>/tmp/out`
+# 因此讀不到原文，被判定「目標看不到原文，不解析就不放行」＝規則誤擋。
+#
+# 原版為什麼是 pass：heredoc 本體只是把一個空白內容寫進 `/tmp/out`（不落在
+# `/dev`／`/proc`），下一個 step 再讀出來餵給 neutralise.py，整個區塊沒有外流路徑。
+#
+# bash 5.3.15 實測：空的單引號分隔字 `cat <<''` 的終止字是空字串，遇到第一個
+# 空行就終止 heredoc（`bash -c 'cat <<'"'"''"'"'
+# before
+#
+# after'` 印出 `before` 之後把 `after` 當成新指令，確認 heredoc 在空行處已經收尾）。
+#
+# EXPECT: pass
+name: t
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: heredoc with an empty quoted terminator writes to a safe target, then neutralise reads it back
+        run: |
+          cat <<'' >/tmp/out
+
+          cat /tmp/out | python3 scripts/neutralise.py

@@ -1,0 +1,26 @@
+# #33 verify R36 第 6 列（regression F4，R35 誤擋回歸）：常見寫法，雙引號裡的命令替換自己帶引號。380e4a4 把內層
+# 引號當成外層收尾，引號狀態一路錯到區塊結尾 ⇒ `PARSE: 引號到 run 區塊結尾都沒收`——PARSE 先發生，連
+# `# LOG-FILTER:` 宣告都救不了（6cf6864 宣告版 rc=0）。bash 5.3 實跑四行都是合法的單一命令。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: subject from git log
+        # LOG-FILTER: none — writes a step output only, prints no PR-controlled text
+        run: |
+          echo "subject=$(git log -1 --format='%s' | tr -d '"')" >> "$GITHUB_OUTPUT"
+      - name: apostrophe inside an inner string
+        # LOG-FILTER: none — writes a step output only, prints no PR-controlled text
+        run: |
+          echo "msg=$(echo "it's done")" >> "$GITHUB_OUTPUT"
+      - name: double quote inside a single-quoted sed script
+        # LOG-FILTER: none — writes a step output only, prints no PR-controlled text
+        run: |
+          echo "v=$(sed 's/"//g' f)" >> "$GITHUB_OUTPUT"
+      - name: backticks with an inner string
+        # LOG-FILTER: none — writes a step output only, prints no PR-controlled text
+        run: |
+          echo "who=`echo "it's me"`" >> "$GITHUB_OUTPUT"

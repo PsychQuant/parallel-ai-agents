@@ -9,7 +9,8 @@ jobs:
     steps:
       - name: step shell bash
         shell: bash
-        run: echo hi 2>&1 | python3 scripts/neutralise.py
+        run: |
+          { echo hi; } 2>&1 | python3 scripts/neutralise.py
       - name: set pipefail inline
         run: |
           set -euo pipefail
@@ -21,4 +22,5 @@ jobs:
         shell: bash
     steps:
       - name: job defaults bash
-        run: echo hi |& python3 scripts/neutralise.py
+        run: |
+          { echo hi; } |& python3 scripts/neutralise.py

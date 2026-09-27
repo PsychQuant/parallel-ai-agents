@@ -1,0 +1,13 @@
+# R37（移植 #61 群組規則時查到）：同 `bypass-strict-group-pipefail-off-inside`，關的寫法換成 `shopt -uo pipefail`。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: shopt -uo pipefail inside the group
+        shell: bash
+        run: |
+          { shopt -uo pipefail; false | true; } 2>&1 | python3 scripts/neutralise.py

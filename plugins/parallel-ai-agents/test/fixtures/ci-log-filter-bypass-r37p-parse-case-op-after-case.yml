@@ -1,0 +1,29 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺 `parse_case` 主詞 guard
+# `if self.tok() is not None and self.tok()["k"] == "W":` 的 drop-operand 第 2 個突變體
+# （拿掉 `self.tok()["k"] == "W"`，只剩 `if self.tok() is not None:`）。fail-closed、無外流（見下）。
+# 原版：`case` 之後緊接的是一個運算子詞元 `;`（不是 `"W"`）——guard 的第二個子句為假，整個 and 短路，
+# 「當成主詞」這條路完全不走，游標原地不動。之後 outer while 的 pattern-scan 迴圈接手，把這個 `;` 當
+# 成普通模式內容吃掉（模式掃描不區分內容種類，只認 `)` 與換行收尾），繼續掃到 `in`、命令替換
+# `"$(echo "$PR_TITLE" >&2)"`（一路都被當「模式」，`subs()` 照樣被呼叫）、直到 `)`，hit 正常登記。
+# 突變體：guard 只剩 `self.tok() is not None`——對這個 `;` 運算子詞元一樣成立，於是誤把它當「主詞」
+# 呼叫 `self.subs(self.tok(), ctx)`。運算子詞元的字典裡根本沒有 `"subs"` 這個 key
+# （`{"k": "OP", "op": op}`），`w["subs"]` 直接 `KeyError`——但 `_analyse()` 外層的
+# `except (IndexError, KeyError, ValueError, RecursionError)` 接得住這個例外，變成
+# `reject(r, ...)` 印出 `PARSE:`（parse-red），與原版的 `rule-red` 不同。
+# 為什麼是 fail-closed、無外流：`case ;` 本身就是語法錯誤（`case` 後面直接接 `;` 不是合法的主詞）。
+# bash 5.3 實測：
+#   bash -n -c 'case ; in a) echo ok ;; esac'
+#   syntax error near unexpected token `;'
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          case ; in "$(echo "$PR_TITLE" >&2)") echo ok ;; esac | python3 scripts/neutralise.py

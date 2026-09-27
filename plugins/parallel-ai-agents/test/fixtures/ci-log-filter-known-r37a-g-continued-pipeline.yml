@@ -1,0 +1,28 @@
+# #33 verify R37（R36 第 1、2 列）：**已知類別 G 的差分要涵蓋整條邏輯行**。神諭把含 `neutralise.py` 的實體行換成中性命令，
+# 再看外流還在不在——管線跨行時，換掉的範圍必須往上接到管線的上游那一段，否則剩下的 `echo safe 2>&1 |` 懸空、語法壞掉
+# （差分不可比 ⇒ 量不到 ⇒ 這裡宣告的 G 過期 ⇒ rc=1）。兩個 step 各用一種續行：
+#   · 行尾 `|` 後面**帶註解**——文字比對「行尾是不是 `|`」會漏掉它，所以續行由 bash 判（`bash -n`：單獨一行不完整、
+#     後面接 `:` 就完整）；
+#   · 行尾反斜線（`bash -n` 對它不報錯，所以另外用文字判）。上游那一段刻意也帶 PR 文字（經管線過濾、不外流）：
+#     沒接上反斜線時，剩下的 `echo "$PR_TITLE" 2>&1 \` 會把中性命令當參數、把 PR 文字印到 stdout ⇒ 出現原本沒有的外流 ⇒
+#     量不到 ⇒ G 過期 ⇒ rc=1。
+# 兩個 step 都是 G（PR 文字由管線以外的命令印出，lint 限制第 2 條），所以檔頭宣告**兩次**——類別閘門比的是條數。
+# KNOWN-CLASS: G
+# KNOWN-CLASS: G
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: pipe continued after a trailing comment, stderr from another command
+        run: |
+          cat "$PR_TITLE" || true
+          echo safe 2>&1 | # route through the filter
+            python3 scripts/neutralise.py
+      - name: pipe continued with a backslash, stdout from another command
+        run: |
+          printf '::notice::%s\n' "$PR_TITLE"
+          echo "$PR_TITLE" 2>&1 \
+            | python3 scripts/neutralise.py

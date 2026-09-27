@@ -1,0 +1,14 @@
+# #33 verify R36 第 15 列（logic）：`true &&` 換行接 `|& python3 …`——`&&` 續行之後直接是管線，同樣沒有
+# 命令可以接。前一版的 `PIPED_RE` 左邊界連 `&` 也接受，收窄之後這裡不再算「已過濾」。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: andand-cont-pipe
+        run: |
+          echo "$PR_TITLE"
+          true &&
+          |& python3 scripts/neutralise.py

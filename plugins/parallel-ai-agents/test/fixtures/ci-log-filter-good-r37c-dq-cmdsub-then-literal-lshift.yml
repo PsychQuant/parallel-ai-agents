@@ -1,0 +1,12 @@
+# #33 verify R36 第 16 列（codex 第 7 條）：`dq_sub` 在命令替換收尾後沒有清除，同一個雙引號裡後面的字面 `<<` 被當成
+# heredoc ⇒ 380e4a4 PARSE 誤擋。bash 5.3：`hi << literal` 是字串，管線接到 neutralise。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: dq-cmdsub-then-literal-lshift
+        run: |
+          printf '%s\n' "$(printf hi) << literal" 2>&1 | python3 scripts/neutralise.py

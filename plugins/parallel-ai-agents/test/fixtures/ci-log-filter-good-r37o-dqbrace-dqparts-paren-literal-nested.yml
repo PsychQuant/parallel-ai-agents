@@ -1,0 +1,24 @@
+# #33 verify R37 opsweep 補件：殺 `drop-operand|_dq_parts|while i < n and d:|1` 存活突變體──拿掉這個迴圈
+# 的 `i < n` 邊界守衛，只留 `while d:`。`_dq_parts` 對 `$(…)` 只是用「數括號」這種粗略方式找收尾（`d +=
+# body[i]=="(" 的加減`），**不理會**裡面巢狀引號讓某個括號變成字面文字這件事──這是既有、不受這次突變
+# 影響的簡化，本身不是缺陷（真正的命令替換剖析、藏在裡面的 fd 外流偵測，交給呼叫端另外呼叫的
+# `_hidden_subs`）。
+# 但拿掉 `i < n` 之後，這個簡化在**用完 body 卻還沒把 `d`數回 0** 時會失控：body 是 `$(echo "(")`──
+# 内層 `echo` 的參數字面上有一個 `(`，這個粗略計數器會把它也算成一次「開括號」（沒有理解那是雙引號裡的
+# 字面字元），數到 body 結尾時 `d` 停在 1（不是 0）。
+#   - 原版：`i < n` 讓迴圈在數完整個 body 之後**照樣停下**（沒有更多字元可看，`d` 沒歸零也沒關係，反正
+#     `literal` 一開始遇到 `$(` 就已經設成 `False` 了，回傳值不受這個計數瑕疵影響）。
+#   - 突變體：`d` 還不是 0，迴圈硬要再看下一個字元──但 body 已經沒有更多字元，`body[i]` 直接
+#     `IndexError`，整支 lint 崩潰（非 `RULE:`／`PARSE:` 的例外，rc≠0 但訊息不成形）。
+# bash 5.3 實測：`echo "$(echo "(")"` 合法──`$(…)` 內部重新起算引號脈絡，`echo "("` 是完整的一個帶引號
+# 參數，執行輸出單一個字元 `(`；`bash -n` parse rc=0。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe
+        run: |
+          echo "$(echo "(")" 2>&1 | python3 scripts/neutralise.py

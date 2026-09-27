@@ -1,0 +1,20 @@
+# #33 verify R37 opsweep 補件（word_lex 群）：`drop-operand|_hidden_subs|if dq and c == '"':|1`（拿掉 `dq`，
+# 只留 `if c == '"':`）。`_hidden_subs` 用來掃未引號 `${…}` 的內容（呼叫時 `dq=False`）時，真正的雙引號
+# 字元不是這段掃描的結尾——`${X:-"a"$(cmd)}` 裡 `"a"` 的兩個引號在 bash 眼中只是普通字元，命令替換
+# 照樣要往下找。拿掉 `dq` 後，掃描一遇到任何 `"` 就 `break`，於是 `${PR_TITLE:-"a"$(echo leak >&2)}`
+# 這種「先有一段雙引號字面、後面才接命令替換」的寫法，突變體在第一個 `"` 就停手，看不到後面
+# `$(echo leak >&2)` 裡的 `>&2`，回傳的 `subs` 是空的——原版正確找到並印 RULE，突變體變成 pass。
+# bash 5.3 實測：`unset PR_TITLE; echo ${PR_TITLE:-"a"$(echo leak >&2)}` 印出 `leak`（來自 `>&2`，繞過
+# 迴圈只接 stdout 的管線）與 `a`（`echo` 本身印出的展開值）。
+# 神諭對帳（R37 移植 #61 時補）：被擋下的那個命令改成真的把 PR 文字印出去（原本印常數、或那一支不會執行），
+# 讓 lint 的紅是「一致」而不是「誤擋」；殺掉的突變體逐一重驗仍然殺。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: dq-in-unquoted-brace
+        run: |
+          echo ${UNSET_Z:-"a"$(echo "$PR_TITLE" >&2)} 2>&1 | python3 scripts/neutralise.py

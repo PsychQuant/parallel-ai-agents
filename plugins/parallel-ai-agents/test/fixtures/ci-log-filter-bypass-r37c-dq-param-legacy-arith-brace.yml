@@ -1,0 +1,13 @@
+# #33 verify R37 相鄰輸入（R36 沒點名；regression 報告寫「雙引號分支裡的 `$[` 我沒構造出繞過」）：同第 5 列 (c)，
+# 但 `${…}` 在頂層雙引號裡。lint 在 `$[ }` 就結束展開，後面的 `"` 被當成外層收尾、假管線變 code ⇒ 380e4a4 放行。
+# bash 5.3：整串是 echo 的一個引數，印出 `PRTEXT  2>&1 | python3 …`，沒有管線。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: dq-param-legacy-arith-brace
+        run: |
+          echo "${PR_TITLE:-$[ } " 2>&1 | python3 scripts/neutralise.py " ]}"

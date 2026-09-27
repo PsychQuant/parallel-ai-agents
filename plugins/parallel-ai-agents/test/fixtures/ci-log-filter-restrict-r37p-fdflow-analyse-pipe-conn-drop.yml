@@ -1,0 +1,26 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺 drop-operand|_analyse|or (conns[k] == "|" and
+# len(segs[k]["trail"]) == 1 and _is_2to1(segs[k]["trail"][0]))):|1（拿掉 `conns[k] == "|"`）。
+# 群組收尾恰好是 `2>&1`（唯一一個、字面就是 `2>&1`），但連接子是 `|&`（不是 `|`）：
+# `{ echo "$PR_TITLE" >&2; } 2>&1 |& python3 scripts/neutralise.py`。bash 實測（`bash -c '{ echo SECRET
+# >&2; } 2>&1 |& sed "s/^/PIPE:/"'`）：印出 `PIPE:SECRET`——群組自己的 `2>&1` 已經讓 fd2 跟著 fd1
+# 進了管線，`|&` 再補一次等效的 `2>&1` 只是重複，真的有經過濾（安全）。
+# 原版：這個分支要求連接子精準是 `|`；本例連接子是 `|&`，`conns[k] == "|"` 為假 → 這個分支不成立
+# （另一支 `|&` 分支則要求收尾必須是空的，本例收尾非空,也不成立）→ 群組不豁免（fail-closed：只認
+# 「連接子與收尾保護的形狀嚴格對應」的兩種固定寫法，不去推論「`2>&1` 加 `|&` 疊加起來也還是安全」）
+# → 群組內 `>&2` 的命中留在 `an["fd"]` → RULE 紅（EXPECT: rule-red，依 bash 實測其實安全、無外流，
+# 屬 fail-closed、無外流）。
+# 突變體拿掉 `conns[k] == "|"` 這個 guard 後，只要收尾恰一個重導向且那個重導向是 `2>&1`，不管連接子
+# 是 `|` 還是 `|&`，都判定豁免 → 群組內 `>&2` 的命中被吞掉 → 突變體放行。
+# **不是繞過，是限制**（fail-closed；神諭記在 KNOWN_DISAGREE）：這個輸入 bash 實際跑起來不會外流 PR 文字，lint 依設計保守地拒絕它；
+# 這張 fixture 釘住的是那個拒絕（突變體放寬後會放行）。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: exact 2>&1 trailer combined with |& connector
+        shell: bash
+        run: |
+          { echo "$PR_TITLE" >&2; } 2>&1 |& python3 scripts/neutralise.py

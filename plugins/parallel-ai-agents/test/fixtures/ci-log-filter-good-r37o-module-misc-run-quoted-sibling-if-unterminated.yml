@@ -1,0 +1,33 @@
+# #33 verify R37 opsweep 補件：殺
+# `drop-operand|<module>|kind[k] == "SCALAR" and owner[k] == r for k in range(r + 1, s["end"] + 1)):|2`
+# ——把「`run:` 的值是跨行引號純量」檢查裡的 `owner[k] == r` 拿掉，變成只剩
+# `kind[k] == "SCALAR"`。
+# 這個 step 的 `run:` 是**單行內收尾**的雙引號純量（`run: "echo hi | python3 …"`，開頭與
+# 結尾的 `"` 在同一行），分類階段掃到收尾的 `"` 就立刻 `break`，從未進入「續行」迴圈，
+# 這一行自己完全沒有 `owner[k] == r` 的續行。
+# 但 step 裡緊接著另一個鍵 `if:` 的值 `"always`（雙引號純量、**故意不收尾**，故意讓它一路
+# 續到 step 結尾），這會讓分類階段把 `if:` 後面那幾行標成 `kind == "SCALAR"`、`owner` 指向
+# `if:` 自己那一行（不是 `run:` 那一行 `r`）。
+# 原版：`owner[k] == r` 精準只認「屬於 `run:` 自己的續行」——`if:` 的續行 `owner` 是
+# `if:` 那一行，不等於 `r`，`any(...)` 判 False，這個檢查不拒絕。落到下面的解碼分支，
+# `run:` 的雙引號純量正常解碼成 `echo hi | python3 …`，管線判定通過，整體 `pass`。
+# 突變體拿掉 `owner[k] == r`，只看 `kind[k] == "SCALAR"`——`if:` 的續行雖然不屬於
+# `run:`，但**只要落在 `range(r+1, s["end"]+1)` 這個 step 尾端的範圍內、kind 是 SCALAR**
+# 就會被算進去，`any(...)` 變 True，整條檢查誤判成「`run:` 的值是跨行引號純量」而拒絕，
+# 變成 `parse-red`——即使 `run:` 自己那行完全是單行、乾淨、安全的純量。與原版的 `pass`
+# 不同，這張 fixture 殺得掉它。
+# bash 5.3 實測：`echo hi | python3 -c "import sys; sys.stdin.read()"` rc=0，
+# `bash -n` 對這段語法 parse 正常；`if:` 的值本身不是 shell 語法（是 GitHub Actions 的
+# 條件式欄位，lint 也從未讀它），這裡只用它的「跨行未收尾引號」結構來製造 `owner` 不等於
+# `r` 但 `kind` 仍是 `SCALAR` 的情形，與 shell 執行安全性無關。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe
+        run: "echo hi | python3 scripts/neutralise.py"
+        if: "always
+          never closes on purpose

@@ -1,0 +1,46 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺一個 wave3-strict 存活突變體：
+#   drop-operand|_set_prefix_line|if len(toks) <= k + 1 or toks[k + 1] not in SET_OPT_NAMES:|2
+#
+# `set -o badname` 當群組前綴行，後面接一個合規的 `{ …; } 2>&1 | python3 …neutralise.py`。
+# 原版：`_set_prefix_line(["set","-o","badname"])` 走到 `-o` 的分支，`len(toks) <= k + 1`
+# 為假（後面確實還有一個 token），落到 `toks[k + 1] not in SET_OPT_NAMES`——`"badname"`
+# 不在 `{"pipefail","errexit","nounset"}` 白名單裡，為真，整個 `or` 為真，
+# `_set_prefix_line` 正確回 False（這一行不是合規的 `set` 前綴）。`strict_group_violation`
+# 因此把這一行當成 body 的開頭，`body[0][:1] != ["{"]`（是 `["set"]`）成立，回一則違規
+# 字串；本 fixture 沒有宣告 `# LOG-FILTER:`，這則違規被採用，印 RULE-red
+# （「群組外的命令……`set` 前綴之後的第一個詞必須是群組的 `{`」）。
+#
+# 這顆突變體（位置 2）拿掉的是**第二個**運算元 `toks[k + 1] not in SET_OPT_NAMES`，只剩
+# `len(toks) <= k + 1`。對 `toks=["set","-o","badname"]`：`len(toks)=3`、`k=1`、`k+1=2`，
+# `3 <= 2` 為假——整個條件退化成恆假，`_set_prefix_line` **不再檢查選項名是否在白名單裡**，
+# 直接跳過 `return False`，把 `k` 往前推兩格（消費掉 `-o` 與 `badname`），迴圈結束後回
+# `True`：`"set -o badname"` 被誤判成合規的 `set` 前綴行！`strict_group_violation` 因此把
+# 這一行當成 prefix 吃掉，`k` 前進到下一個邏輯行（真正的 `{ …; } 2>&1 | python3 …` 群組），
+# 該群組本身寫法合規，`group_why` 回 `None`——整份判定從 RULE-red 掉成 `pass`。
+#
+# bash 5.3 實測（`shell: bash` 對應 GitHub 的 `bash --noprofile --norc -eo pipefail {0}`，
+# `-e` 在場）：`bash -c 'set -e; set -o badname; echo SHOULD_NOT_PRINT'` → stderr
+# `bash: line 1: set: badname: invalid option name`，rc=2，`echo` 那行**沒有**執行——
+# `-e` 生效，腳本在 `set -o badname` 出錯時就整個中止，永遠到不了後面安全的群組。
+# 神諭對這個 step 的判定是「誤擋」（`oracle=piped`）：它判斷若放行，PR 文字最終仍會走
+# 經過濾的管線，不是真的外流。**這是 fail-closed、無外流的一例**——本 lint 的字面驗證機制
+# 在「`set` 前綴之後第一個詞必須是 `{`」這關就已經正確擋下（body[0] 不是 `{`），不管
+# `set -o badname` 這一行本身是否合規，整份 workflow 都會被拒絕；本檔案要證明的是
+# `_set_prefix_line` 自己對這個輸入判得對，不是「這個輸入若被接受會不會外流」。
+# LINT-ARGS: --strict
+# **不是繞過，是限制**（fail-closed；神諭記在 KNOWN_DISAGREE）：這個輸入 bash 實際跑起來不會外流 PR 文字，lint 依設計保守地拒絕它；
+# 這張 fixture 釘住的是那個拒絕（突變體放寬後會放行）。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: set -o with an unrecognised option name is not accepted as a group prefix line
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o badname
+          { echo "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py

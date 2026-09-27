@@ -1,0 +1,19 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺 drop-operand|_is_2to1|...|2（拿掉 `r["pre"] == "2"`）。
+# 群組收尾只帶 `>&1`（等同 `1>&1`：把 fd1 疊回 fd1 的 no-op，完全不碰 fd2），
+# 接 `| python3 …neutralise.py`。bash 實測（`bash -c '{ echo SECRET >&2; } >&1 | cat' 2>/tmp/e; cat /tmp/e`）：
+# SECRET 出現在 /tmp/e（真的外流到環境的 stderr，不經過 cat／管線）——`>&1` 沒有把 fd2 併進管線，
+# 群組內 `>&2` 真的外流。原版 `_is_2to1` 要求 `pre == "2"`（trailing redir 是 `2>&1`）；`>&1` 的 `pre` 是
+# `""`,原版正確判「不是 2>&1」→ 不豁免 → 群組內 `>&2` 的 fd 命中留在 `an["fd"]`→ RULE 紅。
+# 突變體拿掉 `pre == "2"` 這個 guard 後,`>&1`（`op==">&"` 且 `t["lit"]=="1"`）被誤判成等同 `2>&1`
+# → 群組被誤豁免 → 群組內真外流的 `>&2` 命中被吞掉 → 突變體放行,漏掉真的外流。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: group trailer is bare noop dup, not 2>&1
+        shell: bash
+        run: |
+          { echo "$PR_TITLE" >&2; } >&1 | python3 scripts/neutralise.py

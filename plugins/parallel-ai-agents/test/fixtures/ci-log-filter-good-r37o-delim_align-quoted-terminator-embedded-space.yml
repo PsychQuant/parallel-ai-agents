@@ -1,0 +1,33 @@
+# #33 verify R37 opsweep 補件：delim_align 群組——殺
+# `drop-operand|_skip_delim_word|if s[j] in ("'", '"', "`") or s.startswith("$'", j):|1`
+# （拿掉 `s[j] in ("'", '"', "\`")` 這個運算元，只剩 `s.startswith("$'", j)`）。
+#
+# `_skip_delim_word` 遇到單／雙引號或反引號時要整段跳過（引號內含空白也不斷詞）。對
+# `<<'EOF Q'`（分隔字是含一個空白的單引號字）：原版在開引號處命中 `in (...)`，進入引號
+# 分支，正確找到收尾引號、把中間的空白一起吞進去，`_skip_delim_word` 回傳收尾引號**之後**
+# 的位置。拿掉這個運算元之後，開引號 `'` 不再被辨識成引號起點，退回一般字元逐格前進——
+# 掃到 `EOF` 之後遇到那個空白（空白在 `DELIM_WORD_BREAK` 裡）就提早斷詞，把分隔字讀成
+# `'EOF`（少了 ` Q'`），對齊位置整個錯開。
+#
+# heredoc 之後接的安全重導向目標 `>/tmp/out` 因此讀不到原文，被判定「目標看不到
+# 原文，不解析就不放行」＝規則誤擋。
+#
+# 原版為什麼是 pass：heredoc 本體只是把 PR 標題寫進 `/tmp/out`（不落在 `/dev`／
+# `/proc`），下一個 step 再讀出來餵給 neutralise.py，整個區塊沒有未過濾的外流路徑。
+#
+# bash 5.3.15 實測：單引號分隔字可以含空白，`cat <<'EOF Q'` 的終止字是逐字元的
+# `EOF Q`（含中間那個空白），能正確收尾。
+#
+# EXPECT: pass
+name: t
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: heredoc terminator is a quoted word containing a literal space, target is safe, later neutralised
+        run: |
+          cat <<'EOF Q' >/tmp/out
+          $PR_TITLE
+          EOF Q
+          cat /tmp/out | python3 scripts/neutralise.py

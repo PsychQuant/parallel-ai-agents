@@ -1,0 +1,33 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺 lex/`if C.startswith("<(", p) or C.startswith(">(", p):`
+# （L1705，redirect-target 位置的 process substitution 辨識；不是 L1679 主迴圈那個同文字的獨立判斷）
+# 四個突變體：startswith→F/drop-operand 各兩個運算元（`<(` 與 `>(` 各一）。
+# 主張「等價」的理由是：辨識失敗時 target 落回 None（`_redir_hit` 對 t=None 與 psub=True 同樣視為安全），
+# 而未被消耗的 `<(...)`／`>(...)` 會被 `_lex` 主迴圈的同文字判斷（L1679）在下一輪重新讀成一個獨立的
+# **WORD** token——這個論證只看到單一 redirect 自己的安全性，漏看了：這個多出來的 WORD 會被
+# `_Sh.parse_command` 的一般詞收集迴圈吃進同一條簡單命令的 `words`，使 `words[0]` 不再是原本緊跟在後面
+# 的命令名。當這條命令正是 `python3 <路徑>/neutralise.py`（管線的第二段）時，`neut` 判定
+# （`words[0]["code"]=="python3" and words[1] 符合 neutralise.py`）在原版為真、在突變體因索引整批
+# 往後挪一格而判成假——`_analyse` 的群組豁免（`last = max(k for segs neut)`）因此找不到任何 neut 段，
+# 群組完全不被豁免，群組內原本被正確豁免的 `>&2` 外流就會被判成真正的 RULE 外流。
+# 實測（bash 5.3.15）：兩個 fixture 各自 `lint=pass`、`oracle=piped 一致`；
+# `python3 test/mutcheck.py <此檔> @<id 清單>` 對四個突變體全部回 KILL（drop-operand 各運算元、
+# startswith→F 各運算元；`<(` 形式殺掉作用於運算元 1 的兩個突變體、`>(` 形式殺掉作用於運算元 2 的兩個）。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: leading redirect-target psub before the neutralise invocation, input form
+        run: |
+          true | python3 scripts/neutralise.py
+          {
+            echo "$PR_TITLE" >&2
+          } 2>&1 | > <(true) python3 scripts/neutralise.py
+      - name: leading redirect-target psub before the neutralise invocation, output form
+        run: |
+          true | python3 scripts/neutralise.py
+          {
+            echo "$PR_TITLE" >&2
+          } 2>&1 | > >(true) python3 scripts/neutralise.py

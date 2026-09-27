@@ -1,0 +1,26 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺 scanner/_aligned_sources 的
+# `return m if m < len(src_lines) and not code_lines[m] else None`（運算元 2，拿掉 `not code_lines[m]`）。
+# 這是 `joined()`（雙引號裡行尾 `\` 續行時，找下一個被掃描器接過的實體行）的收尾守衛。
+# 主張「等價」的理由是：`joined()` 找到的索引 m，若真的是掃描器摺過的續行，`code_lines[m]` 必然是空字串
+# （掃描器把被接進來的實體行記成空的程式碼行）——但這個論證假設 `joined()` 每次都被呼叫在「掃描器已經
+# 摺過的同一條鏈」上；沒有守衛時，一旦 `tail` 指標因為前一步驟算錯（本例是雙引號內容跨兩個以上實體行、
+# 每一行都以反斜線收尾）而落在**錯誤的**列，`not code_lines[m]` 這個守衛正是唯一能攔住「借錯列的內容」
+# 的機制——拿掉它之後，`s = s[:j] + src_lines[tail]` 會借到不該借的原文字元，逐字比對意外「對得起來」，
+# 拼出一段跟原文完全不同的字面（本例把 `/dev\` + 換行 + `/null` 誤接成 `/dev/n` + 換行 + `/null`，
+# 讓 `/dev` 這個路徑分段從「被反斜線打斷、比對不到」變成「意外對齊、被判成 /dev 底下」——原版因此放行
+# （反斜線把 `/dev` 這個分段打斷，`_redir_hit` 的 `{"dev","proc"} & set(...)` 檢查比不到），
+# 突變體卻把它判成 RULE 外流。
+# 實測（bash 5.3.15）：原版 lint=pass、oracle=piped 一致；`test/mutcheck.py <此檔> @<id>` 對此突變體回 KILL
+# （mutant=rule-red）。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: backslash-continued double-quoted redirect target crossing dev boundary
+        run: |
+          true | python3 scripts/neutralise.py
+          echo hi > "/dev\
+          /null"

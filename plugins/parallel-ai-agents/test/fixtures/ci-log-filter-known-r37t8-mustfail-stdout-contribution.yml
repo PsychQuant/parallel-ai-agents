@@ -1,0 +1,16 @@
+# #33 verify R37（神諭進入突變範圍，R36 條件 7）：must-fail 探針，量 `classify_piped_leak` 的「接 neutralise 的管線自己印到 stdout」分支。
+# 這一行其實是**另一條命令**印的（`echo` 與管線以 `;` 分開，屬已知類別 G，#59）；神諭的差分以邏輯行為單位，換掉整行時 `echo` 一起消失，
+# 所以歸因成「管線自己印到 stdout」——判「不一致：繞過」、不歸任何已知類別。這個誤歸因的方向是保守的（吵，不藏）；在現行 lint 下，
+# 要走到這個分支也只剩這種同一行的構造（管線真的自己印到 stdout 的寫法會先被 fd 規則擋下）。拿掉那個分支，神諭會把它改判成 S-2，
+# 探針宣告的理由就不會出現 ⇒ rc=1。
+# ORACLE-MUST-FAIL: 接 neutralise 的管線自己把 PR 文字印到 stdout
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: same line echoes PR text then pipes to neutralise
+        run: |
+          echo "$PR_TITLE"; true | python3 scripts/neutralise.py

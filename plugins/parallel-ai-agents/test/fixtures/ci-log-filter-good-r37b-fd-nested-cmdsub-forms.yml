@@ -1,0 +1,21 @@
+# #33 verify R36 第 8 列 → R37：fd 流向規則按流向判——重導向目標看去引號後的字、任何 fd 複製（`2>&1`／no-op `>&1` 除外）、xtrace 的各種拼法。
+# 負對照：引號與 `${…}` 裡的命令替換現在也剖析——常見寫法不得因此被擋（沒有重導向、`2>/dev/null`、`2>&1`、巢狀的 `$(…)`）。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: plain command substitution in quotes
+        run: |
+          printf '%s\n' "sha=$(git rev-parse HEAD)" 2>&1 | python3 scripts/neutralise.py
+      - name: default value from a command
+        run: |
+          printf '%s\n' "${GITHUB_REF_NAME:-$(git branch --show-current)}" 2>&1 | python3 scripts/neutralise.py
+      - name: safe redirects inside
+        run: |
+          printf '%s\n' "v=$(cat VERSION 2>/dev/null)" "out=$(uname -a 2>&1)" 2>&1 | python3 scripts/neutralise.py
+      - name: nested substitutions
+        run: |
+          printf '%s\n' "$(basename "$(pwd)")" 2>&1 | python3 scripts/neutralise.py

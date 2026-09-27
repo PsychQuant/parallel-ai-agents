@@ -1,0 +1,17 @@
+# #33 verify R36 第 14 列（logic）：heredoc 分隔字詞含 `${…}`，裡面有空白——bash 把整段（`x${X:-a b}`）讀成
+# 一個詞，終止字含那個空白。前一版在空白處斷詞（空白在 `DELIM_WORD_BREAK` 裡），把終止字讀短成 `x${X:-a`，
+# 一行 `x${X:-a` 就提早收掉 heredoc，真管線被吞成內文的一部分。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: delim-param-space
+        run: |
+          echo "$PR_TITLE"
+          cat <<\x${X:-a b}
+          x${X:-a
+          echo hi 2>&1 | python3 scripts/neutralise.py
+          x${X:-a b}

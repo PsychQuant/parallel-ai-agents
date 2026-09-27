@@ -1,0 +1,29 @@
+# #33 verify R37 opsweep 補件：殺 drop-operand|shell_scan|cmd_pos = cmd_pos and line[i:i + 1] in ("", " ", "\t")|2|L1189。
+# 這行決定 `!`／`{` 之後 `cmd_pos` 要不要保留成 True（只有當 `!`／`{` 本身是**獨立的一個詞**——
+# 後面緊接空白／行尾——才算保留字，後面才是命令位置；緊貼著別的字元則整個詞是別的東西，
+# `cmd_pos` 要收回 False）。突變體拿掉「後面是不是邊界字元」這個檢查，只留
+# `cmd_pos = cmd_pos and (cmd_pos)`——恆等於不變，於是 `!`／`{` **不論後面貼著什麼**都原樣
+# 保留 `cmd_pos` 之前的值。
+#
+# 本例 `![[ 1 | python3 scripts/neutralise.py ]]`——`!` 緊貼著 `[[`（中間沒有空白，`[` 不是
+# metacharacter、不會自動斷詞），在 bash 眼中 `![[` 是**同一個詞**、不是「否定運算子 `!`
+# 加上獨立的 `[[`」。原版：處理 `!` 這格時，`line[i:i+1]` 是 `"["`（下一個字元），不在
+# `("", " ", "\t")` 裡，`cmd_pos` 正確收回 False；緊接著第一個 `[` 出現時，`[[` 的辨識條件
+# 要求 `cmd_pos` 成立，此時已經是 False，`[[` **不被承認**成條件式，整段
+# `[[ 1 | python3 scripts/neutralise.py ]]` 落回一般 code 逐字元掃描，管線乾淨曝光、接到
+# neutralise.py → PASS。突變體因為保留了 `cmd_pos=True`（處理 `!` 那格什麼都沒變），緊接的
+# `[[` 被**誤判**成條件式關鍵字，內容被條件式遮蔽機制整段吃成空白，管線消失不見，此步驟
+# 沒有任何可見管線、也沒有 LOG-FILTER 宣告 → RULE:「既沒有經 neutralise.py」。
+# bash 5.3 實測：`![[ 1 | python3 -c pass ]]` 印出 `bash: ![[: command not found`、rc=0——
+# `![[` 被當成**一個詞**（整體是找不到的指令名），不是否定加條件式，跟原版的判法一致；
+# 沒有任何 PR-controlled 文字被印出，也沒有真正建立過管線。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: bang-glued-double-bracket
+        run: |
+          ![[ 1 | python3 scripts/neutralise.py ]]

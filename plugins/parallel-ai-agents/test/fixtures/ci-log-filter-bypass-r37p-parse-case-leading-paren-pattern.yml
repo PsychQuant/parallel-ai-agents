@@ -1,0 +1,25 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺 `parse_case` 消費模式前導 `(` 那行的 `±1→±2`
+# 突變體（`if self.op(self.tok(), "("): self.i += 1` 改成 `self.i += 2`；`parse_case` 內第 2 個
+# 裸 `self.i += 1`）。
+# 原版：bash 允許模式前面加一個可有可無的 `(`（如 `case x in (pat) …`）。看到 `(` 後 `self.i += 1`，
+# 游標落在模式本身——本檔是 `"$(echo "$PR_TITLE" >&2)"`，pattern-scan 迴圈接手、呼叫
+# `self.subs()`，命令替換裡的 `>&2` 被掃到、登記 hit。
+# 突變體：`self.i += 2` 多跳一格，把 `(` 跟緊接的整個模式詞一起跳過，游標直接落在模式後面的 `)`。
+# pattern-scan 迴圈條件立刻為假、跑 0 輪，模式詞的 `subs()` 從未被呼叫，hit 消失；body
+# `echo ok` 安全、`;;`／`esac` 正常收尾。
+# bash 5.3 實測（真的外流，非 fail-closed；模式最終配不配得到 `x` 不影響命令替換一定會先執行）：
+#   PR_TITLE=LEAK3 bash -c 'case x in ("$(echo "$PR_TITLE" >&2)") echo ok ;; esac'
+#   rc=0、stdout 空、stderr 印出 `LEAK3`。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          case x in ("$(echo "$PR_TITLE" >&2)") echo ok ;; esac | python3 scripts/neutralise.py

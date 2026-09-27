@@ -1,0 +1,36 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺
+# `drop-operand|_cmdsub_end_case|elif cases and cases[-1][0] == depth and (cases[-1][1] == "pat" or at_cmd):|4`（L560）。
+#
+# `_cmdsub_end_case` 遇到 `esac` 時要不要把 `cases` 那一層收掉（pop），原版判準是「這個 case 子句還在等模式
+# （`cases[-1][1] == "pat"`）**或**這個位置本來就是命令起點（`at_cmd`）」——空的 `case a in esac`（一個模式都
+# 沒有）屬於前者：push 之後 `cases[-1][1]` 一直是 `"pat"`，`esac` 一來就直接符合 pop 條件，正確收掉整個
+# （空、安全、什麼都不做的）case 區塊。
+#
+# 這份 fixture 的雙引號命令替換就是這個空 case：`$(case a in esac)`——原版在第一個 `)` 就正確收尾（`cases`
+# 清空，回收尾後的位置）。**收尾之後的文字**（`echo "$PR_TITLE" >&2;esac)`）因此回到雙引號的一般字面掃描：
+# 沒有任何 `$(`／`` ` ``／`${` 會再把它挖成命令替換，整段只是**字面資料**，永遠不會被執行——這跟真正的 bash
+# 語意一致：`"pre$(case a in esac)echo "$PR_TITLE" >&2;esac)post"` 這個字串裡，command substitution 只有
+# `case a in esac`（空、什麼都不做），後面那串 `echo "$PR_TITLE" >&2;esac)post` 純粹是被印出來的文字，`>&2`
+# 在裡面沒有任何重導向效果。
+#
+# 拿掉 `cases[-1][1] == "pat"` 這個 operand 後，判準只剩 `at_cmd`——而空 case 的 `esac` 出現位置（`in` 後面
+# 直接接 `esac`，前面沒有任何邊界字元）不滿足 `_at_command` 的任何一種判法（`AT_CMD_RE` 找不到匹配、也不是
+# `)` 結尾觸發的子句命令特例），`at_cmd` 是 False——於是這個空 case 反而**不被收尾**，`cases` 繼續開著，
+# 把後面本來是純資料的 `echo "$PR_TITLE" >&2` 當成還在 case 子句命令裡的**程式碼**繼續掃描，一路掃到後面
+# 那個 `;` （命令邊界字元，滿足 `AT_CMD_RE`）之後的第二個 `esac` 才真的收掉（這次 `at_cmd` 為真）、再收掉
+# 最後的 `)`。這段被誤判成「已解析、不透明」的內容因此被規則層重新掃過，看到裡面字面上長得像 `>&2` 的文字，
+# 判定從原版的 pass（真的安全）變成 RULE（誤擋）——與宣告的 EXPECT 不同，構成殺點。
+#
+# bash 5.3 實測（`PR_TITLE=LEAK bash -c '...'`）：stdout 印出 `preecho LEAK >&2;esac)post`（`$PR_TITLE` 的值
+# 被字面代入、原封不動印在 stdout 裡）、stderr 完全是空的——確認 `>&2` 在這段字面文字裡真的沒有任何重導向
+# 效果，原版判 pass 是對的方向。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: empty-case-then-literal-text-with-fake-leak
+        run: |
+          echo "pre$(case a in esac)echo "$PR_TITLE" >&2;esac)post" 2>&1 | python3 scripts/neutralise.py

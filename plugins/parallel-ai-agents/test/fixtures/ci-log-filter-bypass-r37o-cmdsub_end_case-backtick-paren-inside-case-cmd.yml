@@ -1,0 +1,33 @@
+# #33 verify R37 opsweep 補件：`_cmdsub_end_case` 自己的字元掃描迴圈裡，`if c == '"' or c == "`" or
+# line.startswith("${", k) or line.startswith("$(", k):` 這一列決定「遇到巢狀構造要整段跳過」，四個 operand
+# 各自對到雙引號／反引號／`${…}`／`$(…)`。拿掉 `c == "`"` 這個 operand 後，反引號不再整段交給
+# `_backtick_end` 跳過，而是被當成一般字元逐位掃描；反引號**裡面**的 `)`（`a)b` 的 `)`）因此被本函式自己的
+# 深度／case 追蹤看到。
+#
+# 在 case 子句的命令部分（`x) echo \`a)b\` >&2 ;; esac`，`cases[-1]` 是 `[depth, "cmd"]`）遇到這個提早暴露的
+# `)`：`cases[-1][0] == depth` 成立、`cases[-1][1] == "cmd"` 也成立 → 命中「子句命令之後同一層的單獨 `)`：
+# bash 語法錯誤」直接 `return None`（fail-closed），比原版整段跳過反引號早了一大截。原版正確整段吃掉
+# `` `a)b` ``（反引號裡的 `)` 不影響外層深度），繼續掃到後面真正的 `;; esac)`，成功配對、把整個 `$(…)` 判成
+# 不透明內容——但**同一段內容還會再被規則層的第二遍剖析（`_hidden_subs`）用同一套字元規則重新掃過一次**，
+# 這一遍才是真正判斷 `>&2` 有沒有外流的地方，量出的結果是 RULE：`>&2` 複製 fd（那段文字沒有經過管線）。
+#
+# 拿掉這個 operand 的突變體因為在 `_cmdsub_end_case` 自己的掃描裡提早回 None，導致呼叫端找不到收尾、
+# 一路掃到 run 區塊結尾都沒有東西能讓雙引號重新收口，最終落到「雙引號裡的命令替換到 run 區塊結尾都沒收——
+# 那一行在 bash 是語法錯誤、不會執行，本 lint 不解析」的 PARSE，與原版的 RULE 判定不同，構成殺點。
+#
+# bash 5.3 實測：`bash -n` 通過，執行印出 `prepost`（`` `a)b` `` 這個反引號子指令執行失敗但不影響外層字串
+# 收尾——`)` 確實不是命令替換的收尾，`>&2` 確實把 `case` 那個子殼層自己的 stdout 複製到 stderr、沒有經過
+# 後面的 `| python3 scripts/neutralise.py` 管線，原版判 RULE 是對的方向。
+#
+# 神諭對帳（R37 移植 #61 時補）：case 的模式改成會匹配（原本 `x)` 那一支不執行），那一支改印 PR 文字到 stderr——
+# bash 5.3 實測反引號裡的 `a)b` 報語法錯誤、外層照跑，PR 文字在 `2>&1` 生效之前就寫到 stderr；lint 的紅因此是「一致」。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: backtick-paren-inside-case-cmd
+        run: |
+          echo "pre$(case a in a) echo "$PR_TITLE" `a)b` >&2 ;; esac)post" 2>&1 | python3 scripts/neutralise.py

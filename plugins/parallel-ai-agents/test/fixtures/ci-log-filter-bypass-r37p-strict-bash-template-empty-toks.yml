@@ -1,0 +1,48 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺兩個 wave3-strict 存活突變體（皆讓 `_bash_template` 在
+# 空 token 清單上失去 fail-closed 短路、改成索引越界崩潰）：
+#   drop-operand|_bash_template|if not toks or toks[0] not in _BASH_PATHS:|1
+#   drop-operand|_bash_template|if i >= len(rest) or rest[i] not in _BASH_O:|1
+#
+# step 1：`shell: "   "`（純空白）。`_scalar` 解出來是三個空白字元（非空字串，不會被
+# `eff_shell = _scalar(...) or job["shell"] or wf_shell` 那條 `or` 鏈退回 None——真的用空字串
+# `""` 會被那條鏈當成假值退回 None，繞過整段檢查，所以特地選空白而非空字串）。`_bash_template`
+# 裡 `toks = sh.split()` 對純空白字串回 `[]`。原版：`if not toks or toks[0] not in _BASH_PATHS:`
+# 短路在 `not toks`（真）就回 `None`，不索引 `toks[0]`——呼叫端把這個樣板判成本 lint 不認得
+# （PARSE-red，訊息裡印出 `'   '`）。拿掉 `not toks` 這個運算元後只剩
+# `toks[0] not in _BASH_PATHS`，對空清單索引 `toks[0]` 直接 `IndexError`，且這次呼叫**不在**
+# 任何 `try/except` 保護範圍內（`_bash_template` 是在 `tmpl = _bash_template(eff_shell)` 這一行
+# 直接呼叫，早於本檔案唯一那段攔截 `(IndexError, KeyError, ValueError, RecursionError)` 的
+# try 區塊），整支 `python3 -` 腳本未捕捉例外中止：不會印 `RULE:`／`PARSE:`，`mutcheck.py` 的
+# `verdict()` 回 `"rc=%d"`，不等於宣告的 `parse-red`。
+#
+# step 2：`shell: "/bin/bash -o {0}"`（`-o` 後面只剩要被三元式吃掉的 `{0}` 佔位符，`rest`
+# 因此只剩 `["-o"]`）。原版：處理到 `-o` 時 `i` 已經等於 `len(rest)`（後面沒有選項名），
+# `if i >= len(rest) or rest[i] not in _BASH_O:` 短路在 `i >= len(rest)`（真），回 `None`——
+# 同樣被呼叫端判成不認得的樣板（PARSE-red）。拿掉 `i >= len(rest)` 這個運算元後只剩
+# `rest[i] not in _BASH_O`，索引 `rest[1]` 對長度 1 的清單直接 `IndexError`，同理不在
+# try/except 保護範圍內，未捕捉例外中止。
+#
+# 兩個 step 都不是「shell 值裡有 bash 程式碼」——`shell:` 的值是 GitHub Actions 的**樣板字串**，
+# 由這支 lint 自己的 `_bash_template()` 解析，不是要交給 `bash -c`／`bash -n` 執行的腳本；
+# 已用抽出的同一份原始碼直接呼叫驗證：
+#   _bash_template("   ")             → None（原版）；索引 toks[0] 拋 IndexError（突變體）
+#   _bash_template("/bin/bash -o {0}") → None（原版）；索引 rest[1] 拋 IndexError（突變體）
+# run 區塊本身（`true`）是良性內建命令，不印 PR 文字，這兩個 step 在**原版**下都因為 shell
+# 樣板本身不認得而在 run 區塊解析之前就被拒絕，神諭對「另類 shell」一律判「不可比」（已知
+# 類別，不是「誤擋」）。
+# LINT-ARGS: --strict
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: whitespace-only shell is rejected without indexing an empty token list
+        shell: "   "
+        run: |
+          true
+      - name: bash template ending in a bare -o is rejected without an out-of-range read
+        shell: "/bin/bash -o {0}"
+        run: |
+          true

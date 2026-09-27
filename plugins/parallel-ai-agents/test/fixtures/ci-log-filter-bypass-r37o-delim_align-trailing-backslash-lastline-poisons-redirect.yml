@@ -1,0 +1,60 @@
+# #33 verify R37 opsweep 補件：反駁「_aligned_sources 的 L1335／L1340 `e is None or e > len(s)` 分支
+# 依構造不可達」——殺 drop-operand|L1335（位置 2/3/4）與 L1340（位置 1/2）共五個突變體。
+#
+# 構造：run 區塊最後一個實體行是 `echo hi 2>/dev/null <<EOF\`——heredoc 分隔字詞不加引號、
+# 以字面反斜線收尾，且這一行是整個 `scan_in` 陣列的**最後一個**實體行（`_aligned_sources` 的
+# `joined(tail)` 找不到下一實體行、回 None）。
+#
+# `shell_scan()` 自己讀這個分隔字詞時（未加引號分支，`if c == "\\" and j + 1 == n:`）遇到行尾反斜線
+# 會呼叫 `_next_phys` 找下一實體行接續；`_next_phys` 找不到（已到陣列尾端）回 `("", 0)`，
+# `shell_scan` 因此把 `line` 截到反斜線之前、直接終止分隔字詞的讀取——**不設 `unparsed`**（bash 5.3
+# 對「未加引號、以行尾反斜線收尾、且是整份腳本最後一行」的 heredoc 分隔字只印
+# `warning: here-document at line N delimited by end-of-file`，是警告不是語法錯誤，指令照樣執行；
+# 用 `bash -n` 對這個構造驗證過 exit code 是 0、`bash -c` 直接跑會把 heredoc 讀到 EOF 才停）。
+#
+# 但 `_aligned_sources` 重建原文位置用的是 `_skip_delim_word`：它對同一個未加引號的尾端反斜線走的是
+# 「跳兩格」的逃逸分支（`j += 2 if s[j] == "\\" else 1`），沒有 `_next_phys` 那種「找不到下一行就截斷」
+# 的退路——反斜線剛好是整個 `s`（原文那一行）最後一個字元時，`j` 會溢出成 `len(s) + 1`，函式回傳
+# `e = len(s) + 1`（不是 `None`，是一個真的整數，且確實 `> len(s)`）。
+#
+# 已用抽出的同一份原始碼直接呼叫驗證（見下方對照組，非本檔內容）：
+#   lines = ['echo "$PR_TITLE" | python3 scripts/neutralise.py', 'echo hi 2>/dev/null <<EOF\\']
+#   shell_scan(lines) → unparsed=None（如上所述，這一行不觸發 unparsed）
+#   _aligned_sources(...)[1] → None（第二行對不齊，`ok=False` 是靠 L1340 的 `e > len(s)` 那一支成立，
+#     不是 `e is None`——證明「`e > len(s)` 恆假、只有 `e is None` 才會發生」的構造論證是假的）
+#   _analyse(...)["fd"] → ["`>/dev/null` 的目標看不到原文（本 lint 對不齊這一行）——不解析就不放行"]
+#     （第二行的 `2>/dev/null` 因為整行對不齊被 fail-closed 判定看不到原文；若 L1340 只剩
+#     `if e is None:`，這裡 `e` 不是 None、條件為假，不會 `ok=False`，對齊會改用「跑到原文尾端」的
+#     另一支繼續、`2>/dev/null` 的目標多半能正常對齊到 `/dev/null`——那是 `_SAFE_TARGETS` 白名單裡的
+#     安全目標，`_redir_hit` 會回 `None`，`an["fd"]` 變空，本 fixture 的判定從 RULE-red 掉回 pass）。
+#   若 L1340 只剩 `if e > len(s):`（砍掉 `e is None` 那個判斷）：對本例的 `e`（真整數，不是
+#     None）不影響——但同一份 `_skip_delim_word` 對「分隔字詞裡有未收尾反引號」的另一種輸入
+#     （如 `<<a\`b`，找不到收尾反引號）會直接回傳 `None`；`None > len(s)` 在 Python 3 會拋
+#     `TypeError: '>' not supported between instances of 'NoneType' and 'int'`，讓 lint 整支腳本
+#     以未捕捉例外中止（訊息不含 `RULE:`／`PARSE:`，rc 也不是預期的 0/1）——已用 `bash -c`
+#     對抽出的同一份原始碼直接呼叫 `_skip_delim_word('cat <<a\`b', 6)` 驗證回傳值是 `None`。
+#   L1335 的 `while (e is None or e > len(s)) and s.endswith("\\") and joined(tail) is not None:`：
+#   本例 `joined(tail) is None`（陣列已到底），三個運算元只要 `joined(tail) is not None` 被砍掉，
+#   迴圈守衛少了這一條、退化成 `e is None or e > len(s)` 恆成立時就會**進迴圈**，對 `tail = joined(tail)`
+#   （此時是 `None`）取 `src_lines[None]` 會直接拋 `TypeError`——同樣是崩潰而非優雅的 `ok=False`；
+#   砍掉 `(e is None or e > len(s))` 這一整組（位置對應 opsweep 對這行報的另外兩個突變體）則會讓
+#   迴圈守衛只剩 `s.endswith("\\") and joined(tail) is not None`，對本例（`joined(tail) is None`）
+#   仍不進迴圈、但對「行尾反斜線、且**確實有下一行可續**」的正常多行分隔字詞場景會**永遠**進迴圈
+#   （不再檢查 `e` 有沒有算出來），跑掉 `_skip_delim_word` 對下一行是否真的成功找到分隔字結尾的判斷，
+#   讓多行分隔字詞正確對齊的既有 fixture（`ci-log-filter-bypass-dq-delim-backslash-last-line` 一族）
+#   風險：本檔只需要證明「原本聲稱不可達的分支確實可達、而且拿掉它會改變最終判定」，不逐一窮舉
+#   每個位置的下游後果——`mutcheck.py` 的 KILL/MISS 輸出是最終依據。
+#
+# 神諭對帳（R37 移植 #61 時補）：被擋下的那個命令改成真的把 PR 文字印出去（原本印常數、或那一支不會執行），
+# 讓 lint 的紅是「一致」而不是「誤擋」；殺掉的突變體逐一重驗仍然殺。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: unquoted heredoc delimiter ends in trailing backslash on the run block's last physical line, poisoning an earlier redirect's alignment
+        run: |
+          echo "$PR_TITLE" | python3 scripts/neutralise.py
+          echo "$PR_TITLE" 2>/dev/null <<EOF\

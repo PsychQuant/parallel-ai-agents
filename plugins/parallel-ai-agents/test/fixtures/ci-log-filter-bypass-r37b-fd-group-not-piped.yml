@@ -1,0 +1,13 @@
+# #33 verify R36 第 8、9 列 → R37：群組 `{ …; }`／`( … )` 收尾後緊接 `2>&1 |`（或 `|&`）進 neutralise，群組裡的 fd 2 就是管線——不算外流。
+# 豁免的邊界（相鄰輸入）：群組帶了 `2>&1` 卻**沒有**接管線——群組的 fd 1 是原始 stdout，`>&2` 之後照樣外流，不得豁免。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: group not piped
+        run: |
+          { printf '%s\n' "$PR_TITLE" >&2; } 2>&1
+          printf 'ok\n' 2>&1 | python3 scripts/neutralise.py

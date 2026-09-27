@@ -1,0 +1,19 @@
+# #33 verify R37 合併 r37b×r37c 時協調者加（`_word` 把掃描器切成 code 的雙引號照 code 讀的相鄰輸入）：跨行的
+# `"$(` … `)"` 裡面有 `>&2`。bash：裡面那條 echo 把 PR 文字寫到 step 的 stderr，不經過最後那條管線（實測外流）。
+# 這張守的是反方向——照 code 讀之後，fd 流向規則必須看得到命令替換裡的重導向；若那段被當成看不見的內容，這裡就會放行。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: fd redirect inside a multi-line double-quoted command substitution
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          X="$(
+            echo "$PR_TITLE" >&2
+          )"
+          echo "$X" 2>&1 | python3 scripts/neutralise.py

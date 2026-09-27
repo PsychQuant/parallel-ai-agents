@@ -1,0 +1,15 @@
+# #33 verify R37 完整性審查（缺陷 b）：同上，換成算術命令 `if (( 1 )) then`（bash 接受）。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$PR_TITLE"
+          if (( 1 )) then [[ "$PR_TITLE" =~ (a| python3 scripts/neutralise.py ) ]]; fi

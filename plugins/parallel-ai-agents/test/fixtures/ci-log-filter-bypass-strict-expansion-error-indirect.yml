@@ -1,0 +1,14 @@
+# #60 第 2 類：`${!PR_TITLE}` 的「無效的變數名稱」是**展開期**錯誤，在這一段的 `2>&1` 生效之前寫到 stderr。
+# 前一版的 `--strict`（只要求管線帶 `2>&1`）放行它；群組規則擋。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: indirect expansion error before 2>&1 applies
+        shell: bash
+        run: |
+          echo "${!PR_TITLE}" 2>&1 | python3 scripts/neutralise.py
