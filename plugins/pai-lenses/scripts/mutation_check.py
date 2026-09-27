@@ -103,12 +103,16 @@ SUITES = {
 REPO_ROOT = PACK.parent.parent
 CACHE = PACK / "scripts" / "mutation-cache.json"
 _PAI_TEST = PAI.relative_to(REPO_ROOT) / "test"
+# 整個 repo 當輸入時唯一不計入的檔：沒有任何一條驗證指令讀它（validate.py 零次；test_validate.py 只在檔頭
+# docstring 提到它；它讀的 lint 原始碼只在註解裡提到）。量測完回填 CHANGELOG 的數字是每一輪的最後一步——
+# 計入的話，那一步會讓兩組共一百多個靶的快取全部失效。新增一條會讀它的測試時要把它從這裡拿掉。
+_NOT_READ = frozenset({str(_PAI_TEST.parent / "CHANGELOG.md")})
 SUITE_INPUTS = {
     "lint": [(REPO_ROOT, [str(_PAI_TEST / "fixtures" / "*")])],
     "oracle": [(REPO_ROOT, [str(_PAI_TEST / "fixtures" / "*"), str(_PAI_TEST / "oracle-probes" / "*"),
                             str(_PAI_TEST / "oracle_selfcheck.py"), str(_PAI_TEST / "lint-ci-log-filter.sh")])],
-    "validate": [(REPO_ROOT, ["**/*"])],
-    "neutralise": [(REPO_ROOT, ["**/*"])],
+    "validate": [(REPO_ROOT, ["**/*"], _NOT_READ)],
+    "neutralise": [(REPO_ROOT, ["**/*"], _NOT_READ)],
 }
 SUITE_INPUTS["oracle-inverted"] = SUITE_INPUTS["oracle"]
 
@@ -145,11 +149,12 @@ def inputs_digest(spec, exclude=frozenset()):
     """輸入檔的雜湊：路徑與（正規化後的）內容都計入，所以改內容、增刪檔案都會換 digest。"""
     h = hashlib.sha256()
     files = set()
-    for root, pats in spec:
+    for root, pats, *skip in spec:
+        skip = skip[0] if skip else ()
         for pat in pats:
             for f in root.glob(pat):
                 if f.is_file() and ".git" not in f.relative_to(root).parts and "__pycache__" not in f.parts \
-                        and f.resolve() not in exclude:
+                        and f.resolve() not in exclude and str(f.relative_to(root)) not in skip:
                     files.add((root, f))
     for root, f in sorted(files, key=lambda x: str(x[1])):
         raw = f.read_bytes()

@@ -2302,6 +2302,17 @@ class ValidateTest(unittest.TestCase):
             d2 = M.inputs_digest(spec); self.assertNotEqual(d1, d2, "多了一張 fixture")
             (td / "fx" / "b.yml").unlink()
             self.assertEqual(d1, M.inputs_digest(spec), "刪回原樣，digest 回到原值")
+            # 第三欄是「不計入的檔名」：只給沒有任何驗證指令讀的檔（CHANGELOG.md——量測完回填數字不該讓快取失效）
+            (td / "CHANGELOG.md").write_text("v1\n")
+            spec2 = [(td, ["**/*"], {"CHANGELOG.md"})]
+            e0 = M.inputs_digest(spec2)
+            (td / "CHANGELOG.md").write_text("v2\n")
+            self.assertEqual(e0, M.inputs_digest(spec2), "排除的檔名改了，digest 不變")
+            (td / "t.py").write_text("t2\n")
+            self.assertNotEqual(e0, M.inputs_digest(spec2), "其他檔改了，digest 照樣變")
+        # 真的排除清單每一條都要指到存在的檔：路徑寫錯或檔案搬家，排除就安靜地變成什麼都沒排除
+        for rel in M._NOT_READ:
+            self.assertTrue((M.REPO_ROOT / rel).is_file(), rel)
 
     def test_mutation_cache_reuses_result_and_no_cache_reruns(self):
         """同一個 key 第二次不跑驗證指令、回報「沿用」；`--no-cache` 一定重跑。靶的結果與快取裡的一致。"""
