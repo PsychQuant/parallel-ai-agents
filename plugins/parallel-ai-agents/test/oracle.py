@@ -213,6 +213,11 @@ KNOWN_DISAGREE = {
     ("ci-log-filter-restrict-r39-strict-cd-before-group.yml", "cd before group"):
         "群組前只收 `set` 前綴：`cd`、`export` 放進群組或改用 `working-directory:`／`env:`。",
     ("ci-log-filter-restrict-r39-strict-export-before-group.yml", "export before group"): "同上。",
+    # ── R39 opsweep 存活者的殺法 fixture ──
+    ("ci-log-filter-bypass-r39-env-shellopts-expression.yml", "SHELLOPTS from an expression"):
+        "神諭不設 runner 運算式的值（`SHELLOPTS: ${{ … }}` 在沙箱裡不存在），量不到它可能開的 xtrace；這張的用途是殺 `_env_names` 的突變體。",
+    ("ci-log-filter-restrict-r39-strict-group-dotdot-stderr.yml", "group writes through dotdot"):
+        "`/dev/fd/../stderr`：`..` 經過 /dev 就不給群組豁免（fail-closed）。bash 寫到群組自己的 stderr（macOS）或寫不出去（Linux），不外流。",
     # ── R39（R38 第 13 列）：殺 `_cmdsub_end_case` 四條存活突變的 fixture——原碼保守判 RULE（命令替換裡的 `shopt -s extglob`
     # 改變之後的詞法，本 lint 不追蹤就擋），bash 照常執行、不外流 ──
     ("ci-log-filter-restrict-r39-cmdsub-case-esac-at-cmd.yml", "cmdsub case esac at cmd"):
