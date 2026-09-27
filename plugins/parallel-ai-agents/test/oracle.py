@@ -88,6 +88,7 @@ import collections
 import os
 import pathlib
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -294,7 +295,7 @@ for _msg in (PIPEFAIL_RULE_MSG, STRICT_GROUP_RULE_MSG):
         sys.exit("✗ oracle.py 用來認 RULE 的字面「%s」不在 %s 裡——lint 改了訊息，這裡要同步改" % (_msg, LINT))
 # 已知類別在 repo 自己的 fixture 集（不給檔案參數）上的**確切**條數（R37，R36 第 2 列；同 selftest 門檻 R24 F9 的理由：
 # 寫成 `>=` 而實際更高時，那個差額沒有網——刪掉一張 G 範例 fixture 仍然綠）。must-fail 探針不算在內。
-FIXTURE_CLASS_TOTALS = {"G": 6, "S-2": 3}
+FIXTURE_CLASS_TOTALS = {"G": 7, "S-2": 3}
 # must-fail 探針的確切張數（同理：刪掉一張探針＝少一條負對照，必須立刻紅）。
 FIXTURE_MUSTFAIL_TOTAL = 8
 KNOWN_CLASS_RE = re.compile(r"^# KNOWN-CLASS: (\S+)", re.M)
@@ -420,7 +421,21 @@ def _continues(line, bash):
         return True
     if not line.strip():
         return False
-    return _bash_n(line, bash)[0] != 0 and _bash_n(line + "\n:", bash)[0] == 0
+    return (_bash_n(line, bash)[0] != 0 and _bash_n(line + "\n:", bash)[0] == 0
+            and _dangling_op(line) != "andor")
+
+
+def _dangling_op(line):
+    """懸空的是 `|`／`|&`（同一條管線）還是 `&&`／`||`（and-or 串的下一條命令）——R39：前一版兩者都算同一條邏輯行，
+    `a | python3 …neutralise.py &&` 換行 `echo "$PR_TITLE"` 的差分把下一行那條**別的命令**一起換掉，外流跟著消失、被錯判成
+    「管線自己印的」（實為 G，`known-r39-g-andand-continuation`）。用 shlex 取最後一個標點詞元；取不出來回 None（照舊當成續行）。"""
+    try:
+        lx = shlex.shlex(line, posix=True, punctuation_chars=True)
+        toks = list(lx)
+    except ValueError:
+        return None
+    last = toks[-1] if toks else ""
+    return "pipe" if last in ("|", "|&") else "andor" if last in ("&&", "||") else None
 
 
 def neutralise_spans(run, bash):

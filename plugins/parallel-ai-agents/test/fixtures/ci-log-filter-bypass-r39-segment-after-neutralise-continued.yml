@@ -1,0 +1,15 @@
+# 同上，接在 neutralise 之後的那一段用 `|` 懸空加註解寫到下一行。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo safe | python3 scripts/neutralise.py | # c
+            printf "%s\n" "$PR_TITLE"

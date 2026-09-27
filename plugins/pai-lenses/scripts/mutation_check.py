@@ -1381,6 +1381,14 @@ MUTATIONS += [
      r'(?:event\.|head_ref\b)', r'(?:event\.)', "lint"),
 ]
 
+# ── R39（mutation 全輪的存活者追到的兩件事）──────────────
+MUTATIONS += [
+    ("lint: neutralise 之後還接管線的一段不擋（R39 → bypass-r39-segment-after-neutralise、-continued）",
+     '        if neut and neut[-1] < len(segs) - 1:', '        if False:', "lint"),
+    ("oracle: `&&`／`||` 懸空也當成同一條管線（R39 → known-r39-g-andand-continuation 被錯判成管線自己印的）",
+     '            and _dangling_op(line) != "andor")', '            and True)', "oracle"),
+]
+
 # ── R39（#33 verify R38 第 3、6、7 列）：神諭的歸類 ──────────────────────────────
 # 前六條由 `test/oracle_selfcheck.py` 的第 3–8 項殺（`oracle-inverted`：那些探針用假 lint 讓神諭走到歸類分支）；
 # 後兩條由 fixture 集的已知類別殺。

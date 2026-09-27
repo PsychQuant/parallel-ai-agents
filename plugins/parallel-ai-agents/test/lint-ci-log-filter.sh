@@ -89,12 +89,12 @@ if [ "${1:-}" = "--selftest" ]; then
   done
   # R24 regression F9：門檻寫成 `>=` 而實際值更高時，那個差額**沒有網**——刪掉一個 fixture 仍然綠。
   # 三個門檻一律改成**等於實測值**：要加 fixture 就同步改這裡，讓「少了一個」立刻紅。
-  if [ "${n_pass}" -ne 257 ]; then
-    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 257（改動 fixture 請同步改這個數字）" >&2
+  if [ "${n_pass}" -ne 258 ]; then
+    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 258（改動 fixture 請同步改這個數字）" >&2
     fail=1
   fi
-  if [ "${n_rule}" -ne 359 ]; then
-    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 359" >&2
+  if [ "${n_rule}" -ne 362 ]; then
+    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 362" >&2
     fail=1
   fi
   if [ "${fail}" -ne 0 ]; then exit 1; fi
@@ -2339,6 +2339,15 @@ def _analyse(logical, logical_src):
                     or (conns[k] == "|" and len(segs[k]["trail"]) == 1 and _is_2to1(segs[k]["trail"][0]))):
                 out["groups"][segs[k]["gid"]] = True
     fd = [why for why, stack, safe in out["hits"] if not (safe and any(out["groups"][g] for g in stack))]
+    # neutralise **之後**還接了管線的一段（R39，mutation 全輪的存活者追到）：那一段自己的輸出不經過濾——
+    # `… | python3 …neutralise.py | printf '%s\n' "$PR_TITLE"`。`--strict` 的群組尾巴規則本來就要求 neutralise 是最後一段；
+    # 預設模式前一版沒有對應的檢查。兩種模式都適用。**保守**：`| cat`、`| tee log` 這類只轉印 stdin 的段也擋——分不出來：
+    # `printenv PR_TITLE`、`sh -c 'echo $PR_TITLE'` 的詞全是字面也照樣外流（`restrict-r39-segment-after-neutralise-cat`）。
+    for segs, _conns in out["pipelines"]:
+        neut = [k for k, sg in enumerate(segs) if sg["neut"]]
+        if neut and neut[-1] < len(segs) - 1:
+            fd.append("`python3 …neutralise.py` 之後還接了管線的一段——那一段自己的輸出不經過濾")
+            break
     return {"fd": fd, "events": out["events"]}
 
 
