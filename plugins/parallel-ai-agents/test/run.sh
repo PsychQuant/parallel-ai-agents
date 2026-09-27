@@ -35,7 +35,10 @@ if python3 -c 'import yaml' 2>/dev/null; then python3 test/oracle.py; else echo 
 echo "── 形狀普查：本輪每個新機制在產生語料裡都要有 > 0 檔（#33 verify R32 DA-9 / G-R32-DA-5）──"
 # 散文規則（shapes.py 檔頭 6-7 行）R31 遵守、R32 破壞——一輪就失守，所以改成會紅的閘門。
 if python3 -c 'import yaml' 2>/dev/null; then
+  # 兩組都產生，與 CI 同一個目錄同樣的內容（test.yml 的產生語料 step）：R37 的機制只出現在 `--strict` 組，
+  # 只產生預設組時 R37-* 各列恆為 0、這一步必紅——R37 加 `--strict` 組時只改了 CI，run.sh 沒跟上（R37 自查）。
   GEN=$(mktemp -d); python3 test/corpus/shellgen.py --out "$GEN" >/dev/null
+  python3 test/corpus/shellgen.py --strict --out "$GEN" >/dev/null
   find "$GEN" -name '*.yml' -print | sort | sed 's/^/x /' > "$GEN/list.txt"   # 不用 ls（SC2012）
   python3 test/corpus/shapes.py --require-nonzero R3 "$GEN/list.txt" | tail -1
   rm -rf "$GEN"
