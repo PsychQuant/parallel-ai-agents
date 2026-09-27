@@ -21,7 +21,7 @@ ensemble-* 的程式表面看似都是「LLM 驅動的編排」，不可測。�
 | `ensemble-workflow.test.mjs` | `../workflows/ensemble-workflow.js`（共用 harness，4 個 skill 的底層）|
 | `pai-parse-lens-csv.bats` | `../bin/pai-parse-lens-csv`（ensemble-compose 的 `--lens-file` CSV 解析器）|
 | `pai-list-profiles.bats` | `../bin/pai-list-profiles`（validate.py 的 profile 名稱真源：求值 harness PROFILES 印 key；`PAI_HARNESS` 只在測試裡指向 fixture，validate.py 呼叫時顯式傳入被 containment 過的路徑——#33 verify R14 E-2）|
-| `skill-lens-wiring.bats` | `../skills/ensemble-*-review/SKILL.md`（#40）：以 fenced block 與 `Phase N` 標題切段做結構檢查 —— 派發段的 `bash` fenced block 以自己的 profile 非註解地呼叫 `bin/pai-collect-lens-layers` 且在派發模板之前；每個派發模板（含 `profile` 鍵的 json/javascript block）帶 `customLenses` 且 `profile` 等於自己；派發之後的 Phase 段有一句未否定的「印 provenance 行」。每條判準都有 mutation case（暫存副本上套缺口、斷言紅在該判準）。以目錄 glob 列舉，新增 review skill 自動涵蓋；**不涵蓋 `ensemble-compose`** |
+| `skill-lens-wiring.bats` | `../skills/ensemble-*-review/SKILL.md`（#40）：以 fenced block 與 `Phase N` 標題切段做結構檢查 —— 派發段的 `bash` fenced block 有一行命令形狀的 `python3 "${CLAUDE_PLUGIN_ROOT}/bin/pai-collect-lens-layers" <自己的 profile>`（註解、行尾註解、`echo`、`true ||` 都不算）且在派發模板之前；每個派發模板（`Phase N` 段內、含 `profile` 鍵與派發標記鍵的 json/javascript block）帶 `customLenses` 且 `profile` 等於自己；派發之後的 Phase 段有一句「印 provenance 行」—— 這條是**同句共現 ＋ 固定否定詞表**的啟發式，表外否定與跨句否定看不出來。每條判準都有 mutation case（暫存副本上套缺口、斷言紅在該判準），反例 block 的寫作約束見檔頭。以目錄 glob 列舉，新增 review skill 自動涵蓋；**不涵蓋 `ensemble-compose`** |
 | `pai-parse-verdict.bats` | `../bin/pai-parse-verdict`（ensemble-academic-review `--auto-iterate` 的 verdict tag 解析器）|
 | `pai-iterate-decide.test.mjs` | `../bin/pai-iterate-decide`（`--auto-iterate` 主迴圈的純狀態機：halt / 套 fix / mode 交替 / focus-rotation）|
 | `pai-iter-commit.bats` | `../bin/pai-iter-commit`（`--auto-iterate` 的 per-round checkpoint commit + 空輪防護）|

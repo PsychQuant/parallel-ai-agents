@@ -116,8 +116,27 @@ pack 與 user 的拆分**不能**直接從 `stats.lensProvenance` 讀：harness 
 一律是 `origin: "custom"`（skill 自己的 `--lens` / `--lens-file` 也是）。harness 依 `customLenses` 的順序
 逐條記錄，所以**依順序配對**：第 i 筆 `origin === "custom"` 的條目對應 `customLenses[i]`，取其 `_layer`
 （沒有 `_layer` 的是 skill 自己的 `--lens` / `--lens-file`）。
-前提是 `customLenses` 裡沒有被 `disableLenses` 跳過的 key（被跳過者不留 provenance 條目，配對會錯位）；
-兩邊條數不等時不要硬配，改印層 ②③ 的合計。`ensemble-minutes-review` 的 Phase 3 有逐欄的來源表。
+配對的前提 —— harness 在下列情況**不留** provenance 條目，配對會錯位：
+(a) 該 key 在 `disableLenses` 裡；(b) 該條的 `key` 或 `focus` 不是字串、或 `trim()` 後為空
+（`workflows/ensemble-workflow.js` 的 `customs` 過濾，安靜丟掉、不警告）。
+因此先比條數：令 `N` = `customLenses` 條數、`C` = `origin === "custom"` 的條目數。
+
+- `C === N` → 依序配對。
+- `N > 0` 且 `C === 0` → 這**不是**歸屬問題，是層 ②③ 整批沒進 harness（典型成因：`customLenses` 被傳成
+  字串 —— harness 對非陣列一律當成沒給）。印警告 `⚠️ 層 ②③ 未進入 harness`，不要印成 `+0/⊕0`。
+  `stats.agents` 在這種情況下與「沒裝 pack」一模一樣，拿 harness 自己回傳的 lens 數與 replicas 去驗算
+  `stats.agents` 永遠對得上，驗不出這件事。
+- 其他（`0 < C ≠ N`）→ 不要硬配，改印層 ②③ 的合計並註明條數不符。
+
+**被上限切掉的 lens 仍記為 `added`。** harness 先記 provenance，之後才依 `maxAgents` 從 lens 集合**尾端**
+`slice`（新增的層 ③ 排最後、先被切）。判別：`stats.reviewers[].lens` 是實際派出的 lens key；
+`lensProvenance` 裡 key 不在其中的條目就是被切掉的（`journal.jsonl` 另有 `lens set N → M … extra lenses dropped`）。
+這些要印成 `✂`（不是 `+`），並警告哪幾條層 ②③ lens 被切。
+
+**同一條 built-in 被 pack 與 user 都 override** 時會有兩筆 `overridden`（第一筆 `overrodeFrom: "builtin"`、
+第二筆 `overrodeFrom: "custom"`）；實際在跑的是**該 key 最後一筆** `overridden` 的那一層，警告要點名它。
+
+`ensemble-minutes-review` 的 Phase 3 有逐欄的來源表與上述各警告的文案。
 
 **沒裝 lens pack 時這行仍要印**（只會顯示 built-in），這樣「今天的報表跟昨天不同」永遠有據可查 ——
 量測儀器換了刻度卻不說，是 eval 數字不可比的根源。

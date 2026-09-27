@@ -26,11 +26,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `origin: "custom"`），改為依順序與 collector 的 `lenses[i]._layer` 配對；條數不符時只印合計。
     這條配對規則也寫進 `references/lens-layers.md` §4，四支 skill 共用。
   - **built-in 被 `override` 取代時印警告**（`overrodeFrom === "builtin"`）—— `fidelity` 等核心 lens
-    被換掉不能只留一個 `⊕`。並註明 lens 會讀到逐字稿：指向 pack README 的四類禁止事項、collector
+    被換掉不能只留一個 `⊕`。pack 與 user 都 override 同一條時，點名**該 key 最後一筆** `overridden` 的層
+    （實際在跑的那一層），不是 `overrodeFrom === "builtin"` 的那一筆（#65 verify R2-6）。
+    並註明 lens 會讀到逐字稿：pack README 的四類禁止事項**直接列在 SKILL.md 裡**（先前的相對連結
+    `../../../pai-lenses/README.md` 在裝好的 plugin cache 裡是死連結，改附 repo URL；R2-8）、collector
     跨 marketplace 取最高版本的選法、與 #36（lens 文字未經 sentinel 包裹）。
-  - **`stats.agents` 的預期公式改照 harness 的上限夾擠**（`maxAgents` 預設 16、夾在 4..30；lens 數與
-    replicas 依序被壓），並更正「偏少就是 agent 死掉」：`stats.agents` 數的是派出去的，agent 死掉要看
-    `stats.reviewers[].ok` / `stats.daOk` / `stats.integrity`。
+  - **「層 ②③ 沒進 harness」有自己的判別與警告**（#65 verify R2-3/4）：比對 collector 的 `lenses` 條數 `N`
+    與 `stats.lensProvenance` 裡 `origin === "custom"` 的條數 `C`；`N > 0` 且 `C === 0` 印
+    「⚠️ 層 ②③ 未進入 harness（customLenses 不是陣列？）」，不再被當成「無法歸屬 pack／user」印成 `+0/⊕0`。
+    R1 加的「預期 `stats.agents` = `min(L, maxAgents − 1) × stats.replicas + 1`」已移除：`L` 與 `stats.replicas`
+    都取自 harness 自己的回傳，那條驗算恆真，`customLenses` 傳成字串時照樣對得上。保留「`stats.agents`
+    數的是派出去的，agent 死掉要看 `stats.reviewers[].ok` / `stats.daOk` / `stats.integrity`」。
+    配對前提補上 harness 會**安靜丟掉** `key` 或 `focus` 非字串／空白的條目（不只 `disableLenses`），
+    `references/lens-layers.md` §4 同步。
+  - **被 `maxAgents` 上限切掉的 lens 不再算成 `+`**（#65 verify R2-5）：harness 先記 `action: "added"`、之後才
+    從尾端 `slice`。以「key 不在 `stats.reviewers[].lens`」判別被切者，印成 `✂` 並警告哪幾條層 ②③ lens
+    被切（`journal.jsonl` 的 `lens set N → M … extra lenses dropped` 可互證）；§4 同步。
+  - 開頭「派出四個角度互不重疊的審閱者」補註：實際 lens 集合以 provenance 行為準，層 ②③ 可增加或取代。
 - 移除 `CLAUDE.md` Skills 表與 root `README.md` 裡「minutes 尚未接線」的 ⚠️；root README 的三層段補上限定：
   層 ②③ 只在有接 collector 的 skill（四支 `ensemble-*-review` 與帶 `--base` 的 `/ensemble-compose`）且走
   `Workflow` backend 時生效，並寫明機器閘門只涵蓋四支 review skill 的 SKILL.md 接線 ——
@@ -42,16 +54,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `test/skill-lens-wiring.bats`：16 個 case（`grep -c "^@test" test/skill-lens-wiring.bats`）。以
+- `test/skill-lens-wiring.bats`：22 個 case（`grep -c "^@test" test/skill-lens-wiring.bats`）。以
   `skills/ensemble-*-review/` glob 列舉每一支專屬 review skill，依 markdown 的 fenced block 與 `Phase N` 標題
-  切段做**結構**檢查，四條判準：派發段的 shell fenced block 以自己的 profile 非註解地呼叫
-  `pai-collect-lens-layers` 且在派發模板之前；每個派發模板（含 `profile` 鍵的 json / javascript block）
-  帶 `customLenses`；同一批模板的 `profile` 都等於自己（因此不是 `custom`）；派發之後的 Phase 段有一句
-  未否定的「印 provenance 行」。每條判準都有 mutation case：在暫存副本上把呼叫換成「⚠️ **不要**呼叫 …」、
-  註解掉、換 profile、刪模板的 `customLenses`、`profile` 改 `custom`、刪或否定報表段的 provenance ——
-  斷言變紅且紅在該判準；另有 verify R1 實測的兩組合（minutes 三處、lecture 兩處）。上一版只 grep 字，
-  這些 mutation 全部仍綠（#65 verify R1）。
-  它只證明指令寫在對的位置、以可執行的形狀，**不證明模型照做**；不涵蓋 `ensemble-compose`。
+  切段做**結構**檢查，四條判準：派發段的 shell fenced block 有一行**命令形狀**的
+  `python3 "${CLAUDE_PLUGIN_ROOT}/bin/pai-collect-lens-layers" <自己的 profile>`（行首即 `python3`，
+  因此行尾註解 `true # python3 …`、`echo '…'`、`true || python3 …` 都不算；#65 verify R2-1）且在派發模板之前；
+  每個派發模板（`Phase N` 段內、含 `profile` 鍵**與**另一個派發標記鍵的 json / javascript block —— 只帶
+  `profile` 的反例或寫在 Phase 段外的示範不算；R2-7）帶 `customLenses`；同一批模板的 `profile` 都等於自己
+  （因此不是 `custom`）；派發之後的 Phase 段有一句「印 provenance 行」—— 同句共現 ＋ 固定否定詞表的啟發式，
+  否定詞表補上 `不印`／`不再印` 這類「不」緊接「印」的寫法（R2-2）。每條判準都有 mutation case：在暫存副本上
+  把呼叫換成「⚠️ **不要**呼叫 …」、註解掉、改成行尾註解、包進 `echo`、前綴 `true ||`、換 profile、刪模板的
+  `customLenses`、`profile` 改 `custom`、刪報表段的 provenance、改成「**不要**印」或「一律不印」—— 斷言變紅
+  且紅在該判準；插入反例 block 仍綠、插入反例後刪掉真模板則紅在 dispatch；另有 verify R1 實測的兩組合
+  （minutes 三處、lecture 兩處）。
+  上一版（只 grep 字）對其中的否定句、刪 `customLenses` 那一行、刪或否定報表段 provenance 仍綠；
+  註解掉、換 profile、`profile` 改 `custom` 則上一版就會紅 —— 這幾條 case 是把既有保護釘成迴歸，
+  不是新抓到的缺口（#65 verify R1、R2-8）。R2-1/2 新增的四種 mutation 在 R1 版的結構檢查下仍綠。
+  它只證明指令寫在對的位置、以可執行的形狀，**不證明模型照做**；跨句否定（fence 旁寫「下面這段已停用，
+  不要執行」）與表外否定寫法看不出來；不涵蓋 `ensemble-compose`。
   `validate.py` 的 `collector_wiring` 只在該 profile 有 pack CSV 時才看、只印 warning 且自承啟發式。
 
 ### Known limitations
