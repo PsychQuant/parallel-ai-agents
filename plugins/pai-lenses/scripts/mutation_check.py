@@ -1285,7 +1285,7 @@ MUTATIONS += [
      'if any(PIPEFAIL_RULE_MSG in m for m in step_rules):', "oracle"),
     ("oracle: YAML env 三層覆蓋不帶進腳本（R37，R36 第 8 列 → good-r37a-oracle-env-three-layers）",
      '        env = dict(yaml_env or {})', '        env = {}', "oracle"),
-    ("oracle: 續行判定關掉 bash 剖析那一支（R37 → known-r37a-g-continued-pipeline 的註解續行 step）",
+    ("oracle: 續行判定關掉 bash 剖析那一支（R37 → known-r37a-g-continued-pipeline 的註解續行 step；R39 的差分往上擴範圍後那一張不再變色，改由 known-r39-g-two-continued-pipelines 殺）",
      '    return (_bash_n(line, bash)[0] != 0 and _bash_n(line + "\\n:", bash)[0] == 0\n            and _dangling_op(line) != "andor")',
      '    return False', "oracle"),
     ("oracle: 續行判定關掉行尾反斜線那一支（R37 → known-r37a-g-continued-pipeline 的反斜線續行 step）",
@@ -1571,12 +1571,15 @@ def main():
     # key 若漏了某個輸入，快取會安靜地給出舊答案：所以發版前的量測用 `--no-cache`，摘要也分開印「重跑」與「沿用」。
     cache_path = pathlib.Path(args.cache) if args.cache else CACHE
     use_cache = not args.worker
-    cache = load_cache(cache_path) if use_cache and not args.no_cache else {}
+    # `--no-cache` 只是「這一輪不沿用」：舊紀錄照樣讀進來，存檔時併回去（R39 實際踩到：`--only 389 --no-cache` 讓 433 筆
+    # 只剩 1 筆）。key 對**所有**靶都算——存檔時只留現行 key，過期的清掉，快取大小以靶數為上限（前一版一輪後長到 868 筆）。
+    stored = load_cache(cache_path) if use_cache else {}
+    cache = {} if args.no_cache else stored
     keys, results = {}, {}
     if use_cache:
         originals = {k: f.read_text(encoding="utf-8") for k, (f, _c, _d) in SUITES.items()}
         digests, tools = {}, tool_versions()
-        for i in sel:
+        for i in range(len(MUTATIONS)):
             entry = MUTATIONS[i]
             where = suite_of(entry)
             try:
@@ -1586,7 +1589,7 @@ def main():
             if where not in digests:
                 digests[where] = inputs_digest(SUITE_INPUTS.get(where, []), exclude={cache_path.resolve()})
             keys[i] = target_key(where, SUITES[where][0], mutated, digests[where], tools)
-            if keys[i] in cache:
+            if i in sel and keys[i] in cache:
                 results[i] = tuple(cache[keys[i]]) + (True,)
     run_sel = [i for i in sel if i not in results]
     # #33 verify R9 M15：先前沒有綠底線前置檢查。測試套件本身是紅的時候（例如有人正在
@@ -1606,12 +1609,14 @@ def main():
         fresh = run_parallel(run_sel, args.jobs)
     else:
         fresh = run_serial(run_sel, emit=bool(args.only))
+    current = set(keys.values())
+    merged = {k: v for k, v in stored.items() if k in current}
     for i, (kind, why) in fresh.items():
         results[i] = (kind, why, False)
         if use_cache and i in keys and kind != "broken":
-            cache[keys[i]] = [kind, why]
-    if use_cache and fresh:
-        save_cache(cache_path, cache)
+            merged[keys[i]] = [kind, why]
+    if use_cache and (fresh or merged != stored):
+        save_cache(cache_path, merged)
     killed = [MUTATIONS[i][0] for i in sel if results[i][0] == "killed"]
     survived = [MUTATIONS[i][0] for i in sel if results[i][0] == "survived"]
     broken = [(MUTATIONS[i][0], results[i][1]) for i in sel if results[i][0] == "broken"]
@@ -1619,9 +1624,10 @@ def main():
         return 1 if broken else 0
     reused = sum(1 for i in sel if results[i][2])
     rc = report(killed, survived, broken, time.monotonic() - t0, args.jobs)
-    if reused:
-        print(f"\n其中 {reused} 靶沿用快取（key 相同：突變後的程式碼、守備單位的輸入、工具版本都沒變），實際重跑 {len(sel) - reused} 靶。"
-              f"快取檔：{cache_path}（發版前的量測請加 --no-cache）")
+    if use_cache:
+        why = ("（--no-cache：這一輪不沿用，結果仍寫回快取）" if args.no_cache
+               else "（沿用的條件：key 相同——突變後的程式碼、守備單位的輸入、工具版本都沒變；發版前的量測請加 --no-cache）")
+        print(f"\n快取：沿用 {reused} 靶、重跑 {len(sel) - reused} 靶{why}。快取檔：{cache_path}")
     return rc
 
 

@@ -2352,6 +2352,44 @@ class ValidateTest(unittest.TestCase):
             self.assertGreater(len(log.read_text().split()), n_first, "--no-cache 一定重跑")
             self.assertIn("殺掉 1", out)
 
+    def test_mutation_cache_no_cache_subset_keeps_other_entries_and_prunes_stale(self):
+        """R39（實際踩到）：`--only 389 --no-cache` 跑完，快取從 433 筆變成 1 筆——`--no-cache` 不讀舊檔，存檔時只寫這一輪。
+        `--no-cache` 的意思是「這一輪不沿用」，不是「丟掉別人的紀錄」。另一面：舊 key 從來不清，一輪完整量測後快取長到
+        868 筆。存檔時只留**目前每個靶的現行 key**。摘要一律印「沿用 N」——連 0 也印，否則看不出快取有沒有作用。"""
+        import contextlib, io, json
+        sys.path.insert(0, str(HERE)); import mutation_check as M
+        with tempfile.TemporaryDirectory() as td:
+            td = pathlib.Path(td)
+            chk = td / "chk.sh"
+            chk.write_text('#!/bin/sh\ngrep -q MUT "%s" && exit 1\nexit 0\n' % (td / "t.py"))
+            chk.chmod(0o755)
+            (td / "t.py").write_text("x = 1\ny = 2\n")
+            suites = {"validate": (td / "t.py", lambda: [str(chk)], td)}
+            muts = [("靶一", "x = 1", "x = 'MUT'"), ("靶二", "y = 2", "y = 'MUT'")]
+            cache = td / "cache.json"
+            keep = (M.SUITES, M.MUTATIONS, M.SUITE_INPUTS, sys.argv)
+
+            def run(*extra):
+                buf = io.StringIO()
+                try:
+                    M.SUITES, M.MUTATIONS, M.SUITE_INPUTS = suites, muts, {"validate": [(td, ["chk.sh"])]}
+                    sys.argv = ["mutation_check.py", "--cache", str(cache), *extra]
+                    with contextlib.redirect_stdout(buf):
+                        rc = M.main()
+                finally:
+                    M.SUITES, M.MUTATIONS, M.SUITE_INPUTS, sys.argv = keep
+                return rc, buf.getvalue()
+
+            entries = lambda: json.loads(cache.read_text())["results"]
+            rc, out = run()
+            self.assertEqual(len(entries()), 2)
+            self.assertIn("沿用 0", out, "沒有沿用任何靶時也要明說")
+            rc, out = run("--only", "0", "--no-cache")
+            self.assertEqual(len(entries()), 2, "--no-cache 跑一個靶，另一個靶的紀錄不能被丟掉")
+            (td / "t.py").write_text("x = 1\ny = 2\nz = 3\n")        # 兩個靶的 key 都換了
+            rc, out = run("--only", "0")
+            self.assertEqual(len(entries()), 1, "過期的 key 要清掉：只剩靶一的新 key（靶二這輪沒跑、它的舊 key 已過期）")
+
     def test_mutation_check_main_installs_restore_signals(self):
         """R16 logic LOW：R15 的 SIGTERM 修法 wiring 無網——把 main() 裡那行 `install_restore_signals()` 換成 `pass`，
         118 條仍全綠。靜態網：main 的 AST 裡必須有那個呼叫，且在 mutate 迴圈之前。"""

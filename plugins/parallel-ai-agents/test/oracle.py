@@ -295,7 +295,7 @@ for _msg in (PIPEFAIL_RULE_MSG, STRICT_GROUP_RULE_MSG):
         sys.exit("✗ oracle.py 用來認 RULE 的字面「%s」不在 %s 裡——lint 改了訊息，這裡要同步改" % (_msg, LINT))
 # 已知類別在 repo 自己的 fixture 集（不給檔案參數）上的**確切**條數（R37，R36 第 2 列；同 selftest 門檻 R24 F9 的理由：
 # 寫成 `>=` 而實際更高時，那個差額沒有網——刪掉一張 G 範例 fixture 仍然綠）。must-fail 探針不算在內。
-FIXTURE_CLASS_TOTALS = {"G": 7, "S-2": 3}
+FIXTURE_CLASS_TOTALS = {"G": 8, "S-2": 3}
 # must-fail 探針的確切張數（同理：刪掉一張探針＝少一條負對照，必須立刻紅）。
 FIXTURE_MUSTFAIL_TOTAL = 8
 KNOWN_CLASS_RE = re.compile(r"^# KNOWN-CLASS: (\S+)", re.M)
