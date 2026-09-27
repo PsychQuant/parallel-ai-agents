@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """lint 的 `dedent_block` ＋ `fold_block` 對 PyYAML 的窮舉對帳（#33 verify R37）。
 
-為什麼進 repo（#33 verify R37 合併時協調者發現）：R37 的 e 包在 `opsweep.py` 寫下「窮舉 5,838 組合法 YAML、修完後
+為什麼進 repo（#33 verify R37 合併時協調者發現）：R37 在 `opsweep.py` 寫下「窮舉 5,838 組合法 YAML、修完後
 兩種模式 0 組不符」，指令碼卻是工作包的暫存檔、沒有進 repo，合併時已經找不到——那句話變成任何人都重跑不了的
 數字。這支把同一類量測放進 repo；本 PR 對外寫的「逐行相符」數字以**這支的輸出**為準。
 

@@ -401,7 +401,7 @@ def fold_block(lines, folded):
                 # `EXPECTED_SURVIVE`（`strip→id|fold_block|…`）論證「折進去的只差行尾空白，下游消費者都吃得
                 # 下」是假的：heredoc 分隔字比對用的正是**沒被折走的整行**，`l.strip()` 悄悄把該行的行尾空白
                 # 吃掉，讓 lint 算出的分隔字比 bash（＝PyYAML）短一個字元——分隔字恰好是空白時（`cat <<' '`
-                # 這一族）差一個字元就是有沒有終止的差別。R36 verify（agents:logic）點名、R37 e 包用突變體
+                # 這一族）差一個字元就是有沒有終止的差別。R36 verify（agents:logic）點名、R37 用突變體
                 # （把這裡的 `.strip()` 拿掉）驗殺：拿掉之後會讓原本放行的探針正確翻紅（t8 隔離測試量到正向與
                 # rule-red 計數各差 1，並非「數字不變」），`.strip()` 才是那個 bug。
                 out[acc] = out[acc] + " " + l
@@ -819,7 +819,7 @@ def shell_scan(lines):
          `known-stderr-cmd-error-missing-2to1`）。**`--strict` 的群組規則擋它**——CI 與 run.sh 對真 workflow 用 `--strict`，
          所以這一條只剩 fixture／產生語料（它們量的是詞法）。另：把輸出轉到 stderr 或開 xtrace 的寫法（`>&2`、
          `set -x`…）在**兩種模式**都是規則（R35；R33 的 S-2 範例用的正是 `>&2`，它不屬於這一條）。
-         **逐段的 `2>&1` 只涵蓋命令執行時寫出的 stderr**（a 包發現，R37 合併時協調者以 bash 5.3 覆核；#60 第 2 類）：在該段
+         **逐段的 `2>&1` 只涵蓋命令執行時寫出的 stderr**（R37 合併時協調者以 bash 5.3 覆核；#60 第 2 類）：在該段
          `2>&1` 生效**之前**就寫出的，預設模式看不到（範例 `known-expansion-error-before-2to1`）——(a) 展開期錯誤：`echo "${!PR_TITLE}" |& …` 印出
          「<原值>：無效的變數名稱」、`echo $(( PR_TITLE )) 2>&1 | …` 印出算術錯誤；(b) 寫在 `2>&1` 左邊的重導向本身出錯：
          `echo x > "$PR_TITLE" 2>&1 | …` 印出 `<原值>: No such file…`（`2>&1` 放左邊就走進管線）。命令執行時才產生的
