@@ -89,17 +89,17 @@ if [ "${1:-}" = "--selftest" ]; then
   done
   # R24 regression F9：門檻寫成 `>=` 而實際值更高時，那個差額**沒有網**——刪掉一個 fixture 仍然綠。
   # 三個門檻一律改成**等於實測值**：要加 fixture 就同步改這裡，讓「少了一個」立刻紅。
-  if [ "${n_pass}" -ne 243 ]; then
-    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 243（改動 fixture 請同步改這個數字）" >&2
+  if [ "${n_pass}" -ne 246 ]; then
+    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 246（改動 fixture 請同步改這個數字）" >&2
     fail=1
   fi
-  if [ "${n_rule}" -ne 343 ]; then
-    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 343" >&2
+  if [ "${n_rule}" -ne 350 ]; then
+    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 350" >&2
     fail=1
   fi
   if [ "${fail}" -ne 0 ]; then exit 1; fi
-  if [ "${n_parse}" -ne 143 ]; then
-    echo "lint-ci-log-filter selftest FAILED: parse-red 是 ${n_parse} 個，預期恰好 143（先前這一類完全沒有下限）" >&2
+  if [ "${n_parse}" -ne 144 ]; then
+    echo "lint-ci-log-filter selftest FAILED: parse-red 是 ${n_parse} 個，預期恰好 144（先前這一類完全沒有下限）" >&2
     exit 1
   fi
   if [ "${n_msg}" -ne 4 ]; then
@@ -2443,18 +2443,18 @@ def _bash_template(sh):
 GROUP_TOK_RE = re.compile(r"&>>|&>|>&|<&|>>|<<<|<<|&&|\|\||\|&|;;|[;&|()<>]|[^ \t;&|()<>]+")
 GROUP_TAIL = (["2", ">&", "1", "|", "python3"], ["|&", "python3"])
 NEUT_PATH_RE = re.compile(r"^[\w./-]*neutralise\.py$")
-SET_OPT_NAMES = frozenset(("pipefail", "errexit", "nounset"))
+SET_OPT_NAMES = frozenset(("pipefail", "errexit", "nounset", "errtrace"))   # errtrace：R39，R38 第 11 列（`-E` 不印任何東西）
 OPEN_AT_RE = re.compile(r"(?<![^ \t;&|()<>])\{(?![^ \t;&|()<>])")     # 實體行裡獨立詞 `{`／`}` 的位置
 CLOSE_AT_RE = re.compile(r"(?<![^ \t;&|()<>])\}(?![^ \t;&|()<>])")
 
 
 def _set_prefix_line(toks):
-    """`set` 前綴行：只收 `-e`／`-u`（可合寫）與 `-o NAME`（可與 `-eu` 合寫成 `-euo NAME`），NAME 限 SET_OPT_NAMES。"""
+    """`set` 前綴行：只收 `-e`／`-u`／`-E`（可合寫）與 `-o NAME`（可與 `-euE` 合寫成 `-euo NAME`），NAME 限 SET_OPT_NAMES。"""
     if toks[:1] != ["set"] or len(toks) < 2:
         return False
     k = 1
     while k < len(toks):
-        m = re.fullmatch(r"-(?=.)([eu]*)(o?)", toks[k])       # `(?=.)`：單獨一個 `-` 不是選項
+        m = re.fullmatch(r"-(?=.)([euE]*)(o?)", toks[k])      # `(?=.)`：單獨一個 `-` 不是選項
         if not m:
             return False
         if m.group(2):
@@ -2465,9 +2465,37 @@ def _set_prefix_line(toks):
     return True
 
 
+GH_EXPR_RE = re.compile(r"\$\{\{.*?\}\}")
+# PR 可控的 runner 運算式（R39，#33 verify R38 第 14 列）：封閉列舉，只有這兩種——`github.event.*`（標題、內文、分支名…）
+# 與 `github.head_ref`。`inputs.*`、`matrix.*`、`steps.*` 不列：它們的值由 workflow 作者或前面的 step 決定。
+GH_EXPR_UNTRUSTED_RE = re.compile(r"\$\{\{[^}]*?\bgithub\.(?:event\.|head_ref\b)")
+
+
+def _logical_lines(code_lines):
+    """程式碼半邊 → 邏輯行：只有前一行以 `CONT_RE` 結尾（`|`、`||`、`|&`、`&&`）才接下一行；空白行丟掉。"""
+    logical = []
+    for c in code_lines:
+        cs = c.strip()
+        if logical and CONT_RE.search(logical[-1]):
+            logical[-1] = logical[-1] + " " + cs
+        elif cs:
+            logical.append(cs)
+    return logical
+
+
 def strict_group_violation(logical, code, src):
     """違規原因，合規回 None。`logical` 是 shell_scan 的程式碼半邊接成的邏輯行；`code` 是逐實體行的程式碼半邊，
     `src` 是 `_aligned_sources` 給的對齊原文（對不齊的行是 None）——字面檢查用。"""
+    # runner 運算式 `${{ … }}` 在 bash 之前就被代換掉，對 bash 而言那裡沒有大括號（R39，#33 verify R38 第 10 列）。掃描器把它讀成
+    # bash 的 `${…}`、在第一個 `}` 收尾，剩下的 `}` 被算成獨立的大括號——`{ make ${{ matrix.target }}; } 2>&1 | …` 因此沒有任何
+    # 可接受的寫法（R32 HIGH-1 修過的那一類）。計數與定位用遮掉運算式的程式碼；字面檢查仍比原本的程式碼（群組外的運算式照樣拒絕）。
+    masked = list(code)
+    for i, s in enumerate(src):
+        for m in (GH_EXPR_RE.finditer(s) if s is not None else ()):
+            if m.end() <= len(masked[i]):
+                masked[i] = masked[i][:m.start()] + " " * (m.end() - m.start()) + masked[i][m.end():]
+    if masked != list(code):
+        logical = _logical_lines(masked)
     toks = [GROUP_TOK_RE.findall(l) for l in logical]
     k = next((i for i, t in enumerate(toks) if not _set_prefix_line(t)), len(toks))
     body = toks[k:]
@@ -2487,6 +2515,8 @@ def strict_group_violation(logical, code, src):
     if c and last[c - 1] not in (";", "&"):
         return "群組的 `}` 必須在命令位置（行首，或緊接在 `;`／`&` 之後）——否則它只是一個參數"
     tail = last[c + 1:]
+    if tail[-1:] == [";"]:
+        tail = tail[:-1]                         # 尾巴後的 `;` 只是結束那條管線（R39，R38 第 11 列）
     if not (tail[:-1] in GROUP_TAIL and NEUT_PATH_RE.match(tail[-1])):
         return ("群組的 `}` 之後必須恰好是 `2>&1 | python3 <路徑>/neutralise.py` 或 `|& python3 <路徑>/neutralise.py`"
                 "（路徑不加引號、不帶變數），實際是 `%s`" % " ".join(tail))
@@ -2498,12 +2528,12 @@ def strict_group_violation(logical, code, src):
     # **群組外的每一個實體行都比**，不只程式碼非空白的行（R38 第 2 列）：`${PR_TITLE}`、`\e\c\h\o …`、`$'\x65cho' …`、
     # `${X:-eval} $'…'` 整行挖空後程式碼是一串空白——上面的詞元檢查（`logical` 丟掉空白碼行）看不到它，只收非空白行的
     # 字面檢查也看不到，bash 卻照樣執行。純註解行與空行不受影響：註解在程式碼半邊被**截掉**、不是挖空，對齊原文只剩縮排。
-    lines = [i for i, l in enumerate(code) if l.strip()]
+    lines = [i for i, l in enumerate(masked) if l.strip()]
     opener = lines[k]
-    closer = max(i for i in lines if CLOSE_AT_RE.search(code[i]))
+    closer = max(i for i in lines if CLOSE_AT_RE.search(masked[i]))
     spans = ([(i, 0, len(code[i])) for i in range(opener)]
-             + [(opener, 0, OPEN_AT_RE.search(code[opener]).end()),
-                (closer, CLOSE_AT_RE.search(code[closer]).start(), len(code[closer]))]
+             + [(opener, 0, OPEN_AT_RE.search(masked[opener]).end()),
+                (closer, CLOSE_AT_RE.search(masked[closer]).start(), len(code[closer]))]
              + [(i, 0, len(code[i])) for i in range(closer + 1, len(code))])
     if not all(src[i] is not None and src[i][a:b] == code[i][a:b] for i, a, b in spans):
         return ("群組外的 `set` 前綴、`{` 之前、`}` 之後必須是字面文字——裡面有引號、逃脫或 `${…}` 展開"
@@ -3047,13 +3077,7 @@ for path in [a for a in sys.argv[1:] if a not in FLAGS]:
         # `echo "$PR_TITLE"` ⏎ `| python3 …neutralise.py` 被接成一條假管線而放行，
         # 而 bash 對行首的 `|` 報的是**語法錯誤**（R30 H-6：兩條路各自獨立足以放行，
         # 所以只收緊 `PIPED_RE` 修不好——要改的是「什麼叫一條命令」）。
-        logical = []
-        for c in run_code:
-            cs = c.strip()
-            if logical and CONT_RE.search(logical[-1]):
-                logical[-1] = logical[-1] + " " + cs
-            elif cs:
-                logical.append(cs)
+        logical = _logical_lines(run_code)
         rl_code, rl_src = _rule_lines(run_code, scan_in)     # 規則層的邏輯行：程式碼＋對齊的原文（R37，見 `_rule_lines`）
         via_pipe = any(PIPED_RE.search(l) for l in logical)
         declared = any(LOGFILTER_RE.match(l) for l in decl_lines)
@@ -3086,6 +3110,10 @@ for path in [a for a in sys.argv[1:] if a not in FLAGS]:
             print(where + "step '%s' 靠管線過濾，而 env（workflow／job／step）帶了 %s——bash（或過濾器 python3）啟動時就讀它們："
                   "可以開 xtrace、在 run 之前執行別的程式碼，或把值印在管線右端的 stderr，那些輸出不經過管線" % (s["name"], "、".join(
                       "`%s`" % k if k != "?" else "看不到鍵名的運算式" for k in env_hit)), file=sys.stderr)
+            rc = 1
+        elif not declared and any(GH_EXPR_UNTRUSTED_RE.search(l) for l in scan_in if l is not None):
+            print(where + "step '%s' 靠管線過濾，而 run 裡直接寫了 PR 可控的運算式（`${{ github.event.* }}`／`${{ github.head_ref }}`）"
+                  "——runner 在 bash 解析之前代換，PR 文字可以收掉引號與群組；改經 step 的 `env:` 傳進來" % s["name"], file=sys.stderr)
             rc = 1
         elif STRICT and not declared and group_why:
             # 訊息不得含 pipefail 這個字：oracle.py 以它辨認「只因退出碼遮蔽而紅」的列。

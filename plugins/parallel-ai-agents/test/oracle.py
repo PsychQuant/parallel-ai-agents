@@ -192,6 +192,19 @@ KNOWN_DISAGREE = {
         "神諭的 `python3` 是 shell stub，不解析 `PYTHONWARNINGS`；真的 CPython 會把不合法的值印到管線右端的 stderr（協調者實跑）。",
     ("ci-log-filter-bypass-r39-env-pythonwarnings-expression-default.yml", "PYTHONWARNINGS from the PR title"): "同上：stub。",
     ("ci-log-filter-bypass-r39-run-export-pythonwarnings.yml", "export PYTHONWARNINGS in run"): "同上：stub。",
+    ("ci-log-filter-bypass-r39-github-event-expression-in-run.yml", "event expression in the group"):
+        "神諭不代換 runner 運算式（值只有 runner 知道）：`${{ … }}` 在 bash 眼中是錯誤的替換，量不到代換之後的注入（R38 第 14 列）。",
+    ("ci-log-filter-bypass-r39-github-head-ref-in-run-default.yml", "head_ref expression in a piped line"): "同上：不代換運算式。",
+    ("gen-d-yaml-ghexpr-plain.yml", "d-yaml-ghexpr-plain"):
+        "同上：產生語料 d 組的 `echo \"${{ github.event.pull_request.title }}\" | …`——真的注入形狀，R39 起兩種模式都擋；神諭不代換運算式。",
+    # ── R39（R38 第 11 列）：群組規則的保守誤擋，逐條揭露（放寬會動到「恰好一對大括號、前綴只收 `set`」的論證）──
+    ("ci-log-filter-restrict-r39-strict-function-def.yml", "function def"):
+        "群組內定義函式：多一對大括號。群組規則只收恰好一對（`case` 模式、陣列裡的大括號不是保留字，計深度要判斷那個）。",
+    ("ci-log-filter-restrict-r39-strict-github-env-group.yml", "github env group"): "同上：巢狀的 `{ …; } >> \"$GITHUB_ENV\"`。",
+    ("ci-log-filter-restrict-r39-strict-two-groups.yml", "two groups"): "同上：一個 step 兩個群組。",
+    ("ci-log-filter-restrict-r39-strict-cd-before-group.yml", "cd before group"):
+        "群組前只收 `set` 前綴：`cd`、`export` 放進群組或改用 `working-directory:`／`env:`。",
+    ("ci-log-filter-restrict-r39-strict-export-before-group.yml", "export before group"): "同上。",
 }
 # **只在沒有 /proc 的平台上成立**的已知分歧（R39，#33 verify R38 第 1、5 列）：macOS 沒有 `/proc`，`/dev/fd` 也不是指向
 # `/proc/self/fd` 的 symlink，這幾個外流在本機量不到、判誤擋。Linux（CI）上**不列入**——在那裡神諭必須看到外流、判一致，

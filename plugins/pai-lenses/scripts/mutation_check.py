@@ -376,7 +376,7 @@ MUTATIONS += [
      'r"[^|\\s;&(]\\s*\\|(?!\\|)&?\\s*python3',
      'r"\\|(?!\\|)&?\\s*python3', "lint"),
     ("lint: 邏輯行只在續行運算子後接續（R30 H-6 的另一半 → bypass-leading-pipe-literal）",
-     "            if logical and CONT_RE.search(logical[-1]):", "            if logical and True:", "lint"),
+     "        if logical and CONT_RE.search(logical[-1]):", "        if logical and True:", "lint"),
     ("lint: explicit_pad 只取標頭本身的指示子（R30 MB-1 → good-block-header-comment-digit）",
      "            ind = m_hdr.group(1) or m_hdr.group(2)      # 只取標頭本身的指示子，不碰行尾註解",
      '            ind = (re.search(r"[1-9]", inline) or [None] and None) and re.search(r"[1-9]", inline).group()', "lint"),
@@ -1251,6 +1251,23 @@ MUTATIONS += [
      '        if m and (w["lit"] is None or "\\0" in text):', '        if False:', "lint"),
     ("lint: run 裡字面的 `PYTHON*` 也擋（R39 → good-r39-run-export-python-literal）",
      '        if m and (w["lit"] is None or "\\0" in text):', '        if m:', "lint"),
+]
+
+# ── R39（#33 verify R38 第 10、11、14 列）：群組規則的放寬與 PR 可控運算式 ──────────────
+MUTATIONS += [
+    ("lint: 群組計數不遮 runner 運算式（R39，R38 第 10 列 → good-r39-strict-group-github-expression-unquoted）",
+     '        for m in (GH_EXPR_RE.finditer(s) if s is not None else ()):', '        for m in ():', "lint"),
+    ("lint: 群組尾巴後的 `;` 不收（R39，R38 第 11 列 → good-r39-strict-group-trailing-semicolon）",
+     '    if tail[-1:] == [";"]:\n        tail = tail[:-1]', '    if False:\n        tail = tail[:-1]', "lint"),
+    ("lint: `set` 前綴不收 `-E`（R39，R38 第 11 列 → good-r39-strict-group-set-E-prefix）",
+     'r"-(?=.)([euE]*)(o?)"', 'r"-(?=.)([eu]*)(o?)"', "lint"),
+    ("lint: `set` 前綴不收 `-o errtrace`（R39 → good-r39-strict-group-set-E-prefix）",
+     '"pipefail", "errexit", "nounset", "errtrace"))', '"pipefail", "errexit", "nounset"))', "lint"),
+    ("lint: run 裡的 PR 可控運算式不擋（R39，R38 第 14 列 → bypass-r39-github-event-expression-in-run）",
+     '        elif not declared and any(GH_EXPR_UNTRUSTED_RE.search(l) for l in scan_in if l is not None):',
+     '        elif False:', "lint"),
+    ("lint: PR 可控運算式不認 `github.head_ref`（R39 → bypass-r39-github-head-ref-in-run-default）",
+     r'(?:event\.|head_ref\b)', r'(?:event\.)', "lint"),
 ]
 
 # ── R39（#33 verify R38 第 3、6、7 列）：神諭的歸類 ──────────────────────────────

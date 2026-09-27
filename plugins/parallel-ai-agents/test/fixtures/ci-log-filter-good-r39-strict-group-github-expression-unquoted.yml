@@ -1,0 +1,19 @@
+# R38 第 10 列（regression MEDIUM-3）：未加引號的 `${{ … }}` 在群組裡。runner 在 bash 之前就代換掉它，對 bash 而言那裡沒有大括號；
+# 前一版把它讀成 bash 的 `${…}`、在第一個 `}` 收尾，剩下的 `}` 被算成一個獨立的大括號（「`}` 有 2 個」）——R32 HIGH-1 修過的那一類。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [a]
+    steps:
+      - name: unquoted runner expression in the group
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          { make ${{ matrix.target }}; } 2>&1 | python3 scripts/neutralise.py

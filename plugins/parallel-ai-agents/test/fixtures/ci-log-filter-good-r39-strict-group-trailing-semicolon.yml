@@ -1,0 +1,20 @@
+# R38 第 11 列（codex 第 8 條，協調者核對）：尾巴後面的 `;` 只是結束那條管線，沒有群組外的命令。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [a]
+    steps:
+      - name: trailing semicolon after the filter
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            echo "$PR_TITLE"
+          } 2>&1 | python3 scripts/neutralise.py;
