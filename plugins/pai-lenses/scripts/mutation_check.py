@@ -46,7 +46,12 @@ R7 有一個 mutation 一直沒轉紅，差點被判定成「那條測試是套�
 mutation test 本身也需要被驗證有沒有真的打中。
 """
 import argparse
+import concurrent.futures
 import pathlib
+import queue
+import re
+import shutil
+import tempfile
 import time
 import signal
 import subprocess
@@ -1417,32 +1422,47 @@ def main():
         description="量測 test_validate.py 的鑑別力：逐一關掉 validate.py 的判定條件。")
     ap.add_argument("--check-targets", action="store_true",
                     help="只驗每個靶是否恰好命中一次（秒級，CI 會跑），不執行 mutation")
+    ap.add_argument("--only", metavar="I,J,…",
+                    help="只跑這些靶（MUTATIONS 的 0-based 索引，逗號分隔）；每個靶另印一行 `RESULT\\t<索引>\\t<結果>`")
+    ap.add_argument("--jobs", type=int, default=1, metavar="N",
+                    help="平行跑 N 個 worker（R39）：各自在一份 repo 副本（不含 .git）裡改寫與驗證，本樹不被改動")
+    ap.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)   # `--jobs` 內部用：不做前置檢查
     try:
         args = ap.parse_args()
     except SystemExit as e:
         return e.code if isinstance(e.code, int) else 2
     if args.check_targets:
         return check_targets_only()
+    if args.jobs < 1:
+        print("✗ --jobs 必須 ≥ 1", file=sys.stderr)
+        return 2
+    try:
+        sel = (list(range(len(MUTATIONS))) if not args.only
+               else sorted({int(x) for x in args.only.split(",") if x.strip()}))
+    except ValueError:
+        print("✗ --only 要逗號分隔的整數索引", file=sys.stderr)
+        return 2
+    if any(not 0 <= i < len(MUTATIONS) for i in sel):
+        print("✗ --only 的索引超出範圍（0..%d）" % (len(MUTATIONS) - 1), file=sys.stderr)
+        return 2
+    if args.jobs > 1:
+        return run_parallel(sel, args.jobs)
     # #33 verify R9 M15：先前沒有綠底線前置檢查。測試套件本身是紅的時候（例如有人正在
     # 改 validate.py 改到一半），**每一個 mutation 都會被判為「殺掉」** —— harness 回報
     # 漂亮的「0 存活」，而它其實什麼都沒量到。這是它自己版本的「肯定式綠燈」。
     # R28 D9（G-R29-4）：前置檢查先前只跑 `test_validate.py`。R27 把守備範圍擴到 lint 之後，lint 靶的
     # 生死由 `--selftest` 判——而 selftest 紅的時候每個 lint 靶都被判「殺掉」，同一個洞換個 suite 又開了。
     # 現在對 SUITES 裡每一條不同的驗證指令各跑一次，任一紅就整輪不跑、點名是哪個 suite。
-    print("前置：確認每個守備單位未 mutate 的驗證指令都是綠的 …", flush=True)
     t0 = time.monotonic()
-    failures = precheck_suites(SUITES)
-    for name, rc, tail in failures:
-        print(f"✗ 守備單位 `{name}` 的基準驗證就沒過（rc={rc}）—— 先修綠再量 mutation，"
-              "否則它的每個靶都會被誤判為『殺掉』。\n" + tail)
-    if failures:
+    if not args.worker and not precheck_ok():
         return 1
 
     originals = {k: f.read_text(encoding="utf-8") for k, (f, _c, _d) in SUITES.items()}
     install_restore_signals()
     survived, killed, broken = [], [], []
     try:
-        for entry in MUTATIONS:
+        for i in sel:
+            entry = MUTATIONS[i]
             name, old, new = entry[0], entry[1], entry[2]
             where = suite_of(entry)
             target, cmd, cwd = SUITES[where]
@@ -1452,10 +1472,14 @@ def main():
             except (ValueError, IndexError) as e:
                 broken.append((name, str(e)))
                 print(f"  靶壞 {name} | {e}", flush=True)
+                if args.only:
+                    print(f"RESULT\t{i}\tbroken\t{e}", flush=True)
                 continue
             if mutated == original:
                 broken.append((name, "替換後檔案沒變"))
                 print(f"  靶壞 {name} | 替換後檔案沒變", flush=True)
+                if args.only:
+                    print(f"RESULT\t{i}\tbroken\t替換後檔案沒變", flush=True)
                 continue
             target.write_text(mutated, encoding="utf-8")
             try:
@@ -1464,6 +1488,8 @@ def main():
                 target.write_text(original, encoding="utf-8")
             (survived if rc == 0 else killed).append(name)
             print(("  存活 " if rc == 0 else "  殺掉 ") + name, flush=True)
+            if args.only:
+                print(f"RESULT\t{i}\t{'survived' if rc == 0 else 'killed'}", flush=True)
     except BaseException:
         # #33 verify R9 M16：只有 finally 保護時，SIGINT/SIGTERM 或當機會把 `if False:`
         # 留在正式的 validate.py 裡 —— 一個被 mutate 過的 validator 看起來完全正常。
@@ -1477,13 +1503,78 @@ def main():
         for k, (f, _c, _d) in SUITES.items():
             f.write_text(originals[k], encoding="utf-8")
 
+    if args.worker:
+        return 1 if broken else 0
+    return report(killed, survived, broken, time.monotonic() - t0, 1)
+
+
+def precheck_ok():
+    print("前置：確認每個守備單位未 mutate 的驗證指令都是綠的 …", flush=True)
+    failures = precheck_suites(SUITES)
+    for name, rc, tail in failures:
+        print(f"✗ 守備單位 `{name}` 的基準驗證就沒過（rc={rc}）—— 先修綠再量 mutation，"
+              "否則它的每個靶都會被誤判為『殺掉』。\n" + tail)
+    return not failures
+
+
+RESULT_RE = re.compile(r"^RESULT\t(\d+)\t(killed|survived|broken)(?:\t(.*))?$", re.M)
+
+
+def run_parallel(sel, jobs):
+    """`--jobs N`（R39）：串行一輪 433 靶在高負載下要 6 小時以上，每改一版就等半天。每個 worker 拿一份 repo 副本
+    （不含 `.git`——與 `git archive` 的量測副本同一個條件），在副本裡以 `--only i --worker` 跑單一個靶；副本同一時間只給
+    一個靶用（`queue` 借還），本樹從頭到尾不被改寫。結果依 MUTATIONS 原順序彙整，摘要與串行相同。
+    worker 沒回報結果（當掉、被砍）一律算「靶壞」——fail-loud，不當成殺掉或存活。"""
+    t0 = time.monotonic()
+    if not precheck_ok():
+        return 1
+    root = PACK.parent.parent
+    script = pathlib.Path(__file__).resolve().relative_to(root)
+    tmp = pathlib.Path(tempfile.mkdtemp(prefix="mutation-jobs-"))
+    trees = queue.Queue()
+    results = {}
+    try:
+        for k in range(jobs):
+            d = tmp / ("w%d" % k)
+            shutil.copytree(root, d, symlinks=True, ignore=shutil.ignore_patterns(".git"))
+            trees.put(d)
+
+        def one(i):
+            d = trees.get()
+            try:
+                r = subprocess.run([sys.executable, str(d / script), "--only", str(i), "--worker"],
+                                   capture_output=True, text=True)
+            finally:
+                trees.put(d)
+            m = RESULT_RE.search(r.stdout)
+            if not m or int(m.group(1)) != i:
+                return i, "broken", "worker 沒有回報結果（rc=%d）：%s" % (r.returncode, (r.stdout + r.stderr)[-300:])
+            return i, m.group(2), m.group(3) or ""
+
+        with concurrent.futures.ThreadPoolExecutor(jobs) as ex:
+            for fut in concurrent.futures.as_completed([ex.submit(one, i) for i in sel]):
+                i, kind, why = fut.result()
+                results[i] = (kind, why)
+                name = MUTATIONS[i][0]
+                print({"killed": "  殺掉 ", "survived": "  存活 "}.get(kind, "  靶壞 ") + name
+                      + (" | " + why if kind == "broken" else ""), flush=True)
+                print(f"RESULT\t{i}\t{kind}" + ("\t" + why if why else ""), flush=True)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    killed = [MUTATIONS[i][0] for i in sel if results[i][0] == "killed"]
+    survived = [MUTATIONS[i][0] for i in sel if results[i][0] == "survived"]
+    broken = [(MUTATIONS[i][0], results[i][1]) for i in sel if results[i][0] == "broken"]
+    return report(killed, survived, broken, time.monotonic() - t0, jobs)
+
+
+def report(killed, survived, broken, elapsed, jobs):
     # R17 DA-H：耗時別再手填。散文裡的區間會漂（R14→R17 連四輪被抓到低估），所以這一輪起
-    # **由程式自己量並印出**；文件只保留粗估並指向這一行。
-    elapsed = time.monotonic() - t0
+    # **由程式自己量並印出**；文件只保留粗估並指向這一行。`--jobs` 時印的是牆鐘時間。
     n_run = len(killed) + len(survived) + len(broken)
     if n_run:
         print(f"\n本輪實測耗時：{elapsed/60:.1f} 分鐘 / {n_run} 靶 = 每靶 {elapsed/n_run:.1f} s"
-              "（把這個數字填回 test_validate.py 檔頭與 CHANGELOG，不要沿用舊區間）")
+              + (f"（--jobs {jobs}，牆鐘）" if jobs > 1 else "")
+              + "（把這個數字填回 test_validate.py 檔頭與 CHANGELOG，不要沿用舊區間）")
     expected = [n for n in survived if n in EXPECTED_SURVIVE]
     survived = [n for n in survived if n not in EXPECTED_SURVIVE]
     print(f"\n殺掉 {len(killed)} / 存活 {len(survived)} / 預期存活 {len(expected)} / 靶壞 {len(broken)}")
