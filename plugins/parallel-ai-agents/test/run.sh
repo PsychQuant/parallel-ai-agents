@@ -43,7 +43,8 @@ if python3 -c 'import yaml' 2>/dev/null; then
   # `--strict` 組，只產生預設組時這 7 列恆為 0、這一步必紅——R37 加 `--strict` 組時只改了 CI，run.sh 沒跟上（R37 自查）。
   GEN=$(mktemp -d); python3 test/corpus/shellgen.py --out "$GEN" >/dev/null
   python3 test/corpus/shellgen.py --strict --out "$GEN" >/dev/null
-  python3 test/oracle.py "$GEN"/*.yml | tail -1
+  # tail -2：摘要行（一致／不一致…）之後還有一行「已知類別：…」（R39 起）——只留一行會只看到類別計數、看不到判定
+  python3 test/oracle.py "$GEN"/*.yml | tail -2
   find "$GEN" -name '*.yml' -print | sort | sed 's/^/x /' > "$GEN/list.txt"   # 不用 ls（SC2012）
   python3 test/corpus/shapes.py --require-nonzero R3 "$GEN/list.txt" | tail -1
   rm -rf "$GEN"
