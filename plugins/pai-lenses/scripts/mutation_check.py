@@ -46,7 +46,10 @@ R7 有一個 mutation 一直沒轉紅，差點被判定成「那條測試是套�
 mutation test 本身也需要被驗證有沒有真的打中。
 """
 import argparse
+import ast
 import concurrent.futures
+import hashlib
+import json
 import pathlib
 import queue
 import re
@@ -89,6 +92,107 @@ SUITES = {
     # `precheck_suites` 的「未突變＝綠」前提；拿掉任一道檢查它就紅。被突變的檔仍是 `test/oracle.py`。
     "oracle-inverted": (ORACLE, lambda: [sys.executable, "test/oracle_selfcheck.py"], PAI),
 }
+
+# ── 結果快取（R39，使用者提議：沒改變就沿用 JSON 記錄）──────────────────────────────────
+# 每個守備單位的驗證指令讀得到的**輸入檔**（被突變的那個檔另外以正規化內容計入 key）。封閉列舉，只有這五組：
+#   · `lint`：selftest 只讀 fixture。
+#   · `oracle`／`oracle-inverted`：神諭讀 fixture、反向探針與假 lint，並執行 lint 本身（lint 以剝註解的 AST 計入）。
+#   · `validate`／`neutralise`：`test_validate.py` 讀的範圍很廣（整個 `plugins/`、`.github/workflows/test.yml`、skills、bin
+#     …），逐一列舉必然漏——所以這兩組的輸入是**整個 repo**（不含 `.git`、`__pycache__` 與快取檔本身）。代價是任何改動
+#     都讓它們重跑；那是對的方向：漏列一個輸入，快取就會安靜地給出舊答案。
+REPO_ROOT = PACK.parent.parent
+CACHE = PACK / "scripts" / "mutation-cache.json"
+_PAI_TEST = PAI.relative_to(REPO_ROOT) / "test"
+SUITE_INPUTS = {
+    "lint": [(REPO_ROOT, [str(_PAI_TEST / "fixtures" / "*")])],
+    "oracle": [(REPO_ROOT, [str(_PAI_TEST / "fixtures" / "*"), str(_PAI_TEST / "oracle-probes" / "*"),
+                            str(_PAI_TEST / "oracle_selfcheck.py"), str(_PAI_TEST / "lint-ci-log-filter.sh")])],
+    "validate": [(REPO_ROOT, ["**/*"])],
+    "neutralise": [(REPO_ROOT, ["**/*"])],
+}
+SUITE_INPUTS["oracle-inverted"] = SUITE_INPUTS["oracle"]
+
+
+def _strip_docstrings(tree):
+    for node in ast.walk(tree):
+        body = getattr(node, "body", None)
+        if (isinstance(body, list) and body and isinstance(body[0], ast.Expr)
+                and isinstance(body[0].value, ast.Constant) and isinstance(body[0].value.value, str)):
+            body[0] = ast.Pass()
+    return tree
+
+
+def _py_norm(src):
+    try:
+        return ast.dump(_strip_docstrings(ast.parse(src)), include_attributes=False)
+    except SyntaxError:
+        return "RAW\0" + src                    # 突變體可能讓程式碼不合法：照原文比
+
+
+def normalized_source(path, text):
+    """快取 key 用的正規化內容：`.py` 用剝掉註解與 docstring 的 AST；內嵌 Python 的 bash（lint）外殼照原文、內嵌那段
+    用 AST；其他照原文。只改註解時 key 不變，改一個字面值 key 就變。"""
+    if path.suffix == ".py":
+        return _py_norm(text)
+    if "<<'PY'\n" in text and "\nPY" in text:
+        head, rest = text.split("<<'PY'\n", 1)
+        py, tail = rest.rsplit("\nPY", 1)
+        return head + "\0" + _py_norm(py) + "\0" + tail
+    return text
+
+
+def inputs_digest(spec, exclude=frozenset()):
+    """輸入檔的雜湊：路徑與（正規化後的）內容都計入，所以改內容、增刪檔案都會換 digest。"""
+    h = hashlib.sha256()
+    files = set()
+    for root, pats in spec:
+        for pat in pats:
+            for f in root.glob(pat):
+                if f.is_file() and ".git" not in f.relative_to(root).parts and "__pycache__" not in f.parts \
+                        and f.resolve() not in exclude:
+                    files.add((root, f))
+    for root, f in sorted(files, key=lambda x: str(x[1])):
+        raw = f.read_bytes()
+        try:
+            body = normalized_source(f, raw.decode("utf-8")).encode("utf-8", "surrogatepass")
+        except UnicodeDecodeError:
+            body = raw
+        h.update(str(f.relative_to(root)).encode() + b"\0" + hashlib.sha256(body).digest())
+    return h.hexdigest()
+
+
+def tool_versions():
+    """python 與 bash 的版本（還有 PyYAML，神諭用它）——換版本就不沿用。"""
+    v = [sys.version]
+    try:
+        v.append(subprocess.run(["bash", "--version"], capture_output=True, text=True).stdout.split("\n")[0])
+    except OSError:
+        v.append("no-bash")
+    try:
+        import yaml
+        v.append("yaml " + yaml.__version__)
+    except ImportError:
+        v.append("no-yaml")
+    return "\n".join(v)
+
+
+def target_key(suite, path, mutated, digest, tools):
+    return hashlib.sha256("\0".join([suite, normalized_source(path, mutated), digest, tools]).encode(
+        "utf-8", "surrogatepass")).hexdigest()
+
+
+def load_cache(path):
+    try:
+        d = json.loads(path.read_text(encoding="utf-8"))
+        return d.get("results", {}) if d.get("version") == 1 else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_cache(path, results):
+    path.write_text(json.dumps({"version": 1, "results": results}, ensure_ascii=False, indent=0, sort_keys=True) + "\n",
+                    encoding="utf-8")
+
 
 # (名稱, 要替換的字串, 替換成什麼)。每個 old 必須在 validate.py 中**恰好出現一次**。
 # `None` 的 new 代表特殊處理（見 _apply）。
@@ -1426,6 +1530,8 @@ def main():
                     help="只跑這些靶（MUTATIONS 的 0-based 索引，逗號分隔）；每個靶另印一行 `RESULT\\t<索引>\\t<結果>`")
     ap.add_argument("--jobs", type=int, default=1, metavar="N",
                     help="平行跑 N 個 worker（R39）：各自在一份 repo 副本（不含 .git）裡改寫與驗證，本樹不被改動")
+    ap.add_argument("--cache", metavar="PATH", help="結果快取檔（預設 scripts/mutation-cache.json）")
+    ap.add_argument("--no-cache", action="store_true", help="不讀快取、全部重跑（結果仍寫回）——發版前的量測用這個")
     ap.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)   # `--jobs` 內部用：不做前置檢查
     try:
         args = ap.parse_args()
@@ -1445,21 +1551,74 @@ def main():
     if any(not 0 <= i < len(MUTATIONS) for i in sel):
         print("✗ --only 的索引超出範圍（0..%d）" % (len(MUTATIONS) - 1), file=sys.stderr)
         return 2
-    if args.jobs > 1:
-        return run_parallel(sel, args.jobs)
+    t0 = time.monotonic()
+    # **快取**（R39，使用者提議）：key 是「突變後被改寫檔的正規化內容（Python 用剝掉註解與 docstring 的 AST）＋ 守備單位
+    # 讀得到的輸入檔 ＋ 工具版本」。key 相同 ⇒ 驗證指令看到的東西逐位元組相同（註解除外）⇒ 結果相同，直接沿用。
+    # 判斷「有沒有改變」的是雜湊，不是人對「是不是大改版」的判斷——一行 `#` 就可能改變某個靶的生死（R37 S29-6）。
+    # key 若漏了某個輸入，快取會安靜地給出舊答案：所以發版前的量測用 `--no-cache`，摘要也分開印「重跑」與「沿用」。
+    cache_path = pathlib.Path(args.cache) if args.cache else CACHE
+    use_cache = not args.worker
+    cache = load_cache(cache_path) if use_cache and not args.no_cache else {}
+    keys, results = {}, {}
+    if use_cache:
+        originals = {k: f.read_text(encoding="utf-8") for k, (f, _c, _d) in SUITES.items()}
+        digests, tools = {}, tool_versions()
+        for i in sel:
+            entry = MUTATIONS[i]
+            where = suite_of(entry)
+            try:
+                mutated = _apply(entry[0], entry[1], entry[2], originals[where])
+            except (ValueError, IndexError):
+                continue                         # 靶壞：不快取，照常跑到那條路徑去報
+            if where not in digests:
+                digests[where] = inputs_digest(SUITE_INPUTS.get(where, []), exclude={cache_path.resolve()})
+            keys[i] = target_key(where, SUITES[where][0], mutated, digests[where], tools)
+            if keys[i] in cache:
+                results[i] = tuple(cache[keys[i]]) + (True,)
+    run_sel = [i for i in sel if i not in results]
     # #33 verify R9 M15：先前沒有綠底線前置檢查。測試套件本身是紅的時候（例如有人正在
     # 改 validate.py 改到一半），**每一個 mutation 都會被判為「殺掉」** —— harness 回報
     # 漂亮的「0 存活」，而它其實什麼都沒量到。這是它自己版本的「肯定式綠燈」。
     # R28 D9（G-R29-4）：前置檢查先前只跑 `test_validate.py`。R27 把守備範圍擴到 lint 之後，lint 靶的
     # 生死由 `--selftest` 判——而 selftest 紅的時候每個 lint 靶都被判「殺掉」，同一個洞換個 suite 又開了。
     # 現在對 SUITES 裡每一條不同的驗證指令各跑一次，任一紅就整輪不跑、點名是哪個 suite。
-    t0 = time.monotonic()
-    if not args.worker and not precheck_ok():
+    # 全部命中快取時不跑（那些結果是在綠底線下量的）；worker 由父行程檢查過。
+    if not args.worker and (run_sel or not sel) and not precheck_ok():
         return 1
+    for i in sel:
+        if i in results:
+            kind = results[i][0]
+            print({"killed": "  沿用 殺掉 ", "survived": "  沿用 存活 "}.get(kind, "  沿用 靶壞 ") + MUTATIONS[i][0], flush=True)
+    if args.jobs > 1 and run_sel:
+        fresh = run_parallel(run_sel, args.jobs)
+    else:
+        fresh = run_serial(run_sel, emit=bool(args.only))
+    for i, (kind, why) in fresh.items():
+        results[i] = (kind, why, False)
+        if use_cache and i in keys and kind != "broken":
+            cache[keys[i]] = [kind, why]
+    if use_cache and fresh:
+        save_cache(cache_path, cache)
+    killed = [MUTATIONS[i][0] for i in sel if results[i][0] == "killed"]
+    survived = [MUTATIONS[i][0] for i in sel if results[i][0] == "survived"]
+    broken = [(MUTATIONS[i][0], results[i][1]) for i in sel if results[i][0] == "broken"]
+    if args.worker:
+        return 1 if broken else 0
+    reused = sum(1 for i in sel if results[i][2])
+    rc = report(killed, survived, broken, time.monotonic() - t0, args.jobs)
+    if reused:
+        print(f"\n其中 {reused} 靶沿用快取（key 相同：突變後的程式碼、守備單位的輸入、工具版本都沒變），實際重跑 {len(sel) - reused} 靶。"
+              f"快取檔：{cache_path}（發版前的量測請加 --no-cache）")
+    return rc
 
+
+def run_serial(sel, emit):
+    """就地改寫本樹、逐一跑驗證指令，回傳 {索引: (結果, 說明)}。`emit`：每個靶另印 `RESULT` 行（`--only`／worker 用）。"""
+    results = {}
+    if not sel:
+        return results
     originals = {k: f.read_text(encoding="utf-8") for k, (f, _c, _d) in SUITES.items()}
     install_restore_signals()
-    survived, killed, broken = [], [], []
     try:
         for i in sel:
             entry = MUTATIONS[i]
@@ -1470,26 +1629,22 @@ def main():
             try:
                 mutated = _apply(name, old, new, original)
             except (ValueError, IndexError) as e:
-                broken.append((name, str(e)))
-                print(f"  靶壞 {name} | {e}", flush=True)
-                if args.only:
-                    print(f"RESULT\t{i}\tbroken\t{e}", flush=True)
-                continue
-            if mutated == original:
-                broken.append((name, "替換後檔案沒變"))
-                print(f"  靶壞 {name} | 替換後檔案沒變", flush=True)
-                if args.only:
-                    print(f"RESULT\t{i}\tbroken\t替換後檔案沒變", flush=True)
-                continue
-            target.write_text(mutated, encoding="utf-8")
-            try:
-                rc = subprocess.run(cmd(), cwd=cwd, capture_output=True, text=True).returncode
-            finally:
-                target.write_text(original, encoding="utf-8")
-            (survived if rc == 0 else killed).append(name)
-            print(("  存活 " if rc == 0 else "  殺掉 ") + name, flush=True)
-            if args.only:
-                print(f"RESULT\t{i}\t{'survived' if rc == 0 else 'killed'}", flush=True)
+                results[i] = ("broken", str(e))
+            else:
+                if mutated == original:
+                    results[i] = ("broken", "替換後檔案沒變")
+                else:
+                    target.write_text(mutated, encoding="utf-8")
+                    try:
+                        rc = subprocess.run(cmd(), cwd=cwd, capture_output=True, text=True).returncode
+                    finally:
+                        target.write_text(original, encoding="utf-8")
+                    results[i] = ("survived" if rc == 0 else "killed", "")
+            kind, why = results[i]
+            print({"killed": "  殺掉 ", "survived": "  存活 "}.get(kind, "  靶壞 ") + name
+                  + (" | " + why if kind == "broken" else ""), flush=True)
+            if emit:
+                print(f"RESULT\t{i}\t{kind}" + ("\t" + why if why else ""), flush=True)
     except BaseException:
         # #33 verify R9 M16：只有 finally 保護時，SIGINT/SIGTERM 或當機會把 `if False:`
         # 留在正式的 validate.py 裡 —— 一個被 mutate 過的 validator 看起來完全正常。
@@ -1502,11 +1657,7 @@ def main():
     finally:
         for k, (f, _c, _d) in SUITES.items():
             f.write_text(originals[k], encoding="utf-8")
-
-    if args.worker:
-        return 1 if broken else 0
-    return report(killed, survived, broken, time.monotonic() - t0, 1)
-
+    return results
 
 def precheck_ok():
     print("前置：確認每個守備單位未 mutate 的驗證指令都是綠的 …", flush=True)
@@ -1525,9 +1676,6 @@ def run_parallel(sel, jobs):
     （不含 `.git`——與 `git archive` 的量測副本同一個條件），在副本裡以 `--only i --worker` 跑單一個靶；副本同一時間只給
     一個靶用（`queue` 借還），本樹從頭到尾不被改寫。結果依 MUTATIONS 原順序彙整，摘要與串行相同。
     worker 沒回報結果（當掉、被砍）一律算「靶壞」——fail-loud，不當成殺掉或存活。"""
-    t0 = time.monotonic()
-    if not precheck_ok():
-        return 1
     root = PACK.parent.parent
     script = pathlib.Path(__file__).resolve().relative_to(root)
     tmp = pathlib.Path(tempfile.mkdtemp(prefix="mutation-jobs-"))
@@ -1561,10 +1709,7 @@ def run_parallel(sel, jobs):
                 print(f"RESULT\t{i}\t{kind}" + ("\t" + why if why else ""), flush=True)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-    killed = [MUTATIONS[i][0] for i in sel if results[i][0] == "killed"]
-    survived = [MUTATIONS[i][0] for i in sel if results[i][0] == "survived"]
-    broken = [(MUTATIONS[i][0], results[i][1]) for i in sel if results[i][0] == "broken"]
-    return report(killed, survived, broken, time.monotonic() - t0, jobs)
+    return results
 
 
 def report(killed, survived, broken, elapsed, jobs):

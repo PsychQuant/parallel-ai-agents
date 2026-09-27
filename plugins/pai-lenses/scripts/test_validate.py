@@ -2270,16 +2270,89 @@ class ValidateTest(unittest.TestCase):
                 or (isinstance(n, ast.Import) and any(a.asname and a.name in V.READ_MODULES for a in n.names))]
         self.assertEqual(len(hits), 2)
 
+    def test_mutation_cache_key_ignores_comments_but_not_code(self):
+        """R39（使用者提議：沒改變就沿用 JSON 記錄）：快取 key 用「剝掉註解與 docstring 的 AST」，所以 lint 嵌入的 Python
+        只改註解時 key 不變；改一個字面值 key 就變。bash 外殼照原文比（它很短，而且 `--selftest` 的門檻就寫在那裡）。"""
+        sys.path.insert(0, str(HERE)); import mutation_check as M
+        base = "#!/bin/bash\nx=1\npython3 - <<'PY'\ndef f():\n    \"\"\"doc\"\"\"\n    return 1\nPY\n"
+        comment = base.replace("def f():\n", "def f():\n    # 新註解\n").replace('"""doc"""', '"""另一段說明"""')
+        code = base.replace("return 1", "return 2")
+        shell = base.replace("x=1", "x=2")
+        k = lambda s: M.normalized_source(pathlib.Path("lint-ci-log-filter.sh"), s)
+        self.assertEqual(k(base), k(comment), "只改註解與 docstring，key 不該變")
+        self.assertNotEqual(k(base), k(code), "改了程式碼，key 必須變")
+        self.assertNotEqual(k(base), k(shell), "bash 外殼改了，key 必須變")
+        kp = lambda s: M.normalized_source(pathlib.Path("oracle.py"), s)
+        self.assertEqual(kp("x = 1  # a\n"), kp("x = 1  # b\n"))
+        self.assertNotEqual(kp("x = 1\n"), kp("x = 2\n"))
+
+    def test_mutation_cache_inputs_digest_tracks_every_input_file(self):
+        """快取 key 的另一半是守備單位讀得到的輸入檔（fixture、測試檔…）。任何一個改了、增加或刪除，digest 都要變——
+        漏掉一個輸入，快取就會安靜地給出舊答案。"""
+        sys.path.insert(0, str(HERE)); import mutation_check as M
+        with tempfile.TemporaryDirectory() as td:
+            td = pathlib.Path(td); (td / "fx").mkdir()
+            (td / "fx" / "a.yml").write_text("a\n"); (td / "t.py").write_text("t\n")
+            spec = [(td, ["fx/*.yml", "t.py"])]
+            d0 = M.inputs_digest(spec)
+            self.assertEqual(d0, M.inputs_digest(spec), "同樣的輸入，digest 要穩定")
+            (td / "fx" / "a.yml").write_text("a2\n")
+            d1 = M.inputs_digest(spec); self.assertNotEqual(d0, d1, "改了 fixture 內容")
+            (td / "fx" / "b.yml").write_text("b\n")
+            d2 = M.inputs_digest(spec); self.assertNotEqual(d1, d2, "多了一張 fixture")
+            (td / "fx" / "b.yml").unlink()
+            self.assertEqual(d1, M.inputs_digest(spec), "刪回原樣，digest 回到原值")
+
+    def test_mutation_cache_reuses_result_and_no_cache_reruns(self):
+        """同一個 key 第二次不跑驗證指令、回報「沿用」；`--no-cache` 一定重跑。靶的結果與快取裡的一致。"""
+        import contextlib, io, json
+        sys.path.insert(0, str(HERE)); import mutation_check as M
+        with tempfile.TemporaryDirectory() as td:
+            td = pathlib.Path(td)
+            log = td / "calls.log"; log.write_text("")
+            chk = td / "chk.sh"
+            chk.write_text('#!/bin/sh\necho run >> "%s"\ngrep -q MUT "%s" && exit 1\nexit 0\n' % (log, td / "t.py"))
+            chk.chmod(0o755)
+            (td / "t.py").write_text("x = 1\n")
+            suites = {"validate": (td / "t.py", lambda: [str(chk)], td)}
+            muts = [("靶一", "x = 1", "x = 'MUT'")]
+            cache = td / "cache.json"
+            keep = (M.SUITES, M.MUTATIONS, M.SUITE_INPUTS, sys.argv)
+
+            def run(*extra):
+                buf = io.StringIO()
+                try:
+                    M.SUITES, M.MUTATIONS, M.SUITE_INPUTS = suites, muts, {"validate": [(td, ["chk.sh"])]}
+                    sys.argv = ["mutation_check.py", "--cache", str(cache), *extra]
+                    with contextlib.redirect_stdout(buf):
+                        rc = M.main()
+                finally:
+                    M.SUITES, M.MUTATIONS, M.SUITE_INPUTS, sys.argv = keep
+                return rc, buf.getvalue()
+
+            rc, out = run()
+            n_first = len(log.read_text().split())
+            self.assertEqual(rc, 0); self.assertIn("殺掉 1", out)
+            self.assertTrue(json.loads(cache.read_text())["results"], "第一次要寫入快取")
+            rc, out = run()
+            self.assertEqual(len(log.read_text().split()), n_first, "同一個 key 第二次不該再跑驗證指令")
+            self.assertIn("殺掉 1", out); self.assertIn("沿用", out)
+            rc, out = run("--no-cache")
+            self.assertGreater(len(log.read_text().split()), n_first, "--no-cache 一定重跑")
+            self.assertIn("殺掉 1", out)
+
     def test_mutation_check_main_installs_restore_signals(self):
         """R16 logic LOW：R15 的 SIGTERM 修法 wiring 無網——把 main() 裡那行 `install_restore_signals()` 換成 `pass`，
         118 條仍全綠。靜態網：main 的 AST 裡必須有那個呼叫，且在 mutate 迴圈之前。"""
         import ast
         src = (PACK / "scripts/mutation_check.py").read_text(encoding="utf-8")
         tree = ast.parse(src)
-        main = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main")
+        # R39：就地改寫的迴圈連同 handler 一起搬進 `run_serial()`（`main()` 只負責快取與派工）——保護的性質不變：
+        # **就地改寫開始之前**先掛上 handler。`--jobs` 的 worker 也走 `run_serial()`。
+        main = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "run_serial")
         calls = [n.lineno for n in ast.walk(main)
                  if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "install_restore_signals"]
-        self.assertTrue(calls, "main() 沒有呼叫 install_restore_signals()")
+        self.assertTrue(calls, "run_serial() 沒有呼叫 install_restore_signals()")
         # R29：認**mutate 迴圈**，不是「main 裡第一個 for」——D9 的前置檢查在它前面多了一個印失敗 suite 的 for，
         # 第一版這樣寫就把那個當成 mutate 迴圈而誤紅。R39 加 `--only` 之後迴圈走選出來的索引（iter 是 `sel`）；
         # `--jobs` 的平行路徑不在本樹就地改寫，不需要還原 handler（每個 worker 自己走這條串行路徑、自己掛）。
