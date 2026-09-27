@@ -38,14 +38,15 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y bats
         # shellcheck 已預裝在 ubuntu-latest runner
 
-      - name: shellcheck
-        # 寫死清單的形式本身是問題（下一個新增的 script 預設不會被檢查）—— 追蹤於 #30。
-        # 這份清單與 test/run.sh 的 shellcheck 行是**兩份**寫死規格；#33 verify R11 抓到兩邊互相
-        # 都不是對方的超集（這裡漏了兩支 lint、run.sh 漏了 pai-list-profiles）。改一邊請一併改另一邊。
+      # #30：受檢清單由 test/shellcheck-all.sh **列舉**（repo 級 `git ls-files` + shebang／副檔名），不再手寫——
+      # 先前這裡與 test/run.sh 各有一份寫死清單，新增的 script 預設不被檢查（#33 verify R11 抓到兩份互不為超集）。
+      # 現在兩處呼叫同一支；受檢與被排除的檔（附理由）都逐行印出；列舉為空、副檔名／shebang 任一規則零命中、
+      # 或找不到它自己 → 紅；來源指令（git ls-files）失敗 → 紅。規則與排除見該檔檔頭。selftest 同時涵蓋 python 模式。
+      - name: shellcheck (enumerated) — selftest, then every tracked shell script
         shell: bash
         run: |
           set -o pipefail
-          { shellcheck bin/pai-build-diff bin/pai-parse-verdict bin/pai-iter-commit bin/pai-list-profiles references/regen-builtin-lenses.sh test/run.sh test/assert-tap-complete.sh test/lint-bats.sh test/lint-changelog-counts.sh test/lint-contract-enumerations.sh test/lint-ci-log-filter.sh; } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
+          { bash test/shellcheck-all.sh --selftest && bash test/shellcheck-all.sh; } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
 
       # Round 6 RC11 (#37): a bare `!` assertion is a no-op under bats' errexit — it recurred four
       # times as a prose rule, so it is a machine rule now, and the guard proves it can fail first.
@@ -111,11 +112,15 @@ jobs:
 
       # 中和只有**一份**實作（validate.py 的 LineSanitiser，neutralise.py 只是把 stdin 接上去）——R13 用 sed 另寫一份，
       # 第一天就與它分岔（`[[:space:]]` 比 .NET IsWhiteSpace 小、`^` 只認 \n；R14 L-4 / S2）。
-      - name: py_compile
+      # #30 verify R1 row 5：先前是寫死的兩支（bin/pai-parse-lens-csv、bin/pai-collect-lens-layers；#34 延後到 #30）。
+      # 現在與 shellcheck 共用同一個列舉（`--python`：*.py 或 python shebang，同樣的 fixture／symlink 排除），
+      # 以 `python3 -I -X pycache_prefix=<暫存>` 跑：-I 不讓受檢 repo 的根目錄進 sys.path（repo 裡的 py_compile.py
+      # 遮蔽不了標準庫；#30 verify R2 row 7），bytecode 寫進暫存目錄，不在工作樹留 __pycache__。
+      - name: py_compile (enumerated) — every tracked python script
         shell: bash
         run: |
           set -o pipefail
-          { python3 -m py_compile bin/pai-parse-lens-csv bin/pai-collect-lens-layers; } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
+          { bash test/shellcheck-all.sh --python; } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
 
       # builtin-lenses.csv is generated from the harness PROFILES. It drives nothing at runtime
       # (#29 keeps the built-in baseline inside the harness), so a stale catalog is a DOCS defect,
@@ -296,9 +301,9 @@ jobs:
       # 初版的 20 個閘門 mutation 有 18 個存活，而當時三處文件都寫著「都做過 mutation」）。
       # mutation_check.py 手動跑、不進 CI（一輪 = 靶數 × 全套測試，一輪 = 靶數 × 全套測試（本機最近一輪：112 靶 / 64.2 分 / 每靶 34.4 s，由 mutation_check.py 收尾自己印））——
       # 這裡刻意不寫靶數，寫了就會過期，而過期的數字正是本 PR 一路在修的東西。
-      # #33 verify R9 M20：py_compile 的寫死清單只涵蓋主 plugin 的兩支，本 pack 新增的
-      # 三支 Python 只有 validate.py / test_validate.py 因為被執行而間接驗過語法，
-      # mutation_check.py **在任何地方都沒被語法檢查**。用 glob 而非清單。
+      # #33 verify R9 M20：當時主 plugin job 的 py_compile 是寫死的兩支，本 pack 的 scripts/*.py 沒被語法檢查，
+      # 所以這裡用 glob。#30 之後主 plugin job 的 `shellcheck-all.sh --python` 是 repo 級列舉、也涵蓋這些檔；
+      # 這一步保留，讓本 job 自足（不依賴另一個 job 的列舉）。
       # ── step log 處理由 test/lint-ci-log-filter.sh 對每一個 run step 機械檢查（#33 verify R15）：py_compile、
       #   test_validate.py、mutation_check.py 經 scripts/neutralise.py；validate.py 自帶 LineSanitiser（in-process）。
       # R13 DA-4 之後這裡曾用一行 sed 做中和——第二份實作，第一天就分岔（`[[:space:]]` 比 .NET IsWhiteSpace 小、

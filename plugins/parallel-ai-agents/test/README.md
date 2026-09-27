@@ -28,6 +28,7 @@ ensemble-* 的程式表面看似都是「LLM 驅動的編排」，不可測。�
 | `codex-call-error-extract.bats` | `../bin/codex-call` 的 SSE error 訊息提取（`--selftest-error-extract`）—— **macOS-only**（codex-call 是 `#!/usr/bin/swift` script），在非 macOS 環境自我 skip |
 | `codex-profile.bats` | repo root `.codex-pro/profile.yaml`（#48 專案層 codex-pro profile pin）—— 用 `references/codex-governance.md` 同組正規式鎖住解析後字面、重複 key、git 追蹤；fixture 三層優先序（不依賴 codex-pro cache）；形狀驗證拒絕注入。與 governance 文件是連動點（codex-pro#18 / #19）|
 | `codex-call-detach.bats` | `../bin/codex-call` 的背景模式（`--detach`／`--poll`／`--abort`／`--force-reap`；#37）—— **macOS-only**、95 case；全部走同一條 detach／lock／claim／poll 路徑，只用 `--_selftest-*` 旗標把 HTTP 換成 sleep＋寫檔（任何沒帶 selftest 旗標的 detach 都會真的發 HTTPS）。**不可與另一組 bats 在同一 checkout 並行**（`own_workers` 斷言是 checkout 級） |
+| `shellcheck-all.sh` | 護欄（#30）：shellcheck 與 py_compile 的受檢清單由列舉產生（`git ls-files`／vendored 或非 git 時 `find`；副檔名或 shebang），CI 與 `run.sh` 共用；排除的檔逐行印出並附理由。列舉為空、副檔名／shebang 任一規則零命中、找不到自己、來源指令失敗、shebang 判定不了（`error:shebang`：引號／跳脫／`$`／未知 env 選項）→ 紅。必須能在 bash 3.2（macOS `/bin/bash`）跑。`--selftest` 以完整集合逐字比對驗分類，鑑別力由 `../pai-lenses/scripts/mutation_check.py` 的 `shellcheck-all` 守備單位量 |
 | `lint-bats.sh` | 護欄：bats 檔內不得有裸 `!` 斷言（errexit 不觸發，斷言變 no-op；round 6 RC11）。`--selftest` 對 `fixtures/lint-bats-bad.bats` 必須拒絕 |
 | `lint-changelog-counts.sh` | 護欄：CHANGELOG 每個「N 個 case（`grep -c "^@test" <file>`）」／「N 條（`grep -c …`）」／「N 個（`grep -c …`）」宣稱，加上第四種「N 量詞（`python3 -c "<expr>"`）」的資料結構長度宣稱（#33 verify R30/R31 加入，LEN_CLAIM）——共四種形式，封閉列舉，不得類推第五種，N 必須等於那條命令此刻的輸出（RC13 第五度復發後機械化，#37 round 10；#33 verify R13/R14 加後兩種）。指向 sibling plugin 的 `../` 路徑在非 monorepo 佈局缺席時跳過並註明。`--selftest` 對 `fixtures/changelog-count-bad.md` 拒絕、對再次餵入的 `fixtures/changelog-count-sibling-file-missing.md`（在 `../pai-lenses` 不存在的分支下）接受——沒有獨立的 `changelog-count-sibling-absent.md` 這個檔案、對 `changelog-count-sibling-file-missing.md`（sibling 目錄在、檔不在）拒絕（該斷言只在 monorepo 佈局跑）|
 | `lint-ci-log-filter.sh` | 護欄：`.github/workflows/*.yml`／`*.yaml`（全部 workflow）每一個 `run:` step 都必須經 `../pai-lenses/scripts/neutralise.py`（**`run:` 區塊之內的 pipeline 位置**）或帶 `# LOG-FILTER:` 註解明示不過濾與理由。**R18 起是白名單解析器**：只認明確列出的結構（plain key、block 清單、block scalar），其餘一律 fail-loud——三輪的黑名單特例都被新的合法 YAML 寫法穿過（去重後 7 個根因）。`--selftest` 對 `fixtures/ci-log-filter-*.yml`（正向與負向全部）**逐一 glob**，數量寫死在三個門檻裡（正向、rule-red、parse-red 都要恰好相等；改 fixture 要同步改門檻，R24 regression F9），並依每個 fixture 的 `# EXPECT:` 斷言它是規則擋（rule-red）還是解析擋（parse-red）；帶 `# EXPECT-MSG:`（可多行）的 fixture 另斷言訊息內容——每行都要以子字串出現在輸出裡，帶它的張數同樣寫死（R37：類別對了不代表訊息對）——兩種都不是 `seen == 0` 的 vacuity 守衛擋的。**兩種模式**（#33 verify R36 第 25 列）：檢查真的 workflow 一律用 **`--strict`**（CI 與 `run.sh` 都是）——它另外要求 shell 是 bash 樣板、有管線的 step 跑在 pipefail 之下（關鍵字 `bash`、樣板自帶 `-o pipefail`，或 run 裡頂層的 `set -o pipefail`；自訂樣板如 `bash -e {0}` 沒有）、靠管線過濾的 step **整個 run 區塊是一個群組** `{ …; } 2>&1 | python3 …neutralise.py`（前面只准 `set -e`／`-u`／`-o pipefail`；#59／#60）——群組外的命令、以及某一段 `2>&1` 生效前的展開期／重導向錯誤都不經過濾，要印 `::error::` 的檢查另開 `# LOG-FILTER: none` 的 step；不帶旗標的預設模式是給 fixture 與產生語料的詞法量測，**假設 shell 是 bash**，非 bash 的 shell／container／Windows runner 只在 `--strict` fail-closed（R34 放行條件第 5 條的偏離，理由見 lint 檔頭）。檔名給絕對路徑：lint 先 `cd` 到 plugin 目錄，找不到檔案回 rc=2，那不是 pass。 |
@@ -56,7 +57,9 @@ brew install bats-core shellcheck
 ./test/run.sh
 
 # 或分開
-shellcheck bin/pai-build-diff
+bash test/shellcheck-all.sh            # repo 內每一支 tracked shell script 跑 shellcheck（列舉規則見檔頭）
+bash test/shellcheck-all.sh --python   # 同一個列舉的 python 那一半，逐支 `python3 -I` py_compile（不留 __pycache__）
+bash test/shellcheck-all.sh --list     # 只印列舉：`<kind>\t<path>`，含被排除的檔與理由（skip:*）
 bats test/
 ```
 

@@ -4,13 +4,18 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-echo "── shellcheck (bash scripts) ──"
-# 這份清單與 .github/workflows/test.yml 的 shellcheck step 是兩份寫死的規格（#30 追蹤自動列舉）；
-# #33 verify R11 抓到兩邊互相都不是對方的超集 —— 改其中一邊時請一併改另一邊。
-shellcheck bin/pai-build-diff bin/pai-parse-verdict bin/pai-iter-commit bin/pai-list-profiles references/regen-builtin-lenses.sh test/run.sh test/assert-tap-complete.sh test/lint-bats.sh test/lint-changelog-counts.sh test/lint-contract-enumerations.sh test/lint-ci-log-filter.sh
+echo "── shellcheck (enumerated shell scripts — #30) ──"
+# 受檢清單由 test/shellcheck-all.sh 列舉（git ls-files + shebang／副檔名），與 CI 的 shellcheck step 同一支；
+# 先前這裡與 test.yml 是兩份寫死清單（#33 verify R11：互不為超集）。新增的 script `git add` 後自動涵蓋。
+# 本檔若不被外層 repo 追蹤（plugin 被 vendor 進別的 repo）或不在 git 裡，退回 find 掃 plugin 目錄並明說。
+# 列舉器（shellcheck-all.sh）必須能在 bash 3.2（macOS 的 /bin/bash）跑——它的 selftest 有靜態掃描擋 bash 4+ 語法（#30 verify R2 row 1）。
+bash test/shellcheck-all.sh --selftest
+bash test/shellcheck-all.sh
 
-echo "── py_compile (python scripts) ──"
-python3 -m py_compile bin/pai-parse-lens-csv bin/pai-collect-lens-layers
+echo "── py_compile (enumerated python scripts — #30 verify R1 row 5) ──"
+# 與 shellcheck 同一個列舉（--python），取代先前寫死的兩支；`python3 -I`（repo 裡的 py_compile.py 遮蔽不了標準庫），
+# bytecode 寫進暫存目錄（-X pycache_prefix），不留 __pycache__。
+bash test/shellcheck-all.sh --python
 
 echo "── lint-bats (bare ! assertions are no-ops under bats errexit — round 6 RC11) ──"
 bash test/lint-bats.sh --selftest
