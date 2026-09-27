@@ -618,6 +618,66 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
     （security S-4 / regression F3，改成 lint 認的形式）；mutation 耗時再上修為 30–50 分（logic 實測 29 s × 96 ≈ 47 分）。
   測試 118 → 124 條；靶清單 96 → 98 個（3 個 EXPECTED_SURVIVE；lint 形式的宣稱只留在最新一段）。
   量測（R16 後）：全輪 98 靶 93 殺／2 存活（emit 自己的中和層，補單元測試後單靶轉殺）→ 95／0／3（複合值）。
+- **verify R38（4 lens + DA + Codex 跨模型 leg，`gpt-6-astra`／medium）— 4 HIGH、12 MEDIUM blocking，另 LOW 若干；六條 leg 全部判 FAIL。**
+  中心發現：網只對作者點名過的輸入有鑑別力，而且量它的平台不是 CI 的平台。strict 產生語料的判定完全由「是不是群組」決定——群組規則擋下
+  所有非群組形式、群組形式又豁免 fd 規則，所以 fd 流向規則在 `--strict` 下從來不是決定判定的那一條（R37 條目的「關掉 fd 複製偵測 → 7 檔繞過」
+  已就地更正）；本輪每一個新繞過與新誤擋都落在語料沒有的維度上。CI 在 c53ac22 上是紅的：一張 fixture 的外流依賴 `/bin/sh` 是 bash，
+  ubuntu 上是 dash。R39 的修正全部 TDD（fixture 或反向探針先在修法前看過紅；新 mutation 靶逐條實跑確認被殺）：
+  - **CI（R38 第 1 列）**：named-fd fixture 改用 `bash -c`。以 `/bin/dash` 充當 `sh` 跑一次 fixture 神諭，重現 CI 的 `一致 595、不一致 27`，
+    而且只有這一張依賴 `sh`。
+  - **群組規則：空白碼行（第 2 列）**：群組外的**每一個**實體行都做字面比對，不只程式碼非空白的行——`${PR_TITLE}`、`\e\c\h\o …`、
+    `$'\x65cho' …`、`${X:-eval} $'…'` 整行挖空後詞元檢查與字面檢查都看不到，bash 照樣執行。純註解行照常放行（註解被截掉、不是挖空）。
+    8 張 bypass＋1 張 good。
+  - **神諭（第 3、6、7 列）**：(a) 已觀察到外流而分類失敗 ⇒ 判繞過（前一版判「量不到」、不改 rc，Codex 的多行群組輸入讓 lint 與神諭
+    同時 rc=0）；多行群組的差分先把範圍往上擴到語法完整。(b) 外流行是 xtrace 的輸出（神諭把 PS4 設成自己的標記）⇒ 繞過，不歸任何類別。
+    (c) S-2 要求**機制**成立：每一段補 `2>&1`（`|` → `|&`）後外流消失，或外流行全是 bash 自己的錯誤訊息、左邊包成群組就消失；
+    `>/dev/fd/2 2>&1 |` 這類 fd 規則該擋的外流不再被收進 S-2。(d) 已知類別的**原因檢查**：刪掉與外流無關的行之後 `--strict` 仍擋
+    （DA 的 `set -Eeuo` 反例）。`oracle_selfcheck.py` 從 2 項擴成 8 項（假 lint 讓神諭走到歸類分支）；每一項在 R38 的神諭上都是 rc=0。
+  - **`_Sh`（第 4、8、11 列）**：前綴詞的選項（`command -p`、`builtin --`、`eval --`、`time -p`，`command -v` 只描述不執行）；非字面命令名
+    的參數像 `set` 選項時 fail-closed（`-x`、`-o xtrace`、`pipefail`；`"$TAR" -xzf` 照常放行）；`$"…"` 當雙引號；pipefail 改成**範圍模型**——
+    子殼層、管線的每一段、命令替換、背景執行各開一層，設定只作用在同一範圍或更內層、之後的管線（`( set +o pipefail )`、先關再開不再誤擋；
+    `set -o pipefail &` 不再當成開了）。第 4 列那一族在預設模式是 R37 的回歸（380e4a4 擋、c53ac22 放行），現在回到擋。
+  - **fd 與 env（第 5、9、20 列）**：群組豁免只給寫到自己 fd 1／2 的目標（數字 fd 複製、`/dev/stdout|stderr`、`/dev/fd/1|2`、
+    `/proc/self/fd/1|2`）；`/proc/$$/…`、`/proc/$PPID/…`、`/dev/tty` 不豁免。含 `..` 又經過 /dev、/proc 的目標 fail-closed。`PYTHON*` 的值是
+    runner 運算式（env 三層），或 run 裡設成非字面值 ⇒ RULE（過濾器 `python3` 啟動時就讀它，`PYTHONWARNINGS` 的不合法值原樣印到管線右端的
+    stderr，協調者實跑）。**Linux 預測**：`/proc/$$`、`exec >/proc/$$`、`..` 三張在本機（沒有 /proc）列為已知誤擋
+    （`KNOWN_DISAGREE_WITHOUT_PROC`），在 CI（Linux）上必須判一致——以推送後的 CI run 為準（run 編號與結果記在 PR 說明）。
+  - **誤擋（第 10、11 列）**：放寬四類——群組內未加引號的 `${{ … }}`（遮罩後計數；R32 HIGH-1 修過的那一類重新出現）、尾巴後的 `;`、
+    `set -E`／`-o errtrace`、`set` 前綴行尾的 `;`。揭露五類（`restrict-r39-*` ＋ KNOWN_DISAGREE）：群組內定義函式、巢狀群組
+    （`>> "$GITHUB_ENV"`）、兩個群組、群組前的 `cd`／`export`、命令替換裡不在命令起點的 `case` 普通參數。regression lens 的 61 個安全寫法：
+    一致 51、不一致 8，8 條都屬已揭露類別。群組規則的完整代價（七類）寫進 lint 的註解。
+  - **run 裡的 PR 可控運算式（第 14 列）**：靠管線過濾的 step，run 裡直接寫 `${{ github.event.* }}`／`${{ github.head_ref }}` ⇒ RULE
+    （兩種模式；runner 在 bash 之前代換，可以收掉引號與群組）。產生語料 d 組的 `gen-d-yaml-ghexpr-plain` 因此從放行變成擋（真的注入形狀）。
+  - **網（第 12、13 列）**：`shellgen.py --strict` 從六個維度擴成九個（群組外的行 × 位置、群組內容、群組尾巴），54 → 85 檔；用 c53ac22
+    的 lint 跑這三個新維度，神諭抓出 11 條繞過或 STRICT_MISS、5 條誤擋、1 條 pipefail 不可比，全部是 R38 找到的缺陷。形狀普查加 R39-1..3。
+    `_scalar` 的 `strip→id` 用一張 EXPECT-MSG fixture 殺掉、移出 `EXPECTED_SURVIVE`（47 → 46）；logic lens 對 8 條「無解」存活者找到的 6 個殺法
+    做成 fixture（其中 4 張是保守 RULE、列 KNOWN_DISAGREE）。
+  - **其他**：TAP 守衛在上一步被跳過時不跑（第 16 列，R38 那次 CI run 裡實際印了不實的 `::error::`）；run.sh 補 `oracle_selfcheck.py` 與產生語料
+    神諭（第 18 列）；lint 註解更正「R36 要求每一段」（實際只要求緊鄰 neutralise 的那一段）與「群組未收尾什麼都不會印」（bash 會印語法診斷）；
+    已知不涵蓋第二組加第 4 條「過濾器的身分」（lint 檢查接線，不驗證 `neutralise.py` 的內容，第 21 列）；神諭盲區補平台、固定 marker、stub、
+    `$?`；README／`test_validate.py` 檔頭的語料與 `EXPECTED_SURVIVE` 數字。
+  - **量測工具（使用者要求：一輪 6 小時、每改一版就等半天）**：`mutation_check.py` 加 `--jobs N`——每個 worker 一份 repo 副本（不含
+    `.git`，與 `git archive` 的量測副本同條件），在副本裡以 `--only i --worker` 跑單一個靶，本樹不被改寫；加 `--only`（索引子集）。
+    等價性：13 個靶（五個守備單位都有）串行與 `--jobs 4` 逐靶結果相同，33.0 分 → 8.4 分。加**結果快取** `mutation-cache.json`：key 是
+    「突變後被改寫檔的正規化內容（Python 剝掉註解與 docstring 的 AST）＋ 守備單位讀得到的輸入檔 ＋ python／bash／PyYAML 版本」，key 相同
+    就沿用、摘要分開印「沿用」與「重跑」；`validate`／`neutralise` 兩組的輸入是整個 repo（它們讀的範圍逐一列舉必然漏）。判斷「有沒有改變」
+    的是雜湊、不是人對「是不是大改版」的判斷；發版前的量測用 `--no-cache`。四條新測試（註解不換 key、輸入檔換 key、命中不跑／`--no-cache`
+    重跑、`--no-cache` 跑子集不丟別的靶的紀錄且清掉過期 key），測試 144 → 148 條（`grep -c "    def test_" ../pai-lenses/scripts/test_validate.py`）。`opsweep.py` 的 10% 上限改用全集分母（前一版除以 `--since` 的區域：R39 的區域只有 368 個）。
+  - **mutation 子集抓到的一條**：類別閘門「KNOWN-CLASS 過期」方向的靶在 R39 之後失去網——原本殺它的 must-fail 探針
+    `g-diff-syntax-break`，在「分類失敗改判繞過」之後光憑繞過就以宣告的理由失敗。補 `known-r39-mustfail-class-stale-only`（唯一的
+    失敗理由就是過期），`FIXTURE_MUSTFAIL_TOTAL` 7 → 8。
+  - **mutation 全輪抓到的一條**（`bf961d1`，唯一的非預期存活者）：續行判定的 bash 那一支（行尾 `|` 後面帶註解）。我原本想把它列成
+    等價（上一行以 `|` 懸空時 stdout 只流進管線，換不換都一樣），實際試了兩個反例都不變色——原因是中性命令 `! ! :` 接在 `|` 後面
+    本身就是語法錯誤，R39 的差分往上擴到最短的完整範圍，剛好補回續行判定該給的範圍。但擴範圍是逐段貪婪、每段都要求**整份腳本**
+    語法完整：同一個 run 區塊有**兩條**註解續行的管線時就量不到。補 `known-r39-g-two-continued-pipelines`（修法前後分別判 G 與 rc=1），
+    G 7 → 8。**量測工具的兩個缺陷**：`--only 389 --no-cache` 讓快取從 433 筆只剩 1 筆（`--no-cache` 不讀舊檔、存檔只寫這一輪）；
+    舊 key 從不清，一輪後長到 868 筆——改成 `--no-cache` 只是不沿用、存檔只留所有靶的現行 key。摘要一律印「沿用 N 靶、重跑 M 靶」：
+    `bf961d1` 那一輪沿用 0（lint、神諭、整個 repo 都變了），當時摘要不印 0，看不出來。快取 key 不計入 `CHANGELOG.md`（沒有任何
+    驗證指令讀它；回填數字是每一輪的最後一步）。
+  **我自己的錯**：R37 推送後沒等 CI 就開 verify；`( set +o pipefail )` 的誤擋是我在 R37 改 `_pipefail_holds` 時引入的；併入群組規則後沒重跑
+  放行條件 6 的負對照；`unmeasured` 不計入失敗是我在 R35／R36 寫的、檔頭還寫成「fail-closed 的方向」。R39 起 verify 要等 CI 綠才開。
+  **量測（本機 macOS，CI 以 Linux 為準）**：selftest 259 正向／362 規則紅／145 解析紅／5 張訊息斷言；fixture 神諭 907 個 step：一致 640、不一致 49（全部已知；類別 G 8、S-2 3）、不可比 201、量不到 17；產生語料 709 個 step：一致 577、不一致 71（全部已知）、不可比 61、量不到 0（於 `bf961d1`；之後 lint 內嵌的 Python 沒動）；`oracle_selfcheck.py` 8 項 ✓；
+  mutation 靶 435 個，全輪 （`c99e4c5` 的 `git archive` 副本，`--jobs 8`）殺 432／存活 0／預期存活 3／靶壞 0，牆鐘 60.6 分（每靶 8.4 s）；同一棵樹立刻重跑：435 靶全部沿用快取、16 秒；opsweep `--since c53ac22` （於 `bf961d1`）368 個突變體：殺 354（其中當掉 37）／存活 14（預期 12、非預期 2＝R37 留下的兩條無解）；`--verify-expected` 46 條全部相同（709 檔）；CI 以推送後的 run 為準（run 編號與結果記在 PR 說明；R39 起 verify 等 CI 綠才開）。
 - **verify R36（4 lens + DA + Codex 跨模型 leg，`gpt-6-astra`／medium）— 7 HIGH、13 MEDIUM blocking，另 LOW 5 條 in-scope、1 條交給 #58。**
   中心發現：R34 的判斷還成立，只是往上搬了一層。R35 讓 R34 點名的四個輸入各自讓網變色，四個 lens 與 Codex 卻在 R35 改過的述詞上又找到
   二十個以上作者沒點名的相鄰輸入，沒有一個讓 repo 內任何一張網變色，其中三個是 R35 引入的回歸。結構原因在神諭：判定「這個外流是不是已知類別」
@@ -972,7 +1032,7 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
     處置是刪掉（同 `fold_block` 折疊條件那兩個運算元），不是寫進 `EXPECTED_SURVIVE`。
   三軸（base `d278e99`，野外 1565 檔／分母 369）：`GREEN→RED` **0**、`RED→GREEN` 0、`RULE:` 逐行相同
   （`PARSE:` 有 26 行是訊息文字改了：anchor／alias／merge key **／tag**）。
-  測試 143 → 144 條（`grep -c "    def test_" ../pai-lenses/scripts/test_validate.py`）；
+  測試 143 → 144 條（歷史數字；帶指令的現況宣稱只留在最新一段，R39 起是 147）；
   靶清單 139 → 155 個（9 個 EXPECTED_SURVIVE；lint 形式的宣稱只留在最新一段——R33 起是 161）；
   lint fixture 109 → 156 個（61 正向／60 規則紅／35 解析紅；`ls test/fixtures/ci-log-filter-*.yml | wc -l`）；
   CI run step 22 個（R33 起 23：形狀普查閘門）；
