@@ -20,7 +20,7 @@ ensemble-* 的程式表面看似都是「LLM 驅動的編排」，不可測。�
 | `pai-build-diff.bats` | `../bin/pai-build-diff`（ensemble-code-review 的 diff 模式建構器）|
 | `ensemble-workflow.test.mjs` | `../workflows/ensemble-workflow.js`（共用 harness，4 個 skill 的底層）|
 | `pai-parse-lens-csv.bats` | `../bin/pai-parse-lens-csv`（ensemble-compose 的 `--lens-file` CSV 解析器）|
-| `pai-list-profiles.bats` | `../bin/pai-list-profiles`（validate.py 的 profile 名稱真源：求值 harness PROFILES 印 key；`PAI_HARNESS` 只在測試裡指向 fixture，validate.py 呼叫時顯式傳入被 containment 過的路徑——#33 verify R14 E-2）|
+| `pai-list-profiles.bats` | `../bin/pai-list-profiles`（validate.py 的 profile 名稱真源：求值 harness PROFILES 印 key；`PAI_HARNESS` 只在測試裡指向 fixture，validate.py 呼叫時顯式傳入被 containment 過的路徑——#33 verify R14 E-2；`--json`＋`PAI_HARNESS=-` 是層 ① bump 閘門的比對面：標準形的兩個方向與「函式值 fail-loud」——#42）|
 | `pai-parse-verdict.bats` | `../bin/pai-parse-verdict`（ensemble-academic-review `--auto-iterate` 的 verdict tag 解析器）|
 | `pai-iterate-decide.test.mjs` | `../bin/pai-iterate-decide`（`--auto-iterate` 主迴圈的純狀態機：halt / 套 fix / mode 交替 / focus-rotation）|
 | `pai-iter-commit.bats` | `../bin/pai-iter-commit`（`--auto-iterate` 的 per-round checkpoint commit + 空輪防護）|

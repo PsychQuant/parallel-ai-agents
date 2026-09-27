@@ -11,6 +11,89 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **「改 lens 必 bump」現在也守層 ①（#42）**。先前 `plugins/pai-lenses/scripts/validate.py` 的 `check_bumped`
+  只看 `<pack>/lenses/*.csv`：改 `workflows/ensemble-workflow.js` 的 `PROFILES` 而不 bump 主 plugin，**CI 全綠**、
+  使用者 `/plugin update` 收不到，沒有任何錯誤訊息——門檻最高的那一層反而沒有閘門，而 CI step 名稱宣稱
+  「改 lens 必 bump」。新閘門 `check_builtin_bumped`：`PROFILES` 相對比較基準有任何差異 → 主 plugin
+  （`plugins/parallel-ai-agents/.claude-plugin/plugin.json`）的版本必須增加；marketplace entry 那一側由
+  `check_marketplace_sync` 保證與 plugin.json 相等，所以不另外比。
+  - **怎麼判「PROFILES 變了」：比求值後的值，不比文字。** 兩側（HEAD 與比較基準）的 harness 都從 git 物件取出，
+    經 stdin 交給**同一支** `bin/pai-list-profiles --json` 求值——與 profile 名稱閘門同一個抽取法（Orchestration
+    分隔線之前的純定義區、真的 JS engine），輸出標準形 JSON（物件 key 排序、陣列保序、只收 JSON 原生型別；
+    函式／Map／class instance／非有限數值**直接失敗**，不讓 `JSON.stringify` 靜默丟掉）。
+    否決的兩個方向：(1)「`ensemble-workflow.js` 有沒有變」——那個檔絕大多數改動與 lens 無關，路徑判準的
+    假陽性會讓人把閘門拿掉；(2) #42 本文提的 `references/builtin-lenses.csv` diff——它**由 lens 產生**，
+    `daFocus`／`title`／`codexDefault`／`codexInstructions`／`codexMaxTime` 與 `lenses: []` 的 `custom` 在裡面
+    一列都沒有，改了看不見，且新鮮度要靠另一道 drift 檢查。
+    **沒有「harness 檔沒變就跳過」的捷徑**：第一版有，理由是「同一支 lister 對同一份 blob 必同輸出」——
+    那只對一般檔成立。harness 在 git 裡是 repo 內 symlink 時 blob 是連結文字，指向的檔改了 PROFILES 而 blob 不變，
+    捷徑印「無需 bump ✓」（而 check_csvs 在這個形狀下也是綠的）。拿掉之後兩側一律求值（對非惡意的 symlink，
+    連結文字求值會失敗 → fail-loud；刻意寫成合法 JS 的連結文字不在防範內，見下方 verify R1 第 5 列），由 `test_symlinked_harness_cannot_hide_a_profiles_change` 釘住——把捷徑加回去，它轉紅（實測）。
+  - **什麼算「lens 改了」（決定，寫在 `check_builtin_bumped` 的 docstring）**：`PROFILES` 標準形的**任何**差異——
+    新增／刪除 profile 或 lens、lens 的任何欄位、lens 在陣列中的順序、profile 級欄位（DA 與 Codex 讀的 prompt）。
+    **focus 的純錯字修正也算**：focus 是 reviewer 逐字讀的 prompt，閘門分不出錯字與語意，也不假裝分得出；
+    patch bump 的成本幾乎是零，沒有豁免旗標。不算：原始碼排版（字串拆行、`+` 串接、註解、物件 key 書寫順序）
+    與值相同的重構。`needsSrt: false` 顯式寫出 vs 省略**算**差異——保守方向的假陽性，罕見且 bump 即解。
+    `PROFILES` 以外的 harness 改動**不在範圍**（那是一般發版紀律，算進來就退化成被否決的路徑判準）。
+  - **兩道 bump 閘門共用一個比較基準**：`--base`／`--event` 的解析（no-base 的本機／dispatch／CI 分流、
+    ref 不存在、merge-base）從 `check_bumped` 開頭抽成 `resolve_cmp_base()`，main() 算一次、傳給兩道閘門——
+    第二道閘門若自己再解析，同一次執行就有兩份 base 規格（R5 修過的形狀），CI 拿不到 base 時還會印兩次
+    「沒有跑」。`resolve_cmp_base` 自己拋例外時，main() 點名「check_bumped 與 check_builtin_bumped 沒有跑」
+    （`gate()` 多了 `crashed=` 哨兵，與「已回報、不跑」的 None 分開——R14 L-3a 的同一條）。
+  - 失敗一律具名、不是「無需 bump」：兩側任一讀不到 harness、求值失敗（stderr 不進 annotation，同 READ-SITE 17）、
+    輸出不是非空 JSON 物件、lister 不在或在 repo 外、任一側沒有主 plugin.json、版本不是 semver。
+    未 commit 的 harness／主 plugin.json 改動印 warning（R6 H2 的同一條：只涵蓋已 commit 的內容）。
+    差異摘要（`minutes: ~lens fidelity`、`academic.codexMaxTime`、`+profile x`…）來自 lister 的 stdout（PR 可控），
+    一律經 `wc()`；taint 網與 READ_SITES（19 → 24）照舊由 AST 測試機械核對，`ALLOWED_IMPORTS` 未動。
+  - `bin/pai-list-profiles`：新增 `--json` 與 `PAI_HARNESS=-`（stdin）；未知參數改為 rc=2（先前任何參數都被忽略——
+    CLI 契約變更，見下方 `### Changed`）。
+    `pai-list-profiles.bats` 15 個 case（`grep -c "^@test" test/pai-list-profiles.bats`）：標準形的兩個方向
+    （key 順序／字串串接不影響輸出；focus 一個字、lens 順序都改變輸出）、函式值 fail-loud、stdin 與讀檔逐字相同、用法錯；
+    verify R1 再加四條（own key `__proto__`、非有限數值、Map／class instance、undefined／null-prototype）。
+  - 測試 144 → 158 條（`grep -c "    def test_" ../pai-lenses/scripts/test_validate.py`；其中 3 條是 verify R1 加的）。
+    首輪新增的 11 條在**舊版** `validate.py` 上逐一跑過：11 條全紅（核心那條在 push 與 pull_request 兩種事件語意下都是
+    「預期報錯但 rc=0」）。
+  - `mutation_check.py`：新增守備單位 `lister`（`bin/pai-list-profiles` ↔ `pai-list-profiles.bats`）與 16 個靶
+    （層 ① 閘門 12、lister 4）；既有兩個靶因程式碼搬移而更新錨點（`bump 比較（tn <= tp）` 帶 `\n` 以與層 ① 那行區分；
+    `no-base fail-loud 整段` 的第二錨點改為 R4 的 rev-parse 註解——no-base 分流搬進 `resolve_cmp_base` 後，被替換的範圍
+    仍恰好是那一段）。verify R1 再加 12 個靶（見下）。靶清單共加 28 個：#42 分支上 193 → 221；與 #34（R37 併入 PR #61 後 394 靶）合流後是 422 個（`python3 scripts/mutation_check.py --check-targets`）。
+    **本輪只對這 18 個（16 新 ＋ 2 改錨點）逐一套用、跑對應套件**：**18 殺 / 0 存活**，而且每一個都由靶名括號裡指名的那條測試（或 bats case）翻紅——不是被別的測試順手殺掉（`no-base fail-loud 整段` 仍由四條 no-base 測試殺掉，確認換錨點後替換範圍沒有變）。
+    完整一輪沒有重跑，`test_validate.py` 檔頭的完整量測（合流後是 R37 的 394 靶那一輪）對最終樹**不再成立**（靶數與測試數都變了）。
+  - **#42 verify R1（7 列 in-scope，非阻擋）**：
+    1. `--json` 的 `canon()` 對 `{}` 賦值 `o['__proto__']` 會命中原型 setter——名為 `__proto__` 的 own key（計算屬性名
+       `['__proto__']` 建得出來）連同值被靜默丟掉，兩側只差在那裡時輸出逐字相同。輸出容器改為 `Object.create(null)`；
+       bats 一條（在 7bc01d7 的 lister 上紅）＋靶一個。
+    2. 判定先前比 `json.loads` 後的 Python 值，而 `False == 0`、`True == 1`——`codexDefault: false` → `0` 印「無需 bump ✓」。
+       改為兩側標準形 JSON **文字**逐字比對；`json.loads` 只留給非空檢查與差異摘要，摘要的判等也改用 JSON 序列化
+       （否則摘要定位不到判定看得到的差異）。測試一條（7bc01d7 上紅：預期報錯但 rc=0）＋靶兩個。
+    3. base 側也用 HEAD 的 lister 求值：同一個 PR 改了 lister↔harness 契約（例如 Orchestration 分隔線改名）→ bump 了也
+       永遠紅。**決定保留**（改用 base 的 lister，兩側的標準化規則就不再保證相同），寫進 `_profiles_at` docstring，
+       且 base 側求值失敗的 error 直接說「這類契約變更必須拆成兩個 PR／兩步」。測試一條釘住這個已知限制（7bc01d7 上紅：
+       訊息沒有那句）＋既有 base 求值失敗測試加一條斷言＋靶一個。
+    4. lister 的型別守衛（非有限數值、Map／class instance、undefined 過濾、null-prototype 輸入）先前沒有測試——
+       拿掉任一條 bats 全綠。bats 三條＋靶四個（逐一看過翻紅）。
+    5. symlink 那段註解說連結文字求值「必失敗」——連結文字是任意位元組，可以刻意寫成合法 JS。改為「對非惡意的 symlink
+       會失敗」並寫明威脅模型：能構造連結文字的只有 PR 作者本人，而同一個 job 本來就跑該 PR 自己的 validate.py。
+    6. 外部文件跟上：`plugins/pai-lenses/README.md` 的閘門表加層 ① 那一列；`lens-layers.md` 加「修改／刪除既有
+       built-in lens」一列（同一道閘門，純錯字也算）；`test.yml` 的 `--base` 註解與 node 相依註解（只改註解，
+       `lint-ci-log-filter.sh --strict` 綠）；validate.py 檔頭威脅模型：站點 22 的 stdout 經 `wc(delta, 400)`、含 lens key，
+       不是站點 17 的 200 字。
+    7. lister 取自工作目錄——它未 commit 的修改**會**被用上，先前 `git status` 只看 harness 與主 plugin.json、一句都不說。
+       現在也看 lister，且用另一句 warning（「只涵蓋已 commit」對 lister 是反話）。核心測試的 pull_request subTest
+       先前用線性歷史，把 cmp_base 接成 base 本身也照紅；改成分岔的 main tip（main 上已有同一個 focus 修改）——
+       exact-tree 綠、merge-base 紅，兩向都斷言。以 `cmp_base = base` 突變實測：7bc01d7 的核心測試存活、新版紅。
+       測試一條＋靶四個（含上面這個 merge-base 語意靶——先前全清單沒有它）。
+    本輪只對這 12 個新靶＋1 個改錨點的靶（`求值後相同就不要求 bump`，錨點隨判定改為 `new_text == old_text`）逐一
+    套用：**13 殺 / 0 存活**，每一個都由靶名括號裡指名的測試翻紅。完整一輪仍未重跑。
+
+### Changed
+
+- `bin/pai-list-profiles` 的 CLI 契約（#42）：先前任何參數都被靜默忽略、走 keys 模式；現在只接受零個參數或
+  `--json`，其餘一律 rc=2（用法錯）。本 repo 內唯一的呼叫端（validate.py、bats）已對齊；外部腳本若曾帶多餘參數呼叫它，
+  現在會失敗而不是安靜地印 key 清單。
+
 ## [2.24.0] - 2026-09-10
 
 `pai-lenses` 從獨立 repo 併回本 repo 成為第二個 plugin，並把三層 lens 疊加的文件與 CI 閘門補齊。
@@ -972,7 +1055,7 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
     處置是刪掉（同 `fold_block` 折疊條件那兩個運算元），不是寫進 `EXPECTED_SURVIVE`。
   三軸（base `d278e99`，野外 1565 檔／分母 369）：`GREEN→RED` **0**、`RED→GREEN` 0、`RULE:` 逐行相同
   （`PARSE:` 有 26 行是訊息文字改了：anchor／alias／merge key **／tag**）。
-  測試 143 → 144 條（`grep -c "    def test_" ../pai-lenses/scripts/test_validate.py`）；
+  測試 143 → 144 條（lint 形式的宣稱只留在最新一段——#42 起是 155）；
   靶清單 139 → 155 個（9 個 EXPECTED_SURVIVE；lint 形式的宣稱只留在最新一段——R33 起是 161）；
   lint fixture 109 → 156 個（61 正向／60 規則紅／35 解析紅；`ls test/fixtures/ci-log-filter-*.yml | wc -l`）；
   CI run step 22 個（R33 起 23：形狀普查閘門）；

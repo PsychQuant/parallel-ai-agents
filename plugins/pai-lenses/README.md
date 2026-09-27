@@ -102,6 +102,7 @@ CI（`manifests-and-lens-pack`）會檢查（`scripts/validate.py`，貢獻者�
 | semver `version` | 缺了或格式不對 → cache 目錄名不是 semver，consumer 定位不到，pack 等同沒裝 |
 | marketplace 版本**雙向**同步 | 只改一處 → 使用者收不到更新；有目錄沒 entry → 根本裝不到 |
 | **改了 `lenses/*.csv` 必須 bump** | 版本沒變 → 使用者端不會收到這些 lens |
+| **改了層 ① `PROFILES` 必須 bump 主 plugin**（#42）| `plugins/parallel-ai-agents/workflows/ensemble-workflow.js` 的 `PROFILES` **求值後**有任何差異（新增／修改／刪除 lens、focus 純錯字、lens 順序、`title`/`daFocus`/`codex*` 等 profile 級欄位）而 `parallel-ai-agents` 的版本沒增加 → 使用者端收不到。原始碼排版與 `PROFILES` 以外的 harness 改動不算 |
 | **撞名** | 與 built-in 同 key 且未標 `override` → harness 判為 `ignored`，那條 lens 一個 agent 都不會派；同檔內重複 key 同理 |
 | `override` 撞名 | 不擋，但印 warning —— 它會讓一條 built-in lens 從所有人的審閱裡消失 |
 | 檔名是既有 profile | 真源查 `bin/pai-list-profiles`（**不是** `builtin-lenses.csv`，那是由 lens 產生的投影）|

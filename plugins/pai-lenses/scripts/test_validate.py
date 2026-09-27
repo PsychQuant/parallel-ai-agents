@@ -21,6 +21,9 @@ mutation」。**那三句話會讓下一個維護者以為改動 `validate.py` �
 selftest、神諭靶跑的是 `test/oracle.py` 全集（反向單位跑 `oracle_selfcheck.py`），都比純 python 套件重——**它不是效能指標，只是
 「這一輪真的跑了多久」**）。之後的改動只有：散文、docstring 與靶名稱裡的工作包代號收斂（AST 比對確認只差 docstring 與字串常數）、`run.sh` 的
 形狀普查改為兩組語料都產生——都不在任何靶的錨點內；`--check-targets` 秒級可確認靶還對得上。
+**#42 之後這組數字不再描述最終樹**：新增層 ① bump 閘門與守備單位 `lister`，靶 +28（與 #34 合流後 394 → 422）、測試 144 → 158。
+#42 只對新增／改錨點的靶逐一跑過（首輪 18 殺 / 0 存活、verify R1 13 殺 / 0 存活，見 CHANGELOG `[Unreleased]`），
+**完整一輪沒有重跑**。
 **上一次（R37 移植 #61 之前，`git archive 5367d9a`）**：390 個靶 → 387 殺 / 0 存活 / 3 預期存活 / 0 靶壞，265.8 分鐘 / 390 靶 =
 每靶 40.9 s；當時列在 `EXPECTED_SURVIVE` 的 4 條裡，lint 的 `<<<` here-string 那一條**被殺掉了**——它的「依構造等價」論證
 是錯的（見 `mutation_check.py` 那個靶旁邊的更正），已從集合移除，所以現在是 3 條。
@@ -853,6 +856,205 @@ class ValidateTest(unittest.TestCase):
         """本機執行不該被擋 —— 但那是**因為它是本機**，不是因為沒人在看。"""
         out = self.assertGreen(msg="本機無 base", ci=False)
         self.assertIn("本機執行", out)
+
+    # ---- 層 ① 的 bump 閘門（#42）：改 PROFILES 不 bump 主 plugin，先前 CI 全綠 ----
+    HARNESS = "plugins/parallel-ai-agents/workflows/ensemble-workflow.js"
+    MAIN_PJ = "plugins/parallel-ai-agents/.claude-plugin/plugin.json"
+
+    def edit_harness(self, old, new, fx=None):
+        fx = fx or self.fx
+        p = fx.repo / self.HARNESS
+        src = p.read_text(encoding="utf-8")
+        self.assertEqual(src.count(old), 1, f"fixture 的錨點必須恰好一處：{old!r}")
+        p.write_text(src.replace(old, new), encoding="utf-8")
+
+    def bump_main(self, version="2.99.0"):
+        self.fx.edit_json(self.MAIN_PJ, lambda d: d.__setitem__("version", version))
+        self.fx.set_entry("parallel-ai-agents", version=version)
+
+    def test_builtin_lens_change_without_main_bump_is_error_and_with_bump_passes(self):
+        """#42 的本體：層 ① 的 focus 改一個字、不 bump 主 plugin → 紅；bump 之後 → 綠。
+        兩種事件語意（push 的 exact-tree、PR 的 merge-base）都要紅——兩道 bump 閘門共用同一個 cmp_base。
+
+        #42 verify R7：pull_request 那一側先前用線性歷史（base 就是 merge-base），把 cmp_base 接成 base 本身也照紅——
+        那個 subTest 分不出兩種語意。現在它的 base 是**分岔的 main tip**，而 main 上已經有**同一個** focus 修改
+        （cherry-pick 的形狀）：exact-tree 看兩側相同 → 綠；merge-base 看「這個分支引入了什麼」→ 紅。
+        兩個方向都斷言，語意接反了才會被抓到。"""
+        base = self.fx.commit("base")
+        self.edit_harness("這句話還站得住嗎", "這句話還站得住嗎？")
+        pr_tip = self.fx.commit("改層 ① 的 focus，沒 bump")
+        git(self.fx.repo, "checkout", "-q", base)
+        git(self.fx.repo, "checkout", "-qb", "mainline")
+        self.edit_harness("這句話還站得住嗎", "這句話還站得住嗎？")
+        (self.fx.repo / "README.md").write_text("main 也往前走了\n", encoding="utf-8")
+        main_tip = self.fx.commit("main：同一個 focus 修改（cherry-pick）＋無關改動")
+        git(self.fx.repo, "checkout", "-q", pr_tip)
+        for event, cmp in (("push", base), ("pull_request", main_tip)):
+            with self.subTest(event=event):
+                out = self.assertRed(("--base", cmp, "--event", event), contains="層 ① 的 PROFILES 改了")
+                self.assertIn("parallel-ai-agents 的版本沒有增加", out)
+                self.assertIn("minutes: ~lens fidelity", out, "訊息要指出是哪條 lens")
+                self.assertNotIn("lenses/ 改了", out, "層 ② 沒動，不得冒名")
+        with self.subTest(event="push（對分岔的 main tip：證明上面的 pull_request 紅是 merge-base 造成的）"):
+            out = self.assertGreen(("--base", main_tip, "--event", "push"), msg="exact-tree：兩側 PROFILES 相同")
+            self.assertIn("求值後的 PROFILES 與 base 相同", out)
+        self.bump_main()
+        self.fx.commit("bump 主 plugin")
+        out = self.assertGreen(("--base", base, "--event", "push"), msg="改層 ① 且已 bump")
+        self.assertIn("主 plugin 已 bump：2.24.0 → 2.99.0", out)
+
+    def test_builtin_gate_compares_canonical_text_not_python_values(self):
+        """#42 verify R2：判定先前比 json.loads 後的 Python 值，而 Python 的 `False == 0`——`codexDefault: false` → `0`
+        （JS 端是不同型別、`!!` 之外的讀法會分岔）被判「相同」、印「無需 bump ✓」。差異摘要也要指得出是哪個欄位。"""
+        base = self.fx.commit("base")
+        self.edit_harness("  minutes: {\n    title: '會議記錄',\n    codexDefault: false,",
+                          "  minutes: {\n    title: '會議記錄',\n    codexDefault: 0,")
+        self.fx.commit("codexDefault false → 0")
+        out = self.assertRed(("--base", base, "--event", "push"), contains="層 ① 的 PROFILES 改了")
+        self.assertIn("minutes.codexDefault", out)
+        self.assertNotIn("主 plugin 無需 bump", out)
+
+    def test_lister_harness_contract_change_is_red_even_with_bump_and_says_split_it(self):
+        """#42 verify R3（已知限制，釘住而不是修掉）：base 側也用 HEAD 的 lister 求值。同一個 PR 把 Orchestration
+        分隔線改名、lister 跟著改 → base 的 harness 抽不出 PROFILES → **bump 了也紅**。訊息必須說出唯一的出路：拆兩步。"""
+        base = self.fx.commit("base")
+        self.edit_harness("// ── Orchestration ──", "// ── Orchestration v2 ──")
+        lister = self.fx.repo / "plugins/parallel-ai-agents/bin/pai-list-profiles"
+        src = lister.read_text(encoding="utf-8")
+        self.assertEqual(src.count("/^\\/\\/ ── Orchestration ──/"), 1)
+        lister.write_text(src.replace("/^\\/\\/ ── Orchestration ──/", "/^\\/\\/ ── Orchestration v2 ──/"),
+                          encoding="utf-8")
+        self.bump_main()
+        self.fx.commit("lister↔harness 契約一起改（已 bump）")
+        out = self.assertRed(("--base", base, "--event", "push"), contains="base 那一版")
+        self.assertIn("拆成兩個 PR／兩步", out)
+
+    def test_builtin_gate_warns_that_an_uncommitted_lister_is_what_evaluates(self):
+        """#42 verify R7：harness／plugin.json 取自 git 物件（未 commit 的改動看不見）；lister 相反——取自工作目錄，
+        未 commit 的改動**會被用上**。先前 git status 只看前兩者，改到一半的 lister 決定了判定卻一句話都沒有。"""
+        base = self.fx.commit("base")
+        lister = self.fx.repo / "plugins/parallel-ai-agents/bin/pai-list-profiles"
+        lister.write_text(lister.read_text(encoding="utf-8") + "# 未 commit 的 lister 改動\n", encoding="utf-8")
+        out = self.assertGreen(("--base", base, "--event", "push"), msg="只有 lister 未 commit")
+        self.assertIn("pai-list-profiles 有未 commit 的修改", out)
+        self.assertNotIn("層 ① 的 bump 檢查**只涵蓋已 commit 的內容**", out,
+                         "lister 的未 commit 改動**有**被用上——說成「只涵蓋已 commit」是反話")
+
+    def test_builtin_profile_level_field_and_new_lens_both_count(self):
+        """什麼算「lens 改了」：profile 級欄位（CSV 描述不了、只能在層 ① 改）與新增 lens 都算。"""
+        base = self.fx.commit("base")
+        self.edit_harness("codexMaxTime: 900", "codexMaxTime: 901")
+        self.edit_harness("const PROFILES = {\n  minutes: {\n    title: '會議記錄',\n    codexDefault: false,\n    lenses: [\n",
+                          "const PROFILES = {\n  minutes: {\n    title: '會議記錄',\n    codexDefault: false,\n    lenses: [\n"
+                          "      { key: 'brand-new', focus: '新 lens' },\n")
+        self.fx.commit("profile 級欄位 + 新 lens")
+        out = self.assertRed(("--base", base, "--event", "push"), contains="層 ① 的 PROFILES 改了")
+        self.assertIn("academic.codexMaxTime", out)
+        self.assertIn("minutes: +lens brand-new", out)
+
+    def test_harness_change_outside_profiles_does_not_demand_a_bump(self):
+        """路徑判準會把 harness 的每一個改動都當成 lens 改動——假陽性的下場是有人把閘門拿掉（#42 本文）。
+        Orchestration 之後的改動、PROFILES 內的純排版（註解）都不算：比的是求值後的值。"""
+        base = self.fx.commit("base")
+        self.edit_harness("const PROFILES = {\n", "const PROFILES = {\n  // 只是一行註解，值不變\n")
+        p = self.fx.repo / self.HARNESS
+        p.write_text(p.read_text(encoding="utf-8") + "\n// orchestration 之後的改動\n", encoding="utf-8")
+        self.fx.commit("harness 改了但 PROFILES 的值沒變")
+        out = self.assertGreen(("--base", base, "--event", "push"), msg="非 lens 的 harness 改動")
+        self.assertIn("求值後的 PROFILES 與 base 相同", out)
+
+    def test_symlinked_harness_cannot_hide_a_profiles_change(self):
+        """第一版有「harness 的 blob 兩側相同就跳過」的捷徑——harness 在 git 裡是 repo 內 symlink 時，blob 是連結文字，
+        指向的檔改了 PROFILES 而 blob 不變，捷徑印「無需 bump ✓」。check_csvs 在這個形狀下是綠的（lister 經 symlink
+        讀得到、目標在 repo 內），所以只有這道閘門會叫。現在兩側一律求值：對非惡意的 symlink，連結文字求值會失敗
+        → fail-loud（刻意寫成合法 JS 的連結文字不在防範內——威脅模型見 check_builtin_bumped 的註解，#42 verify R5）。"""
+        h = self.fx.repo / self.HARNESS
+        real = h.with_name("ensemble-workflow.real.js")
+        h.rename(real)
+        h.symlink_to(real.name)
+        base = self.fx.commit("harness 變成 repo 內 symlink")
+        src = real.read_text(encoding="utf-8")
+        real.write_text(src.replace("這句話還站得住嗎", "這句話還站得住嗎？", 1), encoding="utf-8")
+        self.fx.commit("改 symlink 指向的檔裡的 PROFILES")
+        out = self.assertRed(("--base", base, "--event", "push"), contains="無法求值")
+        self.assertNotIn("主 plugin 無需 bump", out)
+
+    def test_builtin_gate_reads_committed_history_and_surfaces_uncommitted_edits(self):
+        """R6 H2 的同一條規則：兩側都取 git 物件；未 commit 的 PROFILES 改動要講出來，不是安靜的「無變更 ✓」。"""
+        base = self.fx.commit("base")
+        self.edit_harness("這句話還站得住嗎", "這句話還站得住嗎？")
+        out = self.assertGreen(("--base", base, "--event", "push"), msg="未 commit 的層 ① 改動")
+        self.assertIn("層 ① 的 bump 檢查**只涵蓋已 commit 的內容**", out)
+        self.assertIn(self.HARNESS, out)
+
+    def test_builtin_gate_fails_loud_when_base_profiles_cannot_be_evaluated(self):
+        """base 那一版求值失敗 ≠ 無需 bump。HEAD 側正常（check_csvs 綠），只有 base 壞——只有這道守衛會說。"""
+        self.edit_harness("codexMaxTime: 900", "codexMaxTime: 900 +")
+        base = self.fx.commit("base 的 PROFILES 是壞的")
+        self.edit_harness("codexMaxTime: 900 +", "codexMaxTime: 900")
+        self.fx.commit("修好")
+        out = self.assertRed(("--base", base, "--event", "push"), contains="無法求值 base 那一版的 PROFILES")
+        self.assertNotIn("主 plugin 無需 bump", out)
+        self.assertIn("拆成兩個 PR／兩步", out, "base 側求值失敗要點出 lister↔harness 契約那條出路（#42 verify R3）")
+
+    def test_builtin_gate_fails_loud_when_evaluation_yields_no_profiles(self):
+        """lister rc=0 但輸出空物件（`PROFILES = {}`）＝抽取壞了，不是「兩側相同」。"""
+        base = self.fx.commit("base")
+        self.edit_harness("const PROFILES = {\n", "const PROFILES = {}\nconst _UNUSED = {\n")
+        self.fx.commit("PROFILES 變成空物件")
+        self.assertRed(("--base", base, "--event", "push"), contains="沒有輸出非空的 JSON 物件")
+
+    def test_builtin_gate_fails_loud_when_harness_missing_at_base(self):
+        """base 上讀不到 harness（被搬過、或 base 太舊）≠ 無需 bump。"""
+        p = self.fx.repo / self.HARNESS
+        keep = p.read_text(encoding="utf-8")
+        p.unlink()
+        base = self.fx.commit("base 沒有 harness")
+        p.write_text(keep, encoding="utf-8")
+        self.fx.commit("harness 回來")
+        self.assertRed(("--base", base, "--event", "push"), contains=f"base 上讀不到 {self.HARNESS}")
+
+    def test_builtin_gate_names_the_lister_when_it_cannot_run(self):
+        """lister 不在 → 說對原因（層 ① 閘門沒有跑），不是下游 bash rc=127 的「無法求值」。"""
+        base = self.fx.commit("base")
+        self.edit_harness("這句話還站得住嗎", "這句話還站得住嗎？")
+        self.fx.commit("改層 ①")
+        (self.fx.repo / "plugins/parallel-ai-agents/bin/pai-list-profiles").unlink()
+        self.fx.commit("lister 不見了")
+        out = self.assertRed(("--base", base, "--event", "push"),
+                             contains="層 ① 的 bump 閘門沒有跑（無法判斷 PROFILES 有沒有變）")
+        self.assertNotIn("無法求值", out)
+
+    def test_builtin_gate_fails_loud_when_main_manifest_missing_at_base(self):
+        base_pj = self.fx.repo / self.MAIN_PJ
+        keep = base_pj.read_text(encoding="utf-8")
+        base_pj.unlink()
+        base = self.fx.commit("base 沒有主 plugin.json")
+        base_pj.write_text(keep, encoding="utf-8")
+        self.edit_harness("這句話還站得住嗎", "這句話還站得住嗎？")
+        self.fx.commit("改層 ①")
+        out = self.assertRed(("--base", base, "--event", "push"), contains="無法比較版本")
+        self.assertIn(f"base 上沒有 {self.MAIN_PJ}", out)
+
+    def test_resolve_cmp_base_crash_names_both_bump_gates(self):
+        """R14 L-3a 的同一條：閘門之間的相依也要具名。resolve_cmp_base 拋例外時，兩道 bump 閘門都要被點名「沒有跑」，
+        不能與「已回報、不跑」的 None 混在一起而安靜。在行程內 monkeypatch（不走 Fixture.run 的內部錯誤攔截）。"""
+        import io, contextlib
+        sys.path.insert(0, str(HERE)); import validate as V
+        def boom(*_a, **_k):
+            raise RuntimeError("boom")
+        buf, plain = io.StringIO(), io.StringIO()
+        orig = sys.argv, V.resolve_cmp_base, V.RAW_OUT
+        try:
+            sys.argv = ["validate.py"]; V.resolve_cmp_base = boom; V.RAW_OUT = buf
+            with contextlib.redirect_stdout(plain):
+                rc = V.main()
+        finally:
+            sys.argv, V.resolve_cmp_base, V.RAW_OUT = orig
+        out = buf.getvalue() + plain.getvalue()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("閘門 resolve_cmp_base 未跑完", out)
+        self.assertIn("check_bumped 與 check_builtin_bumped 沒有跑", out)
 
     # ---- 壞掉的 manifest 不可吃掉已累積的 annotation（R6 M5）----
     def test_broken_plugin_json_still_prints_accumulated_errors(self):
