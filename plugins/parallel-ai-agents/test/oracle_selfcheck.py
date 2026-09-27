@@ -32,7 +32,7 @@ CHECKS = [
     ("oracle↔lint 的 RULE 字面耦合檢查",
      {"ORACLE_LINT": str(PROBES / "lint-without-rule-messages.sh")},
      [HERE / "fixtures" / "ci-log-filter-good.yml"], 1, "用來認 RULE 的字面"),
-    # 以下四項（R39，#33 verify R38 第 3、6、7 列）量的是**神諭的歸類**：real lint 已經擋下這些形狀，神諭走不到歸類分支，
+    # 以下六項（R39，#33 verify R38 第 3、6、7 列）量的是**神諭的歸類**：real lint 已經擋下這些形狀，神諭走不到歸類分支，
     # 所以用 `oracle-probes/lint-*.sh` 假 lint 模擬「lint 放行」。每一項在 R38 的神諭上都是 rc=0。
     ("已觀察到外流而差分語法壞掉（多行群組）",
      {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
@@ -46,6 +46,12 @@ CHECKS = [
     ("xtrace 外流不歸 S-2",
      {"ORACLE_LINT": str(PROBES / "lint-strict-blocks-all.sh")},
      [PROBES / "s2-shape-xtrace.yml"], 1, "xtrace 的輸出"),
+    ("已觀察到外流而分類失敗、沒有類別宣告",
+     {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "unmeasured-leak-no-class.yml"], 1, "分類失敗不抵銷"),
+    ("已知類別 S-2 被與外流無關的原因擋下",
+     {"ORACLE_LINT": str(PROBES / "lint-strict-blocks-set-E.sh")},
+     [PROBES / "s2-blocked-for-unrelated-reason.yml"], 1, "原因與外流無關"),
 ]
 
 

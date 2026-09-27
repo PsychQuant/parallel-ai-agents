@@ -528,6 +528,13 @@ MUTATIONS += [
     ('lint: --strict：群組外（前綴、`{` 之前、`}` 之後）必須是字面（#59／#60 → bypass-strict-group-expansion-before-opener）',
      '    if not all(src[i] is not None and src[i][a:b] == code[i][a:b] for i, a, b in spans):',
      '    if False:', "lint"),
+    ('lint: --strict：群組前的每一個實體行都做字面比對，不只非空白碼行（R39，R38 第 2 列 → '
+     'bypass-r39-strict-group-blank-code-before、-after-set、-eval…）',
+     '    spans = ([(i, 0, len(code[i])) for i in range(opener)]',
+     '    spans = ([(i, 0, len(code[i])) for i in lines[:k]]', "lint"),
+    ('lint: --strict：群組後的每一個實體行都做字面比對（R39，R38 第 2 列 → bypass-r39-strict-group-blank-code-after）',
+     '             + [(i, 0, len(code[i])) for i in range(closer + 1, len(code))])',
+     '             + [(i, 0, len(code[i])) for i in lines if i > closer])', "lint"),
     ('lint: --strict：群組只收恰好一對大括號（#59／#60 → bypass-strict-group-case-pattern-brace）',
      '    if (flat.count("{"), flat.count("}")) != (1, 1):',
      '    if False:', "lint"),
@@ -1141,7 +1148,8 @@ MUTATIONS += [
      "known-stderr-cmd-error-missing-2to1）",
      'if base_mlines[k] - ml[k]]', 'if not (ml[0] or ml[1])]', "oracle"),
     ("oracle: G 差分關掉語法完整性守衛（R37，R36 第 1 列 → known-r37a-mustfail-g-diff-syntax-break）",
-     '    if pn[0] != 0 and pn != _bash_n(run, bash):', '    if False:', "oracle"),
+     '    if not _syntax_ok(_neutralised(lines, spans), base_n, bash):\n        # **多行群組**',
+     '    if False:\n        # **多行群組**', "oracle"),
     ("oracle: G 差分關掉『出現原本沒有的外流行』守衛（R37，R36 第 1 列 → "
      "known-r37a-mustfail-g-diff-heredoc-feeds-pipe）",
      '    if any(ml[k] - base_mlines[k] for k in (0, 1)):', '    if False:', "oracle"),
@@ -1177,12 +1185,49 @@ MUTATIONS += [
     ("oracle: 關掉 oracle↔lint 的 RULE 字面耦合檢查（R37 合併 r37a／r37b 時加 → test/oracle_selfcheck.py 第 2 項）",
      'for _msg in (PIPEFAIL_RULE_MSG, STRICT_GROUP_RULE_MSG):\n    if _msg not in _LINT_SRC:',
      'for _msg in (PIPEFAIL_RULE_MSG, STRICT_GROUP_RULE_MSG):\n    if False:', "oracle-inverted"),
+    # R39 把這個判斷改寫成 `if not strict_blocks(in_step):`（先排除 STRICT_MISS，再做原因檢查），替換方向跟著對調。
     ("oracle: G 的 --strict 查核恆真（R37 自 #61 移植 → known-r37-mustfail-g-strict-not-blocking）",
-     '                    if strict_blocks(in_step):',
-     '                    if True:', "oracle"),
-    ("oracle: G 的 --strict 查核恆假（R37 自 #61 移植 → known-granularity-* 等 G 範例的 KNOWN-CLASS 過期）",
-     '                    if strict_blocks(in_step):',
+     '                    if not strict_blocks(in_step):',
      '                    if False:', "oracle"),
+    ("oracle: G 的 --strict 查核恆假（R37 自 #61 移植 → known-granularity-* 等 G 範例的 KNOWN-CLASS 過期）",
+     '                    if not strict_blocks(in_step):',
+     '                    if True:', "oracle"),
+]
+
+# ── R39（#33 verify R38 第 3、6、7 列）：神諭的歸類 ──────────────────────────────
+# 前六條由 `test/oracle_selfcheck.py` 的第 3–8 項殺（`oracle-inverted`：那些探針用假 lint 讓神諭走到歸類分支）；
+# 後兩條由 fixture 集的已知類別殺。
+MUTATIONS += [
+    ("oracle: xtrace 外流不另判（R39，R38 第 4、6 列 → oracle_selfcheck「xtrace 外流不歸 S-2」）",
+     '                if any(XTRACE_LINE_RE.match(l) for c in mlines for l in c):',
+     '                if False:', "oracle-inverted"),
+    ("oracle: 多行群組不往上擴範圍（R39，R38 第 3 列 → oracle_selfcheck「已觀察到外流而差分語法壞掉」）",
+     '            for s2 in range(s - 1, lo - 1, -1):', '            for s2 in ():', "oracle-inverted"),
+    ("oracle: 分類失敗退回「量不到」（R39，R38 第 3 列 → oracle_selfcheck「已觀察到外流而分類失敗、沒有類別宣告」）",
+     '                    verdict = "不一致：繞過（PR 文字已經外流，來源分類量不到：',
+     '                    verdict = "量不到（PR 文字已經外流，來源分類量不到：', "oracle-inverted"),
+    ("oracle: G 不做原因檢查（R39，R38 第 7 列 → oracle_selfcheck「已知類別 G 被與外流無關的原因擋下」）",
+     '                        if why is None:\n                            verdict = CAUSE_MISS % "G"',
+     '                        if False:\n                            verdict = CAUSE_MISS % "G"', "oracle-inverted"),
+    ("oracle: S-2 不做原因檢查（R39，R38 第 7 列 → oracle_selfcheck「已知類別 S-2 被與外流無關的原因擋下」）",
+     '                        elif why is None:\n                            verdict = CAUSE_MISS % "S-2"',
+     '                        elif False:\n                            verdict = CAUSE_MISS % "S-2"', "oracle-inverted"),
+    ("oracle: 縮減從不刪行（R39，R38 第 7 列 → oracle_selfcheck「已知類別 G 被與外流無關的原因擋下」）",
+     '        if v == "piped" and (leaked[0] or leaked[1]):\n            cur = trial',
+     '        if False:\n            cur = trial', "oracle-inverted"),
+    ("oracle: S-2 機制差分恆成立（R39，R38 第 6 列 → oracle_selfcheck「S-2 的機制差分」）",
+     '    if gone("\\n".join(a)):\n        return "missing-2to1"',
+     '    if True:\n        return "missing-2to1"', "oracle-inverted"),
+    ("oracle: S-2「展開期錯誤」機制不要求外流行是 bash 的錯誤訊息（R39，R38 第 6 列 → oracle_selfcheck「S-2 的機制差分」）",
+     '    if not all(BASH_DIAG_RE.match(l) for l in contrib):\n        return None',
+     '    if False:\n        return None', "oracle-inverted"),
+    ("oracle: S-2「缺 2>&1」機制恆不成立（R39，R38 第 6 列 → known-stderr-cmd-error-missing-2to1、"
+     "known-r37a-g-plus-s2-same-step 的 KNOWN-CLASS 過期）",
+     '    if gone("\\n".join(a)):\n        return "missing-2to1"',
+     '    if False:\n        return "missing-2to1"', "oracle"),
+    ("oracle: 原因檢查的合成 lint 恆判擋下（R39，R38 第 7 列 → oracle_selfcheck「已知類別 G 被與外流無關的原因擋下」）",
+     '    return "PARSE" if ": PARSE: " in rs.stderr else None',
+     '    return "PARSE"', "oracle-inverted"),
 ]
 
 EXPECTED_SURVIVE = {
