@@ -142,16 +142,26 @@ def inputs_digest(spec, exclude=frozenset()):
     return h.hexdigest()
 
 
+# 神諭（test/oracle.py 的 `pick_bash`）可能選用的每一支 bash，外加 PATH 上的那一支。指紋把**每一支**都記下（路徑與版本），
+# 不在這裡複製神諭的挑選順序：哪一支被選中都一樣會改變 key。test_validate.py 以 AST 讀 `pick_bash` 的候選清單、斷言它 ⊆ 這一份
+# （R41 verify 第 16 列：前一版只記 PATH 上的 bash，神諭卻優先用 `/opt/homebrew/bin/bash`）。
+BASH_CANDIDATES = ("/opt/homebrew/bin/bash", "/usr/local/bin/bash", "/bin/bash", "/usr/bin/bash")
+
+
 def tool_versions():
     """執行環境的指紋——換了就不沿用。版本：python（跑本工具的）、PATH 上的 python3（驗證指令用的）、bash、PyYAML。
     環境（#33 verify R39 第 4 列）：神諭依 `/proc/self/fd` 是否存在改變 KNOWN_DISAGREE、`/bin/sh` 是 bash 還是 dash 會改變
-    fixture 的外流、`ORACLE_LINT` 換掉整支 lint——而快取檔進了版控，會被帶到別台機器上。"""
+    fixture 的外流、`ORACLE_LINT` 換掉整支 lint——而快取檔進了版控，會被帶到別台機器上。
+    bash 記 BASH_CANDIDATES 與 PATH 上的每一支；`/bin/sh` 記內容雜湊與實際執行時自報的身分（macOS 的 `/bin/sh` 是轉接程式，
+    realpath 恆為 `/bin/sh`，看不出它轉到哪一個 shell——R41 verify 第 16 列）。"""
     def run(cmd):
         try:
             return subprocess.run(cmd, capture_output=True, text=True).stdout.strip().split("\n")[0]
         except OSError:
             return "missing"
-    v = [sys.version, "bash " + run(["bash", "--version"])]
+    v = [sys.version]
+    for b in BASH_CANDIDATES + (shutil.which("bash") or "none",):
+        v.append("bash %s: %s" % (b, run([b, "--version"]) if os.path.exists(b) else "absent"))
     py3 = shutil.which("python3") or "none"
     v.append("python3=%s %s" % (py3, run([py3, "--version"]) if py3 != "none" else ""))
     try:
@@ -161,6 +171,11 @@ def tool_versions():
         v.append("no-yaml")
     v.append("platform=%s proc=%s" % (sys.platform, os.path.isdir("/proc/self/fd")))
     v.append("sh=%s" % os.path.realpath("/bin/sh"))
+    try:
+        v.append("sh-sha256=%s" % hashlib.sha256(pathlib.Path("/bin/sh").read_bytes()).hexdigest())
+    except OSError:
+        v.append("sh-sha256=missing")
+    v.append("sh-runs=%s" % run(["/bin/sh", "-c", 'echo "bash=${BASH_VERSION:-} ksh=${KSH_VERSION:-} zsh=${ZSH_VERSION:-}"']))
     v.append("ORACLE_LINT=%s" % os.environ.get("ORACLE_LINT", ""))
     return "\n".join(v)
 

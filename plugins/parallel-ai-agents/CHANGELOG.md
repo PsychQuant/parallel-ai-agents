@@ -655,7 +655,7 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
     拿掉並寫明。`f-inner-heredoc` 的 EOF 多縮排、什麼都沒量到——群組內部內容不再縮排。
   - **mutation 快取（第 4、17 列）**：key 丟掉註解，而 `test_validate.py` 讀 `# READ-SITE` 註解——改用原文；全部命中時也跑前置檢查；
     key 含 `/proc` 能力、`/bin/sh`、PATH 上的 `python3`、`ORACLE_LINT`；`--only` 命中時照印 RESULT；全部沿用時不印每靶耗時；
-    `load_cache` 只收 killed／survived。測試 148 → 152 條（`grep -c "    def test_" ../pai-lenses/scripts/test_validate.py`）。
+    `load_cache` 只收 killed／survived。測試 148 → 152 條（歷史數字；帶指令的現況宣稱只留在最新一段，R42 起是 153）。
   - **其他**：`run.sh` 的 `if …; then A && B`——A 失敗不觸發 errexit（第 6 列，我在 R39 自己引入）；opsweep 的 10% 上限改比區域內的
     預期存活（第 18 列）；test.yml 註解、fixture 檔頭、R38 段的分配數字（第 14、16 列）。
   - **最終量測抓到的**：opsweep 報 `_param_end` 的 `i + 2 >= len(line)` 拿掉後存活——`${` 落在行尾時 lint 丟 IndexError（traceback，

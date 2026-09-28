@@ -2466,6 +2466,29 @@ class ValidateTest(unittest.TestCase):
         for fact in ("proc=", "sh=", "python3="):
             self.assertIn(fact, tv, "執行環境的指紋要含 %s" % fact)
 
+    def test_mutation_cache_fingerprint_follows_the_oracles_bash_and_sh(self):
+        """R41 verify 第 16 列：指紋記的是 PATH 上的 bash，神諭卻優先用 `/opt/homebrew/bin/bash`（`pick_bash`）；`/bin/sh` 記的是
+        `realpath`，而 macOS 的 `/bin/sh` 是個轉接程式、realpath 恆為 `/bin/sh`——換了它實際執行的 shell，key 不變。"""
+        sys.path.insert(0, str(HERE)); import mutation_check as M
+        import ast
+        src = (PACK.parent / "parallel-ai-agents" / "test" / "oracle.py").read_text(encoding="utf-8")
+        fn = next(n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.FunctionDef) and n.name == "pick_bash")
+        loop = next(n for n in ast.walk(fn) if isinstance(n, ast.For))
+        cands = {e.value for e in loop.iter.elts if isinstance(e, ast.Constant)}
+        self.assertTrue(cands, "讀不到神諭 pick_bash 的候選路徑")
+        self.assertLessEqual(cands, set(M.BASH_CANDIDATES), "指紋要涵蓋神諭可能選用的每一支 bash：%s" % sorted(cands))
+        with tempfile.TemporaryDirectory() as td:
+            fake = pathlib.Path(td) / "bash"
+            keep = os.environ.get("PATH", "")
+            try:
+                os.environ["PATH"] = td + os.pathsep + keep
+                fake.write_text("#!/bin/sh\necho 'GNU bash, version 9.1-fake-A'\n"); fake.chmod(0o755); a = M.tool_versions()
+                fake.write_text("#!/bin/sh\necho 'GNU bash, version 9.2-fake-B'\n"); b = M.tool_versions()
+            finally:
+                os.environ["PATH"] = keep
+        self.assertNotEqual(a, b, "PATH 上的 bash 換了版本，key 必須不同")
+        self.assertIn("sh-runs=", M.tool_versions(), "`/bin/sh` 要記實際執行時自報的身分，不是 realpath")
+
     def test_run_sh_stops_when_either_oracle_step_fails(self):
         """R39 verify 第 6 列（我在 R39 自己引入的回歸）：`if …; then python3 test/oracle.py && python3 test/oracle_selfcheck.py`
         ——`&&` 左邊的失敗不觸發 errexit，fixture 神諭紅了 run.sh 照樣往下走、最後回 0。抽出 run.sh 跑神諭的那個 `if` 區塊，
