@@ -46,9 +46,6 @@ LINT = HERE / "lint-ci-log-filter.sh"
 # 突變體 id 的形狀：`<op>|<函式>|<該行去空白的原文>|<同一行第幾個>`。用原文不用 offset：offset 會隨任何改動漂移，
 # 原文只在那一行真的改了才變——而那時本來就該重新判讀。
 EXPECTED_SURVIVE = {   # id → 理由（依構造等價）。每一條都要能回答「為什麼關掉它沒有任何輸出會變」
-    "±1→±2|ctl|self.o[\"nloop\"] += 1|1": "迴圈 id 同範圍 id：只用來取交集（`_pipefail_holds` 的 `loop & set(e[\"loop\"])`）；間隔 1 或 2 都互不相同，沒有任何判定讀它的數值（R40）",
-    "drop-operand|ctl|if word == \"done\" and self.o[\"loops\"]:|2": "`loops` 空的時候遇到 `done` 只發生在多出來的 `done`——那是 bash 語法錯誤（`syntax error near unexpected token`），runner 不會跑；拿掉守衛只讓 lint 對無效輸入當掉，不改變任何合法輸入的判定。解析器共用 `self.o`，命令替換裡的迴圈與外面的 `done` 一樣配對（R40）",
-    "±1→±2|new_scope|self.o[\"nscope\"] += 1|1": "範圍 id 只用來比相等與前綴（`_pipefail_holds`）；間隔 1 或 2 都互不相同，沒有任何判定讀它的數值（R39）",
     # `len(v) >= 2` 只擋單一字元的 `'`／`"`：那是沒收尾的引號，不是合法 YAML（PyYAML ScannerError、GitHub
     # 「workflow file issue」），runner 不會跑。拿掉守衛只改變 lint 對無效輸入的訊息，不改變任何合法輸入的判定。
     "drop-operand|yaml_decode_scalar|if len(v) >= 2 and v[0] == v[-1] == \"'\":|1": "單字元 `'` 是沒收尾的引號、非合法 YAML；守衛只防越界",
@@ -114,7 +111,6 @@ EXPECTED_SURVIVE = {   # id → 理由（依構造等價）。每一條都要能
     # 四個突變體；順帶修掉子 shell `-o xtrace` 的訊息實際印成 `-oo xtrace` 的缺陷——它就是因為沒有任何 fixture 看訊息才活下來的。
     "==↔!=|_cmdsub_end_case|at_word = prev in SHELL_WORD_BREAK or prev == \"\\n\"|1": "只在真的掃到 `\\n` 時才有差別；`_cmdsub_end_case` 的兩個呼叫端都不會讓它在收尾前掃到換行（單一實體行，或收尾落在同一實體行的前綴內）",
     "==↔!=|shell_scan|quote = None; code.append(line[i:i + w]); i += w; prev_sig = \"`\" if w == 1 else \"(\"|1": "`\"`\"` 與 `\"(\"` 都在 SHELL_WORD_BREAK 裡、都不是 `$`；prev_sig 的消費者只問 None／in SHELL_WORD_BREAK／== \"$\"，對調不改變任何判定",
-    "drop-operand|<module>|elif STRICT and not declared and group_why:|1": "`group_why` 只在 STRICT 下計算、否則恆為 None；拿掉 `STRICT` 後 `group_why` 仍是 None",
     "drop-operand|<module>|if _flow_value(l_) and \":\" in yaml_split_comment(KEY_RE.match(norm[l_]).group(3) or \"\")[0]:|4": "左運算元 `_flow_value` 為真時 group(3) 必然是以 `{`／`[` 開頭的非空字串，`or \"\"` 的後備從不生效",
     "drop-operand|<module>|if inline[:1] in (\"'\", '\"') and any(|1": "`kind[k] == \"SCALAR\"` 與 `owner[k] = r` 只在引號續行、block scalar 續行兩處同時寫入；引號開頭那個條件被 any(...) 蘊含",
     "drop-operand|<module>|kind[k] == \"SCALAR\" and owner[k] == r for k in range(r + 1, s[\"end\"] + 1)):|1": "`owner[]` 只在設 `kind[j] = \"SCALAR\"` 的同一句被寫入，`owner[k] == r` 蘊含 `kind[k] == \"SCALAR\"`",

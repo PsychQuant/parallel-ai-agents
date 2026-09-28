@@ -4,6 +4,7 @@
 # 45dee04 的 `--strict` 全部放行。
 # LINT-ARGS: --strict
 # EXPECT: rule-red
+# EXPECT-MSG: `&`（背景執行、`&>`） 不在文法裡
 name: t
 on: pull_request
 jobs:

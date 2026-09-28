@@ -1,0 +1,24 @@
+# #33 R42 plan WP10：`bypass-r37t8-strict-pipefail-in-cmdsub-case` 在 R42 起不再經 `_lex`（`--strict` 走正面文法），它殺的
+# mutation 靶（`_lex` 在 `$(case …)` 裡追蹤 case，模式的 `)` 不是命令替換的收尾）因此沒有別的 fixture 會走到。WP5 試了 22 種
+# 群組 `{ …; }` 形狀都不翻色：突變體多讀到的 `)` 在群組裡只是被略過的殘渣（群組的收尾是 `}`）。翻色要 `$(case …)` 直接位在
+# 子殼層 `( … )` 裡——多出來的 `)` 提早關掉子殼層，之後的 `>&2` 落到外層、失去「收尾後緊接 `2>&1 |` 進 neutralise」的豁免。
+# bash 5.3 實跑兩個 step：PR 文字都只從過濾器出來，stderr 為空，所以放行是對的；突變體兩個 step 都擋下。預設模式（不帶 `--strict`）。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: stderr after the case command substitution
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          ( x=$(case a in a) :;; esac); echo "$PR_TITLE" >&2 ) 2>&1 | python3 scripts/neutralise.py
+      - name: stderr inside a case arm
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          ( x=$(case a in a) echo "$PR_TITLE" >&2;; esac) ) 2>&1 | python3 scripts/neutralise.py

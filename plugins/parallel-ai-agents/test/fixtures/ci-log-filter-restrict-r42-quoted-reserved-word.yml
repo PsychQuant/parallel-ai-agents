@@ -2,6 +2,7 @@
 # 這個 step 不外流。正面文法不收未加引號的反斜線，保守擋下。逐字取自 R41 logic lens 的 p/done1。
 # LINT-ARGS: --strict
 # EXPECT: rule-red
+# EXPECT-MSG: 未加引號的反斜線（逃脫、續行） 不在文法裡
 # EXPECT-MSG: 不在 `--strict` 的正面文法裡
 name: t
 on: pull_request

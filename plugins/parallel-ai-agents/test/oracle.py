@@ -221,6 +221,8 @@ KNOWN_DISAGREE = {
     ("ci-log-filter-bypass-r42-ghenv.yml", "ge-python"): {"dir": "誤擋", "hash": "sha256:13385b7d8a6a65a07897c0c8890aa8f8bc3ca3fa883216ec7f7dbd87890b129c", "why": "同上：stub。"},
     ("ci-log-filter-bypass-r42-ghenv.yml", "a25-git-log"):
         {"dir": "誤擋", "hash": "sha256:b2169564fabfb93bee6575ee56ee33a345844138f0b85d2e55bf185c91f6095b", "why": "神諭的工作目錄不是 git repo，`git log` 讀不到 commit 訊息；在 runner 上那是 PR 作者寫的文字。"},
+    ("ci-log-filter-bypass-r42-flat-fd-dup-3.yml", "fd 3 dup"):
+        {"dir": "誤擋", "hash": "sha256:190b3a43ed23e34e218e4e4dc2d10e1892a9cfe317ff80dfb6baff5707afbc68", "why": "`>&3` 寫到外層 shell 繼承的 fd 3：神諭跑的時候 fd 3 沒開、寫入失敗；runner 上開著時就是群組管線以外的輸出。不歸文法外——它不是安全的寫法，只是神諭量不到。"},
     ("ci-log-filter-bypass-r42-trap-action-registers-mktemp.yml", "trap action registers mktemp"):
         {"dir": "誤擋", "hash": "sha256:23afe3d88e9a9dde676b719aa0294488554458cf96917a903ad46eae89662fa5", "why": "這是注入不是外流：`trap \"rm -rf $tmp\" EXIT` 把 PR 文字接進動作字串、結束時當程式碼執行。神諭的標記不含 shell 字元，觸發不了（WP2 以真 bash 與 `x; …` 的值實跑確認會執行）。"},
 }
@@ -423,7 +425,7 @@ elif LINT == (HERE / "lint-ci-log-filter.sh").resolve():
     sys.exit("✗ %s 裡找不到 GH_SAFE_EXPRS——神諭無法確認兩份同步" % LINT)
 # 已知類別在 repo 自己的 fixture 集（不給檔案參數）上的**確切**條數（R37，R36 第 2 列；同 selftest 門檻 R24 F9 的理由：
 # 寫成 `>=` 而實際更高時，那個差額沒有網——刪掉一張 G 範例 fixture 仍然綠）。must-fail 探針不算在內。
-FIXTURE_CLASS_TOTALS = {"G": 8, "S-2": 3, "文法外": 37, "文法外-without-proc": 2}
+FIXTURE_CLASS_TOTALS = {"G": 8, "S-2": 3, "文法外": 39, "文法外-without-proc": 2}
 # `文法外-without-proc` 只在沒有 /proc 的平台成立（見 `check_file` 的平台變體）；有 /proc 時預期是 0。
 FIXTURE_CLASS_PLATFORM_ONLY = frozenset(("文法外-without-proc",))
 # must-fail 探針的確切張數（同理：刪掉一張探針＝少一條負對照，必須立刻紅）。

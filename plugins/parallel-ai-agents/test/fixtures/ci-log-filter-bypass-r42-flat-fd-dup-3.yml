@@ -1,0 +1,20 @@
+# #33 R42 WP10：殺 FLAT 靶「`>&N`／`<&N` 不擋」。群組裡 `>&3` 寫到外層 shell 繼承下來的 fd 3——那個 fd 不是群組的管線，
+# 寫進去的東西不經過濾（runner 上 fd 3 通常沒開、寫入失敗；開著時就是外流）。正面文法只收 `2>&1` 與 `>&2` 兩種複製。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-MSG: `>&3` 不在文法裡（heredoc
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: fd 3 dup
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "$PR_TITLE" >&3
+          } 2>&1 | python3 scripts/neutralise.py

@@ -3,6 +3,7 @@
 # 兩個 step 逐字取自那兩張 fixture（step 名稱是原 fixture 名）；原檔在 R42 刪除，由這一張帶著。
 # LINT-ARGS: --strict
 # EXPECT: rule-red
+# EXPECT-MSG: `(`（子殼層、函式、陣列） 不在文法裡
 # EXPECT-MSG: 不在 `--strict` 的正面文法裡
 name: t
 on: pull_request

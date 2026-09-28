@@ -11,6 +11,9 @@
 # KNOWN-CLASS: 文法外
 # KNOWN-CLASS: 文法外
 # EXPECT: rule-red
+# EXPECT-MSG: 指派 `RUNNER_TEMP=$PR_TITLE`
+# EXPECT-MSG: 指派 `HOME=$PR_TITLE`
+# EXPECT-MSG: 指派 `TMPDIR=/x`
 name: t
 on: pull_request
 jobs:

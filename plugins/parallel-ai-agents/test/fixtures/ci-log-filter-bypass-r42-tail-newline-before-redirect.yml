@@ -1,0 +1,19 @@
+# #33 R42 WP10：殺 FLAT 靶「群組尾巴的換行規則拿掉」。`}` 之後先換行、下一行才是 `2>&1 | python3 …`：bash 把群組當成一條獨立的
+# 命令執行（PR 文字直接進 log），下一行是一個只有重導向的命令接到 python3——群組根本沒經過濾器。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-MSG: 群組的 `}` 之後必須恰好是
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: tail on the next line
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { echo "$PR_TITLE"; }
+          2>&1 | python3 scripts/neutralise.py
