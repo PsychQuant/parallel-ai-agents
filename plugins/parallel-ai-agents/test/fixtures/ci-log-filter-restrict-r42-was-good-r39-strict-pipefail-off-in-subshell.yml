@@ -1,7 +1,12 @@
+# #33 R42：原名 `good-r39-strict-pipefail-off-in-subshell`（EXPECT: pass）。R39 釘住 pipefail 範圍模型：已經結束的子殼層裡的 `set +o pipefail` 管不到外面；那套模型在 R42 刪除。
+# 正面文法不收子殼層 `( … )`，保守擋下：`false | true` 仍在 pipefail 之下，PR 文字經 neutralise.py 過濾，是揭露的誤擋。
+# run 區塊逐字保留。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-MSG: 不在 `--strict` 的正面文法裡
+# ── R42 之前的檔頭（當時是 good fixture；描述的是 R42 刪除前的 lint，只留作沿革）──
 # R38 第 11 列（codex 第 7 條，協調者核對）：`( set +o pipefail )` 只作用在已經結束的子殼層，群組內之後的管線仍在 pipefail 之下。
 # R37 的 `_pipefail_holds` 讓子殼層裡的「關」一路關到底，誤擋這個寫法。
-# LINT-ARGS: --strict
-# EXPECT: pass
 name: t
 on: pull_request
 jobs:

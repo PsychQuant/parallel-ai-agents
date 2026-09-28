@@ -1,7 +1,13 @@
+# #33 R42：原名 `good-r37t8-strict-set-arg-cond-word`（EXPECT: pass）。R37 用它經 `--strict` 的 pipefail 模擬（`set` 的參數要看得懂）觀察 `_lex` 對引數位置 `[[` 的處理，那套模擬在 R42 刪除。
+# 正面文法的 `set` 前綴每個詞都要是點名的選項，保守擋下：bash 裡 `[[` 以後只是位置參數、pipefail 照樣打開，PR 文字經
+# `2>&1 | python3 …neutralise.py` 過濾，是揭露的誤擋。
+# run 區塊逐字保留。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-MSG: 不在 `--strict` 的正面文法裡
+# ── R42 之前的檔頭（當時是 good fixture；描述的是 R42 刪除前的 lint，只留作沿革）──
 # #33 verify R37 完整性審查（缺陷 e，誤擋）：引數位置的 `[[ -n x ]]` 是 `set` 的位置參數（bash 5.3 實測 `set -o pipefail [[ -n x ]]` 設了 pipefail、$1 是 `[[`），不是條件式；規則層前一版一看到 `[[` 開頭就當成不透明詞，於是判「set 的參數不是字面」。
 # R37 移植 #61 群組規則後：這個 `set` 不是合規的群組前綴，step 改成宣告 `# LOG-FILTER:`——pipefail 規則照樣讀它。
-# LINT-ARGS: --strict
-# EXPECT: pass
 name: t
 on: pull_request
 jobs:

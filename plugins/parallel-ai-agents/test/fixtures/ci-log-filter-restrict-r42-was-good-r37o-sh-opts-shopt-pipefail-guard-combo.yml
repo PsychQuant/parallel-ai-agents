@@ -1,3 +1,10 @@
+# #33 R42：原名 `good-r37o-sh-opts-shopt-pipefail-guard-combo`（EXPECT: pass）。R37 用它經 `--strict` 的 pipefail 模擬殺 `_Sh.shopt_cmd` 的突變體，那套模擬在 R42 刪除。
+# 正面文法不收任何 `shopt`，保守擋下：step 不印 PR 文字，是揭露的誤擋。
+# run 區塊逐字保留。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-MSG: 不在 `--strict` 的正面文法裡
+# ── R42 之前的檔頭（當時是 good fixture；描述的是 R42 刪除前的 lint，只留作沿革）──
 # #33 verify R37 opsweep 補件（sh-opts D）：`_Sh.shopt_cmd` 選項名迴圈第二、三支
 # （`elif "s" in flags and nm in _TRACE_OPTS:` 與 `elif nm == "pipefail" and ("s" in flags or "u" in flags):`）
 # 各拿掉一個運算元的三個突變體，用同一組輸入一次殺掉：
@@ -20,8 +27,6 @@
 # **R37 移植 #61 群組規則後**：step 改成宣告 `# LOG-FILTER:`（寫不成群組），pipefail 規則照樣適用——第 1) 點的第三支與第 2) 點
 # 兩個突變體仍由這一檔殺；第 1) 點的第二支（`"s" in flags` 拿掉 ⇒ 假的 xtrace hit）在宣告的 step 看不到（fd 流向規則只管
 # 靠管線過濾的 step），移到預設模式的 `good-r37o-sh-opts-shopt-uo-xtrace-default`。
-# LINT-ARGS: --strict
-# EXPECT: pass
 name: t
 on: pull_request
 jobs:

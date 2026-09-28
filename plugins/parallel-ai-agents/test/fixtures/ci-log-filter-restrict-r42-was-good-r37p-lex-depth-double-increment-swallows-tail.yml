@@ -1,3 +1,10 @@
+# #33 R42：原名 `good-r37p-lex-depth-double-increment-swallows-tail`（EXPECT: pass）。R37 用它經 `--strict` 的 pipefail 模擬觀察 `_lex` 對 `$( (true) )` 的括號深度，那套模擬在 R42 刪除。
+# 正面文法不收 mktemp 以外的 `$(`，保守擋下：step 只印常數、管線之前 `set -o pipefail` 已經打開，是揭露的誤擋。
+# run 區塊逐字保留。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-MSG: 不在 `--strict` 的正面文法裡
+# ── R42 之前的檔頭（當時是 good fixture；描述的是 R42 刪除前的 lint，只留作沿革）──
 # #33 verify R37 opsweep 補件（最終 lint，lex 群）：殺兩個突變體，同一個構造殺得掉：
 #   ±1→±2|_lex|depth += 1|1   （`_lex` 遇到裸 `(` 時把區域變數 `depth` 加一，改成加二；裸 `)` 仍只減一）
 #   ±1→±2|_lex|depth -= 1|1   （反過來：裸 `(` 仍只加一，裸 `)` 改成減二）
@@ -33,8 +40,6 @@
 # bash 5.3 實測：`bash -e {0}` 底下 `X=$( (true) )` 執行完，命令替換的子殼層完全結束，外層什麼都沒有
 # 殘留；緊接著頂層的 `set -o pipefail` 是貨真價實的頂層陳述，之後 `echo ok | cat` 確實跑在 pipefail
 # 之下——原版判 PASS 與這個事實一致，突變體判紅是錯的方向。
-# EXPECT: pass
-# LINT-ARGS: --strict
 name: t
 on: pull_request
 jobs:

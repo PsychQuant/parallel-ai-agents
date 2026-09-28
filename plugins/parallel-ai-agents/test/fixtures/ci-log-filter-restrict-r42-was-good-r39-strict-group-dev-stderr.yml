@@ -1,0 +1,25 @@
+# #33 R42：原名 `good-r39-strict-group-dev-stderr`（EXPECT: pass）。R39 收窄群組豁免時的對照：群組裡寫 `/dev/stderr`、`/proc/self/fd/2`、`>&2` 都進得了管線。
+# 正面文法的重導向目標不收 `/proc/self/fd/2`，保守擋下：群組的 fd 2 已經 `2>&1` 併進管線，三行的 PR 文字都經 neutralise.py，
+# 是揭露的誤擋。
+# run 區塊逐字保留。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-MSG: 不在 `--strict` 的正面文法裡
+# ── R42 之前的檔頭（當時是 good fixture；描述的是 R42 刪除前的 lint，只留作沿革）──
+# R39 群組豁免收窄後的對照：群組內寫 `/dev/stderr`、`/proc/self/fd/2`、`>&2` 仍然豁免——群組的 fd 2 就是管線。
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: group writes to its own stderr
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            echo "$PR_TITLE" >/dev/stderr
+            echo "$PR_TITLE" >/proc/self/fd/2
+            echo "$PR_TITLE" >&2
+          } 2>&1 | python3 scripts/neutralise.py

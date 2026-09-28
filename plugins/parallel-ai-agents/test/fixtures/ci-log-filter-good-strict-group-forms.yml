@@ -1,6 +1,9 @@
-# #59／#60 群組規則的誤擋守衛：合規的群組寫法都要放行——單行、多行、`|&`、`set` 前綴（合寫與分行）、
-# 行尾 `|` 續行、群組裡的 heredoc／引號與逃脫的大括號／`${…}`／大括號展開、背景 `&` 後接 `}`。
-# #60 表格裡「經過濾」那幾列（群組內的展開期與重導向錯誤）也在這裡：神諭實跑確認沒有外流。
+# #59／#60 群組規則的誤擋守衛：合規的群組寫法都要放行——單行、多行、`|&`、`set` 前綴（合寫與分行）、行尾 `|` 續行、
+# 群組裡的引號大括號／`${…}`／大括號展開。
+# **R42**：原本的第 2、4 步各有一部分不在 `--strict` 的正面文法裡，整步搬到 `restrict-r42-was-good-strict-group-forms`：
+# 第 2 步的 `${!PR_TITLE}` 與 `> "$PR_TITLE/y"`（#60 表格「經過濾」那幾列：群組內的展開期與重導向錯誤），第 4 步的逃脫大括號 `\}`、
+# heredoc 與背景 `&`。這裡的第 2、4 步換成它們在文法裡的部分（合寫的 `set` 前綴＋多行群組；引號大括號、`${PR_TITLE}`、
+# `{a,b}`、行尾 `|` 續行），讓這幾種合規寫法仍有 good fixture 守著。
 # LINT-ARGS: --strict
 # EXPECT: pass
 name: t
@@ -13,12 +16,12 @@ jobs:
         shell: bash
         run: |
           { echo hi; echo there; } 2>&1 | python3 scripts/neutralise.py
-      - name: multi-line group with set prefix, default shell
+      - name: multi-line group with a combined set prefix, default shell
         run: |
           set -euo pipefail
           {
-            echo "${!PR_TITLE}" || true
-            echo x > "$PR_TITLE/y" || true
+            echo "${PR_TITLE}" || true
+            echo x > /dev/null || true
           } 2>&1 | python3 scripts/neutralise.py
       - name: split set prefix and stderr pipe
         run: |
@@ -27,13 +30,10 @@ jobs:
           set -o pipefail
 
           { echo hi; } |& python3 scripts/neutralise.py
-      - name: braces that are not reserved words
+      - name: braces that are not reserved words, line break after the pipe
         shell: bash
         run: |
           {
-            echo "{" '}' \} ${PR_TITLE} {a,b}
-            cat <<EOF
-          }
-          EOF
-            sleep 0 & } 2>&1 |
+            echo "{" '}' ${PR_TITLE} {a,b}
+          } 2>&1 |
             python3 ../pai-lenses/scripts/neutralise.py

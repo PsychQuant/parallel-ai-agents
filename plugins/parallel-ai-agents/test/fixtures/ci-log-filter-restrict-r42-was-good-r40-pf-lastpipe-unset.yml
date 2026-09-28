@@ -1,7 +1,12 @@
+# #33 R42：原名 `good-r40-pf-lastpipe-unset`（EXPECT: pass）。R40 釘住 `shopt -u lastpipe` 不讓 pipefail 的範圍失效；lastpipe 與範圍的模擬在 R42 刪除。
+# 正面文法不收 `shopt`，也不收子殼層，保守擋下：step 不印 PR 文字，是揭露的誤擋。
+# run 區塊逐字保留。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-MSG: 不在 `--strict` 的正面文法裡
+# ── R42 之前的檔頭（當時是 good fixture；描述的是 R42 刪除前的 lint，只留作沿革）──
 # #33 verify R40 最終量測：opsweep 在 R40 的 pipefail 控制流程上報存活，R40 的 fixture 只釘住了點名的輸入、沒有釘住機制。
 # `shopt -u lastpipe` 是關掉 lastpipe，範圍照常——子殼層裡的「關」管不到外面（前一版的判定認「任何帶 `s` 的 `-` 參數」，旗標換成別的字母時會錯）。
-# LINT-ARGS: --strict
-# EXPECT: pass
 name: t
 on: pull_request
 jobs:

@@ -1,3 +1,10 @@
+# #33 R42：原名 `good-r37o-word_lex-backtick-stop-drop`（EXPECT: pass）。R37 用它經 `--strict` 的 pipefail 模擬觀察 `_word` 對收尾反引號的判斷，那套模擬在 R42 刪除。
+# 正面文法不收反引號，保守擋下：step 只印常數、管線之前 `set -o pipefail` 已經打開，是揭露的誤擋。
+# run 區塊逐字保留。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-MSG: 不在 `--strict` 的正面文法裡
+# ── R42 之前的檔頭（當時是 good fixture；描述的是 R42 刪除前的 lint，只留作沿革）──
 # #33 verify R37 opsweep 補件：word_lex 群「依構造等價」反駁——殺
 #   drop-operand|_word|if (c in _WORD_END and not hollow) or (c == "`" and stop == "`"):|4|L1534
 # （拿掉整個 or 的第二個運算元 `c == "`" and stop == "`"`）。
@@ -28,8 +35,6 @@
 # bash 5.3 實測：`bash -n` 對整段語法通過（rc=0）；`bash -c` 實際執行印出 `safe`、`ok`（rc=0），
 # 行為與原版判定的「頂層 `set -o pipefail` 之後接安全管線」一致。
 # R37 移植 #61 群組規則後：這個形狀寫不成群組，step 改成宣告 `# LOG-FILTER:`——pipefail 規則對宣告的 step 照樣適用，殺法不變。
-# EXPECT: pass
-# LINT-ARGS: --strict
 name: t
 on: pull_request
 jobs:

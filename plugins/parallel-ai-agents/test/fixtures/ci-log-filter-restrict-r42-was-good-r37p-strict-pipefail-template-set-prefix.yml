@@ -1,0 +1,18 @@
+# #33 R42：這個 step 原本是 `good-r37p-strict-pipefail-template-set-prefix`（EXPECT: pass）的第一步，R37 用它殺 `_pipefail_holds` 的
+# 突變體（子殼層裡的「開」不算、之後頂層的「開」才算）；`_pipefail_holds` 在 R42 刪除。正面文法不收子殼層，保守擋下：step 不印
+# PR 文字、管線之前頂層的 `set -o pipefail` 已經打開，是揭露的誤擋。step 逐字搬過來。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-MSG: 不在 `--strict` 的正面文法裡
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: pipefail subshell enable does not count, later top-level enable does
+        # LOG-FILTER: none — only inert `set` builtin invocations, nothing prints PR text
+        run: |
+          ( set -o pipefail )
+          set -o pipefail
+          true | true

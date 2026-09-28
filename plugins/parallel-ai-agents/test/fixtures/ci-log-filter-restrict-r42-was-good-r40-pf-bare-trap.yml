@@ -1,0 +1,21 @@
+# #33 R42：原名 `good-r40-pf-bare-trap`（EXPECT: pass）。R40 釘住 `trap_cmd` 遇到不帶參數的 `trap`（只列出目前的 trap）不會當掉；`trap_cmd` 在 R42 刪除。
+# 正面文法的 `trap` 只收 `trap <動作> EXIT`（或 `0`），保守擋下：step 不印 PR 文字，是揭露的誤擋。
+# run 區塊逐字保留。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-MSG: 不在 `--strict` 的正面文法裡
+# ── R42 之前的檔頭（當時是 good fixture；描述的是 R42 刪除前的 lint，只留作沿革）──
+# #33 verify R40 最終量測：opsweep 在 R40 的 pipefail 控制流程上報存活，R40 的 fixture 只釘住了點名的輸入、沒有釘住機制。
+# 不帶參數的 `trap` 只列出目前的 trap，不改變任何設定（`trap_cmd` 少了空參數的守衛時在這裡當掉）。
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: bare trap
+        shell: bash
+        run: |
+          # LOG-FILTER: none — prints no PR text
+          trap
+          false | cat

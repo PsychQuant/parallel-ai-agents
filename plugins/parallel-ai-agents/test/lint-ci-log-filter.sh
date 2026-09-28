@@ -30,7 +30,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 if [ "${1:-}" = "--selftest" ]; then
-  # R22 裁決 3／5：selftest 現在驗**三件**，不只「有沒有紅」。
+  # R22 裁決 3／5：selftest 現在驗**四件**（第四件是 R42 加的），不只「有沒有紅」。
   #   (1) 每個 fixture 自己用 `# EXPECT:` 宣告它該是 pass／rule-red／parse-red，實測必須相符。
   #       為什麼要分辨兩種紅：22 個 bypass fixture 裡有 8 個**只靠 parse-reject 變紅**，而
   #       parse-reject 正是修誤擋必須放寬的機制——分不出來，就等於「修誤擋會靜默重開繞過」。
@@ -38,8 +38,16 @@ if [ "${1:-}" = "--selftest" ]; then
   #       誤擋 26 個合法 workflow 中的 20 個，正是這個不對稱的必然結果。
   #   (3) bypass fixture 加 `--require-run-steps`，保留原本的 vacuity 保護（正式執行時不再套用，
   #       因為純 `uses:` workflow 沒有 run step 是合法的）。
+  #   (4) R42（#33）：`--strict` 的正面文法把 FL_BUILTINS ∪ FL_KEYWORDS 裡的名字當成 bash 的 builtin／保留字、不在 FL_INERT 就拒絕；
+  #       那兩份集合抄自 bash 5.3 的 `compgen -b`／`compgen -k`。PATH 上的 bash（CI 上是 ubuntu 那一支）若多列出一個名字，
+  #       那個名字會被當成外部命令收下——所以每次 selftest 都拿 PATH 上的 bash 重比一次（`--check-compgen`，只查
+  #       「bash 列出的 ⊆ 集合」這個方向：集合多一個名字只會多一個誤擋）。
   shopt -s nullglob
   fail=0; n_pass=0; n_rule=0; n_parse=0; n_msg=0
+  if ! cg=$(bash test/lint-ci-log-filter.sh --check-compgen 2>&1); then
+    printf 'lint-ci-log-filter selftest FAILED: %s\n' "${cg}" >&2
+    fail=1
+  fi
   for f in test/fixtures/ci-log-filter-*.yml; do
     want=$(sed -n 's/^# EXPECT: //p' "$f" | head -1)
     if [ -z "${want}" ]; then
@@ -89,12 +97,12 @@ if [ "${1:-}" = "--selftest" ]; then
   done
   # R24 regression F9：門檻寫成 `>=` 而實際值更高時，那個差額**沒有網**——刪掉一個 fixture 仍然綠。
   # 三個門檻一律改成**等於實測值**：要加 fixture 就同步改這裡，讓「少了一個」立刻紅。
-  if [ "${n_pass}" -ne 273 ]; then
-    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 273（改動 fixture 請同步改這個數字）" >&2
+  if [ "${n_pass}" -ne 260 ]; then
+    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 260（改動 fixture 請同步改這個數字）" >&2
     fail=1
   fi
-  if [ "${n_rule}" -ne 389 ]; then
-    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 389" >&2
+  if [ "${n_rule}" -ne 426 ]; then
+    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 426" >&2
     fail=1
   fi
   if [ "${fail}" -ne 0 ]; then exit 1; fi
@@ -102,41 +110,48 @@ if [ "${1:-}" = "--selftest" ]; then
     echo "lint-ci-log-filter selftest FAILED: parse-red 是 ${n_parse} 個，預期恰好 148（先前這一類完全沒有下限）" >&2
     exit 1
   fi
-  if [ "${n_msg}" -ne 5 ]; then
-    echo "lint-ci-log-filter selftest FAILED: 帶 EXPECT-MSG 的 fixture 是 ${n_msg} 張，預期恰好 5" >&2
+  if [ "${n_msg}" -ne 34 ]; then
+    echo "lint-ci-log-filter selftest FAILED: 帶 EXPECT-MSG 的 fixture 是 ${n_msg} 張，預期恰好 34" >&2
     exit 1
   fi
-  echo "lint-ci-log-filter selftest ok: ${n_pass} 正向通過、${n_rule} 條規則紅、${n_parse} 條解析紅、${n_msg} 張訊息斷言（來源逐一比對相符）"
+  echo "lint-ci-log-filter selftest ok: ${n_pass} 正向通過、${n_rule} 條規則紅、${n_parse} 條解析紅、${n_msg} 張訊息斷言（來源逐一比對相符）；${cg}"
   exit 0
 fi
 
 # R16 DA-4：守備目標不寫死單檔——`.github/workflows/` 底下每一份 workflow 都檢查（新增第二份 workflow 不會漏）。
 # `--require-run-steps` 是給 selftest 用的旗標（正式執行時純 `uses:` workflow 沒有 run step 是
 # 合法的）。要在「檔案存在」檢查**之前**把它剝掉，否則它會被當成一個不存在的檔名。
-flags=(); args=()
-for a in "$@"; do
-  case "$a" in --require-run-steps|--strict) flags+=("$a") ;; *) args+=("$a") ;; esac
-done
-set -- "${args[@]+"${args[@]}"}"
-if [ $# -gt 0 ]; then files=("$@"); else files=(../../.github/workflows/*.yml ../../.github/workflows/*.yaml); fi
-# `*.yaml` 沒有檔案時 glob 會留字面——過濾掉不存在的（R17 logic L-7／security S-1：GitHub 也執行 .yaml）
-# 明確給定的檔案**不得**靜默換掉：傳一個不存在的路徑先前會落回預設的 test.yml，於是
-# 「我驗過那個 fixture 了」其實驗的是別的檔（R19 自查；同 repo 已有數個同形前例）。
-if [ $# -gt 0 ]; then
-  missing=(); for f in "${files[@]}"; do [ -f "$f" ] || missing+=("$f"); done
-  if [ ${#missing[@]} -gt 0 ]; then
-    echo "lint-ci-log-filter: 指定的檔案不存在：${missing[*]}（cwd=${PWD}）—— 不會改去檢查別的檔" >&2
+# R42（#33）：單獨一個 `--check-compgen` 是 selftest 的一項（見 Python 端 `_fl_compgen_problems`）：只比對 PATH 上的 bash 列出的
+# builtin／保留字與文法的兩份集合，不讀任何 workflow——所以不走下面的檔案解析，沒有 .github/ 的 plugin cache 副本也跑得了。
+# 跟其他參數一起給就不是這個模式：它會被當成檔名、照「指定的檔案不存在」回 rc=2。
+if [ $# -eq 1 ] && [ "$1" = "--check-compgen" ]; then
+  flags=(--check-compgen); files=()
+else
+  flags=(); args=()
+  for a in "$@"; do
+    case "$a" in --require-run-steps|--strict) flags+=("$a") ;; *) args+=("$a") ;; esac
+  done
+  set -- "${args[@]+"${args[@]}"}"
+  if [ $# -gt 0 ]; then files=("$@"); else files=(../../.github/workflows/*.yml ../../.github/workflows/*.yaml); fi
+  # `*.yaml` 沒有檔案時 glob 會留字面——過濾掉不存在的（R17 logic L-7／security S-1：GitHub 也執行 .yaml）
+  # 明確給定的檔案**不得**靜默換掉：傳一個不存在的路徑先前會落回預設的 test.yml，於是
+  # 「我驗過那個 fixture 了」其實驗的是別的檔（R19 自查；同 repo 已有數個同形前例）。
+  if [ $# -gt 0 ]; then
+    missing=(); for f in "${files[@]}"; do [ -f "$f" ] || missing+=("$f"); done
+    if [ ${#missing[@]} -gt 0 ]; then
+      echo "lint-ci-log-filter: 指定的檔案不存在：${missing[*]}（cwd=${PWD}）—— 不會改去檢查別的檔" >&2
+      exit 2
+    fi
+  else
+    existing=(); for f in "${files[@]}"; do [ -f "$f" ] && existing+=("$f"); done; files=("${existing[@]}")
+  fi
+  # R16 logic L-2：非 monorepo 佈局（plugin cache 副本）沒有 .github/ —— 先前裸 traceback 並讓 run.sh 整支中止。
+  if [ ! -f "${files[0]}" ]; then
+    echo "lint-ci-log-filter: 找不到 ${files[0]}（非 monorepo 佈局？）—— 這條 lint 本次無法跑" >&2
     exit 2
   fi
-else
-  existing=(); for f in "${files[@]}"; do [ -f "$f" ] && existing+=("$f"); done; files=("${existing[@]}")
 fi
-# R16 logic L-2：非 monorepo 佈局（plugin cache 副本）沒有 .github/ —— 先前裸 traceback 並讓 run.sh 整支中止。
-if [ ! -f "${files[0]}" ]; then
-  echo "lint-ci-log-filter: 找不到 ${files[0]}（非 monorepo 佈局？）—— 這條 lint 本次無法跑" >&2
-  exit 2
-fi
-python3 - "${flags[@]+"${flags[@]}"}" "${files[@]}" <<'PY'
+python3 - "${flags[@]+"${flags[@]}"}" "${files[@]+"${files[@]}"}" <<'PY'
 # ── 白名單解析器（R18：四個 lens + DA 去重後仍有 7 個互不相同的根因）──────────────────────
 # R15–R17 三輪都在加「拒絕這種寫法」的特例，而每一輪的下一輪都找得到新的寫法。R18 四份 findings
 # 與 DA 的共同結論：**這是黑名單，而合法 YAML 比任何手寫黑名單大。** 所以改成相反的方向：
@@ -2583,6 +2598,37 @@ def _fl_trusted_var_problems():
 
 if _fl_trusted_var_problems():
     sys.exit("lint-ci-log-filter: 文法信任的變數與產生式對不上——" + "；".join(_fl_trusted_var_problems()))
+
+
+def _fl_compgen_problems():
+    """R42：PATH 上那支 bash 自己列出的 builtin 與保留字（`compgen -b`、`compgen -k`）必須都在 FL_BUILTINS ∪ FL_KEYWORDS 裡。
+    文法靠這兩份集合認出「命令名是 bash 的 builtin／保留字」，不在 FL_INERT 就拒絕；bash 新增一個 builtin（例如會改選項的）而集合
+    沒跟上，那個名字就會被當成外部命令收下。只查這個方向：集合多列一個 bash 沒有的名字，只會多一個誤擋。
+    `--selftest` 經 `--check-compgen` 跑這一項，用的是 PATH 上的 `bash`——CI 上就是 GitHub 的 `shell: bash` 會用的那一支。
+    回傳 (bash 版本, bash 列出的名字, 問題清單)。"""
+    import subprocess
+    try:
+        r = subprocess.run(["bash", "-c", 'printf "%s\\n" "$BASH_VERSION"; compgen -b; compgen -k'],
+                           capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError) as e:
+        return "?", [], ["跑不起來 PATH 上的 bash：%s" % e]
+    out = r.stdout.split("\n")
+    ver, names = out[0] or "?", [n for n in out[1:] if n]
+    if r.returncode != 0:
+        return ver, names, ["`compgen -b; compgen -k` 的 rc=%d：%s" % (r.returncode, r.stderr.strip()[:200])]
+    if not names:
+        return ver, names, ["`compgen -b`／`compgen -k` 什麼都沒印——比對會空轉"]
+    return ver, names, ["bash %s 列出的 `%s` 不在 FL_BUILTINS ∪ FL_KEYWORDS 裡" % (ver, n)
+                        for n in sorted(set(names) - FL_BUILTINS - FL_KEYWORDS)]
+
+
+if "--check-compgen" in sys.argv:
+    _cg_ver, _cg_names, _cg_probs = _fl_compgen_problems()
+    if _cg_probs:
+        sys.exit("lint-ci-log-filter: 文法的 builtin／保留字集合沒跟上 bash——" + "；".join(_cg_probs)
+                 + "（在 FL_BUILTINS／FL_KEYWORDS 補上；要收它就另外判斷它會不會改選項或 pipefail）")
+    print("compgen：bash %s 列出的 %d 個 builtin／保留字都在 FL_BUILTINS ∪ FL_KEYWORDS 裡" % (_cg_ver, len(set(_cg_names))))
+    sys.exit(0)
 
 
 class FlatReject(Exception):
