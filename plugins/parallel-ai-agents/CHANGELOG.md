@@ -673,9 +673,9 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
     `runner_exprs` 的 `q`——每一處在註解寫了為什麼等價）；`EXPECTED_SURVIVE` 加兩條（`nloop` 的 `±1`、多出來的 `done`＝bash 語法錯誤）。
   **我自己的錯**：run.sh 的 `&&`；R38 放行條件 10 要我把 `${{ github.event.* }}` 寫成已知限制，我寫成規則加「封閉列舉」；
   「不一致的 8 條都屬已揭露類別」沒有逐條核對；快取 key 丟掉註解，而我在同一個檔寫了「一行 `#` 就可能改變某個靶的生死」。
-  **量測（本機 macOS，CI 以 Linux 為準）**：selftest @SELFTEST@；fixture 神諭 @FIXORACLE@；產生語料 @GENORACLE@；`oracle_selfcheck.py`
-  10 項 ✓；mutation 靶 @TARGETS@，全輪 @MUTATION@；opsweep `--since 6aced19` @OPSWEEP@；`--verify-expected` @VEXP@；CI 以推送後的 run
-  為準（run 編號與結果推送後記在 PR 說明）。
+  **量測（本機 macOS，CI 以 Linux 為準）**：selftest 273 正向／389 規則紅／148 解析紅／5 張訊息斷言；fixture 神諭 975 個 step：一致 693、不一致 62（全部已知）、不可比 202、量不到 18；產生語料 712 個 step：一致 580、不一致 78（全部已知）、不可比 54、量不到 0；`oracle_selfcheck.py`
+  10 項 ✓；mutation 靶 464 個，全輪 （`8f2d21a` 的 `git archive` 副本，`--jobs 8`）殺 461／存活 0／預期存活 3／靶壞 0，牆鐘 75.9 分（每靶 9.8 s）；同一棵樹立刻重跑：464 靶全部沿用快取、203 秒（R40 起全部命中也跑前置檢查——R39 的 16 秒沒有這一步）；R40 第一次量測（`7ced8fe`，`--no-cache`）459 靶 456 殺／0 存活／3 預期、68.0 分；opsweep `--since 6aced19` （本輪最終，`8f2d21a`）379 個突變體：殺 365（其中當掉 35、逾時 0）／存活 14（預期 12、非預期 2＝R37 留下的兩條無解），牆鐘 74.8 分；R40 第一次量測（`7ced8fe`）390 個、非預期存活 29，處置見上；`--verify-expected` 48 條全部相同（712 檔）；`run.sh` 全綠（254 ok、0 not ok，973 秒）。量測在 `8f2d21a` 上跑；之後的 commit 只改了註解與 docstring（剝掉 docstring 的 AST 比對相同）與 CHANGELOG。量測當天機器同時有其他工作，
+  opsweep 與 mutation 的牆鐘時間不能與前幾輪直接比。CI 以推送後的 run 為準（run 編號與結果推送後記在 PR 說明）。
 - **verify R38（4 lens + DA + Codex 跨模型 leg，`gpt-6-astra`／medium）— 4 HIGH、11 MEDIUM blocking、7 LOW，共 22 列（報告的 Aggregate 行寫成 12 MEDIUM，逐列表格是 #5–#15 十一條——那一行是我寫錯的，發文時沒對表）；六條 leg 全部判 FAIL。**
   中心發現：網只對作者點名過的輸入有鑑別力，而且量它的平台不是 CI 的平台。strict 產生語料的判定完全由「是不是群組」決定——群組規則擋下
   所有非群組形式、群組形式又豁免 fd 規則，所以 fd 流向規則在 `--strict` 下從來不是決定判定的那一條（R37 條目的「關掉 fd 複製偵測 → 7 檔繞過」

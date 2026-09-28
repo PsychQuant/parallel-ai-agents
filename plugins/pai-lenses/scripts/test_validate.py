@@ -15,11 +15,14 @@
 mutation」，CHANGELOG 寫「十個 mutation 逐一確認轉紅」。**那三句話會讓下一個維護者以為改動 `validate.py` 有測試網接著。**
 
 現在用 `scripts/mutation_check.py` 量：跑一次就知道哪些閘門沒有測試網。
-**最近一次完整量測（R39 最終，於 `git archive c99e4c5` 副本上跑，`--jobs 8`）：435 個靶 → 432 殺 / 0 存活 / 3 預期存活 / 0 靶壞**，
-牆鐘 **60.6 分鐘 / 435 靶 = 每靶 8.4 s**（8 個 worker 各一份不含 `.git` 的副本；開跑時一分鐘平均負載 19.0，同機另有其他 session）。
-同一棵樹立刻重跑：435 靶**全部沿用** `mutation-cache.json`、16 秒——快取的 key 是「突變後的正規化程式碼＋守備單位讀得到的
-輸入＋工具版本」，之後只改了 docstring、CHANGELOG 與快取檔本身（三者都不進 key：`.py` 以剝掉 docstring 的 AST 計算、
-CHANGELOG 在 `_NOT_READ`、快取檔在 `inputs_digest` 的 exclude 裡）。發版前的量測用 `--no-cache`。
+**最近一次完整量測（R40 最終，於 `git archive 8f2d21a` 副本上跑，`--jobs 8`）：464 個靶 → 461 殺 / 0 存活 / 3 預期存活 / 0 靶壞**，
+牆鐘 **75.9 分鐘 / 464 靶 = 每靶 9.8 s**（8 個 worker 各一份不含 `.git` 的副本；開跑時一分鐘平均負載 18.1，同機另有其他 session）。
+這一輪沿用 0 靶：lint 與 fixture 都改了，每個靶的 key 都換了，等於完整一輪。同一棵樹立刻重跑：464 靶全部沿用快取、203 秒（R40 起全部命中也跑前置檢查——R39 的 16 秒沒有這一步）。
+快取的 key 是「突變後被改寫檔的**原文**＋守備單位讀得到的輸入＋執行環境（platform、`/proc`、`/bin/sh`、PATH 上的
+`python3`、`ORACLE_LINT`）」，R40 起改 docstring 或註解也會讓它失效（`test_validate.py` 讀 `# READ-SITE` 註解）；不計入的只有
+`_NOT_READ` 點名的檔（CHANGELOG）與快取檔本身。發版前的量測用 `--no-cache`。
+R40 第一次量測（`7ced8fe`，`--no-cache`）：459 靶 → 456 殺 / 0 存活 / 3 預期存活，68.0 分鐘、每靶 8.9 s。
+R39 最終（`c99e4c5`）：435 靶 → 432 殺 / 0 存活 / 3 預期存活，60.6 分鐘、每靶 8.4 s；當時快取 key 還是剝掉 docstring 的 AST。
 R39 之前那一輪（`bf961d1`）：殺 431 / 存活 1 / 預期存活 3——存活的是神諭續行判定的 bash 那一支，我原本想列成等價，
 實際它只在同一個 run 區塊有兩條註解續行的管線時分岔（`known-r39-g-two-continued-pipelines`，見 CHANGELOG 的 R38 段）。
 **R37 最終（`git archive d1014e6`，串行）**：394 個靶 → 391 殺 / 0 存活 / 3 預期存活 / 0 靶壞，327.7 分鐘 / 394 靶 = 每靶 49.9 s
