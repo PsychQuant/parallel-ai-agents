@@ -596,7 +596,10 @@ def run_script(run, bash, stub_bin, yaml_env=None, extra=False):
         got = open(mark).read().split("\n")
         # 分開記 stdout 與 stderr：外流走哪一條流是歸類的輸入（S-2 只可能走 stderr；管線自己印到 stdout 一律是繞過）。
         leaked = (PR_MARKER.encode() in r.stdout, PR_MARKER.encode() in r.stderr)
-        obs = (r.returncode, r.stdout, r.stderr, sorted(got))
+        # 暫存目錄換成 `<TMP>`（R42 自查）：bash 的錯誤訊息帶腳本路徑，每次執行的暫存目錄不同——前一版的差分（`real_declaration`）
+        # 因此在任何會印 bash 錯誤的宣告 step 上都判「不是宣告」（`gen-g-d-008`：`[ -n a{b,c} ]` 的錯誤訊息）。`mlines` 早就這樣做。
+        tmpb = d.encode()
+        obs = (r.returncode, r.stdout.replace(tmpb, b"<TMP>"), r.stderr.replace(tmpb, b"<TMP>"), sorted(got))
         mlines = tuple(collections.Counter(l.replace(d, "<TMP>") for l in s.decode("utf-8", "replace").split("\n")
                                            if PR_MARKER in l) for s in (r.stdout, r.stderr))
         o = "piped" if "piped" in got else ("called-unpiped" if any(l.startswith("called ") for l in got) else "not-invoked")

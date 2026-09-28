@@ -96,6 +96,19 @@ jobs:
             python3 test/corpus/shellgen.py --strict --out "$RUNNER_TEMP/gen"
             python3 test/oracle.py "$RUNNER_TEMP"/gen/*.yml
           } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
+
+      # #33 R42 WP9：`--strict` 的正面文法是**允許清單**——它宣稱「文法接受的都不外流」。這一步從文法的產生式取樣
+      # （`shellgen.py --grammar`：100 格，固定種子，每個變數位置都放 PR 文字），要求 lint 對每一格 rc=0（產生器沒有走出文法）、
+      # 神諭對每一格判一致（沒有外流、沒有跨 step 通道、每條管線都在 pipefail 之下）。任何一格不成立，錯的是文法本身。
+      - name: oracle — against the generated grammar corpus (--strict accepts every cell, none leaks)
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            python3 test/corpus/shellgen.py --grammar --out "$RUNNER_TEMP/gg"
+            bash test/lint-ci-log-filter.sh --strict "$RUNNER_TEMP"/gg/*.yml
+            python3 test/oracle.py "$RUNNER_TEMP"/gg/*.yml
+          } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
       # 形狀普查閘門（#33 verify R32 DA-9）：R31 的每個機制在 shapes.py 都是零列而 CHANGELOG 照寫 GREEN→RED 0。
       # 「分母裡沒有的形狀，量到的 0 不是證據」寫在 shapes.py 檔頭，作者 R29 遵守、R31 破壞——散文規則一輪
       # 就失守，所以這裡讓它會紅：R31-*/R32-* 任一列在產生語料上為 0 就 fail。
@@ -237,6 +250,22 @@ jobs:
         run: |
           set -o pipefail
           { bash test/lint-contract-enumerations.sh --selftest && bash test/lint-contract-enumerations.sh; } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
+
+      # #33 R42 WP9：lint 的詞法模型對 bash 5.3 寫了一段（`${ cmd; }`、`compgen` 的兩份集合），而 ubuntu 的 runner 是 5.2——
+      # 那一段只有這個 job 量得到。selftest 在這裡再跑一次（`--check-compgen` 比的是這台的 bash），神諭跑 bash 5.3 才有意義的
+      # fixture 與文法語料（神諭自己挑 Homebrew 的 bash，版本不在 lint 檔頭 `ORACLE-BASH-SUPPORTED` 裡就具名退出）。
+      - name: lint-ci-log-filter selftest and oracle subset under bash 5.3
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            python3 -c 'import yaml' || python3 -m pip install --quiet --break-system-packages pyyaml
+            bash test/lint-ci-log-filter.sh --selftest
+            python3 test/oracle.py test/fixtures/ci-log-filter-parse-r40-bash53-*.yml test/fixtures/ci-log-filter-*r42-*nested*.yml
+            python3 test/corpus/shellgen.py --grammar --out "$RUNNER_TEMP/gg"
+            bash test/lint-ci-log-filter.sh --strict "$RUNNER_TEMP"/gg/*.yml
+            python3 test/oracle.py "$RUNNER_TEMP"/gg/*.yml
+          } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
 
       - name: Assert swift toolchain is usable (the real gate — a present shim is not enough)
         # LOG-FILTER: none — prints tool versions only
