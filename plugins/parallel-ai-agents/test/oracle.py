@@ -76,6 +76,14 @@ PR 文字固定是 `ORACLE-PR-TITLE-MARKER`：算術展開（`$(( PR_TITLE ))` �
 **差分的中性替換會改變 `$?`**（R38 codex 第 5 條）：換掉接 neutralise 的那一行，之後依賴 `$?` 的分支可能不再印，差分因此把
 「管線外的命令外流」看成管線自己的外流。R39 起 S-2 另外要求機制差分成立（補 `2>&1` 後外流消失），這一類因此判繞過、
 不再被收進已知類別——方向是 fail-closed，但歸類的**原因**仍可能寫錯。
+**R40 起的三條（#33 verify R39 第 3、8、15 列、放行條件 12）**：
+  · **差分的往上擴範圍是逐段貪婪的**：每一段都要求整份腳本語法完整才擴成功。同一個 run 區塊有兩段都需要擴時判量不到；擴進來的行
+    若恰好是另一條外流的命令（`echo "::notice::$PR_TITLE"; {` ⏎ … ⏎ `} 2>&1 | …`），外流跟著消失、被歸成「管線自己印的」而不是 G。
+    兩者都判繞過（rc=1），方向是吵、不是藏，但原因可能寫錯（`known-r39-g-two-continued-pipelines` 的檔頭有細節）。
+  · **S-2 的機制差分禁止多出 baseline 沒有的外流行**（stdout 與 stderr 都禁）。能讓這一條翻色的形狀要靠 Linux 的 `/proc`
+    （`tee /proc/$$/fd/2`），本機做不出會翻色的 fixture——這一條目前**沒有會翻色的網**，也沒有列進 EXPECTED_SURVIVE（它不是等價突變）。
+  · **runner 運算式的代換是一組封閉的 payload**（`RUNNER_PAYLOADS`）：不在那張表上的脈絡（heredoc 內文、`$'…'`、算術…）神諭不保證
+    逃得出去，判的是「沒看到外流」。bash 樣板照旗標跑（`bash_template_prefix`），封閉清單以外的樣板（`-x`、`-v`、`-l`…）仍不可比。
 
 依賴：PyYAML（`python3 -m pip install pyyaml`）。缺就 fail-loud，不靜默跳過。
 用法：test/oracle.py [FILE…]   不給檔案 → 全部 test/fixtures/ci-log-filter-*.yml
@@ -107,6 +115,19 @@ except ImportError:                       # 依賴缺席不是「沒有不一致
 
 # (fixture 檔名, step 名) → 理由。每一條都要能說出「runner 與 lint 為什麼依設計會不同」；說不出來的就是缺陷。
 KNOWN_DISAGREE = {
+    # ── R40：神諭照 bash 樣板的旗標跑（`bash_template_prefix`）之後才量得到的五條。它們前一版刻意用帶旗標的樣板讓神諭判不可比
+    #    （檔頭寫著「神諭量不到這一條」）；現在量得到了，結果是「lint 擋、這一次執行不外流」。擋的是**機制**，不是這個輸入 ──
+    ("ci-log-filter-bypass-r37b-env-policy-BASH_XTRACEFD.yml", "job env BASH_XTRACEFD"):
+        "`BASH_XTRACEFD` 單獨設定不會打開 xtrace（lint 的訊息也這樣寫）；擋的是它與 xtrace 並存時把 trace 轉到別的 fd。",
+    ("ci-log-filter-bypass-r37b-fd-bash-xtracefd-assign.yml", "run assigns BASH_XTRACEFD"): "同上：run 裡指派。",
+    ("ci-log-filter-bypass-r37b-env-policy-ENV.yml", "step env ENV"):
+        "非互動的 bash 不讀 `ENV`（只有 sh 模式或互動 shell 才讀）；擋的是 `shell:` 換成 sh 或互動時它會執行別的檔。",
+    ("ci-log-filter-bypass-r37b-xtrace-verbose-set-o.yml", "verbose on a pipe-filtered step"):
+        "`set -o verbose` 印的是原始碼；這一步的原始碼裡沒有 PR 文字——run 裡寫了 runner 運算式時（runner 先代換）才外流，"
+        "那一類另由運算式規則擋。擋的是機制。",
+    ("ci-log-filter-bypass-r37p-parse-misc-parse-list-fallback-skip-amount.yml", "stray close-paren before an xtrace bash call"):
+        "第二行是語法錯誤，bash（`-e`）什麼也不外流；lint 擋的是剖析殘渣裡的 `bash -x`（fail-closed）。前一版照裸 bash 跑時"
+        "判「一致」，靠的是 `called-unpiped` 這個狀態，不是外流。",
     # **YAML tag 一律 fail-closed，而 `!!str` 的值 bash 照跑** ⇒ 誤擋。這是**刻意保留**的，
     # 理由與代價都寫在這裡（R33，由 642 檔產生語料的 `R31-5 tag 值` 那一列量出來）：
     #   · 那道守衛是 R30 MB-8 加的，堵的是 `jobs: !!map {…}` 讓 flow 規則、`steps:` flow 檢查、
@@ -152,8 +173,6 @@ KNOWN_DISAGREE = {
         '管線的過濾端不是 `python3 <路徑>/neutralise.py`，照規則拒絕；實際執行會報錯、不把 stdin 印出來，神諭量不到外流。',
     ('ci-log-filter-restrict-r37p-parse-command-neut-wrong-interpreter.yml', 'group piped through a same-named script under the wrong interpreter'):
         '管線的過濾端不是 `python3 <路徑>/neutralise.py`，照規則拒絕；實際執行會報錯、不把 stdin 印出來，神諭量不到外流。',
-    ('ci-log-filter-restrict-r37p-strict-set-prefix-badname.yml', 'set -o with an unrecognised option name is not accepted as a group prefix line'):
-        '群組規則的 `set` 前綴只收 `-e`／`-u`／`-o pipefail|errexit|nounset`；bash 對壞選項報錯，這一步實際不外流，被擋是限制。',
     ('ci-log-filter-restrict-r37p-strict-set-prefix-eu-skip.yml', 'set -e followed by a bad token is not accepted as a group prefix line'):
         '群組規則的 `set` 前綴只收 `-e`／`-u`／`-o pipefail|errexit|nounset`；bash 對壞選項報錯，這一步實際不外流，被擋是限制。',
     ('ci-log-filter-restrict-r37p-strict-set-prefix-o-skip.yml', 'set -o pipefail followed by a bad token is not accepted as a group prefix line'):
@@ -184,6 +203,14 @@ KNOWN_DISAGREE = {
     ("gen-f-shell-bash.yml", "shell value bash"):
         "群組規則不收逐段 `2>&1`（#60 第 2 類：那一段的 `2>&1` 生效前的錯誤不經過濾）；這個形狀剛好不出錯，規則不分辨。",
     ("gen-f-shell-bash-dq.yml", "shell value bash-dq"): "同 `gen-f-shell-bash`：逐段 `2>&1`，群組規則保守擋下。",
+    # R40：神諭照 bash 樣板的旗標跑之後，同一個 `gen-f-shell-bash` 維度裡原本判不可比的七個樣板也量得到了——同一類保守誤擋。
+    ("gen-f-shell-bash-brace.yml", "shell value bash-brace"): "同 `gen-f-shell-bash`：逐段 `2>&1`，群組規則保守擋下（R40 起樣板可比）。",
+    ("gen-f-shell-bash-e.yml", "shell value bash-e"): "同 `gen-f-shell-bash`：逐段 `2>&1`，群組規則保守擋下（R40 起樣板可比）。",
+    ("gen-f-shell-bash-eo-pipefail.yml", "shell value bash-eo-pipefail"): "同 `gen-f-shell-bash`：逐段 `2>&1`，群組規則保守擋下（R40 起樣板可比）。",
+    ("gen-f-shell-bash-euo-pipefail.yml", "shell value bash-euo-pipefail"): "同 `gen-f-shell-bash`：逐段 `2>&1`，群組規則保守擋下（R40 起樣板可比）。",
+    ("gen-f-shell-bash-noprofile-e.yml", "shell value bash-noprofile-e"): "同 `gen-f-shell-bash`：逐段 `2>&1`，群組規則保守擋下（R40 起樣板可比）。",
+    ("gen-f-shell-bash-noprofile-eo-pipefail.yml", "shell value bash-noprofile-eo-pipefail"): "同 `gen-f-shell-bash`：逐段 `2>&1`，群組規則保守擋下（R40 起樣板可比）。",
+    ("gen-f-shell-bash-o-pipefail-e.yml", "shell value bash-o-pipefail-e"): "同 `gen-f-shell-bash`：逐段 `2>&1`，群組規則保守擋下（R40 起樣板可比）。",
     ("gen-f-shell-bash-sq.yml", "shell value bash-sq"): "同 `gen-f-shell-bash`：逐段 `2>&1`，群組規則保守擋下。",
     ("gen-f-pipeseg-2-gap0.yml", "pipeline of 2 segments, gap=0"): "同 `gen-f-shell-bash`：每段都帶 `2>&1`，仍不是群組形式。",
     ("gen-f-pipeseg-3-gap0.yml", "pipeline of 3 segments, gap=0"): "同 `gen-f-shell-bash`：每段都帶 `2>&1`，仍不是群組形式。",
@@ -252,14 +279,16 @@ PR_MARKER = "ORACLE-PR-TITLE-MARKER"
 # 其餘每一個運算式都當成 PR 可控，依序換成下面這組 payload 各跑一次，**任何一組外流就算外流**，後續的差分與歸類都用那一份。
 # payload 的集合是封閉的：純標記（值直接被印出來）＋三種引號脈絡（不加引號、雙引號、單引號）× 兩種位置（收掉群組、群組外的
 # 同一行）。不在這張表上的脈絡（例如 heredoc 內文、`$'…'`）神諭不保證逃得出去——那時它判的是「沒看到外流」，方向是寬。
+# 每一組都先 `|| :`：runner 用 `bash -e`（神諭也照樣板跑，見 `bash_template_prefix`），運算式前面那個命令失敗時腳本就停了，
+# 標記印不出來——payload 不得依賴它前面的命令成功（R40 自查：`{ make ${{ matrix.target }}; }` 的 make 失敗，前一版的 payload 量不到）。
 RUNNER_PAYLOADS = (
     PR_MARKER,
-    "x; }; echo %s; { :" % PR_MARKER,
-    'x"; }; echo %s; { : "' % PR_MARKER,
-    "x'; }; echo %s; { : '" % PR_MARKER,
-    "x; echo %s >&2; :" % PR_MARKER,
-    'x"; echo %s >&2; : "' % PR_MARKER,
-    "x'; echo %s >&2; : '" % PR_MARKER,
+    "x || :; }; echo %s; { :" % PR_MARKER,
+    'x" || :; }; echo %s; { : "' % PR_MARKER,
+    "x' || :; }; echo %s; { : '" % PR_MARKER,
+    "x || :; echo %s >&2; :" % PR_MARKER,
+    'x" || :; echo %s >&2; : "' % PR_MARKER,
+    "x' || :; echo %s >&2; : '" % PR_MARKER,
 )
 GH_LITERAL_RE = re.compile(r"\s*(?:'(?:[^']|'')*'|-?\d+(?:\.\d+)?|true|false|null)\s*")
 
@@ -429,8 +458,14 @@ def run_script(run, bash, stub_bin, yaml_env=None):
             # 在 pipe 下不逾時）。runner 的 step stdin 也不是終端機。
             r = subprocess.run([bash, script], env=env, cwd=d, capture_output=True,
                                stdin=subprocess.DEVNULL, timeout=TIMEOUT_S)
-        except subprocess.TimeoutExpired:
-            return "timeout", None, (False, False), None
+        except subprocess.TimeoutExpired as e:
+            # 逾時之前的輸出要留著（R40，#33 verify R39 第 8 列）：前一版丟掉它、判「量不到」——一個已經外流、只是之後的命令比
+            # TIMEOUT_S 慢的 step 就變成 rc=0。這一次不拿來差分（obs=None），只回報已經看到的外流。
+            so, se = e.stdout or b"", e.stderr or b""
+            leaked = (PR_MARKER.encode() in so, PR_MARKER.encode() in se)
+            mlines = tuple(collections.Counter(l.replace(d, "<TMP>") for l in s.decode("utf-8", "replace").split("\n")
+                                               if PR_MARKER in l) for s in (so, se))
+            return "timeout", None, leaked, mlines
         got = open(mark).read().split("\n")
         # 分開記 stdout 與 stderr：外流走哪一條流是歸類的輸入（S-2 只可能走 stderr；管線自己印到 stdout 一律是繞過）。
         leaked = (PR_MARKER.encode() in r.stdout, PR_MARKER.encode() in r.stderr)
@@ -630,8 +665,14 @@ def s2_mechanism(run, spans, bash, stub_bin, yaml_env, base_ml, neutral_ml):
         if not _syntax_ok(probe, base_n, bash):
             return False
         v, _o, _l, ml = run_script(probe, bash, stub_bin, yaml_env)
-        return v != "timeout" and not (contrib & ml[1]) and not (ml[0] - base_ml[0])
+        # stderr 也不得多出 baseline 沒有的外流行（R40，#33 verify R39 第 3 列）：前一版只禁新增的 stdout，於是改寫後換成另一種
+        # 內容的 stderr 外流，也被當成「補上 `2>&1` 就修好了」而歸 S-2。
+        return (v != "timeout" and not (contrib & ml[1]) and not (ml[0] - base_ml[0])
+                and not (ml[1] - base_ml[1]))
 
+    # heredoc 的內文不是命令，`_pipe_to_pipeamp` 卻會改寫它、讓外流的**內容**變了（R39 verify 第 3 列）——這一類由上面「stderr 不得多出
+    # baseline 沒有的外流行」接住，不另外擋 `<<`：R40 第一版見到 `<<` 就不做差分，產生語料裡 folded 成一行的 heredoc 形狀
+    # （`cat <<EOF… echo "$PR_TITLE" | …` 全在同一行、沒有內文）60 條 S-2 全部掉成繞過——那些行根本沒有內文可改。
     a = list(lines)
     for s, e in spans:
         for k in range(s, e + 1):
@@ -778,16 +819,55 @@ def steps_with_lines(text):
                     # container 裡是 sh、Windows runner 是 pwsh。這些情況神諭的判定沒有意義 ⇒ 不可比，並寫出原因。
                     st_sh = kv.get("shell")
                     eff = (st_sh.value if isinstance(st_sh, yaml.ScalarNode) else None) or job_shell or wf_shell
+                    prefix = ""
                     if eff is not None:
-                        note = None if eff.strip() == "bash" else "shell 是 %r" % eff
+                        prefix = bash_template_prefix(eff)
+                        note = None if prefix is not None else "shell 是 %r" % eff
                     elif "container" in jkv:
                         note = "job 跑在 container 裡、沒寫 shell（預設 sh）"
                     elif "windows" in ro_text.lower() or "${{" in ro_text:
                         note = "runs-on 是 %r、沒寫 shell（Windows 預設 pwsh；運算式無法靜態判定）" % ro_text
                     else:
-                        note = None
-                    out.append((jk.value, name, run.value, (starts[idx], end), note, dict(job_env, **_env_of(st))))
+                        note, prefix = None, "set -e; "          # 沒寫 shell、不在 container：GitHub 用 `bash -e {0}`
+                    body = run.value
+                    if note is None and prefix:
+                        body = prefix + body                     # 同一行：行號不動（錯誤訊息的行號要對得上）
+                    out.append((jk.value, name, body, (starts[idx], end), note, dict(job_env, **_env_of(st))))
     return out
+
+
+# bash 樣板的旗標 → 神諭在 run 第一行前面加的 `set`（R40，#33 verify R39 放行條件 12、DA N3）。前一版只認關鍵字 `bash`、而且照裸的 `bash`
+# 跑——runner 其實用 `bash --noprofile --norc -eo pipefail {0}`；`bash -e {0}`（GitHub 沒寫 shell 時的預設）等二十個樣板全判不可比。
+# **封閉列舉**：旗標只收 `-e`、`-u`、`-o pipefail`（可合寫成 `-eo pipefail`、`-euo pipefail`、`-eu`）、`--noprofile`、`--norc`
+# （後兩個對非互動的腳本沒有作用）；其餘旗標（`-x`、`-v`、`-l`、`-O …`…）照舊不可比。
+_TEMPLATE_BASH = ("bash", "/bin/bash", "/usr/bin/bash")
+
+
+def bash_template_prefix(sh):
+    """`shell:` 的值 → 要加在 run 前面的 `set …; `；不是封閉列舉裡的樣板回 None（不可比）。"""
+    sh = sh.strip()
+    if sh == "bash":
+        return "set -eo pipefail; "
+    toks = sh.split()
+    if len(toks) < 2 or toks[0] not in _TEMPLATE_BASH or toks[-1] != "{0}":
+        return None
+    opts, i = [], 1
+    while i < len(toks) - 1:
+        x = toks[i]
+        if x in ("--noprofile", "--norc"):
+            pass
+        elif re.fullmatch(r"-[eu]+", x):
+            opts += ["-" + c for c in x[1:]]
+        elif re.fullmatch(r"-[eu]*o", x) and i + 1 < len(toks) - 1 and toks[i + 1] == "pipefail":
+            opts += ["-" + c for c in x[1:-1]] + ["-o pipefail"]
+            i += 1
+        elif x == "-o" and i + 1 < len(toks) - 1 and toks[i + 1] == "pipefail":
+            opts.append("-o pipefail")
+            i += 1
+        else:
+            return None
+        i += 1
+    return ("set %s; " % " ".join(opts)) if opts else ""
 
 
 def yaml_declaration(text, a, b, block_bodies):
@@ -832,6 +912,7 @@ def check_file(f, text, bash, stub_bin):
     failures（這個檔讓神諭 rc=1 的每一個理由，一句一條——must-fail 探針拿它比對宣告的理由）、
     cls_stale、cls_undeclared（已知類別檔頭宣告與神諭實際歸類的落差，見下方類別閘門）。"""
     res = {"rows": [], "disagree": [], "stale": [], "unmeasured": [], "seen": collections.Counter(), "failures": [],
+           "uncomparable": [],
            "cls_stale": [], "cls_undeclared": []}
     rows = res["rows"]
     expect = (re.search(r"^# EXPECT: (\S+)", text, re.M) or [None, ""])[1] if "# EXPECT:" in text else ""
@@ -886,6 +967,13 @@ def check_file(f, text, bash, stub_bin):
             continue
         if shell_note:
             rows.append((f.name, name, "-", "-", "不可比（%s——神諭只會用 bash 跑）" % shell_note))
+            # R40（#33 verify R39 放行條件 12）：不可比的 step 前一版直接跳過——掛在它上面的 KNOWN_DISAGREE 條目因此永遠不會過期
+            # （理由已經量不到，卻被靜默保留）；檔頭宣告 `ORACLE-COMPARABLE` 的檔，每個 step 都必須可比。
+            if key[:2] in KNOWN_DISAGREE:
+                res["stale"].append(key)
+            if "# ORACLE-COMPARABLE" in text:
+                res["uncomparable"].append(key)
+                res["failures"].append("%s（第 %d 行）：宣告了 ORACLE-COMPARABLE，卻不可比（%s）" % (name, a + 1, shell_note))
             continue
         if has_nonliteral_expr(run):
             # 依序試 RUNNER_PAYLOADS，取第一個外流的那一份（沒有任何一份外流就用第一份）；下游的差分、機制與原因檢查都用它。
@@ -911,7 +999,9 @@ def check_file(f, text, bash, stub_bin):
             lint = ("RULE-red" if step_rules
                     else ("PARSE" if (any(in_step(x) for x in parse_lines) or struct_parse) else "pass"))
         classes = []
-        if o == "timeout":
+        if o == "timeout" and lint == "pass" and (leaked[0] or leaked[1]):
+            verdict = ("不一致：繞過（逾時之前已經觀察到 PR 文字外流——量不到的只是之後的部分，不抵銷已觀察到的外流）")
+        elif o == "timeout":
             verdict = "量不到（逾時 %ds）" % TIMEOUT_S
             res["unmeasured"].append(key)
         elif lint == "ERROR":
@@ -1030,7 +1120,7 @@ def main(argv):
     print("bash: %s (%s)  管線判定：DEBUG trap + PIPESTATUS（bash 自己的剖析）" % (bash, ver))
     if LINT != (HERE / "lint-ci-log-filter.sh").resolve():
         print("⚠ ORACLE_LINT：對帳的是 %s（不是 repo 自己的 lint）" % LINT)
-    rows, disagree, stale, unmeasured = [], [], [], []
+    rows, disagree, stale, unmeasured, uncomparable = [], [], [], [], []
     cls_stale, cls_undeclared, cls_count = [], [], collections.Counter()
     mf_rows, mf_report, mf_bad = [], [], []
     with tempfile.TemporaryDirectory(prefix="oracle-") as d:
@@ -1058,6 +1148,7 @@ def main(argv):
                 continue
             rows += res["rows"]
             disagree += res["disagree"]; stale += res["stale"]; unmeasured += res["unmeasured"]
+            uncomparable += res["uncomparable"]
             cls_stale += res["cls_stale"]; cls_undeclared += res["cls_undeclared"]
             cls_count.update(res["seen"])
     w = max(len(r[0]) for r in rows + mf_rows) if rows + mf_rows else 10
@@ -1075,9 +1166,14 @@ def main(argv):
         rc = 1
         print("\n✗ KNOWN_DISAGREE 之外的不一致（lint 與 runner 對同一個 step 說不同的話）：")
         for fn, name, ln in disagree: print("  - %s :: %s（第 %d 行）" % (fn, name, ln))
+    if uncomparable:
+        rc = 1
+        print("\n✗ 檔頭宣告了 ORACLE-COMPARABLE，這些 step 卻不可比（神諭對 bash 樣板的解析退化了，或樣板不在封閉清單裡）：")
+        for k in uncomparable:
+            print("  - %s :: %s（第 %d 行）" % k)
     if stale:
         rc = 1
-        print("\n✗ KNOWN_DISAGREE 裡的項目現在一致了（理由不再成立，移除它）：")
+        print("\n✗ KNOWN_DISAGREE 裡的項目現在一致了、或已經量不到（理由不再成立，移除它）：")
         for fn, name, ln in stale: print("  - %s :: %s（第 %d 行）" % (fn, name, ln))
     if unmeasured:
         # R32 requirements F1：前一版這一行的標題斷言「腳本逾時」，而列在下面的大多數是另一個原因

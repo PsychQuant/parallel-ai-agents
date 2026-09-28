@@ -1,0 +1,47 @@
+# #33 verify R39 放行條件 12：神諭照 bash 樣板的旗標跑（`bash_template_prefix`），封閉清單裡的每一種樣板都必須**可比**——前一版只認
+# 關鍵字 `bash`（而且照裸 bash 跑），`bash -e {0}`（GitHub 沒寫 shell 時的預設）等二十個樣板全判不可比。
+# `ORACLE-COMPARABLE`：這一檔每個 step 都必須可比，否則神諭 rc=1——樣板解析一退化，神諭自己就紅。
+# ORACLE-COMPARABLE
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: template 0
+        shell: bash
+        run: |
+          set -o pipefail
+          { echo "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: template 1
+        shell: bash -e {0}
+        run: |
+          set -o pipefail
+          { echo "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: template 2
+        shell: bash -eu {0}
+        run: |
+          set -o pipefail
+          { echo "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: template 3
+        shell: bash -euo pipefail {0}
+        run: |
+          set -o pipefail
+          { echo "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: template 4
+        shell: bash --noprofile --norc -eo pipefail {0}
+        run: |
+          set -o pipefail
+          { echo "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: template 5
+        shell: /bin/bash -e -o pipefail {0}
+        run: |
+          set -o pipefail
+          { echo "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: template 6
+        shell: /usr/bin/bash -o pipefail -e {0}
+        run: |
+          set -o pipefail
+          { echo "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
