@@ -11,8 +11,8 @@
 **這套測試自己的鑑別力是量出來的，不是宣稱的。** R8 的 devil's-advocate 實測指出：初版
 26 條裡，20 個閘門 mutation **有 18 個存活** —— 包含 root `CLAUDE.md` 標為 CRITICAL 的版本
 同步閘門，以及 R4 的頭號修正「拿不到 base → fail-loud」（後者甚至可以整段換成無條件
-`return` 而全套仍綠）。而當時本檔開頭、`test.yml` 註解、CHANGELOG 三處都寫著「都做過
-mutation」。**那三句話會讓下一個維護者以為改動 `validate.py` 有測試網接著。**
+`return` 而全套仍綠）。而當時本檔開頭與 `test.yml` 註解都寫著「都做過
+mutation」，CHANGELOG 寫「十個 mutation 逐一確認轉紅」。**那三句話會讓下一個維護者以為改動 `validate.py` 有測試網接著。**
 
 現在用 `scripts/mutation_check.py` 量：跑一次就知道哪些閘門沒有測試網。
 **最近一次完整量測（R39 最終，於 `git archive c99e4c5` 副本上跑，`--jobs 8`）：435 個靶 → 432 殺 / 0 存活 / 3 預期存活 / 0 靶壞**，
@@ -54,8 +54,8 @@ R18 抽樣三個粗靶，三個都藏著細顆粒缺口；R19 拆了三處，R20
 **注意這三個是 `mutation_check.py` 的具名靶集合**；`test/opsweep.py`（作者無關的運算子掃描）另有自己的
 `EXPECTED_SURVIVE`（R40：48 條；R39：46 條；R33 時是 7 條——R32 DA-2 把 `fold_block` 的四條全部撤掉，理由本身就是那個 bug），兩者是不同的集合、不同的判準，不要混著數。R31 起 opsweep 那一組的
 「依構造等價」由 `--verify-expected` 在產生語料（R40：預設組 624＋`--strict` 組 88＝712 檔；R39 時 709 檔、R31 時 468 檔）上逐檔跑出來，不是散文。規則明寫在 mutation_check.py：每一條
-進來的靶都要能回答「關掉它，哪一行輸出會變」（R14 把「pack_name 讀取的 containment」放進去的理由是假的——
-dirty worktree 到得了那行 print——現在它有測試網）。
+進來的靶都要能回答「關掉它，哪一行輸出會變」（R13 把「pack_name 讀取的 containment」列為預期存活，理由是假的——
+R14 發現 dirty worktree 到得了那行 print，移出清單——現在它有測試網）。
 R13 修法的 `main()` 逐閘門隔離曾讓一輪跑出 8 個假存活（守衛被刪掉後只剩一條「validator 內部錯誤」），修在
 `Fixture.run`（預設拒絕那個字串）一處；R12 曾判「catalog 缺檔」為 equivalent——不是：守衛的價值是**說對原因**。
 R11 曾寫「四個存活皆 equivalent」：一個判定為假（containment 靶，已補 `./docs/evil` fixture 轉紅）、

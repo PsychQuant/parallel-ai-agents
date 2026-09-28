@@ -826,7 +826,7 @@ def shell_scan(lines):
          **逐段的 `2>&1` 只涵蓋命令執行時寫出的 stderr**（R37 合併時協調者以 bash 5.3 覆核；#60 第 2 類）：在該段
          `2>&1` 生效**之前**就寫出的，預設模式看不到（範例 `known-expansion-error-before-2to1`）——(a) 展開期錯誤：`echo "${!PR_TITLE}" |& …` 印出
          「<原值>：無效的變數名稱」、`echo $(( PR_TITLE )) 2>&1 | …` 印出算術錯誤；(b) 寫在 `2>&1` 左邊的重導向本身出錯：
-         `echo x > "$PR_TITLE" 2>&1 | …` 印出 `<原值>: No such file…`（`2>&1` 放左邊就走進管線）。命令執行時才產生的
+         `echo x > "$PR_TITLE" 2>&1 | …` 印出 `<原值>: No such file…`（`2>&1` 移到那個重導向的左邊——`echo x 2>&1 > "$PR_TITLE" | …`——錯誤就走進管線）。命令執行時才產生的
          錯誤（`[[ $PR_TITLE -eq 1 ]] 2>&1 | …`）會走管線、被過濾。群組 `{ …; } 2>&1 |` 的重導向在內部展開之前生效，
          (a)(b) 一起關掉——`--strict` 要求整個區塊就是那個群組（R37 自 PR #61 移植；R36 的逐段 `2>&1` 規則看不到它們）。
          本 lint 不為 (a)(b) 逐拼法列規則（那正是 R36 批評的形狀）。
@@ -2556,7 +2556,7 @@ def _bash_template(sh):
 #     非字面的 runner 運算式由 run 內運算式那條規則另外擋（R39 只認兩種拼法，R40 改成除了字面常數一律擋）。
 # `set` 前綴只收 `-e`／`-u`／`-E`／`-o pipefail|errexit|nounset|errtrace`（`-E`／errtrace：R39，只影響 ERR trap 的繼承）：`set -v` 會把原始碼（含 runner 代入的 `${{ … }}`）
 # 印到群組外的 stderr，`-x` 同理；裸 `set` 把所有變數（含 PR 可控的 env）印到群組外的 stdout。
-# **代價：保守誤擋**（#33 verify R38 第 11 列：R37 只揭露了前兩類；R39 verify 第 12 列：R39 的清單又漏了三類）。封閉列舉，只有這九類，
+# **代價：保守誤擋**（#33 verify R38 第 11 列：R37 只揭露了前兩類；R39 verify 第 12 列：R39 的清單又漏了兩類、另一類寫得太窄）。封閉列舉，只有這九類，
 # 每一類都在 oracle.py 的 KNOWN_DISAGREE 登記（逐段 `2>&1` 登記的是產生語料 `gen-f-*`，其餘各有一張以上的 `restrict-*` fixture）：
 # 逐段 `2>&1`（不是群組形式）、`( … )` 子殼層、群組內定義函式、群組內的巢狀群組（`{ …; } >> "$GITHUB_ENV"`）、一個 step 兩個群組、
 # **群組前任何不是白名單 `set` 前綴的行**（`cd`、`export`、`set +e`、`shopt`、`echo "::group::…"`…——R39 寫成「群組前的 `cd`／`export`」
@@ -2564,7 +2564,7 @@ def _bash_template(sh):
 # （`python3 "$GITHUB_WORKSPACE/…"`）、命令替換裡不在命令起點的 `case` 普通參數（這一類是掃描器的 fail-closed，不是群組規則）。R39 放寬了四類（未加引號的 `${{ … }}`、尾巴後的 `;`、`set -E`／errtrace、
 # `set` 前綴行尾的 `;`）；其中第一類 R40 收回（#33 verify R39 第 1 列）：群組計數仍遮掉運算式，但 run 裡任何非字面的運算式
 # （`matrix.*`、`inputs.*`、`runner.*`、函式呼叫…，字面常數與 GH_SAFE_EXPRS 除外）改由運算式規則擋——改經 step 的 `env:` 傳進來，
-# `restrict-r40-ghexpr-*` 兩張釘住。這一條不是群組規則的代價、兩種模式都適用，所以不算進上面七類。
+# `restrict-r40-ghexpr-*` 兩張釘住。這一條不是群組規則的代價、兩種模式都適用，所以不算進上面九類。
 # **子殼層 `( … ) 2>&1 |` 不收**：`(`／`)` 也出現在 `$(`、`$((`、陣列、`case` 模式裡，同一套「恰好一對」的論證不成立。
 # 斷詞只認 ASCII 空白與 tab——bash 的詞界就是這兩個加上 metachar。Python 的 `\s` 還認 NBSP 等 Unicode 空白：
 # `{<NBSP>true` 在 `\s` 下斷成 `{`、`true`，bash 卻讀成一個詞（不存在的命令），群組根本沒開

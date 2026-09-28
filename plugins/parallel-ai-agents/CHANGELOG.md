@@ -619,7 +619,7 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
   測試 118 → 124 條；靶清單 96 → 98 個（3 個 EXPECTED_SURVIVE；lint 形式的宣稱只留在最新一段）。
   量測（R16 後）：全輪 98 靶 93 殺／2 存活（emit 自己的中和層，補單元測試後單靶轉殺）→ 95／0／3（複合值）。
 - **verify R39（4 lens + DA + Codex 跨模型 leg，`gpt-6-astra`／medium）— 1 HIGH、11 MEDIUM blocking、6 LOW；六條 leg 全部判 FAIL。**
-  CI 在 `6aced19` 上是綠的（R38 的平台那一半部分修好）。中心發現（DA 的方法層裁決）：這一輪找到的每一個繞過，都落在神諭結構上
+  CI 在 `6aced19` 上是綠的（R38 的平台那一半部分修好）。報告的中心發現：這一輪找到的每一個繞過，都落在神諭結構上
   看不到的地方——runner 運算式不代換、pipefail 不可比、每個 step 單獨跑所以看不到跨 step 的 `GITHUB_ENV`、逾時丟掉輸出、bash 版本；
   產生語料在 `--strict` 下對 R39 加的安全規則零鑑別力。R40 的方向是縮小神諭的盲區，不是再加 fixture。修正全部 TDD（fixture、
   selfcheck 探針或單元測試先在修法前看過紅；新 mutation 靶逐條實跑確認被殺）：
