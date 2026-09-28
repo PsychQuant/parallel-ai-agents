@@ -30,9 +30,10 @@ pipeline 的每段狀態，長度 ≥2 就代表它真的是 pipeline。這是 b
 原本沒有的外流 ⟹ 差分不可比 ⟹ **分類**失敗，絕不歸 G。**外流是 baseline 已觀察到的事實，分類失敗不抵銷它**：判不一致：繞過
 （R39，#33 verify R38 第 3 列；前一版判「量不到」而量不到不改 rc，lint 與神諭兩張網因此同時看不到多行群組裡的外流）。
 外流行是 xtrace 的輸出（神諭把 PS4 設成自己的標記）⟹ 繞過，不歸任何已知類別（R39，R38 第 4、6 列）。
-S-2 的定義是「預設模式不要求 `2>&1`、`--strict` 要求」：管線自己只從 stderr 外流、`--strict` 的群組規則真的擋下這個 step，
+S-2 的定義是「預設模式不要求 `2>&1`、`--strict` 要求」：管線自己只從 stderr 外流、`--strict` 真的擋下這個 step（R37–R41 是群組規則；
+R42 起要求擋下它的 RULE 帶正面文法的標記 `GRAMMAR_RULE_TAG`），
 **而且機制成立**（R39，R38 第 6 列；見 `s2_mechanism`）——每一段補上 `2>&1` 外流就消失，或外流行全是 bash 自己的錯誤訊息、
-左邊包成群組就消失。前一版只看前兩條，而群組規則擋下所有非群組管線，於是 fd 轉向、xtrace 這些 fd 規則該擋的外流在規則失效時
+左邊包成群組就消失。前一版只看前兩條，而 `--strict` 擋下所有非群組管線，於是 fd 轉向、xtrace 這些 fd 規則該擋的外流在規則失效時
 被收進 S-2。G 同理（#59／#60，R37 自 PR #61 移植）：`--strict` 對那個 step 印 pipefail 以外的 RULE 或 PARSE 才算已知 G，
 否則判 `STRICT_MISS`（繞過）。**兩個類別都另外要求原因檢查**（R39，R38 第 7 列）：刪掉與外流無關的行之後 `--strict` 仍擋，
 否則判 `CAUSE_MISS`（繞過）。這些判準都不含任何 lint 規則的正規式副本。
@@ -47,11 +48,39 @@ S-2 的定義是「預設模式不要求 `2>&1`、`--strict` 要求」：管線�
   lint pass     ∧ 非 piped ∧ 有**真**宣告        → 一致（宣告的豁免）
   lint RULE-red ∧ 非 piped                      → 一致
   lint RULE-red ∧ piped ∧ 外流                  → 一致（擋下是對的，R35）
-  lint RULE-red ∧ piped ∧ 無外流                → **不一致：誤擋**
-  step 唯一的 RULE 是 `[--strict]` pipefail      → 不可比（量的是退出碼遮蔽；同 step 另有 RULE 時照常對帳，R37）
+  lint RULE-red ∧ piped ∧ 無外流                → **不一致：誤擋**；RULE 全是文法標記或 pipefail 時歸已知類別「文法外」（R42，見下）
   lint pass     ∧ 非 piped ∧ 無宣告 ∧ 有外流    → **不一致：繞過**；無外流時是**量不到**
   lint PARSE    ∧ piped ∧ PyYAML 解析成功        → **不一致：誤擋（PARSE）**，除非該檔自己宣告 `# EXPECT: parse-red`
-  timeout／stub 沒被呼叫到但腳本逾時             → **量不到**（不是繞過，也不算一致；逐項具名）
+  timeout／stub 沒被呼叫到但腳本逾時             → **量不到**（不是繞過，也不算一致；逐項具名）；逾時之前已經外流：lint 放行判繞過、
+                                                   lint 擋下判一致（R42，#33 verify R41 第 20 列）
+  **`--strict` 的檔再疊一層**（R42；逾時的那次不疊）：
+  lint RULE-red ∧（pipefail 探針看到關閉 ∨ 通道帶 PR 文字） → 一致（擋下是對的）
+  lint pass     ∧ 通道帶 PR 文字                            → **不一致：繞過（跨 step 通道）**
+  lint pass     ∧ pipefail 探針看到關閉                     → **不一致：繞過（pipefail）**
+  pipefail 探針被換掉（腳本改了 DEBUG trap、主 shell 沒跑到 EXIT）→ **量不到**（已判繞過的不改：外流是事實）
+  step 唯一的 RULE 是 pipefail ∧ 沒有任何多段管線跑完 ∧ 通道沒帶 → 不可比（量不到退出碼遮蔽）
+
+## `--strict` 的兩個額外觀測（R42，#33 verify R41 第 1–7、11 列）
+`--strict` 宣稱兩件預設模式不宣稱的事——寫出來的每條管線跑在 pipefail 之下、靠管線過濾的 step 不把 PR 文字寫進跨 step 的通道。
+前一版兩件都量不到（pipefail 的 step 一律不可比；一次跑一個 step，看不到 `$GITHUB_ENV`），R39–R41 那兩類的繞過因此全在神諭的盲區裡。
+  · **pipefail 探針**（`PRELUDE_PF`、`pf_observation`）：DEBUG trap 在每條多段管線跑完時記下管線**開始時**的 pipefail（bash 在那時決定
+    退出碼怎麼算）與退出碼有沒有被遮蔽；每個子殼層第一次觸發時裝一個 EXIT 收尾。完整性檢查：DEBUG trap 被換掉、或主 shell 沒跑到
+    EXIT，判「量不到」而不是「一致」。腳本自己的 `trap <動作> EXIT` 經 `trap` 函式與神諭的收尾組合——不組合的話，文法接受的每一個
+    trap step 都會讀成量不到。探針自己的程式碼不產生 xtrace（`local -; set +xv`）。
+  · **跨 step 通道**（`CHANNELS`）：`GITHUB_ENV`／`PATH`／`OUTPUT`／`STATE`／`STEP_SUMMARY` 指到暫存檔，跑完看有沒有 PR 文字。
+    比 lint 嚴：lint 收 `$GITHUB_OUTPUT`、`$GITHUB_STEP_SUMMARY` 的寫入，神諭五個一起看。一次仍只跑一個 step：之後的 step 怎麼讀它，
+    神諭不模擬——看到 PR 文字寫進去就算外流。
+
+## 已知類別「文法外」（R42）
+`--strict` 對靠管線過濾的 step 用正面文法，文法的補集一律 RULE——多數是保守的誤擋。這一格只在誤擋、KNOWN_DISAGREE 之後判，
+三個條件同時成立：step 的每一條 RULE 都帶 `GRAMMAR_RULE_TAG` 或是 pipefail 那一條；沒有外流；pipefail 探針與通道都沒看到東西
+（看到的話上面的疊加已判一致）。與 G、S-2 同一道雙向閘門：由檔頭 `# KNOWN-CLASS: 文法外` 簽名、數量必須相等。平台變體
+「文法外-without-proc」只在沒有 `/proc` 的平台計數（`/proc/$$/fd/…` 那一類在 Linux 會外流、判一致）；有 `/proc` 的平台不計它的宣告。
+
+## KNOWN_DISAGREE 的格式（R42，#33 verify R41 第 14 列）
+鍵是（檔名, step 名），值是 `{dir, hash, why}`：`dir` 是登記的方向（誤擋／繞過），`hash` 是運算式代換之前 run 區塊的
+`kd_hash`（`--print-kd-hash FILE STEP` 印出）。方向與雜湊都相符才算已知；不符 ⇒ 照一般的不一致處理並具名（前一版只比鍵，
+一條登記成誤擋的條目吞掉了同名 step 的繞過）。`KNOWN_DISAGREE_WITHOUT_PROC` 同格式，只在沒有 `/proc` 的平台生效。
 
 **適用邊界**：lint 依設計不判可達性（`if false; then … | python3 …; fi` 它算「有管線」），神諭是真的跑——
 這類差異多數落在「量不到」，根本不會走到「不一致」（用不到 `KNOWN_DISAGREE`）；只有真的判成「不一致」的設計性分歧，才會列在 `KNOWN_DISAGREE` 並寫理由（可達性本身目前沒有對應條目）。神諭不用 `-e`：runner 用 `bash -e`，但這裡要問的是
@@ -65,7 +94,9 @@ PyYAML 拒絕、GitHub 照樣執行；R29 探針實測整份縮排的文件 PyYA
 stdin `/dev/null`、逾時 5 秒。但那不是沙箱——fixture 寫絕對路徑就寫得出去、背景程序活得過逾時。
 **加 fixture 等於加一段會被執行的 shell**，review 時請當成程式碼看。
 **`env:` 會帶進去**（R37，R36 第 8 列）：workflow／job／step 三層的純量值依序覆蓋（step 最後），`SHELLOPTS: xtrace`、
-`BASHOPTS`、`BASH_XTRACEFD` 因此量得到；含 `${{` 的值 runner 才知道，不設。PATH、HOME、`PR_TITLE` 永遠用神諭自己的值。
+`BASHOPTS`、`BASH_XTRACEFD` 因此量得到；含 `${{` 的值照 run 區塊的規則代換（R42：字面常數換成值、GH_SAFE 換成數字、其餘換成
+PR 標記——前一版不設，`PR_BODY` 寫到哪裡都量不到）。PATH、HOME、`PR_TITLE` 永遠用神諭自己的值；`RUNNER_TEMP`、`GITHUB_WORKSPACE`
+照 runner 的語意設成臨時目錄（R42：前一版不設，`> "$RUNNER_TEMP/e"` 變成寫 `/e`、失敗，那一步做了什麼就量不到）。
 **盲區**：`BASH_ENV`／`ENV` 指向的檔案在臨時 cwd 裡不存在（神諭不把 repo 的檔案帶進去），那些檔案的內容量不到；
 `/proc/self/fd/2` 在 macOS 上不存在，那一類 fd 轉向在本機量不到外流、在 Linux runner 上量得到（R39 起這幾張
 fixture 的誤擋只在沒有 /proc 的平台列為已知，見 `KNOWN_DISAGREE_WITHOUT_PROC`）；`/bin/sh` 在 macOS 是 bash、在 ubuntu
@@ -89,8 +120,11 @@ PR 文字固定是 `ORACLE-PR-TITLE-MARKER`：算術展開（`$(( PR_TITLE ))` �
 
 依賴：PyYAML（`python3 -m pip install pyyaml`）。缺就 fail-loud，不靜默跳過。
 用法：test/oracle.py [FILE…]   不給檔案 → 全部 test/fixtures/ci-log-filter-*.yml
+      test/oracle.py --print-kd-hash FILE STEP   印出 step 的 `kd_hash`（新增或更新 KNOWN_DISAGREE 條目時用）
+      test/oracle.py --selftest-severity         `select_most_severe` 的單元測試
       環境變數 `ORACLE_LINT=<path>` 換掉被對帳的 lint（只給突變測試用：量「神諭抓不抓得到某個 lint 突變」）。
-退出碼：有 `KNOWN_DISAGREE` 之外的不一致 → 1；`KNOWN_DISAGREE` 裡的項目變成一致（理由不再成立）→ 1；
+退出碼：神諭用的 bash 不在 lint 檔頭 `# ORACLE-BASH-SUPPORTED:` 的集合裡 → 1（`bash_supported`，第 13 列）；神諭與 lint 的
+`GH_SAFE_EXPRS` 不同步 → 載入時具名退出；有 `KNOWN_DISAGREE` 之外的不一致（含方向或雜湊不符的條目）→ 1；`KNOWN_DISAGREE` 裡的項目變成一致（理由不再成立）→ 1；
 已知類別的歸類數與檔頭宣告數不相等（任一方向）→ 1；must-fail 探針沒有以宣告的理由失敗 → 1；不給檔案參數執行整個 fixture 集時，已知類別總數／must-fail 探針總數與寫死常數 `FIXTURE_CLASS_TOTALS`／`FIXTURE_MUSTFAIL_TOTAL` 不符 → 1；否則 0。
 「量不到」不改變退出碼，但一定逐項印出來。
 """

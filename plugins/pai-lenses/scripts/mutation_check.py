@@ -96,7 +96,7 @@ SUITES = {
 # ── 結果快取（R39，使用者提議：沒改變就沿用 JSON 記錄）──────────────────────────────────
 # 每個守備單位的驗證指令讀得到的**輸入檔**（被突變的那個檔另外以正規化內容計入 key）。封閉列舉，只有這五組：
 #   · `lint`：selftest 只讀 fixture。
-#   · `oracle`／`oracle-inverted`：神諭讀 fixture、反向探針與假 lint，並執行 lint 本身（lint 以剝註解的 AST 計入）。
+#   · `oracle`／`oracle-inverted`：神諭讀 fixture、反向探針與假 lint，並執行 lint 本身（lint 以原文計入，見 `_key_content`）。
 #   · `validate`／`neutralise`：`test_validate.py` 讀的範圍很廣（整個 `plugins/`、`.github/workflows/test.yml`、skills、bin
 #     …），逐一列舉必然漏——所以這兩組的輸入是**整個 repo**（不含 `.git`、`__pycache__` 與快取檔本身）。代價是任何改動
 #     都讓它們重跑；那是對的方向：漏列一個輸入，快取就會安靜地給出舊答案。
@@ -1614,8 +1614,9 @@ def main():
         print("✗ --only 的索引超出範圍（0..%d）" % (len(MUTATIONS) - 1), file=sys.stderr)
         return 2
     t0 = time.monotonic()
-    # **快取**（R39，使用者提議）：key 是「突變後被改寫檔的正規化內容（Python 用剝掉註解與 docstring 的 AST）＋ 守備單位
-    # 讀得到的輸入檔 ＋ 工具版本」。key 相同 ⇒ 驗證指令看到的東西逐位元組相同（註解除外）⇒ 結果相同，直接沿用。
+    # **快取**（R39，使用者提議）：key 是「突變後被改寫檔的**原文** ＋ 守備單位讀得到的輸入檔 ＋ 工具版本與環境指紋」。
+    # key 相同 ⇒ 驗證指令看到的東西逐位元組相同 ⇒ 結果相同，直接沿用。（R39 用剝掉註解與 docstring 的 AST，R40 改成原文——
+    # `test_validate.py` 讀 `# READ-SITE` 註解，#33 verify R39 第 4 列；R41 第 17 列指出這裡的說明沒跟著改。）
     # 判斷「有沒有改變」的是雜湊，不是人對「是不是大改版」的判斷——一行 `#` 就可能改變某個靶的生死（R37 S29-6）。
     # key 若漏了某個輸入，快取會安靜地給出舊答案：所以發版前的量測用 `--no-cache`，摘要也分開印「重跑」與「沿用」。
     cache_path = pathlib.Path(args.cache) if args.cache else CACHE

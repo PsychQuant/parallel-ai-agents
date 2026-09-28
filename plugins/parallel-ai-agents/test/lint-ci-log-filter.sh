@@ -17,13 +17,20 @@
 #
 # 用法：test/lint-ci-log-filter.sh --strict [workflow.yml…]   **檢查真的 workflow 用這個**（CI 與 run.sh 都是）；
 #                                                             預設 ../../.github/workflows/*.yml *.yaml（全部 workflow）
-# 神諭（test/oracle.py）只在它自己用的 bash 落在下面這個集合時才對帳——詞法模型（bash 5.3 的 `${ cmd; }`、`FL_BUILTINS`／`FL_KEYWORDS`）
-# 是對這些版本寫的（R42，#33 verify R41）。CI 的 ubuntu 是 5.2、macOS 與本機是 5.3。
-# ORACLE-BASH-SUPPORTED: 5.2 5.3
 #       test/lint-ci-log-filter.sh [workflow.yml…]            預設模式：fixture 與產生語料用，量的是 lint 與 bash 的詞法對帳，
 #                                                             **假設 shell 是 bash**、不要求 pipefail 與群組形式
 #       test/lint-ci-log-filter.sh --selftest
+#       test/lint-ci-log-filter.sh --check-compgen            PATH 上的 bash 的 `compgen -b`／`-k` 必須 ⊆ FL_BUILTINS ∪ FL_KEYWORDS
 #       檔名請給絕對路徑或相對於 plugin 目錄的路徑：本 lint 先 `cd` 到 plugin 目錄，找不到檔案回 rc=2（不是 pass）。
+# **兩種模式從 R42 起是兩套判準**（#33 verify R41）：兩者共用 YAML 的白名單解析與 `shell_scan`（先跑、看不懂就 PARSE）。之後——
+#   · `--strict`：整條規則鏈是 `flat_step_rules`。靠管線過濾的 step 用**正面文法**：只收點名的形狀，文法的補集一律 RULE
+#     （產生式與已知限制見「`--strict` 的正面文法」一節）；宣告了 `# LOG-FILTER:` 的 step 只在觸發時（寫出來的管線、提到
+#     `$GITHUB_ENV`／`$GITHUB_PATH`）套用同一套產生式。
+#   · 預設模式：R1（過濾或宣告）、fd 流向（`_analyse`）、啟動時讀的 env 鍵、非字面的 runner 運算式。**不檢查** `$GITHUB_ENV`／
+#     `$GITHUB_PATH` 的寫入（R40 的 `github_env_write` 兩種模式共用，R42 隨 pipefail 模擬一起刪除），也不模擬 pipefail。
+# 神諭（test/oracle.py）只在它自己用的 bash 落在下面這個集合時才對帳——詞法模型（bash 5.3 的 `${ cmd; }`、`FL_BUILTINS`／`FL_KEYWORDS`）
+# 是對這些版本寫的（R42，#33 verify R41 第 13 列）。CI 的 ubuntu 是 5.2、macOS 與本機是 5.3。
+# ORACLE-BASH-SUPPORTED: 5.2 5.3
 # **兩種模式的取捨（#33 verify R34 放行條件第 5 條的偏離，R36 第 25 列要求寫在這裡）**：非 bash 的 shell（`sh`、`pwsh`、
 # 帶白名單外選項的樣板）、container job、Windows／運算式 runs-on 只在 `--strict` fail-closed。R35 第一版在預設模式也套用，
 # 合成 A 語料 959 個 base-綠檔翻紅一大批（R35 寫 290；R36 requirements 按規則重量：shell 值那條 75 檔、container／Windows
@@ -842,22 +849,23 @@ def shell_scan(lines):
       * 續行重掃前還原 `pending` 快照：前一版只還原 quote／prev_sig，同一個 heredoc 被排兩次。
     **已知不涵蓋，第二組（這一組是封閉列舉，只有五條，不得依性質相似類推第六條；R32 抓到前三條不在檔內，第 4 條 R39、第 5 條 R40 加）**：
       1. **stderr（預設模式）**：預設模式的 `PIPED_RE` 只要求管線存在，不要求 `2>&1`／`|&`（已知類別 S-2，範例
-         `known-stderr-cmd-error-missing-2to1`）。**`--strict` 的群組規則擋它**——CI 與 run.sh 對真 workflow 用 `--strict`，
+         `known-stderr-cmd-error-missing-2to1`）。**`--strict` 擋它**（R37–R41 是群組規則，R42 起是正面文法的 `run_F`）——CI 與 run.sh 對真 workflow 用 `--strict`，
          所以這一條只剩 fixture／產生語料（它們量的是詞法）。另：把輸出轉到 stderr 或開 xtrace 的寫法（`>&2`、
-         `set -x`…）在**兩種模式**都是規則（R35；R33 的 S-2 範例用的正是 `>&2`，它不屬於這一條）。
+         `set -x`…）在預設模式是 fd 流向規則；`--strict` 的群組裡 `>&2` 進管線、收下，`set -x` 不在文法裡（R35；R33 的 S-2 範例
+         用的正是 `>&2`，它不屬於這一條）。
          **逐段的 `2>&1` 只涵蓋命令執行時寫出的 stderr**（R37 合併時協調者以 bash 5.3 覆核；#60 第 2 類）：在該段
          `2>&1` 生效**之前**就寫出的，預設模式看不到（範例 `known-expansion-error-before-2to1`）——(a) 展開期錯誤：`echo "${!PR_TITLE}" |& …` 印出
          「<原值>：無效的變數名稱」、`echo $(( PR_TITLE )) 2>&1 | …` 印出算術錯誤；(b) 寫在 `2>&1` 左邊的重導向本身出錯：
          `echo x > "$PR_TITLE" 2>&1 | …` 印出 `<原值>: No such file…`（`2>&1` 移到那個重導向的左邊——`echo x 2>&1 > "$PR_TITLE" | …`——錯誤就走進管線）。命令執行時才產生的
          錯誤（`[[ $PR_TITLE -eq 1 ]] 2>&1 | …`）會走管線、被過濾。群組 `{ …; } 2>&1 |` 的重導向在內部展開之前生效，
-         (a)(b) 一起關掉——`--strict` 要求整個區塊就是那個群組（R37 自 PR #61 移植；R36 的逐段 `2>&1` 規則看不到它們）。
+         (a)(b) 一起關掉——`--strict` 要求整個區塊就是那個群組（R37 自 PR #61 移植，R42 起是 `run_F`；R36 的逐段 `2>&1` 規則看不到它們）。
          本 lint 不為 (a)(b) 逐拼法列規則（那正是 R36 批評的形狀）。
          R35 更正：R33 這裡寫「repo 自己的 17 條管線全部已帶 `2>&1`／`|&`」——`--strict` 第一次跑就在 pack anchor
          那一步抓到一條 `… | tee | python3 …` 的最後一段沒帶（`tee` 的 stderr 沒有 PR 文字，但宣稱是假的）。
       2. **顆粒度（預設模式）**：一個 run 區塊裡**任一條**邏輯行接了管線，整個區塊就算已過濾（#33 verify R34 requirements F4、logic F6、DA；追蹤 #59）。
          `echo "$PR_TITLE"` ⏎ `echo safe | python3 …` 因此放行（已知類別 G）。這是宣告過的語意，不是漏洞的偽裝。
          **`--strict` 改了「什麼算已過濾」**（#59，R37 自 PR #61 移植）：整個區塊必須是一個 `{ …; } 2>&1 | python3 …`
-         群組（見 `strict_group_violation`），另一條命令不可能在群組外。
+         群組（R42 起是正面文法的 `run_F`，見「`--strict` 的正面文法」一節），另一條命令不可能在群組外。
          同一條也涵蓋「管線不可達」：外流的行先執行、接管線的行因語法錯誤／`exit`／沒走到的分支不執行
          （R35 已把「引號開到區塊結尾」改成 fail-closed；R37 補齊同一族其餘未收尾構造——管線後面接
          `$(`、反引號、`; ((`、`; [[ -n x`、`$[`、`; (` 六種，以及掃描結束時 `csub`／`bt`／`arith`／`brk`／
@@ -874,9 +882,10 @@ def shell_scan(lines):
       5. **不經 shell 重導向的寫入**（#33 verify R39 第 2、9 列）：fd 規則看的是**重導向的目標**。以命令參數給的路徑
          （`tee /proc/$$/fd/1`、`dd of=/proc/$$/fd/1`、`cp f /proc/$$/fd/1`）、群組裡自己建的 symlink（`ln -s /proc/$$/fd/1 o; … > o`）
          都不在模型裡——參數分不出是讀還是寫（`cat /dev/null` 很常見），一律擋會誤擋太多；Linux 上它們寫到外層 shell 的 fd，
-         是真的外流（本機沒有 /proc，未實跑）。同理，寫進 `$GITHUB_ENV`／`$GITHUB_PATH` 的規則（R40，`github_env_write`）只管
-         靠管線過濾的 step：宣告了 `# LOG-FILTER:` 的 step 照樣可以把 PR 文字寫進去、之後的 step 讀進來；神諭一次跑一個 step，
-         看不到跨 step 的效果。
+         是真的外流（本機沒有 /proc，未實跑）。`--strict` 對 `$$` 本身不收（文法的參數只收 `$NAME`、`${NAME}`、`${NAME:-字面}`、`$?`），
+         但命令參數的路徑同樣不模擬（正面文法一節的 L1）。跨 step 的通道（`$GITHUB_ENV`／`$GITHUB_PATH`）：R40 的 `github_env_write`
+         兩種模式共用，R42 刪除；現在只有 `--strict` 管（靠管線過濾的 step 與觸發了的宣告 step 只收字面寫入與唯讀，正面文法一節的
+         P1、L3），預設模式不檢查。神諭把五個通道指到暫存檔、看得到一個 step 寫進去的 PR 文字（一次仍只跑一個 step）。
     **已知不涵蓋，第三組——預設模式的假設（封閉列舉，只有五條，不得依性質相似類推第六條；R35 新增前三條，
     R37 新增第 4、5 條）**：
       1. **shell 是 bash**：預設模式不讀 `shell:`／`defaults.run.shell`／container／runs-on，照 bash 的詞法判。
@@ -1451,21 +1460,18 @@ def shell_scan(lines):
 # `set -eo xtrace`、`shopt -so xtrace`、從 `env:` 帶進的 SHELLOPTS；前段管線的 stderr、子殼層湊數、黏在詞上的 `"$X"2>&1`；
 # `bash -e {0}`／`bash -l {0}` 沒有 pipefail；`case … in a|b)` 的模式 `|` 被當成管線；規則還擋掉它自己推薦的群組寫法。
 # 修法是改成**按結構與流向**判：把 `shell_scan()` 的程式碼半邊對回原文（`_aligned_sources`），切成詞與運算子（`_lex`），
-# 剖析成管線／群組／簡單命令（`_Sh`）。R36 的三條規則讀同一份結構：
+# 剖析成管線／群組／簡單命令（`_Sh`）。**R42 起這一節只有預設模式在用**，讀這份結構的規則只剩一條：
 #   · fd 流向：fd 複製（`2>&1` 與 no-op 的 `>&1` 除外）、去引號後落在 `/dev`、`/proc` 底下的寫檔目標（`_SAFE_TARGETS` 除外）、
 #     開 xtrace／verbose 的命令、run 裡設定 SHELLOPTS 等變數——都算外流，除非它位在「收尾後緊接 `2>&1 |`（或 `|&`）進
 #     neutralise 的群組」裡：那個群組是管線的一段、在子殼層裡跑，fd 1 與 fd 2 都是管線。
-#   · `--strict` 的 `2>&1`：R36 版是「每一條接 neutralise 的管線，neutralise 之前的**每一段**都要讓 fd 2 併進管線」；R37 改成
-#     整個區塊一個群組（`strict_group_violation`，#59／#60），不再讀這份結構——它是逐字的形狀檢查，只看挖空後的詞與原文。
-#   · pipefail：照詞元順序模擬——起始值由 shell 樣板決定（`_bash_template`），頂層的 `set ±o pipefail`／`shopt -s|-uo pipefail`
-#     改變它，每一個管線運算子出現時它必須是開的。
-# **已知不涵蓋（這一節的，封閉列舉，只有四條，不得依性質相似類推第五條）**：
+# R36 另外兩條讀這份結構的規則已經不在：`--strict` 的 `2>&1`（R37 改成整個區塊一個群組，R42 再改成正面文法的 `run_F`），
+# pipefail 的詞元順序模擬（R37–R40；R42 刪除，`--strict` 的 pipefail 改由樣板與 `set` 前綴決定，見 `flat_step_rules`）。
+# **已知不涵蓋（這一節的，預設模式；封閉列舉，只有三條，不得依性質相似類推第四條）**：
 #   1. 重導向目標含參數展開或命令替換（`> "$GITHUB_OUTPUT"`、`> "$X"`）時不求值——`$GITHUB_OUTPUT` 這類是 Actions 的日常寫法；
 #      只有目標的**字面部分**已經落在 `/dev`、`/proc` 底下（`>/dev/fd/$N`）才擋。
 #   2. `eval`／`bash -c`／`trap` 的**字串**不剖析（同 `shell_scan` 第一組：本 lint 不求值）；`eval` 後面全是字面詞時例外——
 #      那時 bash 執行的就是那幾個詞（`eval set -x`）。
-#   3. `if`／`while`／`for` 不建結構、當成一般的詞，所以判定不看可達性：沒走到的分支裡的 `set -o pipefail` 也算數。
-#   4. 未引號 heredoc 的**內文**裡的命令替換（bash 會展開、執行它）不剖析：掃描器把內文整行當資料、規則層收不到那些行。
+#   3. 未引號 heredoc 的**內文**裡的命令替換（bash 會展開、執行它）不剖析：掃描器把內文整行當資料、規則層收不到那些行。
 #      雙引號與 `${…}` 裡的命令替換**有**剖析（`_hidden_subs`）。
 import posixpath
 
@@ -2423,42 +2429,23 @@ def _bash_template(sh):
     return {"pipefail": pf, "trace": trace}
 
 
-# **`--strict` 的群組規則**（#59／#60；R37 自 PR #61 移植）：靠管線過濾的 step，整個 run 區塊必須是
-#     [若干行 `set -e`／`-u`／`-o pipefail`]
+# **群組形式**（#59／#60；R37 自 PR #61 移植成「群組規則」，R42 由正面文法的 `run_F` 產生式接手）：靠管線過濾的 step，整個 run 區塊必須是
+#     [若干行 `set` 前綴]
 #     { …整個區塊… ; } 2>&1 | python3 <路徑>/neutralise.py        （或 `} |& python3 …`）
-# R36 的 `--strict` 只要求「緊鄰 `python3 …neutralise.py` 的那一段把 stderr 併進管線」（`STRICT_NEUT_RE`；「每一段」是 R37 WIP
-# 的規則、從沒出貨——#33 verify R38 regression LOW-8 更正），關不掉兩類：
+# R36 的 `--strict` 只要求「緊鄰 `python3 …neutralise.py` 的那一段把 stderr 併進管線」，關不掉兩類：
 #   · #59（已知類別 G）：同一個區塊裡**另一條命令**印的 PR 文字不經任何管線；
 #   · #60 第 2 類：bash 先展開詞、再由左到右套用重導向——`echo "${!PR_TITLE}" 2>&1 | …` 的展開期錯誤、
 #     `echo x > "$PR_TITLE" 2>&1 | …` 的重導向錯誤，都在那一段的 `2>&1` 生效**之前**寫到當下的 stderr。
 # 群組的重導向在群組內任何展開之前生效，而整個區塊都在群組裡——兩類一起關掉，不需要 taint、不列拼法清單。
-#
-# **為什麼是「恰好一個 `{`、一個 `}`」而不是計深度**：計深度要知道每個 `{`／`}` 在 bash 眼中是不是保留字，
-# 而 `case` 的模式（`{)`）、陣列字面（`a=(` ⏎ `}` ⏎ `)`）裡的大括號不是——一個被多算的 `{` 讓 lint 以為群組
-# 還開著、bash 卻已經關了，之後那一行就在群組外執行（`restrict-strict-group-nested`、`bypass-strict-group-case-pattern-brace`）。
-# 只允許一對，就不必判斷：
-#   · 程式碼半邊（引號內容、`\` 逃脫、`${…}`、算術、heredoc 內文、註解都已挖空）裡的**獨立詞** `{`／`}`
-#     是 bash 保留字的超集；多出任何一個 ⇒ 拒絕。
-#   · 唯一的 `{` 是 `set` 前綴之後第一個詞 ⇒ bash 一定把它當群組開頭。
-#   · 唯一的 `}` 若因為某個沒收的構造（`case`、陣列、`$(`）而不被 bash 當成保留字，群組就到檔尾都沒關——
-#     bash 在執行群組裡任何東西之前就報語法錯誤（它先讀完整個複合命令），群組裡的命令一個都不執行。bash 仍會把**語法診斷**
-#     印到群組外的 stderr（#33 verify R38 codex 第 10 條：「命令沒執行」推不出「沒有輸出」）——診斷引用的是原始碼；原始碼裡
-#     非字面的 runner 運算式由 run 內運算式那條規則另外擋（R39 只認兩種拼法，R40 改成除了字面常數一律擋）。
-# `set` 前綴只收 `-e`／`-u`／`-E`／`-o pipefail|errexit|nounset|errtrace`（`-E`／errtrace：R39，只影響 ERR trap 的繼承）：`set -v` 會把原始碼（含 runner 代入的 `${{ … }}`）
-# 印到群組外的 stderr，`-x` 同理；裸 `set` 把所有變數（含 PR 可控的 env）印到群組外的 stdout。
-# **代價：保守誤擋**（#33 verify R38 第 11 列：R37 只揭露了前兩類；R39 verify 第 12 列：R39 的清單又漏了兩類、另一類寫得太窄）。封閉列舉，只有這九類，
-# 每一類都在 oracle.py 的 KNOWN_DISAGREE 登記（逐段 `2>&1` 登記的是產生語料 `gen-f-*`，其餘各有一張以上的 `restrict-*` fixture）：
-# 逐段 `2>&1`（不是群組形式）、`( … )` 子殼層、群組內定義函式、群組內的巢狀群組（`{ …; } >> "$GITHUB_ENV"`）、一個 step 兩個群組、
-# **群組前任何不是白名單 `set` 前綴的行**（`cd`、`export`、`set +e`、`shopt`、`echo "::group::…"`…——R39 寫成「群組前的 `cd`／`export`」
-# 兩個例子，性質其實是這一句）、過濾器前面的**直譯器選項**（`python3 -u`、`python3 -I`）、**不是字面的過濾器路徑**
-# （`python3 "$GITHUB_WORKSPACE/…"`）、命令替換裡不在命令起點的 `case` 普通參數（這一類是掃描器的 fail-closed，不是群組規則）。R39 放寬了四類（未加引號的 `${{ … }}`、尾巴後的 `;`、`set -E`／errtrace、
-# `set` 前綴行尾的 `;`）；其中第一類 R40 收回（#33 verify R39 第 1 列）：群組計數仍遮掉運算式，但 run 裡任何非字面的運算式
-# （`matrix.*`、`inputs.*`、`runner.*`、函式呼叫…，字面常數與 GH_SAFE_EXPRS 除外）改由運算式規則擋——改經 step 的 `env:` 傳進來，
-# `restrict-r40-ghexpr-*` 兩張釘住。這一條不是群組規則的代價、兩種模式都適用，所以不算進上面九類。
-# **子殼層 `( … ) 2>&1 |` 不收**：`(`／`)` 也出現在 `$(`、`$((`、陣列、`case` 模式裡，同一套「恰好一對」的論證不成立。
-# 斷詞只認 ASCII 空白與 tab——bash 的詞界就是這兩個加上 metachar。Python 的 `\s` 還認 NBSP 等 Unicode 空白：
-# `{<NBSP>true` 在 `\s` 下斷成 `{`、`true`，bash 卻讀成一個詞（不存在的命令），群組根本沒開
-# （`bypass-strict-group-nbsp-after-opener`）。
+# R37–R41 的群組規則用 `shell_scan` 的挖空結果數大括號（「恰好一個 `{`、一個 `}`」，因為 `case` 模式、陣列字面裡的大括號不是保留字，
+# 計深度會與 bash 分岔）。R42 的正面文法用自己的斷詞器：群組裡根本不收 `case`、陣列、`(`、mktemp 以外的 `$(`，`{`／`}` 當命令名
+# 是保留字、不在 FL_INERT，所以巢狀群組、兩個群組、群組後面的行都在文法外；當參數的 `echo { }` 是字面、收下（R41 第 10 列）。
+# 群組前的行只收 `set` 前綴（`_set_prefix_line`）：`-e`／`-u`／`-E`／`-o pipefail|errexit|nounset|errtrace`（`-E`／errtrace：R39，只影響
+# ERR trap 的繼承）。`set -v` 會把原始碼（含 runner 代入的 `${{ … }}`）印到群組外的 stderr，`-x` 同理；裸 `set` 把所有變數（含 PR 可控的
+# env）印到群組外的 stdout。
+# **代價**：R39–R41 在這裡維護一份「保守誤擋的類別」清單（七類 → 九類），每一輪都被找到清單外的一類（R41 第 10 列）。R42 起改成性質：
+# 靠管線過濾的 step，文法的補集一律 RULE；fixture 裡每一個這樣被擋的 step 都在檔頭簽 `KNOWN-CLASS: 文法外`，神諭照它計數
+# （oracle.py 的已知類別）。常見寫法的代價清單在 #60。
 SET_OPT_NAMES = frozenset(("pipefail", "errexit", "nounset", "errtrace"))   # errtrace：R39，R38 第 11 列（`-E` 不印任何東西）
 
 
@@ -2484,7 +2471,8 @@ def _set_prefix_line(toks):
 def runner_exprs(s):
     """`s` 裡每一個 runner 運算式 `${{ … }}` 的 (起點, 終點, 內容)。邊界照運算式語言本身找：單引號字串（`''` 是跳脫的單引號）
     裡的 `}}` 不收尾（前一版用正規式在第一個 `}}`／`}` 收尾，`format('{0}', …)` 因此切錯位置，#33 verify R39 第 1 列）。
-    沒收尾的 `${{` 延伸到字串結尾——呼叫端把它當成非字面（fail-closed）。"""
+    沒收尾的 `${{` 延伸到字串結尾，內容照常判：多半不是字面、被擋，但 `${{ 123` 的內容是數字字面（#33 verify R41 第 17 列——前一版
+    這裡寫「一律當成非字面」）。這一格不必擋：runner 拒絕沒收尾的運算式，整個 workflow 不會執行。"""
     out, i = [], 0
     while True:
         a = s.find("${{", i)
@@ -2513,7 +2501,8 @@ GH_LITERAL_RE = re.compile(r"\s*(?:'(?:[^']|'')*'|-?\d+(?:\.\d+)?|true|false|nul
 
 
 # GitHub 產生、PR 作者控制不了的純量欄位（R40，#33 verify R39 第 12 列）。**封閉列舉，只有這八個**，點號寫法、大小寫不分（Actions 的
-# context 名稱不分大小寫）；索引寫法、函式呼叫、同一物件的其他欄位（`head.ref`、`title`…）不在裡面、照擋。lint 與神諭共用同一份。
+# context 名稱不分大小寫）；索引寫法、函式呼叫、同一物件的其他欄位（`head.ref`、`title`…）不在裡面、照擋。神諭（oracle.py）另有一份，
+# 載入時與這一份比對、不同步就具名退出（R42，#33 verify R41 第 17 列：前一版這裡寫「共用同一份」，實際是兩份、沒有同步檢查）。
 GH_SAFE_EXPRS = frozenset((
     "github.event.pull_request.number", "github.event.number",
     "github.event.pull_request.base.sha", "github.event.pull_request.head.sha",
@@ -2559,8 +2548,30 @@ def _logical_lines(code_lines):
 # here-string、process substitution、`>&N`／`<&N`、`&>`、`>|`、`<>`、mktemp 以外的 `$(`、`$((`、`${` 的其他寫法。
 # 允許清單漏掉一種相鄰寫法只會多一個誤擋，不會多一個繞過。文法接受的輸入裡，繞過會藏在兩處：斷詞與 bash 不一致，以及產生式
 # 本身的語意（R42 移植時就在後者修掉兩個：trap 動作的 mktemp 登記、`printf -v` 經 GITHUB_ENV 產生式指派信任變數——見
-# `_fl_command`）。文法之外、本段不宣稱的：執行時才組出來的管線（`flat_trigger`）、外部程式自己寫 `$GITHUB_ENV`、
-# 啟動時讀的 env 鍵（FL_STARTUP_KEYS 仍是否定清單）。
+# `_fl_command`）。
+#
+# **`--strict` 宣稱的性質（只有這三條）**：
+#   P1（靠管線過濾的 step）：run 文字是 run_F 的字串。所以每個命令都在那一個 fd 1、fd 2 都進 neutralise.py 的群組裡跑；
+#      在 step 的 shell 裡執行的只有 FL_INERT 的八個 builtin、`NAME=值` 指派、`trap <動作> EXIT`（動作本身也在文法裡）；
+#      shell 自己開的重導向只落在點名的目標；run 文字提到 `$GITHUB_ENV`／`$GITHUB_PATH` 只有字面寫入與唯讀兩種形狀。
+#   P2（有寫出來的管線的 step）：run 文字裡寫出來的每一條管線都跑在 pipefail 之下。「寫出來的管線」＝文字裡有一個不屬於 `||`
+#      的 `|`（`||` 前一個字元不是 `\`）。宣告了 `# LOG-FILTER:` 的 step 也適用（`flat_trigger`）。
+#   P3（靠管線過濾的 step）：run 文字裡的 `${{ … }}` 只有字面常數與 GH_SAFE_EXPRS 的八個欄位；字面常數在剖析**之前**代換，
+#      與 runner 同序。宣告的 step 不在此列（#33 的 R42 決策 (f)，#81）。
+# **已知不涵蓋（照性質寫，不是拼法清單；#33 verify R41 → R42）**：
+#   L1 step 呼叫的程式：腳本、直譯器與它們的 `-c`／`-e` 字串（`bash -c "…$X…"`、`python3 -c '…os.environ["GITHUB_"+"ENV"]…'`），
+#      以及這些程式按名字打開的檔案——命令參數給的路徑不是 shell 的重導向，`tee /proc/$PPID/fd/1`、`dd of=/dev/tty`、
+#      `tee "$RUNNER_TEMP"/_runner_file_commands/*` 都照收。本 lint 檢查的是 run 文字與 shell 自己開的重導向；PR 的程式碼在
+#      每個 job 裡本來就有同樣的能力。
+#   L2 step 之前就在的狀態：前一個 step 寫進 `$GITHUB_ENV`／`$GITHUB_PATH` 的值、export 的函式、文法信任的 runner 變數
+#      （FL_TRUSTED_VARS）。lint 假設它們是 runner 給的值；文法禁止 run 文字與任何一層 `env:` 覆寫它們。
+#   L3 沒有寫出來的管線、宣告了 `# LOG-FILTER:` 的 step：不進文法。執行時才組出來的管線（`eval "$X"`、`source`、alias）看不到；
+#      宣告的 step 裡 `$GITHUB_ENV` 的檢查只看**字面的名字**，是抓無心之失的，不是封閉（`n=GITHUB_; … "${!n}"` 看不到）。
+#   L4 工作目錄：相對路徑的重導向目標照字面判，不對 `working-directory:` 求值，也不追 PR 提交的 symlink。
+#   L5 YAML：本 lint 的白名單解析器與 PyYAML 對帳，兩者都不是 GitHub 的解析器（差異的實測見 oracle.py 檔頭的「盲區」段）。
+#   L6 pipefail 以外的退出碼：`|| true`、群組裡的 `exit 0` 是維護者明寫的選擇，不在宣稱內。（trap 動作裡的 `exit` 不收：
+#      EXIT trap 的 `exit N` 會蓋掉整個 step 的退出碼。）
+# 另外 FL_STARTUP_KEYS 仍是否定清單（bash 啟動時讀的 env 鍵；權威是 bash 的 INVOCATION 一節，神諭的 pipefail 探針在執行時看它的效果）。
 FL_GRAMMAR_TAG = "不在 `--strict` 的正面文法裡"     # 每一則文法 RULE 都帶這句；restrict fixture 的 EXPECT-MSG 以它斷言擋下的原因
 # bash 5.3 的 `compgen -b` 與 `compgen -k`：這兩份是 bash 自己的輸出，不是拼法清單。命令名落在裡面而不在 FL_INERT 就拒絕。
 FL_BUILTINS = frozenset(". : [ alias bg bind break builtin caller cd command compgen complete compopt continue declare dirs "
@@ -3127,19 +3138,19 @@ def flat_step_rules(where, name, ok, declared, logical, env_names, env_hit, text
 
 
 REQUIRE_RUN_STEPS = "--require-run-steps" in sys.argv
-# **`--strict`**（#33 verify R35；R37 按 R36 第 3、4、13 列改寫）：CI 與 run.sh 對**真的 workflow** 用這個模式。
-# 比預設模式多四條（封閉列舉，只有這四條）：
-#   (1) 有管線的 step 必須跑在 pipefail 之下：shell 是**關鍵字** `bash`、或樣板自帶 `-o pipefail`，或 run 裡在管線之前、
-#       頂層地 `set -o pipefail`（之後不得再關掉）——R33 的形狀普查 step 缺它，閘門在 CI 上結構上紅不了（R34 security S-1／
+# **`--strict`**（#33 verify R35；R37 按 R36 第 3、4、13 列改寫；R42 按 R41 改寫）：CI 與 run.sh 對**真的 workflow** 用這個模式。
+# 與預設模式的差別（封閉列舉，只有這三條——對應下面 `STRICT` 的四處用法）：
+#   (1) 每個 run step 的規則鏈換成 `flat_step_rules`：R1 → 非字面的 runner 運算式 → 啟動時讀的 env 鍵 → 文法信任的變數被 `env:` 設定
+#       → 觸發了的宣告 step 的啟動 env → 正面文法 → pipefail。預設模式的 fd 流向（`_analyse`）不在這條鏈裡：群組形式讓群組裡的
+#       fd 1、fd 2 都進管線，文法又只收點名的重導向目標。pipefail 只有兩個來源：shell 是**關鍵字** `bash`（或樣板自帶
+#       `-o pipefail`），或 run 開頭的 `set` 前綴——R33 的形狀普查 step 缺它，閘門在 CI 上結構上紅不了（R34 security S-1／
 #       regression H-3／requirements F1）；R36 第 4 列：`bash -e {0}`、`bash -l {0}` 這類樣板**沒有** pipefail。
-#   (2) 靠管線過濾的 step，整個 run 區塊必須是**一個群組** `{ …; } 2>&1 | python3 …neutralise.py`（見 `strict_group_violation`；
-#       #59／#60，R37 自 PR #61 移植）。R35／R36 的前一版只要求「緊鄰 neutralise 的那一段把 stderr 併進管線」——
-#       已知類別 S-2 在那個模式下是規則，G（同區塊另一條命令）與展開期／重導向錯誤不是；群組形式三者都關。
-#   (3) shell 只能是 bash 樣板（不得開 xtrace／verbose）；container 或 Windows／運算式 runs-on 的 job 必須明寫 shell
+#   (2) shell 只能是 bash 樣板（不得開 xtrace／verbose）；container 或 Windows／運算式 runs-on 的 job 必須明寫 shell
 #       （R35 從預設模式移過來：預設模式假設 shell 是 bash，見 `shell_scan` 已知不涵蓋第三組第 1 條）。
-#   (4) workflow 根層級 `defaults.run` 寫成 flow 形式 ⇒ PARSE（R36 第 13 列：讀不到 shell）。
-# 預設模式不要求這四條：fixture 與產生語料量的是**詞法**，不是 CI 的寫法規範；改寫數百個 fixture 的管線只會讓
-# 每一個詞法形狀多一個與它無關的變數。fd 流向與 env 那兩條（見規則層的詞法一節）兩種模式都套用。
+#   (3) workflow 根層級 `defaults.run` 寫成 flow 形式 ⇒ PARSE（R36 第 13 列：讀不到 shell）。
+# R37–R41 的「群組規則」（`strict_group_violation`）與 R37–R40 的 pipefail 模擬已刪除，由 (1) 的正面文法取代。
+# 預設模式不套用這三條：fixture 與產生語料量的是**詞法**，不是 CI 的寫法規範；改寫數百個 fixture 的管線只會讓
+# 每一個詞法形狀多一個與它無關的變數。
 STRICT = "--strict" in sys.argv
 FLAGS = ("--require-run-steps", "--strict")
 rc_all = 0

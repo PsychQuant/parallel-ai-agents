@@ -1,5 +1,6 @@
-# #33 verify R39 第 12 列：R39 宣稱「沒揭露的誤擋是 0」，regression 與 DA 另外量到這七種（第八種在預設模式，見 `restrict-r40-default-export-pythonpath`）——R40 不放寬（理由逐條寫在 oracle.py 的
-# KNOWN_DISAGREE 與 lint 的代價清單），改成揭露：這一張釘住現狀，每一格都是「lint 擋、這一步不外流」。
+# #33 verify R39 第 12 列：R39 宣稱「沒揭露的誤擋是 0」，regression 與 DA 另外量到這七種（第八種在預設模式，見 `restrict-r40-default-export-pythonpath`）——R40 不放寬、改成揭露：
+# 這一張釘住現狀，每一格都是「lint 擋、這一步不外流」。R42 起：過濾器尾巴與 `PYTHON*` 那 4 步仍在 oracle.py 的 KNOWN_DISAGREE
+# （理由逐條寫在那裡）；群組前的 `set +e`、`shopt` 與 `..` 那 3 步是正面文法的文法外，由下面的 KNOWN-CLASS 簽名。
 #   · `python3 -u`／`-I`：過濾器的路徑之前多了直譯器選項——群組尾巴只認 `python3 <路徑>/neutralise.py`（R38 放行條件 9 建議的 `-I`
 #     也在這裡被擋）；`"$GITHUB_WORKSPACE/…"`：路徑不是字面，lint 看不出那是不是 neutralise.py。
 #   · 群組前的 `set +e`、`shopt`：前綴只收白名單的 `set`（`-e`／`-u`／`-E`／`-o pipefail|errexit|nounset|errtrace`）。
