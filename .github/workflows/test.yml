@@ -210,7 +210,7 @@ jobs:
         shell: bash
         run: |
           echo "bats shebang: $(head -1 "$(command -v bats)")"
-          echo "bash on PATH: $(command -v bash) → $(bash --version | head -1)"
+          echo "bash on PATH: $(command -v bash) → $(bash -c 'echo "$BASH_VERSION"')"
           major="$(bash -c 'echo "${BASH_VERSINFO[0]}"')"
           [ "$major" -ge 5 ] || { echo "::error::bats would run under bash $major — CJK-named cases become 'unknown test name' and never execute"; exit 1; }
 

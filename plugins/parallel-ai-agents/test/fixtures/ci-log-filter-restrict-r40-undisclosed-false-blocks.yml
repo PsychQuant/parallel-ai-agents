@@ -5,8 +5,11 @@
 #   · 群組前的 `set +e`、`shopt`：前綴只收白名單的 `set`（`-e`／`-u`／`-E`／`-o pipefail|errexit|nounset|errtrace`）。
 #   · `PYTHONPATH` 是運算式或非字面：過濾器 python3 啟動時讀它，lint 不分辨哪個 `PYTHON*` 鍵危險。
 #   · `> ../dev/…`：路徑含 `..` 又經過名為 dev 的目錄——lint 不知道工作目錄有多深，足夠多的 `..` 走得到 /dev，fail-closed。
+# #33 verify R41 第 19 列（LOW）：`python3 -u` 那一格的訊息原本是「既沒有經 neutralise.py」，而管線明明接到了 neutralise.py。
+# R42 起 `--strict` 對這種寫法印另一句（EXPECT-MSG 釘住）；擋不擋不變。
 # LINT-ARGS: --strict
 # EXPECT: rule-red
+# EXPECT-MSG: 接到了 neutralise.py，但過濾器不是恰好 `python3 <字面路徑>/neutralise.py`
 name: t
 on: pull_request
 jobs:

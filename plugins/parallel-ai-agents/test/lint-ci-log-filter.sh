@@ -2711,6 +2711,563 @@ def strict_group_violation(logical, code, src):
     return None
 
 
+# ── `--strict` 的正面文法（#33 verify R41 → R42）──────────────────────────────────────────────────────────────────
+# R40 的 pipefail 控制流程模擬與 `$GITHUB_ENV` 形狀清單都是否定清單：R41 在那六個函式上找到約 30 個作者沒點名的相鄰放行輸入。
+# R42 反過來：`--strict` 對靠管線過濾的 step 只收下面點名的形狀，其餘一律 RULE（保守誤擋）；宣告了 `# LOG-FILTER:` 的 step，
+# 只要 run 文字裡有寫出來的管線或提到 `$GITHUB_ENV`／`$GITHUB_PATH`（`flat_trigger`），也要落在同一套產生式裡。
+# 斷詞器是自己的：逐字元吃掉 run 文字，每個字元都必須屬於點名的詞元之一，吃不掉就拒絕。**不讀** `shell_scan` 的挖空結果
+# （R41 第 15 列的缺陷在挖空層）；`shell_scan` 仍先跑、仍 fail-closed（PARSE）。
+#
+#   run_F   ::= PREFIX* '{' LIST '}' TAIL          靠管線過濾的 step（`flat_filtered`）
+#   run_D   ::= PREFIX* LIST                       宣告不過濾、觸發了的 step（`flat_declared`）；沒有 `{`／`}` 命令
+#   PREFIX  ::= 'set' 選項，單獨一行；選項照 `_set_prefix_line` 的白名單，每個詞都是未加引號的字面
+#   TAIL    ::= ( '2>&1' '|' | '|&' ) 'python3' <字面路徑>/neutralise.py [';']；換行只准在 `|`／`|&` 之後，之後只准註解與空行
+#   LIST    ::= 命令，以 `;`、換行、`&&`、`||`、`|`、`|&` 相接（`&&`／`||`／`|`／`|&` 之後可換行）
+#   命令    ::= NAME=WORD | NAME=$(mktemp 字面…) | trap 動作 EXIT|0 | echo／printf 字面… >> "$GITHUB_ENV" | 簡單命令
+#   簡單命令 ::= 未加引號的字面命令名（bash 的 builtin／保留字只收 FL_INERT）後接 WORD 與重導向
+#   WORD    ::= 未加引號字面（FL_PLAIN_RE）、單引號、雙引號（`$` 只准 FL_VAR_RE）、FL_VAR_RE 的參數，接成一個詞
+#   重導向  ::= '2>&1' | '>&2' | ( '>' | '>>' | '<' | '2>' | '2>>' ) 目標；run_F 的目標只收 `/dev/null`、`/dev/stdout`、
+#               `/dev/stderr`、不含 `..` 的相對路徑、`"$RUNNER_TEMP/…"`
+# 其餘一律拒絕：未加引號的 `\`、反引號、`(`、`)`、單獨的 `&`、`!`、非 ASCII 字元、任何控制字元（引號裡也一樣）、`;;`、heredoc、
+# here-string、process substitution、`>&N`／`<&N`、`&>`、`>|`、`<>`、mktemp 以外的 `$(`、`$((`、`${` 的其他寫法。
+# 允許清單漏掉一種相鄰寫法只會多一個誤擋，不會多一個繞過。文法接受的輸入裡，繞過會藏在兩處：斷詞與 bash 不一致，以及產生式
+# 本身的語意（R42 移植時就在後者修掉兩個：trap 動作的 mktemp 登記、`printf -v` 經 GITHUB_ENV 產生式指派信任變數——見
+# `_fl_command`）。文法之外、本段不宣稱的：執行時才組出來的管線（`flat_trigger`）、外部程式自己寫 `$GITHUB_ENV`、
+# 啟動時讀的 env 鍵（FL_STARTUP_KEYS 仍是否定清單）。
+FL_GRAMMAR_TAG = "不在 `--strict` 的正面文法裡"     # 每一則文法 RULE 都帶這句；restrict fixture 的 EXPECT-MSG 以它斷言擋下的原因
+# bash 5.3 的 `compgen -b` 與 `compgen -k`：這兩份是 bash 自己的輸出，不是拼法清單。命令名落在裡面而不在 FL_INERT 就拒絕。
+FL_BUILTINS = frozenset(". : [ alias bg bind break builtin caller cd command compgen complete compopt continue declare dirs "
+                        "disown echo enable eval exec exit export false fc fg getopts hash help history jobs kill let local "
+                        "logout mapfile popd printf pushd pwd read readarray readonly return set shift shopt source suspend "
+                        "test times trap true type typeset ulimit umask unalias unset wait".split())
+FL_KEYWORDS = frozenset("if then else elif fi case esac for select while until do done in function time { } ! [[ ]] coproc".split())
+FL_INERT = frozenset(("echo", "printf", "test", "[", "true", "false", ":", "exit"))
+FL_PLAIN_RE = re.compile(r"[A-Za-z0-9_./:=,+%@~^*?\[\]{}-]+")
+FL_NAME_RE = re.compile(r"[A-Za-z0-9_./+][A-Za-z0-9_./+-]*|\[|:")          # 命令名：純字面、無 glob／大括號／引號
+FL_VAR_RE = re.compile(r"\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)(?::-([A-Za-z0-9_./:@%+,=-]*))?\}|(\?))")
+FL_ASSIGN_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=")
+FL_MKTEMP_RE = re.compile(r"\$\(mktemp((?:[ \t]+[A-Za-z0-9_./:%+-]+)*)[ \t]*\)")
+FL_REDIR_AT_RE = re.compile(r"[0-9]*[<>]")
+FL_REDIR_BAD_RE = re.compile(r"[0-9]*(?:<<|<\(|>\(|[<>]&(?!2|1)|[<>]&1(?<=2>&1)?(?![ \t\n;|&]|$)|&>|>\||<>)")
+FL_REDIR_DUP_OK_RE = re.compile(r"2>&1(?=[ \t\n;|&]|$)|>&2(?=[ \t\n;|&]|$)")
+FL_REDIR_RE = re.compile(r"2>&1|>&2|2>>|2>|>>|>|<")
+FL_SIGNALS = frozenset(("EXIT", "0"))
+# **文法信任其值的變數**（R42）：不另寫一份清單，由用到它們的產生式各自的集合聯集而成。run 裡不得指派它們；靠管線過濾的 step 與
+# 觸發了的宣告 step，workflow／job／step 的 `env:` 也不得設定（`flat_step_rules`）。產生式的正規式裡寫出的變數名必須在該產生式
+# 自己的集合裡（`_fl_trusted_var_problems`）。
+FL_TARGET_VARS = frozenset(("RUNNER_TEMP",))                              # 重導向目標 `"$RUNNER_TEMP/…"`（FL_TEMP_TARGET_RE）
+FL_GHVALUE_VARS = frozenset(("HOME", "RUNNER_TEMP", "GITHUB_WORKSPACE"))  # 寫進 `$GITHUB_ENV`／`$GITHUB_PATH` 的值裡准展開的變數
+FL_MKTEMP_VARS = frozenset(("TMPDIR",))                                   # `NAME=$(mktemp …)`：mktemp 在這個目錄下建檔
+FL_CHANNEL_VARS = frozenset(("GITHUB_ENV", "GITHUB_PATH"))                # 跨 step 通道本身（FL_GH_RE、FL_GH_TARGET_RE）
+FL_TRUSTED_VARS = FL_TARGET_VARS | FL_GHVALUE_VARS | FL_MKTEMP_VARS | FL_CHANNEL_VARS
+FL_GH_RE = re.compile(r"GITHUB_ENV|GITHUB_PATH")
+FL_GH_TARGET_RE = re.compile(r'"?\$(?:\{GITHUB_ENV\}|\{GITHUB_PATH\}|GITHUB_ENV|GITHUB_PATH)"?')
+FL_TEMP_TARGET_RE = re.compile(r'"(?:\$RUNNER_TEMP|\$\{RUNNER_TEMP(?::-/tmp)?\})/([A-Za-z0-9_.+-]+(?:/[A-Za-z0-9_.+-]+)*)"')
+FL_REL_TARGET_RE = re.compile(r"[A-Za-z0-9_+-][A-Za-z0-9_.+-]*(?:/[A-Za-z0-9_.+-]+)*")
+# bash 啟動時讀、可以在 run 之前關掉 pipefail 的 env 鍵（R3 的清單去掉只影響 xtrace 輸出位置的 BASH_XTRACEFD）。這一份仍是否定清單，
+# 權威是 bash 的 INVOCATION 一節；神諭的 pipefail 探針在執行時觀察它的效果。
+FL_STARTUP_KEYS = tuple(k for k in ENV_TRACE_KEYS if k != "BASH_XTRACEFD")
+# R41 第 19 列：管線接到了 neutralise.py、只是過濾器前多了直譯器選項（`python3 -u`）或路徑不是字面——R1 原本的訊息說「沒有經
+# neutralise.py」，誤導。只換訊息，判定不變。
+FL_NEUT_NEAR_RE = re.compile(r"\|&?\s*python3\b[^|;&]*neutralise\.py")
+_FL_NAME_TOKEN_RE = re.compile(r"[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+|[A-Z]{3,}")
+
+
+def _fl_trusted_var_problems():
+    """R42 的斷言：產生式正規式裡寫出來的每一個變數名，都在該產生式自己的集合裡；每個集合都在 FL_TRUSTED_VARS 裡。
+    模組載入時就檢查、不成立就不跑（selftest 對每張 fixture 各執行一次本 lint，所以這也是 selftest 的一條斷言）。"""
+    probs = []
+    for label, rx, own in (("FL_TEMP_TARGET_RE", FL_TEMP_TARGET_RE, FL_TARGET_VARS),
+                           ("FL_GH_TARGET_RE", FL_GH_TARGET_RE, FL_CHANNEL_VARS), ("FL_GH_RE", FL_GH_RE, FL_CHANNEL_VARS)):
+        probs += ["%s 寫了 `%s`，它不在該產生式的集合裡" % (label, nm) for nm in _FL_NAME_TOKEN_RE.findall(rx.pattern) if nm not in own]
+    for label, own in (("FL_TARGET_VARS", FL_TARGET_VARS), ("FL_GHVALUE_VARS", FL_GHVALUE_VARS),
+                       ("FL_MKTEMP_VARS", FL_MKTEMP_VARS), ("FL_CHANNEL_VARS", FL_CHANNEL_VARS)):
+        probs += ["%s 的 `%s` 不在 FL_TRUSTED_VARS 裡" % (label, nm) for nm in sorted(own - FL_TRUSTED_VARS)]
+    return probs
+
+
+if _fl_trusted_var_problems():
+    sys.exit("lint-ci-log-filter: 文法信任的變數與產生式對不上——" + "；".join(_fl_trusted_var_problems()))
+
+
+class FlatReject(Exception):
+    pass
+
+
+def _fl_word(s, i):
+    """一個詞：由 P（未加引號字面）、S（單引號）、D（雙引號）、V（參數）、M（`$(mktemp …)`）片段接成。回傳 (詞, 結尾)。"""
+    pieces, st = [], i
+    while i < len(s):
+        c = s[i]
+        if c in " \t\n;&|<>()":
+            break
+        if c == "'":
+            j = s.find("'", i + 1)
+            if j < 0:
+                raise FlatReject("單引號沒收尾")
+            pieces.append(("S", s[i + 1:j]))
+            i = j + 1
+        elif c == '"':
+            parts, j = [], i + 1
+            while True:
+                if j >= len(s):
+                    raise FlatReject("雙引號沒收尾")
+                d = s[j]
+                if d == '"':
+                    break
+                if d == "\\":
+                    parts.append(("T", s[j:j + 2]))
+                    j += 2
+                    continue
+                if d == "`":
+                    raise FlatReject("雙引號裡的反引號（命令替換）")
+                if d == "$":
+                    m = FL_VAR_RE.match(s, j)
+                    if not m:
+                        raise FlatReject("雙引號裡的 `%s`——文法只收 `$NAME`、`${NAME}`、`${NAME:-字面}`、`$?`" % s[j:j + 3])
+                    parts.append(("V", m.group(1) or m.group(2) or "?", m.group(3)))
+                    j = m.end()
+                    continue
+                parts.append(("T", d))
+                j += 1
+            pieces.append(("D", parts))
+            i = j + 1
+        elif c == "$":
+            m = FL_MKTEMP_RE.match(s, i)
+            if m and len(pieces) == 1 and pieces[0][0] == "P" and FL_ASSIGN_RE.fullmatch(pieces[0][1]):
+                pieces.append(("M", m.group(1).split()))
+                i = m.end()
+                continue
+            m = FL_VAR_RE.match(s, i)
+            if not m:
+                raise FlatReject("`%s`——文法只收 `$NAME`、`${NAME}`、`${NAME:-字面}`、`$?`、`NAME=$(mktemp …)`" % s[i:i + 3])
+            pieces.append(("V", m.group(1) or m.group(2) or "?", m.group(3)))
+            i = m.end()
+        else:
+            m = FL_PLAIN_RE.match(s, i)
+            if not m:
+                raise FlatReject("字元 %r 不在文法裡（反斜線、反引號、`!`、非 ASCII 字元…）" % c)
+            pieces.append(("P", m.group(0)))
+            i = m.end()
+    if not pieces:
+        raise FlatReject("`%s` 不在文法裡" % s[i:i + 2])
+    return {"pieces": pieces, "raw": s[st:i], "s": st}, i
+
+
+def _fl_plain(w):
+    """整個詞只有一段未加引號的字面時回傳它，否則 None。"""
+    return w["pieces"][0][1] if len(w["pieces"]) == 1 and w["pieces"][0][0] == "P" else None
+
+
+def fl_tokens(s):
+    """run 文字 → 詞元串列：('NL',)、('OP', op)、('R', op, 目標詞或 None)、('W', 詞)。註解只收 `#` 在詞首（bash 同）。"""
+    m = re.search(r"[\x00-\x08\x0b-\x1f\x7f]", s)
+    if m:
+        raise FlatReject("控制字元 %r（引號裡也不收）" % m.group(0))
+    toks, i, n = [], 0, len(s)
+    while i < n:
+        c = s[i]
+        if c in " \t":
+            i += 1
+            continue
+        if c == "\n":
+            toks.append(("NL",))
+            i += 1
+            continue
+        if c == "#":
+            j = s.find("\n", i)
+            i = n if j < 0 else j
+            continue
+        for op in ("&&", "||", "|&", "|", ";"):
+            if s.startswith(op, i):
+                if op == ";" and s.startswith(";;", i):
+                    raise FlatReject("`;;`（case）不在文法裡")
+                toks.append(("OP", op))
+                i += len(op)
+                break
+        else:
+            m = FL_REDIR_AT_RE.match(s, i)
+            if m and FL_REDIR_BAD_RE.match(s, i) and not FL_REDIR_DUP_OK_RE.match(s, i):
+                raise FlatReject("`%s` 不在文法裡（heredoc／here-string、process substitution、`>&N`／`<&N`、`&>`、`>|`、`<>`）"
+                                 % s[i:i + 4].split()[0])
+            if m:
+                r = FL_REDIR_RE.match(s, i)
+                if not r or (r.group(0) in ("2>&1", ">&2") and i + len(r.group(0)) < n
+                             and s[i + len(r.group(0))] not in " \t\n;|&"):
+                    raise FlatReject("重導向 `%s` 不在文法裡（只收 `2>&1`、`>&2`、`>`、`>>`、`<`、`2>`、`2>>`）" % s[i:i + 4].split()[0])
+                op = r.group(0)
+                i = r.end()
+                if op in ("2>&1", ">&2"):
+                    toks.append(("R", op, None))
+                    continue
+                while i < n and s[i] in " \t":
+                    i += 1
+                if i >= n or s[i] in "\n;&|<>()#":
+                    raise FlatReject("重導向 `%s` 沒有目標" % op)
+                w, i = _fl_word(s, i)
+                toks.append(("R", op, w))
+                continue
+            if c in "()&`\\!":
+                raise FlatReject({"(": "`(`（子殼層、函式、陣列）", ")": "`)`", "&": "`&`（背景執行、`&>`）", "`": "反引號",
+                                  "\\": "未加引號的反斜線（逃脫、續行）", "!": "`!`"}[c] + " 不在文法裡")
+            w, i = _fl_word(s, i)
+            toks.append(("W", w))
+    return toks
+
+
+def _fl_lines(toks):
+    """詞元 → 命令：[(前一個分隔符, [W/R 詞元…])…]。分隔符是 'NL' 或 OP（`&&`／`||`／`|`／`|&`／`;`）。
+    `&&`／`||`／`|`／`|&` 之後的換行是續行（bash 同）；運算子前面一定要有命令。"""
+    cmds, cur, sep, i = [], [], "NL", 0
+    while i < len(toks):
+        t = toks[i]
+        if t[0] == "NL":
+            if cur:
+                cmds.append((sep, cur))
+                cur = []
+            sep = "NL"
+            i += 1
+            continue
+        if t[0] == "OP":
+            if not cur:
+                raise FlatReject("運算子 `%s` 前面沒有命令" % t[1])
+            cmds.append((sep, cur))
+            cur, sep = [], t[1]
+            i += 1
+            if t[1] in ("&&", "||", "|", "|&"):
+                while i < len(toks) and toks[i][0] == "NL":
+                    i += 1
+                if i >= len(toks):
+                    raise FlatReject("運算子 `%s` 後面沒有命令" % t[1])
+            continue
+        cur.append(t)
+        i += 1
+    if cur:
+        cmds.append((sep, cur))
+    return cmds
+
+
+def _fl_lit(w, allow_vars=()):
+    """GITHUB_ENV 寫入的值：未加引號字面（不含 glob、大括號、`~`）、單引號、雙引號（只准 `allow_vars` 裡的變數）。"""
+    for p in w["pieces"]:
+        if p[0] == "P" and re.search(r"[*?\[\]{}~]", p[1]):
+            return False
+        if p[0] in ("V", "M"):
+            return False
+        if p[0] == "D" and any(q[0] == "V" and (q[1] not in allow_vars or q[2] is not None) for q in p[1]):
+            return False
+    return True
+
+
+def _fl_target_ok(w):
+    raw = w["raw"]
+    if raw in ("/dev/null", "/dev/stdout", "/dev/stderr"):
+        return True
+    m = FL_TEMP_TARGET_RE.fullmatch(raw)
+    if m:
+        return ".." not in m.group(1).split("/")
+    return FL_REL_TARGET_RE.fullmatch(raw) is not None and ".." not in raw.split("/")
+
+
+def _fl_command(words, redirs, ctx, pos=("NL", "NL")):
+    """一個命令：指派、trap … EXIT、GITHUB_ENV 的字面寫入、或簡單命令。`ctx`：mktemp（到這一行為止由 mktemp 指派、之後沒再改過的
+    變數）、filtered（是不是靠管線過濾的群組）、trap（是不是在 trap 動作裡）。`pos`：(前一個分隔符, 後一個分隔符)。"""
+    w0 = words[0] if words else None
+    p0 = _fl_plain(w0) if w0 else None
+    # 指派 `NAME=值`（沒有前綴指派 `X=1 cmd`、沒有陣列、`+=`）
+    if w0 is not None and w0["pieces"][0][0] == "P" and FL_ASSIGN_RE.match(w0["pieces"][0][1]):
+        if len(words) > 1 or redirs:
+            raise FlatReject("指派後面還有東西（`X=1 cmd` 這類前綴指派、陣列）不在文法裡：`%s`" % w0["raw"][:40])
+        name = FL_ASSIGN_RE.match(w0["pieces"][0][1]).group(1)
+        if FL_GH_RE.search(w0["raw"]) or name in FL_TRUSTED_VARS:
+            raise FlatReject("指派 `%s`：`$GITHUB_ENV`／`$GITHUB_PATH` 與文法信任的 runner 變數（%s）在 run 裡不得指派或當成值"
+                             % (w0["raw"][:40], "、".join(sorted(FL_TRUSTED_VARS - FL_CHANNEL_VARS))))
+        ctx["mktemp"].discard(name)
+        if any(p[0] == "M" for p in w0["pieces"]):
+            if len(w0["pieces"]) != 2 or w0["pieces"][0][1] != name + "=":
+                raise FlatReject("`$(mktemp …)` 只能是整個指派的值")
+            # 只有「一定在目前的 shell 執行」的指派才算數：前面是換行或 `;`（不在 `&&`／`||` 右邊），後面不接管線（不在子殼層）
+            if pos[0] in ("NL", ";") and pos[1] not in ("|", "|&"):
+                ctx["mktemp"].add(name)
+        return
+    if w0 is None:
+        raise FlatReject("只有重導向、沒有命令")
+    if p0 is None or not FL_NAME_RE.fullmatch(p0):
+        raise FlatReject("命令名不是純字面：`%s`" % w0["raw"][:40])
+    args = words[1:]
+    # `printf -v NAME` 會指派變數：格式參數必須是字面、不以 `-` 開頭。這一條在 GITHUB_ENV 的產生式**之前**檢查——原型放在它之後，
+    # `printf -v RUNNER_TEMP … >> "$GITHUB_ENV"` 的參數全是字面，於是繞過了信任變數不得指派的規則（`bypass-r42-flat-ghwrite-printf-v`）。
+    if p0 == "printf" and (not args or not _fl_lit(args[0]) or args[0]["raw"].lstrip("'\"").startswith("-")):
+        raise FlatReject("`printf` 的第一個參數（格式）必須是字面、不以 `-` 開頭（`printf -v NAME` 會指派變數）")
+    # GITHUB_ENV／GITHUB_PATH：唯一允許的寫入形狀是 echo／printf 全字面參數 `>>` 寫進它本身
+    gh_targets = [r for r in redirs if r[2] is not None and FL_GH_RE.search(r[2]["raw"])]
+    if gh_targets and all(r[1] == "<" and FL_GH_TARGET_RE.fullmatch(r[2]["raw"]) for r in gh_targets) \
+            and not any(FL_GH_RE.search(w["raw"]) for w in words):
+        gh_targets = []                          # 唯讀：shell 以唯讀開檔接到 fd 0（`grep -q X < "$GITHUB_ENV"`）
+        redirs = [r for r in redirs if not (r[2] is not None and FL_GH_RE.search(r[2]["raw"]))]
+    if gh_targets:
+        if not (p0 in ("echo", "printf") and len(redirs) == 1 and redirs[0][1] == ">>"
+                and FL_GH_TARGET_RE.fullmatch(redirs[0][2]["raw"])
+                and all(_fl_lit(a, FL_GHVALUE_VARS) and not FL_GH_RE.search(a["raw"]) for a in args)):
+            raise FlatReject("提到 `$GITHUB_ENV`／`$GITHUB_PATH` 的地方只收一種形狀：`echo`／`printf` 的參數全是字面"
+                             "（雙引號裡只准 %s），`>> \"$GITHUB_ENV\"`" % "、".join("`$%s`" % v for v in sorted(FL_GHVALUE_VARS)))
+        return
+    for w in words:
+        if FL_GH_RE.search(w["raw"]):
+            raise FlatReject("提到 `$GITHUB_ENV`／`$GITHUB_PATH` 的地方只收一種形狀：`echo`／`printf` 的參數全是字面，"
+                             "`>> \"$GITHUB_ENV\"`；唯讀寫成 `< \"$GITHUB_ENV\"`（當參數傳給程式、複製、別名都不收）")
+    for r in redirs:
+        if r[2] is not None and FL_GH_RE.search(r[2]["raw"]):
+            raise FlatReject("提到 `$GITHUB_ENV`／`$GITHUB_PATH`")
+        if ctx["filtered"] and r[2] is not None and not _fl_target_ok(r[2]):
+            raise FlatReject("重導向目標 `%s` 不在文法裡（群組裡只收 `/dev/null`、相對路徑、`\"$RUNNER_TEMP/…\"`）" % r[2]["raw"][:40])
+    if p0 == "trap":
+        if redirs or len(args) != 2 or _fl_plain(args[1]) not in FL_SIGNALS:
+            raise FlatReject("`trap` 只收 `trap <動作> EXIT`（或 `0`）；DEBUG／ERR／RETURN、其他訊號、選項都不收")
+        act = args[0]
+        if len(act["pieces"]) != 1:
+            raise FlatReject("trap 的動作要是單一個單引號字串、雙引號字串或命令名")
+        kind, body = act["pieces"][0][0], act["pieces"][0][1]
+        if kind == "P":
+            if not FL_NAME_RE.fullmatch(body) or body in FL_BUILTINS or body in FL_KEYWORDS:
+                raise FlatReject("trap 的動作 `%s` 不是外部命令名" % body)
+            return
+        if kind == "D":
+            text = []
+            for q in body:
+                if q[0] == "V":
+                    if q[1] not in ctx["mktemp"] or q[2] is not None:
+                        raise FlatReject("雙引號 trap 動作裡的 `$%s`：設 trap 時就展開、執行時當成程式碼再剖析一次——"
+                                         "只收這個 body 裡由 `NAME=$(mktemp …)` 指派的變數" % q[1])
+                    text.append("/tmp/tmp.x")
+                else:
+                    t_ = q[1]
+                    text.append(t_[1:] if t_.startswith("\\") and t_[1:] in ('"', "\\", "$", "`") else
+                                ("" if t_ == "\\\n" else t_))
+            body = "".join(text)
+        # 動作是離開時才執行的程式碼：它裡面的指派（含 `NAME=$(mktemp …)`）不影響設 trap 之後這個 body 的登記——用自己的一份。
+        # 原型與外層共用同一個集合，單引號動作裡的 `tmp=$(mktemp -d)` 因此讓下一個雙引號 trap 展開了 PR 文字
+        # （`bypass-r42-trap-action-registers-mktemp`）。
+        _fl_body(body, dict(ctx, trap=True, mktemp=set(ctx["mktemp"])))
+        return
+    if p0 == "exit" and ctx.get("trap"):
+        raise FlatReject("trap 動作裡的 `exit`——EXIT trap 裡的 `exit N` 會蓋掉整個 step 的退出碼")
+    if p0 in FL_BUILTINS or p0 in FL_KEYWORDS:
+        if p0 not in FL_INERT:
+            raise FlatReject("`%s` 是 bash 的 builtin／保留字——文法只收外部命令與 echo、printf、test、[、true、false、:、exit"
+                             "（`set` 只能當群組前的前綴）" % p0)
+
+
+def _fl_body(text, ctx):
+    cmds = _fl_lines(fl_tokens(text))
+    for n_, (sep, items) in enumerate(cmds):
+        words = [t[1] for t in items if t[0] == "W"]
+        redirs = [t for t in items if t[0] == "R"]
+        _fl_command(words, redirs, ctx, (sep, cmds[n_ + 1][0] if n_ + 1 < len(cmds) else "NL"))
+
+
+def _fl_split_prefix(cmds):
+    """開頭的 `set` 前綴行（只收 `_set_prefix_line` 的白名單，每個詞都是純字面）。回傳 (前綴數, pipefail 有沒有開)。"""
+    k, pf = 0, False
+    while k < len(cmds):
+        sep, items = cmds[k]
+        if sep not in ("NL", ";") or not items or items[0][0] != "W" or _fl_plain(items[0][1]) != "set":
+            break
+        toks = [_fl_plain(t[1]) if t[0] == "W" else None for t in items]
+        if None in toks or not _set_prefix_line(toks):
+            raise FlatReject("`set` 前綴只收 `-e`／`-u`／`-E`／`-o pipefail|errexit|nounset|errtrace`（每個詞都是字面）")
+        nxt = cmds[k + 1][0] if k + 1 < len(cmds) else "NL"
+        if nxt not in ("NL", ";"):
+            raise FlatReject("`set` 前綴後面接了 `%s`" % nxt)
+        pf = pf or "pipefail" in toks
+        k += 1
+    return k, pf
+
+
+def flat_filtered(text):
+    """靠管線過濾的 step：`set` 前綴* `{` BODY `}` (`2>&1 |` | `|&`) `python3 <路徑>/neutralise.py` [`;`]。回傳 pipefail 前綴有沒有開。"""
+    toks = fl_tokens(text)
+    cmds = _fl_lines(toks)
+    k, pf = _fl_split_prefix(cmds)
+    if k >= len(cmds):
+        raise FlatReject("run 區塊只有 `set` 前綴，沒有群組")
+    first = cmds[k][1][0]
+    if not (first[0] == "W" and _fl_plain(first[1]) == "{"):
+        raise FlatReject("`set` 前綴之後的第一個詞必須是群組的 `{`，實際是 `%s`" % (first[1]["raw"] if first[0] == "W" else first[1]))
+    # 在原始詞元串上從 `{` 往後走，按 bash 的規則找命令位置上（`;`／換行之後）的第一個 `}`
+    idx = [i for i, t in enumerate(toks) if t[0] == "W" and t[1] is first[1]][0]
+    body_toks, j, at_cmd, close = [], idx + 1, True, None
+    while j < len(toks):
+        t = toks[j]
+        if t[0] == "W" and at_cmd and _fl_plain(t[1]) == "}" and (not body_toks or body_toks[-1][0] == "NL"
+                                                                  or body_toks[-1] == ("OP", ";")):
+            close = j
+            break
+        body_toks.append(t)
+        at_cmd = t[0] == "NL" or t[0] == "OP"
+        j += 1
+    if close is None:
+        raise FlatReject("群組沒有收尾（`}` 要在 `;` 或換行之後）")
+    ctx = {"mktemp": set(), "filtered": True}
+    cmds = _fl_lines(body_toks)
+    if not cmds:
+        raise FlatReject("群組是空的（bash 對 `{ }` 報語法錯誤）")
+    for n_, (sep, items) in enumerate(cmds):
+        words = [t[1] for t in items if t[0] == "W"]
+        if words and _fl_plain(words[0]) in ("{", "}"):
+            raise FlatReject("群組裡的 `%s`（巢狀群組）不在文法裡" % _fl_plain(words[0]))
+        _fl_command(words, [t for t in items if t[0] == "R"], ctx, (sep, cmds[n_ + 1][0] if n_ + 1 < len(cmds) else "NL"))
+    tail = toks[close + 1:]
+    while tail and tail[-1][0] == "NL":
+        tail = tail[:-1]
+    if tail[-1:] == [("OP", ";")]:
+        tail = tail[:-1]
+    shape = [t for t in tail if t[0] != "NL"]
+    ok = False
+    if len(shape) == 4 and shape[0] == ("R", "2>&1", None) and shape[1] == ("OP", "|"):
+        py, path = shape[2], shape[3]
+        ok = True
+    elif len(shape) == 3 and shape[0] == ("OP", "|&"):
+        py, path = shape[1], shape[2]
+        ok = True
+    if ok:
+        ok = (py[0] == "W" and _fl_plain(py[1]) == "python3" and path[0] == "W" and _fl_plain(path[1]) is not None
+              and re.fullmatch(r"[A-Za-z0-9_./-]*neutralise\.py", _fl_plain(path[1])) is not None)
+    # 換行只准出現在 `|`／`|&` 之後（_fl_lines 的續行規則）；`}` 與 `2>&1` 之間、python3 與路徑之間不得換行
+    nl_pos = [i for i, t in enumerate(tail) if t[0] == "NL"]
+    if ok and nl_pos:
+        pipe_at = next(i for i, t in enumerate(tail) if t[0] == "OP")
+        ok = all(p == pipe_at + 1 + q for q, p in enumerate(nl_pos))
+    if not ok:
+        raise FlatReject("群組的 `}` 之後必須恰好是 `2>&1 | python3 <路徑>/neutralise.py`（或 `|& python3 …`），之後只准 `;`、註解、空行")
+    return pf
+
+
+def flat_declared(text):
+    """宣告了 `# LOG-FILTER:` 而觸發了的 step：`set` 前綴* BODY。回傳 (有管線, pipefail 前綴有沒有開)。"""
+    toks = fl_tokens(text)
+    cmds = _fl_lines(toks)
+    k, pf = _fl_split_prefix(cmds)
+    ctx = {"mktemp": set(), "filtered": False}
+    piped = any(t == ("OP", "|") or t == ("OP", "|&") for t in toks)
+    for n_ in range(k, len(cmds)):
+        sep, items = cmds[n_]
+        words = [t[1] for t in items if t[0] == "W"]
+        if words and _fl_plain(words[0]) in ("{", "}"):
+            raise FlatReject("群組 `{ …; }` 在宣告不過濾的 step 裡不在文法裡")
+        _fl_command(words, [t for t in items if t[0] == "R"], ctx, (sep, cmds[n_ + 1][0] if n_ + 1 < len(cmds) else "NL"))
+    return piped, pf
+
+
+def flat_trigger(text):
+    """宣告不過濾的 step 什麼時候要落在文法裡：run 文字（含註解、引號、heredoc）裡有 `|` 字元——前面不是 `\\` 的 `||` 除外——
+    或提到 GITHUB_ENV／GITHUB_PATH。依構造成立：bash 寫出來的每一條管線都有一個 `|` 字元，而一對前面沒有反斜線的 `||`
+    在 bash 的詞法裡恆為「或」（兩個字元之間夾不進引號）。誤觸發（引號、註解、heredoc 裡的 `|`）只會多擋，不會漏。
+    這是**寫出來的**管線的觸發條件：執行時才組出來的管線（`eval`、別的程式）不在它的範圍裡。"""
+    rest, i = [], 0
+    while i < len(text):
+        if text.startswith("||", i) and (i == 0 or text[i - 1] != "\\"):
+            i += 2
+            continue
+        rest.append(text[i])
+        i += 1
+    return "|" in "".join(rest) or FL_GH_RE.search(text) is not None
+
+
+def flat_substitute(text, drop_nonliteral=False):
+    """runner 運算式先代換（runner 在 bash 之前代換，所以依構造與 runner 同序）：字面常數換成它的值、GH_SAFE 換成 `0`。
+    非字面的運算式：預設拒絕（值看不到，文法無從判斷 bash 看到什麼）；`drop_nonliteral` 時刪掉——只給 `flat_trigger` 的第二種讀法用。"""
+    out, k = [], 0
+    for a, b, inner in runner_exprs(text):
+        out.append(text[k:a])
+        v = inner.strip()
+        if v.lower() in GH_SAFE_EXPRS:
+            out.append("0")
+        elif GH_LITERAL_RE.fullmatch(inner):
+            if v.startswith("'"):
+                val = v[1:-1].replace("''", "'")
+                if "\n" in val and not drop_nonliteral:
+                    raise FlatReject("字面運算式的值含換行")
+                out.append(val)
+            elif v == "null":
+                out.append("")
+            else:
+                out.append(v)
+        elif not drop_nonliteral:
+            raise FlatReject("非字面的 runner 運算式")
+        k = b
+    out.append(text[k:])
+    return "".join(out)
+
+
+def _fl_declared_trigger(text):
+    """宣告不過濾的 step 的觸發。R4′（連宣告的 step 也擋非字面運算式）不在 R42 的範圍（#33 的 R42 決策紀錄 (f)），所以這裡可能有
+    非字面的運算式：它們的值看不到，觸發改看兩種讀法，任一觸發就要進文法——原文（運算式的字面也算），以及字面代換、非字面刪掉的
+    結果（代換後才相鄰的 `\\` 與 `||` 在 bash 裡是管線）。已知不涵蓋：非字面運算式的**值**本身帶 `|` 或結尾的 `\\`——宣告的 step
+    由作者承諾，其餘規則都信任宣告。"""
+    return flat_trigger(text) or flat_trigger(flat_substitute(text, drop_nonliteral=True))
+
+
+def flat_step_rules(where, name, ok, declared, logical, env_names, env_hit, text, tmpl):
+    """`--strict` 的整條規則鏈（R42）：R1 → R4 → R3 → 信任變數的 env → 觸發了的宣告 step 的啟動 env → 正面文法 → pipefail。
+    第一條不過的印一行 RULE、回傳 1；全過回傳 0。"""
+    if not ok:
+        if any(FL_NEUT_NEAR_RE.search(l) for l in logical):
+            print(where + "step '%s' 的 run 區塊接到了 neutralise.py，但過濾器不是恰好 `python3 <字面路徑>/neutralise.py`"
+                  "（直譯器選項、引號、變數都不收），也沒有 `# LOG-FILTER:` 註解" % name, file=sys.stderr)
+        else:
+            print(where + "step '%s' 的 run 區塊既沒有經 neutralise.py，也沒有 `# LOG-FILTER:` 註解說明為何不過濾" % name,
+                  file=sys.stderr)
+        return 1
+    if not declared and any(not gh_literal(inner) for _a, _b, inner in runner_exprs(text)):
+        print(where + "step '%s' 靠管線過濾，而 run 裡直接寫了 runner 運算式 `${{ … }}`（純字面常數與 GitHub 產生的編號／SHA 除外）——"
+              "runner 在 bash 解析之前代換，值裡的 PR 文字可以收掉引號與群組；改經 step 的 `env:` 傳進來" % name, file=sys.stderr)
+        return 1
+    if not declared and env_hit:
+        print(where + "step '%s' 靠管線過濾，而 env（workflow／job／step）帶了 %s——bash（或過濾器 python3）啟動時就讀它們："
+              "可以開 xtrace、在 run 之前執行別的程式碼，或把值印在管線右端的 stderr，那些輸出不經過管線" % (name, "、".join(
+                  "`%s`" % k if k != "?" else "看不到鍵名的運算式" for k in env_hit)), file=sys.stderr)
+        return 1
+    triggered = not declared or _fl_declared_trigger(text)
+    trusted = sorted(set(env_names) & FL_TRUSTED_VARS)
+    if trusted and triggered:
+        print(where + "[--strict] step '%s' 的 env（workflow／job／step）設了 %s——文法信任這些變數是 runner 給的值"
+              "（`$GITHUB_ENV` 寫入的值、重導向目標、mktemp 的目錄），不得由 workflow 覆寫" % (name, "、".join("`%s`" % k for k in trusted)),
+              file=sys.stderr)
+        return 1
+    if not triggered:
+        return 0
+    if declared:
+        startup = [k for k in env_names if k in FL_STARTUP_KEYS or k == "?"]
+        if startup:
+            print(where + "[--strict] step '%s' 有寫出來的管線或提到 `$GITHUB_ENV`／`$GITHUB_PATH`，而 env 帶了 %s——bash 啟動時就讀它們，"
+                  "可以在 run 之前關掉 pipefail" % (name, "、".join("`%s`" % k if k != "?" else "看不到鍵名的運算式" for k in startup)),
+                  file=sys.stderr)
+            return 1
+    try:
+        sub = flat_substitute(text)
+        if declared:
+            piped, pf = flat_declared(sub)
+        else:
+            piped, pf = True, flat_filtered(sub)
+    except FlatReject as e:
+        if not declared:
+            print(where + "[--strict] step '%s' 靠管線過濾，而 run 區塊%s：%s——文法只收 `set` 前綴＋一個群組 "
+                  "`{ …; } 2>&1 | python3 <路徑>/neutralise.py`；群組裡只收外部命令、echo／printf／test／[／true／false／:／exit、"
+                  "`NAME=值`、`trap <動作> EXIT` 與點名的重導向。其餘寫進腳本檔再呼叫" % (name, FL_GRAMMAR_TAG, e), file=sys.stderr)
+        else:
+            print(where + "[--strict] step '%s' 有寫出來的管線或提到 `$GITHUB_ENV`／`$GITHUB_PATH`，而 run 區塊%s：%s——"
+                  "文法外的構造（控制流程、builtin、命令替換…）可能關掉 pipefail 或改寫 `$GITHUB_ENV`，本 lint 不模擬它們；"
+                  "寫進腳本檔再呼叫，或拿掉管線" % (name, FL_GRAMMAR_TAG, e), file=sys.stderr)
+        return 1
+    if piped and not (pf or (tmpl is not None and tmpl["pipefail"])):
+        # 訊息保留 oracle.py 的 PIPEFAIL_RULE_MSG（「卻沒有跑在 pipefail 之下」）：神諭以它認出只因退出碼遮蔽而紅的列。
+        print(where + "[--strict] step '%s' 有管線，卻沒有跑在 pipefail 之下（shell 不是關鍵字 `bash`、樣板也沒帶 `-o pipefail`，"
+              "run 開頭的 `set` 前綴也沒開）——GitHub 預設 `bash -e {0}`，管線前段的失敗會被後段的 rc 蓋掉" % name, file=sys.stderr)
+        return 1
+    return 0
+
+
 REQUIRE_RUN_STEPS = "--require-run-steps" in sys.argv
 # **`--strict`**（#33 verify R35；R37 按 R36 第 3、4、13 列改寫）：CI 與 run.sh 對**真的 workflow** 用這個模式。
 # 比預設模式多四條（封閉列舉，只有這四條）：
@@ -3252,17 +3809,24 @@ for path in [a for a in sys.argv[1:] if a not in FLAGS]:
         via_pipe = any(PIPED_RE.search(l) for l in logical)
         declared = any(LOGFILTER_RE.match(l) for l in decl_lines)
         ok = via_pipe or declared
+        # env 帶進的 shell 設定（R36 第 8 列）：workflow／job（含 container.env）／step 三層；`?` ＝值是運算式、鍵名看不到
+        env_names = wf_env + (job["env"] if job else []) + (
+            _env_names(s["keys"]["env"], s["kindent"]) if "env" in s["keys"] else [])
+        env_hit = [k for k in env_names if k in ENV_TRACE_KEYS or k == "?" or ENV_EXPR_RE.fullmatch(k)]
+        where = "%s:%d: RULE: " % (path, s["start"] + 1)
+        if STRICT:
+            # R42：`--strict` 的整條規則鏈是正面文法（`flat_step_rules`）。下面的 `_analyse`（fd 流向、pipefail 模擬）只剩預設模式
+            # 在跑；群組規則（`strict_group_violation`）與 `STRICT` 開頭的兩個分支從這裡起走不到。
+            if flat_step_rules(where, s["name"], ok, declared, logical, env_names, env_hit,
+                               "\n".join(l for l in scan_in if l is not None), tmpl):
+                rc = 1
+            continue
         try:
             an = _analyse(rl_code, rl_src)
             group_why = strict_group_violation(logical, run_code, _aligned_sources(run_code, scan_in)) if STRICT else None
         except (IndexError, KeyError, ValueError, RecursionError) as e:   # 剖析器自己的錯：fail-closed，不讓 traceback 蓋掉其他檔
             reject(r, "規則層剖析這個 run 區塊時出錯（%s: %s）——不解析就不放行" % (type(e).__name__, e))
             continue
-        # env 帶進的 shell 設定（R36 第 8 列）：workflow／job（含 container.env）／step 三層；`?` ＝值是運算式、鍵名看不到
-        env_names = wf_env + (job["env"] if job else []) + (
-            _env_names(s["keys"]["env"], s["kindent"]) if "env" in s["keys"] else [])
-        env_hit = [k for k in env_names if k in ENV_TRACE_KEYS or k == "?" or ENV_EXPR_RE.fullmatch(k)]
-        where = "%s:%d: RULE: " % (path, s["start"] + 1)
         if not ok:
             print(where + "step '%s' 的 run 區塊既沒有經 neutralise.py，也沒有 `# LOG-FILTER:` 註解說明為何不過濾"
                   % s["name"], file=sys.stderr)
