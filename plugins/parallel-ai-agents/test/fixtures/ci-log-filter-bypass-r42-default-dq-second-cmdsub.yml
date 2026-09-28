@@ -1,0 +1,20 @@
+# #33 verify R41 logic F6（R37 起就有）：雙引號裡先有一個**跨行**的命令替換（`dq_ret` 把它當 code 掃、收尾時回到雙引號），
+# 同一個雙引號字串後面的第二個 `$(…)` 被 `_cmdsub_end_case` 整段挖空——裡面的 `>&2` 沒有人看，`2>&1` 又在展開之後才生效，
+# 命令替換的 stderr 直接進 log。bash 實跑印出 `::error::` 那一行；寫成單行的對照組（R41 `h1c`）兩種模式都擋。
+# R42 plan D8：不去模型化，回到雙引號之後同一個字串裡再出現 `$(` 或反引號一律不解析。逐字取自 logic p/h1。預設模式。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$(
+          true
+          )$(echo "::error::$PR_TITLE" >&2)" 2>&1 | python3 scripts/neutralise.py

@@ -97,8 +97,8 @@ if [ "${1:-}" = "--selftest" ]; then
   done
   # R24 regression F9：門檻寫成 `>=` 而實際值更高時，那個差額**沒有網**——刪掉一個 fixture 仍然綠。
   # 三個門檻一律改成**等於實測值**：要加 fixture 就同步改這裡，讓「少了一個」立刻紅。
-  if [ "${n_pass}" -ne 260 ]; then
-    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 260（改動 fixture 請同步改這個數字）" >&2
+  if [ "${n_pass}" -ne 261 ]; then
+    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 261（改動 fixture 請同步改這個數字）" >&2
     fail=1
   fi
   if [ "${n_rule}" -ne 426 ]; then
@@ -106,12 +106,12 @@ if [ "${1:-}" = "--selftest" ]; then
     fail=1
   fi
   if [ "${fail}" -ne 0 ]; then exit 1; fi
-  if [ "${n_parse}" -ne 148 ]; then
-    echo "lint-ci-log-filter selftest FAILED: parse-red 是 ${n_parse} 個，預期恰好 148（先前這一類完全沒有下限）" >&2
+  if [ "${n_parse}" -ne 152 ]; then
+    echo "lint-ci-log-filter selftest FAILED: parse-red 是 ${n_parse} 個，預期恰好 152（先前這一類完全沒有下限）" >&2
     exit 1
   fi
-  if [ "${n_msg}" -ne 34 ]; then
-    echo "lint-ci-log-filter selftest FAILED: 帶 EXPECT-MSG 的 fixture 是 ${n_msg} 張，預期恰好 34" >&2
+  if [ "${n_msg}" -ne 37 ]; then
+    echo "lint-ci-log-filter selftest FAILED: 帶 EXPECT-MSG 的 fixture 是 ${n_msg} 張，預期恰好 37" >&2
     exit 1
   fi
   echo "lint-ci-log-filter selftest ok: ${n_pass} 正向通過、${n_rule} 條規則紅、${n_parse} 條解析紅、${n_msg} 張訊息斷言（來源逐一比對相符）；${cg}"
@@ -803,6 +803,10 @@ def _param_end(line, i):
                 return None
             j = e; continue
         if line.startswith("${", j):
+            # 巢狀的 `${` 與最外層同一條（#33 verify R41 requirements F1）：先前只查最外層，`${X:-${ set -x; }}` 被讀成
+            # 一般的參數展開，bash 5.3 卻在目前的 shell 開了 xtrace（`parse-r42-default-nested-funsub`）。
+            if j + 2 >= n or line[j + 2] in " \t|":
+                return None
             depth += 1; j += 2; continue
         j += 1
         if c == "}":
@@ -934,6 +938,10 @@ def shell_scan(lines):
     # `dq_ret`：從雙引號進入、同一行收不掉的命令替換（堆疊）。元素是進入後的 `csub + cpar`（`$(…)`：括號總深度
     # 跌破它＝這個命令替換收尾）或 0（反引號：`bt` 回到 False＝收尾）；收尾時回到雙引號（R37，R36 第 6 列）。
     dq_ret = []
+    # `dq_back`：目前這個雙引號字串是從 `dq_ret` 回來的（前面有過跨行的命令替換）。這種字串裡再出現 `$(`／反引號一律
+    # 不解析（R42 plan D8，#33 verify R41 logic F6）：同一行收得掉的會被 `_cmdsub_end_case` 整段挖空，而那段內容沒有別的
+    # 分析看得到（單行寫法由整句剖析看見，跨行之後就沒有了），`$(echo "::error::…" >&2)` 因此放行。雙引號收尾時清除。
+    dq_back = False
     # `cases`：命令替換裡開著的 case（堆疊），元素是 [所在的括號深度 `csub + cpar`, 階段 "pat"／"cmd"]（R37，見主迴圈）。
     cases = []
     # **裸括號（不屬於 `$(`／`((` 任何一邊）的未配對深度**（R37，#33 verify R36 第 15 列）：`( cmd` 沒有對應的
@@ -997,7 +1005,8 @@ def shell_scan(lines):
         cmd_pos = True
         after_compound = False               # 換行本身就是分隔字元：之後的保留字照一般命令位置處理
         quote0, prev0 = quote, prev_sig      # 邏輯行起點的狀態：摺疊後要從頭重掃
-        lex0 = (arith, arith_par, brk, csub, cpar, cond, bt, tuple(dq_ret), tuple(map(tuple, cases)), bt_at, arith_cmd)
+        lex0 = (arith, arith_par, brk, csub, cpar, cond, bt, tuple(dq_ret), tuple(map(tuple, cases)), bt_at, arith_cmd,
+                dq_back)
         bare_par0 = bare_par                 # 裸括號深度也要快照——續行重掃前這一行已經記的深度要還原
         pending0 = list(pending)             # R28 D6（Codex #2）：快照漏了 pending，重掃會把同一個 heredoc 排兩次
         while i < n:
@@ -1038,6 +1047,11 @@ def shell_scan(lines):
                     # 記下進入點（`dq_ret`），這個命令替換收尾時回到雙引號。heredoc 因此由一般的 `<<` 分支登記（R35 的
                     # 「暫時離開雙引號、登記完就回來」只修到登記那一點：heredoc 之後命令替換裡的 `"…"` 仍被當外層的收尾與開頭，
                     # `bypass-r37c-dq-cmdsub-heredoc-then-quoted-code`）。
+                    if dq_back:
+                        # 見 `dq_back` 的宣告處（R42 plan D8）。break 之後 quote 仍是 `"`，訊息多半會被結尾的一般性檢查覆寫成
+                        # 「引號到 run 區塊結尾都沒收」——判定仍是 PARSE-red（`bypass-r42-default-dq-second-cmdsub`）。
+                        unparsed = "雙引號裡跨行的命令替換之後，同一個字串又開了命令替換——本 lint 不解析"
+                        break
                     e = _backtick_end(line, i) if ch == "`" else _cmdsub_end_case(line, i)   # 雙引號裡：認得 case（合併 r37b×r37c）
                     if e is not None:
                         code.append(" " * (e - i)); i = e; prev_sig = "x"; continue
@@ -1064,7 +1078,7 @@ def shell_scan(lines):
                     continue
                 code.append('"' if ch == '"' else " ")
                 if ch == '"':
-                    quote = None
+                    quote = None; dq_back = False
                 i += 1; prev_sig = ch; continue
             if ch == "\\":
                 if i + 1 < n:
@@ -1085,7 +1099,7 @@ def shell_scan(lines):
                     quote, prev_sig = quote0, prev0
                     arith, arith_par, brk, csub, cpar, cond, bt = lex0[:7]
                     dq_ret, cases = list(lex0[7]), [list(c) for c in lex0[8]]
-                    bt_at, arith_cmd = lex0[9], lex0[10]
+                    bt_at, arith_cmd, dq_back = lex0[9], lex0[10], lex0[11]
                     bare_par = bare_par0
                     cmd_pos = True           # 邏輯行起點永遠是命令位置，重掃回到起點也一樣
                     after_compound = False
@@ -1241,7 +1255,7 @@ def shell_scan(lines):
                     bt_at = nest()
             if dq_ret and ((ch == "`" and not bt) if dq_ret[-1] == 0 else (ch == ")" and csub + cpar < dq_ret[-1])):
                 # 從雙引號進來的命令替換在這裡收尾（見雙引號分支）：回到雙引號。
-                dq_ret.pop(); quote = '"'
+                dq_ret.pop(); quote = '"'; dq_back = True
                 cmd_pos = False          # 回到雙引號＝回到同一個詞的中間，不是命令位置（合併 r37c×r37d）
                 code.append(ch); i += 1; prev_sig = ch; continue
             if ch == "#" and (prev_sig is None or prev_sig in SHELL_WORD_BREAK):

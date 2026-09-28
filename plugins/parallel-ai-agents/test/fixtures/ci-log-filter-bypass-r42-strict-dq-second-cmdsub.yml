@@ -1,7 +1,9 @@
 # #33 verify R41 第 15 列：雙引號裡跨行命令替換之後的第二個命令替換，45dee04 的掃描整段挖空，看不到它把 PR 文字寫到
 # `/proc/$$/fd/2`（繞過過濾器；`/proc` 路徑是 Linux 推論）。逐字取自 R41 logic lens 的 p/h4。45dee04 的 `--strict` 放行。
+# R42 WP5 起詞法層先擋：從跨行命令替換回到雙引號之後，同一個字串再出現 `$(` 一律不解析（PARSE，正面文法輪不到）。
+# 預設模式的對應版本是 `bypass-r42-default-dq-second-cmdsub`。
 # LINT-ARGS: --strict
-# EXPECT: rule-red
+# EXPECT: parse-red
 name: t
 on: pull_request
 jobs:

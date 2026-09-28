@@ -1,0 +1,20 @@
+# #33 R42 plan WP5：`bypass-r39-strict-group-proc-pid-fd1` 的預設模式雙胞胎。`--strict` 在 R42 改走正面文法、不再經 `_Sh`，
+# 群組豁免依目標區分（`_group_safe_target`，R39）這條只剩預設模式走得到。群組跑在子殼層，但 `$$` 仍是外層 shell 的 PID——
+# 在 Linux 上 `/proc/$$/fd/1` 就是外層原本的 stdout（step log）；群組豁免只涵蓋寫到群組自己 fd 1／2 的目標。預設模式。
+# EXPECT: rule-red
+# EXPECT-MSG: 寫到 /dev 或 /proc 底下
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: group writes to proc-pid-fd1
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            echo "$PR_TITLE" > /proc/$$/fd/1
+            echo "$PR_TITLE"
+          } 2>&1 | python3 scripts/neutralise.py
