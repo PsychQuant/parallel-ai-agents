@@ -557,12 +557,14 @@ def main():
     # 兩條上限：(1) 工具內守「EXPECTED_SURVIVE ≤ 本次掃描突變體數的 10%」——修完之後存活的只剩預期的，
     # 「≤ 存活的 1/3」在工具裡會退化成永遠失敗；(2) 每輪「新增條數 ≤ 該輪存活數的 1/3」是**審查規則**，
     # 對照該輪修法前的 sweep log 在 PR body 檢查（R29：30 存活 → 4 條預期 = 13%）。
-    # 分母是**全集**（R39 更正）：`EXPECTED_SURVIVE` 是全集的清單，前一版除以 `--since` 過濾後的區域——R37 的區域 866 個剛好
-    # 放得下，R39 的區域只有 368 個，46 條全集清單被判「超過 10%」。同一個集合要跟同一個分母比。
-    cap = len(all_ms) // 10
-    if len(EXPECTED_SURVIVE) > cap:
+    # 分子與分母都是**這一次掃描的區域**（R40，#33 verify R39 第 18 列）：R37 以前用全集清單的條數比區域大小（R39 的區域 368 個、46 條
+    # 全集清單被判超過）；R39 改成全集分母，上限從 36 變 108、等於永遠滿足。同一個集合要跟同一個分母比——比的是區域裡落在
+    # EXPECTED_SURVIVE 的突變體數。
+    in_region = sum(1 for mid in results if mid in EXPECTED_SURVIVE)
+    cap = len(results) // 10
+    if in_region > cap:
         rc = 1
-        print("\n✗ EXPECTED_SURVIVE（%d）超過全集突變體數的 10%%（上限 %d）——這個集合在藏東西" % (len(EXPECTED_SURVIVE), cap))
+        print("\n✗ 區域裡落在 EXPECTED_SURVIVE 的突變體（%d）超過區域的 10%%（上限 %d）——這個集合在藏東西" % (in_region, cap))
     if args.json:
         pathlib.Path(args.json).write_text(json.dumps({"results": results, "elapsed_s": elapsed}, ensure_ascii=False, indent=1))
     return rc

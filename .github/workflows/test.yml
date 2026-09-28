@@ -24,11 +24,13 @@ jobs:
       # ── step log 的 PR 可控文字怎麼處理，由 test/lint-ci-log-filter.sh --strict 對**每一個** run step 機械檢查（#33 verify R15）：
       #    經 ../pai-lenses/scripts/neutralise.py（validate.py LineSanitiser 那一份實作），或 `# LOG-FILTER:` 明示不過濾與理由。
       #    --strict 另外要求：靠管線過濾的 step 整個 run 區塊是**一個群組** `{ …; } 2>&1 | python3 …neutralise.py`
-      #    （前面只准 `set -e`／`-u`／`-o pipefail`）——群組外的命令、以及某一段 `2>&1` 生效前的展開期／重導向錯誤
+      #    （前面只准 `set -e`／`-u`／`-E`／`-o pipefail|errexit|nounset|errtrace`）——群組外的命令、以及某一段 `2>&1` 生效前的展開期／重導向錯誤
       #    都不經過濾（#59／#60）；有管線的 step 跑在 pipefail 之下（只有關鍵字 `bash`、樣板自帶 `-o pipefail`，或 run 裡
       #    頂層的 `set -o pipefail`——群組形式就是寫在 `set` 前綴）；shell 只能是 bash（#33 verify R34 → R37）。
       #    兩種模式都要求：靠管線過濾的 step 不得把輸出帶離管線（fd 複製到 2 或另存的 fd、寫到 /dev 或 /proc、開 xtrace／
-      #    verbose），env 也不得帶 SHELLOPTS／BASHOPTS／BASH_ENV／ENV／BASH_XTRACEFD。
+      #    verbose），env 也不得帶 SHELLOPTS／BASHOPTS／BASH_ENV／ENV／BASH_XTRACEFD，`PYTHON*` 的值不得是運算式或非字面；
+      #    run 裡不得直接寫非字面的 `${{ … }}`（字面常數與 GitHub 產生的編號／SHA 除外，改經 `env:`）；不得把非字面的內容寫進
+      #    `$GITHUB_ENV`／`$GITHUB_PATH`；neutralise.py 必須是管線的最後一段（R39、R40）。
       #    要印 `::error::` 的檢查另開一個 `# LOG-FILTER: none` 的 step（放進群組會被中和）。
       #    R14 把這件事寫成散文列舉，R15 四個 lens 各自找到列舉外的 step（shellcheck、lint-*、整個 macOS job）。
       #    過濾器擋的是 `::`/`##[` 偽造 annotation 與跨 step 的 `::add-mask::`；真正的邊界是 `on: pull_request`

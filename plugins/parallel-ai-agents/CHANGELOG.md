@@ -649,7 +649,7 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
   - **run 裡的 PR 可控運算式（第 14 列）**：靠管線過濾的 step，run 裡直接寫 `${{ github.event.* }}`／`${{ github.head_ref }}` ⇒ RULE
     （兩種模式；runner 在 bash 之前代換，可以收掉引號與群組）。產生語料 d 組的 `gen-d-yaml-ghexpr-plain` 因此從放行變成擋（真的注入形狀）。
   - **網（第 12、13 列）**：`shellgen.py --strict` 從六個維度擴成九個（群組外的行 × 位置、群組內容、群組尾巴），54 → 85 檔；用 c53ac22
-    的 lint 跑這三個新維度，神諭抓出 11 條繞過或 STRICT_MISS、5 條誤擋、1 條 pipefail 不可比，全部是 R38 找到的缺陷。形狀普查加 R39-1..3。
+    的 lint 跑這三個新維度，神諭抓出 12 條繞過或 STRICT_MISS、4 條誤擋、1 條 pipefail 不可比（R39 verify 第 14 列更正：原寫 11／5／1，實跑 12／4／1，總數 17 相符），全部是 R38 找到的缺陷。形狀普查加 R39-1..3。
     `EXPECTED_SURVIVE` 47 → 46 是三個變動的淨值：`_scalar` 的 `strip→id` 用一張 EXPECT-MSG fixture 殺掉（移出）；`<module>` 的 `cs = c.strip()` 因那段程式碼搬進新函式 `_logical_lines()`、id 改名後被 opsweep 證明可殺（移出）；pipefail 範圍模型新增的 `new_scope` `±1→±2` 列為等價（加入）；logic lens 對 8 條「無解」存活者找到的 6 個殺法
     做成 fixture（其中 4 張是保守 RULE、列 KNOWN_DISAGREE）。
   - **其他**：TAP 守衛在上一步被跳過時不跑（第 16 列，R38 那次 CI run 裡實際印了不實的 `::error::`）；run.sh 補 `oracle_selfcheck.py` 與產生語料
