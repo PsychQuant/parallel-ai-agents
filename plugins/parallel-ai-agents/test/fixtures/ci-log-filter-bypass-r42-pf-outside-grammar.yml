@@ -7,6 +7,7 @@
 # 模擬器），其餘全部放行。模擬器在 R42 刪除，這四個一起釘住。
 # LINT-ARGS: --strict
 # EXPECT: rule-red
+# EXPECT-EACH-STEP: rule-red
 name: t
 on: pull_request
 jobs:

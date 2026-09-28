@@ -53,7 +53,7 @@ if [ "${1:-}" = "--selftest" ]; then
   #       那個名字會被當成外部命令收下——所以每次 selftest 都拿 PATH 上的 bash 重比一次（`--check-compgen`，只查
   #       「bash 列出的 ⊆ 集合」這個方向：集合多一個名字只會多一個誤擋）。
   shopt -s nullglob
-  fail=0; n_pass=0; n_rule=0; n_parse=0; n_msg=0
+  fail=0; n_pass=0; n_rule=0; n_parse=0; n_msg=0; n_each=0
   if ! cg=$(bash test/lint-ci-log-filter.sh --check-compgen 2>&1); then
     printf 'lint-ci-log-filter selftest FAILED: %s\n' "${cg}" >&2
     fail=1
@@ -99,6 +99,20 @@ if [ "${1:-}" = "--selftest" ]; then
       printf '%s\n' "$out" | head -2 >&2; fail=1; continue
     fi
     if grep -q '^# EXPECT-MSG: ' "$f"; then n_msg=$((n_msg+1)); fi
+    # R42（opsweep `--since 45dee04`）：多 step 的 fixture 只判「整張紅」時，某個守衛被拿掉、放行了其中幾步，只要還有一步被別的
+    # 規則擋下，selftest 照樣綠——`bypass-r42-ghenv`（42 步）與 `bypass-r42-pf-outside-grammar`（36 步）上的 `_fl_command`
+    # 存活都是這個形狀。檔頭寫 `# EXPECT-EACH-STEP: rule-red` 的 fixture，每一個 `- name:` 那一行都要有自己的 `:行號: RULE:`
+    # （lint 把 step 的 RULE 印在 step 的起始行）。
+    if grep -q '^# EXPECT-EACH-STEP: rule-red$' "$f"; then
+      n_each=$((n_each+1))
+      while IFS=: read -r ln _; do
+        case "$out" in *":${ln}: RULE: "*) ;; *) msg_bad="第 ${ln} 行"; break ;; esac
+      done < <(grep -n '^ *- name:' "$f")
+      if [ -n "${msg_bad}" ]; then
+        echo "lint-ci-log-filter selftest FAILED: ${f} 宣告 EXPECT-EACH-STEP，${msg_bad}的 step 沒有自己的 RULE 行" >&2
+        fail=1; continue
+      fi
+    fi
     case "${want}" in
       pass)      n_pass=$((n_pass+1)) ;;
       rule-red)  n_rule=$((n_rule+1)) ;;
@@ -111,8 +125,8 @@ if [ "${1:-}" = "--selftest" ]; then
     echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 263（改動 fixture 請同步改這個數字）" >&2
     fail=1
   fi
-  if [ "${n_rule}" -ne 433 ]; then
-    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 433" >&2
+  if [ "${n_rule}" -ne 434 ]; then
+    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 434" >&2
     fail=1
   fi
   if [ "${fail}" -ne 0 ]; then exit 1; fi
@@ -120,11 +134,15 @@ if [ "${1:-}" = "--selftest" ]; then
     echo "lint-ci-log-filter selftest FAILED: parse-red 是 ${n_parse} 個，預期恰好 153（先前這一類完全沒有下限）" >&2
     exit 1
   fi
-  if [ "${n_msg}" -ne 46 ]; then
-    echo "lint-ci-log-filter selftest FAILED: 帶 EXPECT-MSG 的 fixture 是 ${n_msg} 張，預期恰好 46" >&2
+  if [ "${n_msg}" -ne 47 ]; then
+    echo "lint-ci-log-filter selftest FAILED: 帶 EXPECT-MSG 的 fixture 是 ${n_msg} 張，預期恰好 47" >&2
     exit 1
   fi
-  echo "lint-ci-log-filter selftest ok: ${n_pass} 正向通過、${n_rule} 條規則紅、${n_parse} 條解析紅、${n_msg} 張訊息斷言（來源逐一比對相符）；${cg}"
+  if [ "${n_each}" -ne 2 ]; then
+    echo "lint-ci-log-filter selftest FAILED: 帶 EXPECT-EACH-STEP 的 fixture 是 ${n_each} 張，預期恰好 2" >&2
+    exit 1
+  fi
+  echo "lint-ci-log-filter selftest ok: ${n_pass} 正向通過、${n_rule} 條規則紅、${n_parse} 條解析紅、${n_msg} 張訊息斷言（來源逐一比對相符）、${n_each} 張逐步斷言；${cg}"
   exit 0
 fi
 
@@ -2897,6 +2915,10 @@ def _fl_command(words, redirs, ctx, pos=("NL", "NL")):
         if len(act["pieces"]) != 1:
             raise FlatReject("trap 的動作要是單一個單引號字串、雙引號字串或命令名")
         kind, body = act["pieces"][0][0], act["pieces"][0][1]
+        # 只收三種片段。前一版只寫了 P 與 D 的分支、其餘落到「把 body 當文法剖析」——未加引號的 `trap $X EXIT` 的 body 是**變數名**，
+        # 被當成外部命令收下；bash 卻在離開時把 `$X` 的值當程式碼執行（`bypass-r42-trap-unquoted-var-action`）。
+        if kind not in ("P", "S", "D"):
+            raise FlatReject("trap 的動作是未加引號的參數——設 trap 時展開、離開時把值當程式碼執行")
         if kind == "P":
             if not FL_NAME_RE.fullmatch(body) or body in FL_BUILTINS or body in FL_KEYWORDS:
                 raise FlatReject("trap 的動作 `%s` 不是外部命令名" % body)

@@ -9,6 +9,7 @@
 # 會把這一步建的符號連結留給之後的 step 與之後的執行——`ge-cp` 寫 `/tmp/e` 時寫進一個已刪除的暫存檔，通道外流因此量不到。
 # LINT-ARGS: --strict
 # EXPECT: rule-red
+# EXPECT-EACH-STEP: rule-red
 name: t
 on: pull_request
 jobs:
