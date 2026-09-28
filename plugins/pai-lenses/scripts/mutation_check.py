@@ -1298,8 +1298,8 @@ MUTATIONS += [
 # ── R39（#33 verify R38 第 4、8、11 列）：`_Sh` 的前綴詞、非字面命令名、`$"…"`、pipefail 的範圍 ──────────────
 MUTATIONS += [
     ("lint: 前綴詞的選項不剝（R39，R38 第 4、8 列 → bypass-r39-xtrace-prefix-command-p、-builtin-dashdash…）",
-     '            while k < len(words) and w["code"] in _LEAD_OPTS and words[k]["lit"] in _LEAD_OPTS[w["code"]]:',
-     '            while False:', "lint"),
+     '            while k < len(words) and lead in _LEAD_OPTS and words[k]["lit"] in _LEAD_OPTS[lead]:',
+     '            while False:', "lint"),     # R40 重新對位（前綴詞改用 lead）
     ("lint: `command -v` 也當成執行（R39 → good-r39-command-v-describes-only）",
      '                if words[k]["lit"] in ("-v", "-V"):\n                    return',
      '                if False:\n                    return', "lint"),
@@ -1313,13 +1313,13 @@ MUTATIONS += [
      '        if "pipefail" in lits:\n            self.pf_event(False, ctx)',
      '        if False:\n            self.pf_event(False, ctx)', "lint"),
     ("lint: 非字面命令名的 `-x` 不 fail-closed（R39，R38 第 4 列 → bypass-r39-xtrace-prefix-nonliteral-name）",
-     '        if (any(l is not None and re.fullmatch(r"-[%s]+" % _SET_LETTERS, l) and set(l[1:]) & set("xv") for l in lits)',
-     '        if (False', "lint"),
+     '        if (any(set(l[1:]) & set("xv") for l in bundles)',
+     '        if (False', "lint"),     # R40 重新對位（單字母與合寫形式併成 bundles）
     ("lint: 非字面命令名的 `-o xtrace` 不 fail-closed（R39 → bypass-r39-xtrace-prefix-nonliteral-name-o-xtrace）",
-     '                or ("-o" in lits and any(l in _TRACE_OPTS for l in lits))):',
-     '                or False):', "lint"),
+     '                or (any(l.endswith("o") for l in bundles) and any(l in _TRACE_OPTS for l in lits))):',
+     '                or False):', "lint"),     # R40 重新對位（`-o` 併進合寫形式的判斷）
     ("lint: 非字面命令名的選項字母不限 `set` 的（R39 → good-r39-nonliteral-name-option-not-set-letters）",
-     're.fullmatch(r"-[%s]+" % _SET_LETTERS, l)', 're.fullmatch(r"-[A-Za-z]+", l)', "lint"),
+     're.fullmatch(r"-[%s]*o?" % _SET_LETTERS, l)', 're.fullmatch(r"-[A-Za-z]*o?", l)', "lint"),     # R40 重新對位（合寫 -…o）
     ("lint: `$\"…\"` 的 `$` 當字面（R39，R38 第 4 列 → bypass-r39-xtrace-prefix-dollar-dq、bypass-r39-fd-dollar-dq-target）",
      '        if c == "$" and C[p + 1:p + 2] == \'"\':',
      '        if False:', "lint"),
@@ -1369,6 +1369,15 @@ MUTATIONS += [
      '        elif False and any(not gh_literal(inner) for _a, _b, inner in\n', "lint"),
     ("lint: `set` 前綴行尾的 `;` 不收（R39，R38 第 11 列 → good-r39-strict-set-prefix-semicolon）",
      '    if toks[-1:] == [";"]:\n        toks = toks[:-1]', '    if False:\n        toks = toks[:-1]', "lint"),
+    # R40（#33 verify R39 第 7、10 列）：前綴詞、合寫的 set 選項、bash 5.3 的 `${ cmd; }`。
+    ("lint: 前綴詞一律用挖空後的 code 判（R40 → bypass-r40-lead-builtin-escaped、bypass-r40-pf-quoted-builtin-off）",
+     '            lead = w["lit"] if w["lit"] in _LEAD_BUILTINS else w["code"]', '            lead = w["code"]', "lint"),
+    ("lint: opaque_cmd 不認合寫的 -…o（R40 → bypass-r40-opaque-set-bundled-o）",
+     're.fullmatch(r"-[%s]*o?" % _SET_LETTERS, l) and len(l) > 1', 're.fullmatch(r"-[%s]+" % _SET_LETTERS, l) and len(l) > 1', "lint"),
+    ("lint: bash 5.3 的 ${ cmd; } 照參數展開讀（R40 → parse-r40-bash53-funsub-space）",
+     '    if i + 2 >= len(line) or line[i + 2] in " \\t|":', '    if False:', "lint"),
+    ("lint: bash 5.3 的 ${| cmd; } 照參數展開讀（R40 → parse-r40-bash53-valsub-pipe）",
+     'line[i + 2] in " \\t|"', 'line[i + 2] in " \\t"', "lint"),
     # R40（#33 verify R39 第 5 列）：pipefail 的控制流程——每一個判定點一個靶。
     ("lint: 條件裡的「開」照算（R40 → bypass-r40-pf-cond-on／or-on）",
      'and not ((e["fn"] or e["cond"]) and e["on"])', 'and not (e["fn"] and e["on"])', "lint"),

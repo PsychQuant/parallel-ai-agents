@@ -89,17 +89,17 @@ if [ "${1:-}" = "--selftest" ]; then
   done
   # R24 regression F9：門檻寫成 `>=` 而實際值更高時，那個差額**沒有網**——刪掉一個 fixture 仍然綠。
   # 三個門檻一律改成**等於實測值**：要加 fixture 就同步改這裡，讓「少了一個」立刻紅。
-  if [ "${n_pass}" -ne 261 ]; then
-    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 261（改動 fixture 請同步改這個數字）" >&2
+  if [ "${n_pass}" -ne 262 ]; then
+    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 262（改動 fixture 請同步改這個數字）" >&2
     fail=1
   fi
-  if [ "${n_rule}" -ne 373 ]; then
-    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 373" >&2
+  if [ "${n_rule}" -ne 376 ]; then
+    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 376" >&2
     fail=1
   fi
   if [ "${fail}" -ne 0 ]; then exit 1; fi
-  if [ "${n_parse}" -ne 145 ]; then
-    echo "lint-ci-log-filter selftest FAILED: parse-red 是 ${n_parse} 個，預期恰好 145（先前這一類完全沒有下限）" >&2
+  if [ "${n_parse}" -ne 147 ]; then
+    echo "lint-ci-log-filter selftest FAILED: parse-red 是 ${n_parse} 個，預期恰好 147（先前這一類完全沒有下限）" >&2
     exit 1
   fi
   if [ "${n_msg}" -ne 5 ]; then
@@ -499,7 +499,7 @@ def _ansic_decode(s):
 
 # `_param_end()` 回 None 時呼叫端印的原因（兩處共用）。R36 第 24 列：前一版兩處都寫「命令替換／舊式算術」不解析——
 # 命令替換自 R35 起是配對的，那句話不再成立。現在的 None 只有這些來源（見 `_param_end`、`_cmdsub_end`）。
-PARAM_UNPARSED = ("`${…}` 在同一行沒收尾（含裡面的引號、命令替換），或裡面有本 lint 不解析的構造："
+PARAM_UNPARSED = ("`${…}` 在同一行沒收尾（含裡面的引號、命令替換），或是 bash 5.3 的 `${ cmd; }`／`${| cmd; }`，或裡面有本 lint 不解析的構造："
                   "舊式算術 `$[…]`；命令替換裡的詞首 `#`、heredoc、`$'…'`、`$[…]`、`case`；"
                   "算術 `$((…))` 裡的引號、反斜線，或 `$((…) …)` 形式")
 
@@ -751,6 +751,10 @@ def _param_end(line, i):
     刪掉之後 lint 在 `$[ }` 就收掉展開、放行（`bypass-r37c-param-legacy-arith-brace`）。opsweep 報「存活」只代表
     當時沒有 fixture 走到它，不代表它沒有行為。雙引號裡的 `$[` 同此（`_dq_end`）。
     """
+    if i + 2 >= len(line) or line[i + 2] in " \t|":
+        # bash 5.3 的 `${ cmd; }`／`${| cmd; }` 在**目前的 shell** 執行 cmd（R40，#33 verify R39 第 10 列）：`echo ${ set -x; }` 開了
+        # xtrace。5.3 以前這些都是 bad substitution，沒有合法用途——一律不解析。
+        return None
     j, depth, n = i + 2, 1, len(line)
     while j < n:
         c = line[j]
@@ -1442,6 +1446,10 @@ ENV_EXPR_RE = re.compile(r"PYTHON\w*=\$\{\{ … \}\}")     # `_env_names` 對值
 _RUN_ENV_KEYS = ("SHELLOPTS", "BASHOPTS", "BASH_ENV", "BASH_XTRACEFD")
 _ASSIGN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(\[[^\]]*\])?\+?=")
 _LEAD_WORDS = frozenset(("!", "time", "if", "then", "else", "elif", "do", "while", "until", "builtin", "command"))
+# 其中 `command`、`builtin` 是 **builtin**：加引號或跳脫照樣執行（`\command -p set -x`、`'builtin' set +o pipefail`），所以用字面值 `lit`
+# 判（R40，#33 verify R39 第 5、7 列）。其餘是**保留字**：加了引號就不是保留字（`'time' -p set -x` 執行外部 `time`、不開 xtrace），
+# 照挖空後的 `code` 判。封閉列舉，只有這兩個。
+_LEAD_BUILTINS = frozenset(("builtin", "command"))
 # 前綴詞自己的選項（R39，#33 verify R38 第 4、8 列）：封閉列舉，只有這三個詞的這些選項。
 _LEAD_OPTS = {"command": frozenset(("-p", "--", "-v", "-V")), "builtin": frozenset(("--",)), "time": frozenset(("-p", "--"))}
 # `set` 的單字母選項（bash 5.3 `help set`）——`opaque_cmd` 判「參數像 `set -x`」用。
@@ -2169,16 +2177,17 @@ class _Sh:
         k = 0
         while k < len(words):                    # 前綴：變數指派（`X=1 cmd`）與不改變命令名的保留字
             w = words[k]
+            lead = w["lit"] if w["lit"] in _LEAD_BUILTINS else w["code"]
             if _ASSIGN_RE.match(w["skel"] if w["skel"] is not None else w["code"]):
                 self.env_word(w, ctx, bare=False)
-            elif w["code"] not in _LEAD_WORDS:
+            elif lead not in _LEAD_WORDS:
                 break
             self.ctl(w["code"])
             k += 1
             # 前綴詞自己的選項（R39，#33 verify R38 第 4、8 列）：`command -p set -x`、`builtin -- set +o pipefail`、`time -p …`——
             # 前一版只剝裸詞，選項被當成命令名，後面的 `set` 就看不到了（380e4a4 的 `FD_RE` 擋這幾種，回歸）。
             # `command -v`／`-V` 只印命令的描述、不執行它。
-            while k < len(words) and w["code"] in _LEAD_OPTS and words[k]["lit"] in _LEAD_OPTS[w["code"]]:
+            while k < len(words) and lead in _LEAD_OPTS and words[k]["lit"] in _LEAD_OPTS[lead]:
                 if words[k]["lit"] in ("-v", "-V"):
                     return
                 k += 1
@@ -2220,8 +2229,10 @@ class _Sh:
         lits = [a["lit"] for a in args]
         if "pipefail" in lits:
             self.pf_event(False, ctx)
-        if (any(l is not None and re.fullmatch(r"-[%s]+" % _SET_LETTERS, l) and set(l[1:]) & set("xv") for l in lits)
-                or ("-o" in lits and any(l in _TRACE_OPTS for l in lits))):
+        # 合寫的 `-euxo pipefail`（R40，#33 verify R39 第 7 列）：`o` 不在單字母表裡，前一版整串不匹配、裡面的 `x` 看不到。
+        bundles = [l for l in lits if l is not None and re.fullmatch(r"-[%s]*o?" % _SET_LETTERS, l) and len(l) > 1]
+        if (any(set(l[1:]) & set("xv") for l in bundles)
+                or (any(l.endswith("o") for l in bundles) and any(l in _TRACE_OPTS for l in lits))):
             self.hit("命令名不是字面、參數像 `set -x`／`set -o xtrace`——看不出是不是開了 trace", ctx)
 
     def env_word(self, w, ctx, bare):
