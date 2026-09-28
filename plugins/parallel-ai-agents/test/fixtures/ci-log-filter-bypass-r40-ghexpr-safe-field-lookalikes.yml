@@ -1,0 +1,20 @@
+# #33 verify R39 第 1 列的相鄰輸入：封閉清單只收點號寫法的那幾個欄位——同一個欄位寫成索引、或名稱只差一段的
+# PR 文字欄位（`pull_request.title`、`head.ref`），都不在清單裡，照擋。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: index form of a safe field
+        shell: bash
+        run: |
+          set -o pipefail
+          { echo ${{ github.event['pull_request'].number }}; } 2>&1 | python3 scripts/neutralise.py
+      - name: head ref is PR text
+        shell: bash
+        run: |
+          set -o pipefail
+          { echo ${{ github.event.pull_request.head.ref }}; } 2>&1 | python3 scripts/neutralise.py

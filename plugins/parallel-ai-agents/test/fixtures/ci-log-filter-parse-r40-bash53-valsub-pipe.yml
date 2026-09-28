@@ -1,0 +1,13 @@
+# #33 verify R39 第 10 列：bash 5.3 的 `${| cmd; }`（結果放在 REPLY）同樣在目前的 shell 執行 cmd。`${` 後面緊接 `|` 一律不解析。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: valsub
+        run: |
+          set -o pipefail
+          echo ${| set -x; }
+          echo "$PR_TITLE" | python3 scripts/neutralise.py

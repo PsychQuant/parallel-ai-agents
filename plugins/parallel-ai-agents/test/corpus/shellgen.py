@@ -303,7 +303,7 @@ TAG_BANG_DOC = (HEAD + '      - name: tag-bang\n        run: !!str "echo hi | '
 # `shell:`、`defaults:`、`env:` 維度，624 檔全是預設模式。這一組補上這四個維度，每個檔頭帶 `# LINT-ARGS: --strict`
 # 讓 `oracle.py` 用 strict 模式對帳（機制見 oracle.py R35 段：`# LINT-ARGS:` 已經是既有機制，這裡只是餵它）。
 #
-# 九個封閉列舉的維度（**只有這九個，不得在別處「順便」擴充**——改動這份清單是另一次 change；R39 加了 7–9）：
+# 十個封閉列舉的維度（**只有這十個，不得在別處「順便」擴充**——改動這份清單是另一次 change；R39 加了 7–9，R40 加了 10）：
 #   1. shell 值（SHELL_TEMPLATES，18）：`--strict` 接受 `bash`／`/bin/bash`／`/usr/bin/bash` 加白名單選項的整個樣板家族（不含 xtrace/verbose 以外的選項一律拒）；樣板（`bash -e {0}`…）與非 bash
 #      shell（`sh`／`pwsh`／`python {0}`）本來就不接受。R36 第 4 列點名的是 pipefail 規則的 `is_bash` 旗標漏掉 `bash {0}`／`bash -e {0}`／`bash -l {0}`／`bash -el {0}`／`bash --noprofile --norc -e {0}` 五種**仍是 bash** 的樣板，不是非 bash shell 或另一條規則的字面清單問題。
 #   2. env 鍵（ENV_KEYS）：**只有 `SHELLOPTS`**，值只有 `xtrace`（`verbose` 被 `ENV_VALUES` 排除，理由見下），三層（workflow／job／step）各一檔，共 3 檔。
@@ -340,15 +340,18 @@ TAG_BANG_DOC = (HEAD + '      - name: tag-bang\n        run: !!str "echo hi | '
 #      **R37 移植群組規則之後**：群組規則只收 `{ …; }`，`( … )` 那三個「有包」改成保守擋下（同 fixture
 #      `restrict-r37-strict-subshell-group`，記在 `KNOWN_DISAGREE`）；`{ … }` 那三個照樣放行。
 #   **維度 3、4、5、6 的非群組形式在 `--strict` 下全部先被群組規則擋下**（#33 verify R38 第 12 列）：它們量不到 fd 流向規則與
-#   xtrace 規則本身——requirements 把 fd 複製偵測改成 `return None`，這一組的神諭結果逐字不變。那兩條規則在 `--strict` 下是縱深
-#   防禦，鑑別力由預設模式的 A–E 組與 fixture 量（selftest 殺得掉那個突變體：rule-red 少 56 張）。維度 7–9 補的是群組規則**本身**
-#   沒量到的東西：
+#   xtrace 規則本身——requirements 把 fd 複製偵測改成 `return None`，這一組的神諭結果逐字不變。**更正**（#33 verify R39 第 11 列）：
+#   前一版這裡寫「鑑別力由預設模式的 A–E 組與 fixture 量」——A–E 組裡 `>&2`／`/dev/stderr`／`/dev/fd/2`／`3>&1` 出現 0 檔，那一半
+#   不成立；R39 verify 另外量到 env、`${{ }}`、fd 三條規則分別關掉時，`--strict` 組的 RULE 行逐字不變。維度 10（R40）補上
+#   「只靠某一條規則擋下的群組形式」。維度 7–9 補的是群組規則**本身**沒量到的東西：
 #   7. 群組外的行（OUTSIDE_LINES × OUTSIDE_POSITIONS）：群組前、`set` 前綴與群組之間、群組之後各放一行——`set` 前綴（該放行）、
 #      會外流的命令、以及**程式碼半邊整行挖空**的行（`${PR_TITLE}`、`\e\c\h\o …`、`$'\x65cho' …`、`${X:-eval} $'…'`，R38 第 2 列：
 #      詞元檢查與只收非空白碼行的字面檢查都看不到它們）。`set` 前綴只放在群組之前（群組之後的 `set` 不是前綴，照規則擋、不外流）。
-#   8. 群組內部內容（GROUP_INNER）：群組裡的 `if`／`for`／`case`／heredoc／`>&2`／`set -x`／`exec 3>&1`／`trap`／子殼層裡關 pipefail／
-#      未加引號的 `${{ … }}`——全部安全、`--strict` 都該放行（R38 第 11 列：前一版沒有這個維度，群組規則的誤擋面沒被量到）。
+#   8. 群組內部內容（GROUP_INNER，R40 起各行不縮排——前一版縮兩格，heredoc 的 `EOF` 因此不是結束標記、heredoc 永不終止，
+#      `f-inner-heredoc` 什麼都沒量到（R39 verify 第 11 列）：群組裡的 `if`／`for`／`case`／heredoc／`>&2`／`set -x`／`exec 3>&1`／`trap`／子殼層裡關 pipefail／
+#      未加引號的 `${{ github.run_id }}`（R40 起只有 `GH_SAFE_EXPRS` 的 GitHub 產生純量與字面常數放行，其他運算式照規則擋）——全部安全、`--strict` 都該放行（R38 第 11 列：前一版沒有這個維度，群組規則的誤擋面沒被量到）。
 #   9. 群組尾巴後（GROUP_TAILS）：尾巴後的 `;`（該放行）、尾巴後接命令（該擋）。
+#  10. 只靠某一條規則擋下的群組形式（RULE_ONLY_GROUPS，R40）：見下方 `RULE_ONLY_GROUPS` 與產生迴圈的說明。
 SHELL_TEMPLATES = [
     ("bash", "bash"), ("bash-dq", '"bash"'), ("bash-sq", "'bash'"),
     ("bash-brace", "bash {0}"), ("bash-e", "bash -e {0}"), ("bash-l", "bash -l {0}"),
@@ -386,6 +389,15 @@ GROUP_INNER = [
     ("gh-expr-unquoted", ['echo ${{ github.run_id }} "$PR_TITLE"']),
 ]
 GROUP_TAILS = [("semicolon", ";", True), ("command-after", "; echo \"$PR_TITLE\"", False)]
+# 維度 10（R40）：(名稱, run 內容, _strict_doc 的額外參數)。每一格的註解寫它靠哪一條規則、在哪個平台外流。
+RULE_ONLY_GROUPS = [
+    # 運算式規則：runner 在 bash 之前代換，PR 文字收掉群組（神諭代換成 payload，兩個平台都外流）
+    ("gh-expr", ["{", "echo ${{ github.event.pull_request.title }}", "} 2>&1 | " + "python3 scripts/neutralise.py"], {}),
+    # fd 規則：寫到外層 shell 的 fd（Linux 外流；macOS 沒有 /proc，列在 KNOWN_DISAGREE_WITHOUT_PROC）
+    ("proc-fd", ["{", 'echo "$PR_TITLE" > /proc/$$/fd/1', "} 2>&1 | " + "python3 scripts/neutralise.py"], {}),
+    # 群組計數的運算式遮罩：字面常數裡的 `}` 不是群組的大括號——遮罩失效時群組規則誤擋（不外流；突變時神諭判誤擋）
+    ("literal-expr-brace", ["{", "echo ${{ 'a}' }} \"$PR_TITLE\"", "} 2>&1 | " + "python3 scripts/neutralise.py"], {}),
+]
 WRAP_CONTENTS = [
     ("fd-redirect", ['printf \'%s\\n\' "$PR_TITLE" >&2']),
     ("xtrace", ["set -x", 'printf \'%s\\n\' "$PR_TITLE"']),
@@ -505,8 +517,15 @@ def group_strict():
     # 維度 8：群組內部內容（R39）
     for gn, glines in GROUP_INNER:
         yield ("f-inner-%s" % gn,
-               LA + _strict_doc("group inner %s" % gn, ["{"] + ["  " + l for l in glines] + ["} 2>&1 | " + NEUT],
+               LA + _strict_doc("group inner %s" % gn, ["{"] + list(glines) + ["} 2>&1 | " + NEUT],
                                 step_shell="bash"))
+
+    # 維度 10：只靠某一條規則擋下的群組形式（R40，#33 verify R39 第 11 列、放行條件 7）——群組形式本身合規，唯一的違規是那一條
+    # 規則，而且**會外流**：那條規則被關掉時，神諭判繞過。封閉列舉，只有這三格。不列的：pipefail（量的是退出碼）、`GITHUB_ENV`
+    # （要跨 step）、env 規則——`SHELLOPTS: xtrace` 在群組形式下，群組裡的 trace 走管線、被過濾，群組外只剩 `set` 那一行（R40 第一版
+    # 放了這一格，神諭判誤擋才看到）；`BASH_ENV` 指的檔神諭帶不進去、`PYTHON*` 神諭的 python3 stub 不讀。env 規則在群組形式下是保守的。
+    for rn, body, kw in RULE_ONLY_GROUPS:
+        yield ("f-only-%s" % rn, LA + _strict_doc("only rule %s" % rn, body, step_shell="bash", **kw))
 
     # 維度 9：群組尾巴後（R39）
     for tn, tail, _safe in GROUP_TAILS:

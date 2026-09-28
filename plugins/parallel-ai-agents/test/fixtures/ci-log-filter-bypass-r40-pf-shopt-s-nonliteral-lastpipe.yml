@@ -1,0 +1,20 @@
+# #33 verify R40 最終量測：`shopt -s` 的名字不是字面——`OPT=lastpipe` 時管線最後一段在目前的 shell 跑，`true | set +o pipefail`
+# 關掉的是目前這個 shell（bash 5.3 實跑 rc=0；`OPT=nullglob` 時 rc=1）。前一版只認字面的 `lastpipe`。旗標位置的非字面同時當成關掉 pipefail
+# 與開了 lastpipe；中間那行 `set -o pipefail` 把前者蓋掉，這張量的只剩後者（第一版沒有這一行，拿掉 lastpipe 時「關掉」照樣讓它紅——
+# mutation 靶存活才看到）。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: shopt -s with non-literal name
+        shell: bash
+        run: |
+          # LOG-FILTER: none — prints no PR text
+          shopt -s "$OPT"
+          set -o pipefail
+          true | set +o pipefail
+          false | cat

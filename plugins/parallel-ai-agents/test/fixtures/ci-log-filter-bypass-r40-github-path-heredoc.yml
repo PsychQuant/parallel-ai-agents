@@ -1,0 +1,25 @@
+# #33 verify R39 第 9 列：寫進 `$GITHUB_ENV`／`$GITHUB_PATH` 的東西，之後**每一個 step** 都會讀進來——PR 文字用 runner 的多行語法
+# （`PYTHONIOENCODING<<EOF` ⏎ `x` ⏎ `##[error]…` ⏎ `EOF`）就能設定任意變數；`PYTHONIOENCODING` 的值原樣（含換行）印到每個過濾 step 右端
+# python3 的 stderr（bash 5.3 實跑，行首的 `##[error]` 是 workflow command）。這是 GitHub 安全文件警告的環境變數注入。
+# R40：靠管線過濾的 step，把**看不出是字面**的內容寫進這兩個檔就擋。
+# 本張：heredoc 寫進 `$GITHUB_PATH`——命令的詞都是字面，內容在 heredoc 內文裡。`EOF` 貼齊 run 的左邊界（多縮排就不是結束標記，
+# heredoc 會吞掉後面的 `}` 與過濾管線——R40 第一版就這樣寫錯，被別的規則擋下、量不到這一條）。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: github-path-heredoc
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -o pipefail
+          {
+          cat <<EOF >> "$GITHUB_PATH"
+          $PR_BODY
+          EOF
+          } 2>&1 | python3 scripts/neutralise.py

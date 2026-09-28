@@ -1,0 +1,15 @@
+# #33 verify R39 第 7 列：命令名不是字面（`${X:-set}`）時，`opaque_cmd` 只認 `-x`／`-v` 這類純單字母、或分開寫的 `-o xtrace`——
+# 合寫的 `-euxo pipefail` 裡的 `x` 沒被看到（`o` 不在單字母表裡，整串不匹配）。bash 5.3 實跑：X 為空時就是 `set -euxo pipefail`，
+# 之後的命令原樣印到 stderr。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: bundled -o
+        run: |
+          set -o pipefail
+          ${X:-set} -euxo pipefail
+          echo "$PR_TITLE" | python3 scripts/neutralise.py

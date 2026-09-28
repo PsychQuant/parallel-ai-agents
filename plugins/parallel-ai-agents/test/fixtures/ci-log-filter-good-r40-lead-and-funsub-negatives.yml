@@ -1,0 +1,14 @@
+# #33 verify R39 第 7、10 列的負對照：引號裡的前綴詞只是文字、普通的參數展開照常解析、`'time'`（外部 time，不開 xtrace）照常放行。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: quoted text
+        run: |
+          set -o pipefail
+          echo "command -p set -x" "${X:-y}" "${#X}"
+          'time' -p true
+          echo "$PR_TITLE" | python3 scripts/neutralise.py

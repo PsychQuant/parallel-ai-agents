@@ -1,0 +1,19 @@
+# #33 verify R39 第 9 列的負對照：寫進 `$GITHUB_ENV` 的內容是字面，照常放行。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: github-env-literal
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -o pipefail
+          {
+            echo "BUILD_MODE=release" >> "$GITHUB_ENV"
+            echo "NOTE=$PR_BODY"
+          } 2>&1 | python3 scripts/neutralise.py

@@ -1,0 +1,16 @@
+# #33 verify R39 第 12 列（regression：`${{ github.event.pull_request.number }}`／`base.sha` 在 run 裡被當成「PR 可控的運算式」擋下）：
+# PR 編號、commit SHA、run id 由 GitHub 產生，PR 作者控制不了。R40 的運算式規則除了字面常數，只放行這一份**封閉清單**
+# （lint 的 GH_SAFE_EXPRS，神諭同一份）：點號寫法、大小寫不分；索引寫法、函式呼叫、其他欄位一律照擋。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: github-generated scalars
+        shell: bash
+        run: |
+          set -o pipefail
+          { echo ${{ github.event.pull_request.number }} ${{ github.event.pull_request.base.sha }} ${{ GITHUB.SHA }} ${{ github.run_id }}; } 2>&1 | python3 scripts/neutralise.py

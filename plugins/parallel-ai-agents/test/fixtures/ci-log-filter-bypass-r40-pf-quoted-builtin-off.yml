@@ -1,0 +1,18 @@
+# #33 verify R39 第 5 列：`'builtin' set +o pipefail`——`builtin` 是 builtin，加引號照樣執行，pipefail 被關掉；前一版用挖空後的 `code`
+# 判前綴詞、看不到後面的 `set`。bash 5.3 實跑：失敗被遮蔽、rc=0。R40 起 `command`／`builtin` 用 `lit` 判（`_LEAD_BUILTINS`）。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: quoted builtin turns pipefail off
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            'builtin' set +o pipefail
+            false | cat
+          } 2>&1 | python3 scripts/neutralise.py

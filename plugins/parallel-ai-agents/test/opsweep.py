@@ -46,6 +46,8 @@ LINT = HERE / "lint-ci-log-filter.sh"
 # 突變體 id 的形狀：`<op>|<函式>|<該行去空白的原文>|<同一行第幾個>`。用原文不用 offset：offset 會隨任何改動漂移，
 # 原文只在那一行真的改了才變——而那時本來就該重新判讀。
 EXPECTED_SURVIVE = {   # id → 理由（依構造等價）。每一條都要能回答「為什麼關掉它沒有任何輸出會變」
+    "±1→±2|ctl|self.o[\"nloop\"] += 1|1": "迴圈 id 同範圍 id：只用來取交集（`_pipefail_holds` 的 `loop & set(e[\"loop\"])`）；間隔 1 或 2 都互不相同，沒有任何判定讀它的數值（R40）",
+    "drop-operand|ctl|if word == \"done\" and self.o[\"loops\"]:|2": "`loops` 空的時候遇到 `done` 只發生在多出來的 `done`——那是 bash 語法錯誤（`syntax error near unexpected token`），runner 不會跑；拿掉守衛只讓 lint 對無效輸入當掉，不改變任何合法輸入的判定。解析器共用 `self.o`，命令替換裡的迴圈與外面的 `done` 一樣配對（R40）",
     "±1→±2|new_scope|self.o[\"nscope\"] += 1|1": "範圍 id 只用來比相等與前綴（`_pipefail_holds`）；間隔 1 或 2 都互不相同，沒有任何判定讀它的數值（R39）",
     # `len(v) >= 2` 只擋單一字元的 `'`／`"`：那是沒收尾的引號，不是合法 YAML（PyYAML ScannerError、GitHub
     # 「workflow file issue」），runner 不會跑。拿掉守衛只改變 lint 對無效輸入的訊息，不改變任何合法輸入的判定。
@@ -557,12 +559,14 @@ def main():
     # 兩條上限：(1) 工具內守「EXPECTED_SURVIVE ≤ 本次掃描突變體數的 10%」——修完之後存活的只剩預期的，
     # 「≤ 存活的 1/3」在工具裡會退化成永遠失敗；(2) 每輪「新增條數 ≤ 該輪存活數的 1/3」是**審查規則**，
     # 對照該輪修法前的 sweep log 在 PR body 檢查（R29：30 存活 → 4 條預期 = 13%）。
-    # 分母是**全集**（R39 更正）：`EXPECTED_SURVIVE` 是全集的清單，前一版除以 `--since` 過濾後的區域——R37 的區域 866 個剛好
-    # 放得下，R39 的區域只有 368 個，46 條全集清單被判「超過 10%」。同一個集合要跟同一個分母比。
-    cap = len(all_ms) // 10
-    if len(EXPECTED_SURVIVE) > cap:
+    # 分子與分母都是**這一次掃描的區域**（R40，#33 verify R39 第 18 列）：R37 以前用全集清單的條數比區域大小（R39 的區域 368 個、46 條
+    # 全集清單被判超過）；R39 改成全集分母，上限從 36 變 108、等於永遠滿足。同一個集合要跟同一個分母比——比的是區域裡落在
+    # EXPECTED_SURVIVE 的突變體數。
+    in_region = sum(1 for mid in results if mid in EXPECTED_SURVIVE)
+    cap = len(results) // 10
+    if in_region > cap:
         rc = 1
-        print("\n✗ EXPECTED_SURVIVE（%d）超過全集突變體數的 10%%（上限 %d）——這個集合在藏東西" % (len(EXPECTED_SURVIVE), cap))
+        print("\n✗ 區域裡落在 EXPECTED_SURVIVE 的突變體（%d）超過區域的 10%%（上限 %d）——這個集合在藏東西" % (in_region, cap))
     if args.json:
         pathlib.Path(args.json).write_text(json.dumps({"results": results, "elapsed_s": elapsed}, ensure_ascii=False, indent=1))
     return rc
