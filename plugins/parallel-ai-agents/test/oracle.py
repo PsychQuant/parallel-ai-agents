@@ -270,6 +270,7 @@ KNOWN_DISAGREE = {
 # `/proc/self/fd` 的 symlink，這幾個外流在本機量不到、判誤擋。Linux（CI）上**不列入**——在那裡神諭必須看到外流、判一致，
 # 否則就是 lint 擋錯了或 fixture 寫錯了。R38 的教訓：ground truth 在 CI 的平台上量，本機數字要註明平台。
 KNOWN_DISAGREE_WITHOUT_PROC = {
+    ("gen-f-only-proc-fd.yml", "only rule proc-fd"): "產生語料維度 10（R40）：`/proc/$$/fd/1` 只在 Linux 寫到外層 shell 的 fd。",
     ("ci-log-filter-bypass-r39-strict-group-proc-pid-fd1.yml", "group writes to proc-pid-fd1"):
         "`/proc/$$/fd/1`：本機沒有 /proc。Linux 上 `$$` 是外層 shell，那個 fd 就是 step log。",
     ("ci-log-filter-bypass-r39-strict-group-exec-proc-pid.yml", "group writes to exec-proc-pid"): "同上：`exec >/proc/$$/fd/2`。",
