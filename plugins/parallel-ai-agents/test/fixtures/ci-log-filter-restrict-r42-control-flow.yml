@@ -1,0 +1,59 @@
+# R42 的代價（#33 的 R42 決策紀錄「代價」段）：過濾 step 的群組裡不再收控制流程（`if`／`for`／`while`／`case`）。這四個 step
+# 都不外流、pipefail 也開著，正面文法保守擋下。逐字取自 R41 regression lens 的 c1 輸入 if-pipe、for-pipe、while-read-pipe、
+# case-in-group。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-MSG: 不在 `--strict` 的正面文法裡
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: if-pipe
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+          {
+            if [ -f Makefile ]; then
+              make test | tee log
+            else
+              echo none
+            fi
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: for-pipe
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+          {
+            for f in a b c; do
+              grep -c x "$f" | sort
+            done
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: while-read-pipe
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+          {
+            git ls-files '*.sh' | while read -r f; do
+              shellcheck "$f" | head -5
+            done
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: case-in-group
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+          {
+            case "$RUNNER_OS" in
+              Linux) make linux | tee log ;;
+              *) make | tee log ;;
+            esac
+          } 2>&1 | python3 scripts/neutralise.py

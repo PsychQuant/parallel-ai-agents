@@ -1,0 +1,47 @@
+# R42 正面文法自己加的限制，一條一個 step，逐字取自 R42 risk-first 設計的 attack 電池（群組形式：`set -o pipefail`、`{`、該條、
+# `} 2>&1 | python3 scripts/neutralise.py`）：在 run 裡指派文法信任其值的變數（RUNNER_TEMP、HOME、TMPDIR、GITHUB_ENV）、以及
+# `printf -v` 指派。文法信任 `"$RUNNER_TEMP/…"` 當重導向目標、`$HOME` 等當 `$GITHUB_PATH` 的值——這些變數一旦在 run 裡被改成
+# PR 文字，信任就不成立。45dee04 的 `--strict` 全部放行。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: assign RUNNER_TEMP
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+          RUNNER_TEMP=$PR_TITLE
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: assign HOME
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+          HOME=$PR_TITLE
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: assign TMPDIR
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+          TMPDIR=/x
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: assign GITHUB_ENV
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+          GITHUB_ENV=/tmp/x
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: printf -v
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+          printf -v RUNNER_TEMP %s x
+          } 2>&1 | python3 scripts/neutralise.py

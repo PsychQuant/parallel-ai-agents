@@ -1,0 +1,23 @@
+# #33 verify R41 第 10 列：群組之後再多一行（`echo done`、`exit 0`）。這兩行不印 PR 文字，正面文法規定群組的過濾器之後只准 `;`、
+# 註解與空行，保守擋下。逐字取自 R41 requirements lens 的 c11 輸入 s-t2-line-after、s-t8-exit-after。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-MSG: 不在 `--strict` 的正面文法裡
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s-t2-line-after
+        shell: bash
+        run: |
+          set -o pipefail
+          { make; } 2>&1 | python3 scripts/neutralise.py
+          echo done
+      - name: s-t8-exit-after
+        shell: bash
+        run: |
+          set -o pipefail
+          { make; } 2>&1 | python3 scripts/neutralise.py
+          exit 0

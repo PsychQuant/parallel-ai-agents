@@ -1,0 +1,27 @@
+# #33 的 R42 決策紀錄 (a)：R40 的 `good-r40-pf-subshell-off-*` 釘的是 pipefail 範圍模擬器（子殼層裡的「關」管不到外面），
+# 模擬器在 R42 刪除。兩個 step 的 pipefail 在外層確實開著、不外流，正面文法不收子殼層與 `shopt`，保守擋下。
+# 兩個 step 逐字取自那兩張 fixture（step 名稱是原 fixture 名）。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-MSG: 不在 `--strict` 的正面文法裡
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: good-r40-pf-subshell-off-after-shopt
+        shell: bash
+        run: |
+          # LOG-FILTER: none — prints no PR text
+          true | cat
+          shopt -s nullglob
+          ( set +o pipefail )
+          false | cat
+      - name: good-r40-pf-subshell-off-before-lastpipe
+        shell: bash
+        run: |
+          # LOG-FILTER: none — prints no PR text
+          ( set +o pipefail )
+          shopt -s lastpipe
+          false | cat

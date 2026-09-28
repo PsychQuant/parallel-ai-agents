@@ -1,0 +1,18 @@
+# #33 verify R41 第 8 列、R42 放行條件 4：字面運算式 `${{ 'x; }; echo "$PR_TITLE"; { :' }}` 在 runner 代換之後收掉群組，
+# PR 文字不經過濾印出。逐字取自協調者 c1-literal-expr。45dee04 的 `--strict` 放行。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: c1-literal-expr
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            echo ${{ 'x; }; echo "$PR_TITLE"; { :' }}
+          } 2>&1 | python3 scripts/neutralise.py

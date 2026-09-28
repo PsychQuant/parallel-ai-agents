@@ -1,0 +1,47 @@
+# #33 verify R41 第 2 列（R40 引入的回歸）、R42 放行條件 1：`shopt -s lastpipe` 之後，子殼層、命令替換、背景工作或管線第一段裡的
+# `set -o pipefail` 被 lint 當成作用到外層；bash 5.3 下最後的 `false | true` rc=0，失敗被遮蔽。逐字取自 R41 DA 的 reg 輸入
+# c2-lastpipe-subshell-on、v-bg、v-cmdsub、v-first-elem，與協調者的 c2（內容與 DA 那張逐位元組相同；step 名稱加 `coord/` 區分）。
+# 45dee04 的 `--strict` 全部放行。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: c2-lastpipe-subshell-on
+        shell: bash {0}
+        run: |
+          # LOG-FILTER: none — this step only tests exit statuses
+          shopt -s lastpipe
+          (set -o pipefail)
+          false | true
+      - name: v-bg
+        shell: bash {0}
+        run: |
+          # LOG-FILTER: none — this step only tests exit statuses
+          shopt -s lastpipe
+          set -o pipefail & wait
+          false | true
+      - name: v-cmdsub
+        shell: bash {0}
+        run: |
+          # LOG-FILTER: none — this step only tests exit statuses
+          shopt -s lastpipe
+          x=$(set -o pipefail)
+          false | true
+      - name: v-first-elem
+        shell: bash {0}
+        run: |
+          # LOG-FILTER: none — this step only tests exit statuses
+          shopt -s lastpipe
+          set -o pipefail | cat
+          false | true
+      - name: coord/c2-lastpipe-subshell-on
+        shell: bash {0}
+        run: |
+          # LOG-FILTER: none — this step only tests exit statuses
+          shopt -s lastpipe
+          (set -o pipefail)
+          false | true
