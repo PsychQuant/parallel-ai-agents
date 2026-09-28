@@ -89,12 +89,12 @@ if [ "${1:-}" = "--selftest" ]; then
   done
   # R24 regression F9：門檻寫成 `>=` 而實際值更高時，那個差額**沒有網**——刪掉一個 fixture 仍然綠。
   # 三個門檻一律改成**等於實測值**：要加 fixture 就同步改這裡，讓「少了一個」立刻紅。
-  if [ "${n_pass}" -ne 263 ]; then
-    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 263（改動 fixture 請同步改這個數字）" >&2
+  if [ "${n_pass}" -ne 264 ]; then
+    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 264（改動 fixture 請同步改這個數字）" >&2
     fail=1
   fi
-  if [ "${n_rule}" -ne 376 ]; then
-    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 376" >&2
+  if [ "${n_rule}" -ne 381 ]; then
+    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 381" >&2
     fail=1
   fi
   if [ "${fail}" -ne 0 ]; then exit 1; fi
@@ -818,7 +818,7 @@ def shell_scan(lines):
       * `((`／`))` 整個 token 消費：前一版 `$((` 在兩個位置各命中一次而 `))` 只減一次，深度卡住。
       * `run: |N` 的顯式縮排指示子由呼叫端算成 `explicit_pad` 交給 `dedent_block()`（見該函式）。
       * 續行重掃前還原 `pending` 快照：前一版只還原 quote／prev_sig，同一個 heredoc 被排兩次。
-    **已知不涵蓋，第二組（這一組是封閉列舉，只有四條，不得依性質相似類推第五條；R32 抓到前三條不在檔內，第 4 條 R39 加）**：
+    **已知不涵蓋，第二組（這一組是封閉列舉，只有五條，不得依性質相似類推第六條；R32 抓到前三條不在檔內，第 4 條 R39、第 5 條 R40 加）**：
       1. **stderr（預設模式）**：預設模式的 `PIPED_RE` 只要求管線存在，不要求 `2>&1`／`|&`（已知類別 S-2，範例
          `known-stderr-cmd-error-missing-2to1`）。**`--strict` 的群組規則擋它**——CI 與 run.sh 對真 workflow 用 `--strict`，
          所以這一條只剩 fixture／產生語料（它們量的是詞法）。另：把輸出轉到 stderr 或開 xtrace 的寫法（`>&2`、
@@ -849,6 +849,12 @@ def shell_scan(lines):
          本 lint 檢查的是 **shell 接線**——PR 文字有沒有經過那個過濾器——不驗證那個檔案的內容：前一個 step 寫出一個同名的
          `cat`，或 PR 直接改掉過濾器本身，lint 都看不到。test.yml 的威脅模型寫明每個 job 本來就執行 PR 的程式碼；這條 lint
          防的是維護者的無心之失（接線漏掉），不是對抗性的替換。過濾器自己的啟動環境（`PYTHON*` 的值是運算式）另有規則（R39）。
+      5. **不經 shell 重導向的寫入**（#33 verify R39 第 2、9 列）：fd 規則看的是**重導向的目標**。以命令參數給的路徑
+         （`tee /proc/$$/fd/1`、`dd of=/proc/$$/fd/1`、`cp f /proc/$$/fd/1`）、群組裡自己建的 symlink（`ln -s /proc/$$/fd/1 o; … > o`）
+         都不在模型裡——參數分不出是讀還是寫（`cat /dev/null` 很常見），一律擋會誤擋太多；Linux 上它們寫到外層 shell 的 fd，
+         是真的外流（本機沒有 /proc，未實跑）。同理，寫進 `$GITHUB_ENV`／`$GITHUB_PATH` 的規則（R40，`github_env_write`）只管
+         靠管線過濾的 step：宣告了 `# LOG-FILTER:` 的 step 照樣可以把 PR 文字寫進去、之後的 step 讀進來；神諭一次跑一個 step，
+         看不到跨 step 的效果。
     **已知不涵蓋，第三組——預設模式的假設（封閉列舉，只有五條，不得依性質相似類推第六條；R35 新增前三條，
     R37 新增第 4、5 條）**：
       1. **shell 是 bash**：預設模式不讀 `shell:`／`defaults.run.shell`／container／runs-on，照 bash 的詞法判。
@@ -1450,6 +1456,7 @@ _LEAD_WORDS = frozenset(("!", "time", "if", "then", "else", "elif", "do", "while
 # 判（R40，#33 verify R39 第 5、7 列）。其餘是**保留字**：加了引號就不是保留字（`'time' -p set -x` 執行外部 `time`、不開 xtrace），
 # 照挖空後的 `code` 判。封閉列舉，只有這兩個。
 _LEAD_BUILTINS = frozenset(("builtin", "command"))
+_GHENV_RE = re.compile(r"\$\{?GITHUB_(?:ENV|PATH)\b")
 # 前綴詞自己的選項（R39，#33 verify R38 第 4、8 列）：封閉列舉，只有這三個詞的這些選項。
 _LEAD_OPTS = {"command": frozenset(("-p", "--", "-v", "-V")), "builtin": frozenset(("--",)), "time": frozenset(("-p", "--"))}
 # `set` 的單字母選項（bash 5.3 `help set`）——`opaque_cmd` 判「參數像 `set -x`」用。
@@ -1827,12 +1834,13 @@ def _word(C, S, p, stop):
         skel.append(s)
         p += 1
     return {"k": "W", "code": C[st:p], "lit": "".join(lit) if literal and known else None,
-            "skel": "".join(skel) if known else None, "glob": glob, "subs": subs, "bad_sub": bad_sub, "s": st, "e": p}
+            "skel": "".join(skel) if known else None, "glob": glob, "subs": subs, "bad_sub": bad_sub, "s": st, "e": p,
+            "src": S[st:p]}
 
 
 def _opaque(C, p, e, subs=(), bad_sub=False):
     return {"k": "W", "code": C[p:e], "lit": None, "skel": None, "glob": False, "subs": list(subs), "bad_sub": bad_sub,
-            "s": p, "e": e}
+            "s": p, "e": e, "src": None}
 
 
 def _lex(C, S, p=0, stop=None):
@@ -2061,7 +2069,7 @@ class _Sh:
             bounds.append(len(self.o["events"]))
             self.i += 1
             self.skip_nl()
-            seg = self.parse_command(ctx, end)
+            seg = self.parse_command(dict(ctx, piped_in=True), end)
         if len(segs) > 1:                        # 管線的每一段各自在一個子殼層：裡面的設定不作用在外面、也不作用在別段
             bounds.append(len(self.o["events"]))
             for a, b in zip(bounds, bounds[1:]):
@@ -2116,6 +2124,7 @@ class _Sh:
                 self.skip_nl()
                 self.parse_command(dict(ctx, fn=True), end)
                 return {"kind": "func", "trail": [], "neut": False}
+        self.github_env_write(words, rs, ctx)
         self.simple(words, ctx)
         neut = (len(words) >= 2 and words[0]["code"] == "python3"
                 and re.fullmatch(r"\S*neutralise\.py", words[1]["code"]) is not None)
@@ -2166,6 +2175,21 @@ class _Sh:
             self.hit(why, ctx, group_safe=_group_safe_target(r))
         if r["t"] is not None:
             self.subs(r["t"], ctx)
+
+    def github_env_write(self, words, rs, ctx):
+        """寫進 `$GITHUB_ENV`／`$GITHUB_PATH` 的內容看不出是字面（R40，#33 verify R39 第 9 列）：之後每一個 step 都會讀進來——多行語法
+        `X<<EOF` 能設定任意變數，`PYTHONIOENCODING` 的值（含換行）原樣印到每個過濾 step 右端 python3 的 stderr。**封閉列舉**，
+        「看不出是字面」只有這三種：命令的其他詞不是字面（含不解析的構造）、這個命令是管線的後段（內容來自 stdin）、帶了 heredoc
+        或 here-string。"""
+        targets = [w for w in words if w.get("src") and _GHENV_RE.search(w["src"])]
+        targets += [r["t"] for r in rs if r["t"] is not None and r["t"].get("src") and _GHENV_RE.search(r["t"]["src"])]
+        if not targets:
+            return
+        others = [w for w in words if w not in targets]
+        if (any(w["lit"] is None for w in others) or ctx.get("piped_in")
+                or any(r["op"] in ("<<", "<<-", "<<<") for r in rs)):
+            self.hit("把看不出是字面的內容寫進 `$GITHUB_ENV`／`$GITHUB_PATH`——之後每一個 step 都會讀進來（多行語法 `X<<EOF` 能設定"
+                     "任意變數，`PYTHONIOENCODING` 之類的值原樣印到過濾器的 stderr）", ctx, group_safe=False)
 
     def subs(self, w, ctx):
         if w.get("bad_sub"):
@@ -2521,10 +2545,12 @@ def _bash_template(sh):
 #     非字面的 runner 運算式由 run 內運算式那條規則另外擋（R39 只認兩種拼法，R40 改成除了字面常數一律擋）。
 # `set` 前綴只收 `-e`／`-u`／`-E`／`-o pipefail|errexit|nounset|errtrace`（`-E`／errtrace：R39，只影響 ERR trap 的繼承）：`set -v` 會把原始碼（含 runner 代入的 `${{ … }}`）
 # 印到群組外的 stderr，`-x` 同理；裸 `set` 把所有變數（含 PR 可控的 env）印到群組外的 stdout。
-# **代價：保守誤擋**（#33 verify R38 第 11 列：R37 只揭露了前兩類）。封閉列舉，只有這七類，每一類都在 oracle.py 的 KNOWN_DISAGREE
-# 登記（逐段 `2>&1` 登記的是產生語料 `gen-f-*` 的五檔，其餘六類各有一張以上的 `restrict-*` fixture）：逐段 `2>&1`（不是群組形式）、`( … )` 子殼層、群組內定義函式、群組內的巢狀群組
-# （`{ …; } >> "$GITHUB_ENV"`）、一個 step 兩個群組、群組前的 `cd`／`export`、命令替換裡不在命令起點的 `case` 普通參數
-# （這一類是掃描器的 fail-closed，不是群組規則）。R39 放寬了四類（未加引號的 `${{ … }}`、尾巴後的 `;`、`set -E`／errtrace、
+# **代價：保守誤擋**（#33 verify R38 第 11 列：R37 只揭露了前兩類；R39 verify 第 12 列：R39 的清單又漏了三類）。封閉列舉，只有這九類，
+# 每一類都在 oracle.py 的 KNOWN_DISAGREE 登記（逐段 `2>&1` 登記的是產生語料 `gen-f-*`，其餘各有一張以上的 `restrict-*` fixture）：
+# 逐段 `2>&1`（不是群組形式）、`( … )` 子殼層、群組內定義函式、群組內的巢狀群組（`{ …; } >> "$GITHUB_ENV"`）、一個 step 兩個群組、
+# **群組前任何不是白名單 `set` 前綴的行**（`cd`、`export`、`set +e`、`shopt`、`echo "::group::…"`…——R39 寫成「群組前的 `cd`／`export`」
+# 兩個例子，性質其實是這一句）、過濾器前面的**直譯器選項**（`python3 -u`、`python3 -I`）、**不是字面的過濾器路徑**
+# （`python3 "$GITHUB_WORKSPACE/…"`）、命令替換裡不在命令起點的 `case` 普通參數（這一類是掃描器的 fail-closed，不是群組規則）。R39 放寬了四類（未加引號的 `${{ … }}`、尾巴後的 `;`、`set -E`／errtrace、
 # `set` 前綴行尾的 `;`）；其中第一類 R40 收回（#33 verify R39 第 1 列）：群組計數仍遮掉運算式，但 run 裡任何非字面的運算式
 # （`matrix.*`、`inputs.*`、`runner.*`、函式呼叫…，字面常數與 GH_SAFE_EXPRS 除外）改由運算式規則擋——改經 step 的 `env:` 傳進來，
 # `restrict-r40-ghexpr-*` 兩張釘住。這一條不是群組規則的代價、兩種模式都適用，所以不算進上面七類。

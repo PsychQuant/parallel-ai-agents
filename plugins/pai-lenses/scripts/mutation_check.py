@@ -1369,6 +1369,17 @@ MUTATIONS += [
      '        elif False and any(not gh_literal(inner) for _a, _b, inner in\n', "lint"),
     ("lint: `set` 前綴行尾的 `;` 不收（R39，R38 第 11 列 → good-r39-strict-set-prefix-semicolon）",
      '    if toks[-1:] == [";"]:\n        toks = toks[:-1]', '    if False:\n        toks = toks[:-1]', "lint"),
+    # R40（#33 verify R39 第 9 列）：寫進 $GITHUB_ENV／$GITHUB_PATH。
+    ("lint: 不檢查寫進 GITHUB_ENV 的內容（R40 → bypass-r40-github-*）",
+     '        self.github_env_write(words, rs, ctx)\n', '', "lint"),
+    ("lint: GITHUB_ENV 寫入不看其他參數是否字面（R40 → bypass-r40-github-env-redirect）",
+     'any(w["lit"] is None for w in others)', 'False', "lint"),
+    ("lint: GITHUB_ENV 寫入不看是否管線後段（R40 → bypass-r40-github-env-tee-stdin）",
+     'or ctx.get("piped_in")', 'or False', "lint"),
+    ("lint: GITHUB_ENV 寫入不看 heredoc（R40 → bypass-r40-github-path-heredoc）",
+     'or any(r["op"] in ("<<", "<<-", "<<<") for r in rs))', 'or False)', "lint"),
+    ("lint: 管線後段不標 piped_in（R40 → bypass-r40-github-env-tee-stdin）",
+     'seg = self.parse_command(dict(ctx, piped_in=True), end)', 'seg = self.parse_command(ctx, end)', "lint"),
     # R40（#33 verify R39 第 3、8 列、放行條件 12）：神諭的逾時、bash 樣板、payload。
     ("oracle: ORACLE-COMPARABLE 的宣告不檢查（R40 → oracle_selfcheck 的 comparable-declared-but-sh 探針）",
      '            if "# ORACLE-COMPARABLE" in text:', '            if False:', "oracle-inverted"),

@@ -115,6 +115,23 @@ except ImportError:                       # 依賴缺席不是「沒有不一致
 
 # (fixture 檔名, step 名) → 理由。每一條都要能說出「runner 與 lint 為什麼依設計會不同」；說不出來的就是缺陷。
 KNOWN_DISAGREE = {
+    # ── R40（#33 verify R39 第 12 列）：R39 宣稱「沒揭露的誤擋是 0」之外的八種——不放寬，揭露（lint 的代價清單與 #60 同步）──
+    ("ci-log-filter-restrict-r40-undisclosed-false-blocks.yml", "python3 -u"): "群組尾巴只認 `python3 <路徑>/neutralise.py`，直譯器選項 `-u` 讓它看不出後面是不是過濾器。",
+    ("ci-log-filter-restrict-r40-undisclosed-false-blocks.yml", "python3 -I"): "同上：`-I`（R38 放行條件 9 建議的加固寫法）同樣被擋——放寬要先讓尾巴的比對認直譯器選項，R40 未做。",
+    ("ci-log-filter-restrict-r40-undisclosed-false-blocks.yml", "workspace path"): "路徑 `\"$GITHUB_WORKSPACE/…\"` 不是字面，lint 看不出它指向的是不是 neutralise.py。",
+    ("ci-log-filter-restrict-r40-undisclosed-false-blocks.yml", "set +e before the group"): "群組前只收白名單的 `set` 前綴；`set +e` 不印任何東西，但不在白名單裡。",
+    ("ci-log-filter-restrict-r40-undisclosed-false-blocks.yml", "shopt before the group"): "同上：`shopt` 不在前綴白名單裡（`shopt -s extglob` 會改變詞法，白名單不收任何 shopt）。",
+    ("ci-log-filter-restrict-r40-undisclosed-false-blocks.yml", "PYTHONPATH from github.workspace"):
+        "`PYTHON*` 的值是運算式就擋（R39 第 9 列）；`github.workspace` 是 runner 給的路徑、不是 PR 文字，lint 不分辨鍵與運算式。",
+    ("ci-log-filter-restrict-r40-undisclosed-false-blocks.yml", "parent dir named dev"):
+        "路徑含 `..` 又經過名為 dev 的目錄：lint 不知道工作目錄有多深，足夠多的 `..` 走得到 /dev——fail-closed。",
+    ("ci-log-filter-restrict-r40-default-export-pythonpath.yml", "export PYTHONPATH at top level"):
+        "頂層 export 的 `PYTHON*` 值不是字面就擋；這一步的值是本地路徑，不外流。",
+    # ── R40（#33 verify R39 第 9 列）：跨 step 的 `GITHUB_ENV`——神諭每個 step 單獨跑，看不到下一個 step 讀進來的環境 ──
+    ("ci-log-filter-bypass-r40-github-env-redirect.yml", "github-env-redirect"):
+        "寫進 `$GITHUB_ENV` 的東西只在**之後的 step** 生效；神諭一次跑一個 step（這一步本身不外流），量不到下一步的注入。",
+    ("ci-log-filter-bypass-r40-github-env-tee-stdin.yml", "github-env-tee-stdin"): "同上：經 `tee -a \"$GITHUB_ENV\"`。",
+    ("ci-log-filter-bypass-r40-github-path-heredoc.yml", "github-path-heredoc"): "同上：heredoc 寫進 `$GITHUB_PATH`。",
     # ── R40：神諭照 bash 樣板的旗標跑（`bash_template_prefix`）之後才量得到的五條。它們前一版刻意用帶旗標的樣板讓神諭判不可比
     #    （檔頭寫著「神諭量不到這一條」）；現在量得到了，結果是「lint 擋、這一次執行不外流」。擋的是**機制**，不是這個輸入 ──
     ("ci-log-filter-bypass-r37b-env-policy-BASH_XTRACEFD.yml", "job env BASH_XTRACEFD"):
