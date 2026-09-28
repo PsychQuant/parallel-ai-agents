@@ -116,8 +116,8 @@ if [ "${1:-}" = "--selftest" ]; then
     fail=1
   fi
   if [ "${fail}" -ne 0 ]; then exit 1; fi
-  if [ "${n_parse}" -ne 152 ]; then
-    echo "lint-ci-log-filter selftest FAILED: parse-red 是 ${n_parse} 個，預期恰好 152（先前這一類完全沒有下限）" >&2
+  if [ "${n_parse}" -ne 153 ]; then
+    echo "lint-ci-log-filter selftest FAILED: parse-red 是 ${n_parse} 個，預期恰好 153（先前這一類完全沒有下限）" >&2
     exit 1
   fi
   if [ "${n_msg}" -ne 46 ]; then
