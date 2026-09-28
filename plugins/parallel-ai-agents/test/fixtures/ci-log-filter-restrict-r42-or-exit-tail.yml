@@ -1,6 +1,9 @@
 # #33 verify R41 第 10 列：過濾器之後接 `|| exit 1`。不外流，正面文法規定群組的過濾器之後只准 `;`、註解與空行，保守擋下。
 # 逐字取自 R41 requirements lens 的 c11/s-t1-or-exit。
 # LINT-ARGS: --strict
+# R42：這一張的 1 步是**文法外**——不在 `--strict` 的正面文法裡、神諭實跑沒有外流（stdout／stderr／跨 step 通道都沒有）、
+# pipefail 探針沒看到關閉。保守擋下，由下面的宣告簽名（神諭的類別閘門是雙向的）。
+# KNOWN-CLASS: 文法外
 # EXPECT: rule-red
 # EXPECT-MSG: 不在 `--strict` 的正面文法裡
 name: t

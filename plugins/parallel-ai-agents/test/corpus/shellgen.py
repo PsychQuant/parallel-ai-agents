@@ -28,13 +28,23 @@
 
 **已知類別由構造決定、寫進檔頭**（R37；R36 第 2 列要求神諭的類別閘門雙向，這裡讓它在產生語料上也量得到）：神諭的類別閘門是雙向的——被歸進已知類別 X 的 step
 數必須等於檔頭 `# KNOWN-CLASS: X` 的行數。這一支知道每個檔的每個維度，所以**由構造**判定哪些檔該落進哪一類並寫出宣告，
-不是事後照神諭的輸出補（那樣宣告只是神諭的影子，雙向閘門就量不到東西）。封閉列舉，**只有兩種**，不得依相似類推第三種：
+不是事後照神諭的輸出補（那樣宣告只是神諭的影子，雙向閘門就量不到東西）。封閉列舉，**只有下面這幾種**，不得依相似類推：
   S-2 —— A 組、方向 real、折疊 block（`>` 開頭）、內文確實被折成一行、終止字非空白：
          折疊後整段是 `cat <<X plain data X echo "$PR_TITLE" | neutralise`，`cat` 把 `$PR_TITLE` 當檔名、錯誤訊息
          走 stderr，而管線沒有 `2>&1`。「確實被折成一行」＝ auto-detect 縮排（`>`、`> # note`），或明寫縮排 `>2` 且內文
          不多縮（多縮的行 YAML 不折）；終止字是空字串或空白的三個分隔字，那一行在 YAML 裡是空行、會留下換行 ⇒ 不是一行。
   G   —— D 組 `d-paramexp-literal-brace-in`：bash 不為字面的 `{` 配對 `}`，`${PR_TITLE#a{b}` 在第一個 `}` 結束，
          剩下的 `c| neutralise }` 是真管線；第一行 `echo "$PR_TITLE"` 是**另一條命令**印的。
+  文法外（R42，只在 `--strict` 組）—— 構造本身不外流、pipefail 開著，但不在 `--strict` 的正面文法裡，保守擋下。四個維度、
+         各自的封閉列舉（常數見 `STRICT_SHELLS_PF_ON`、`GROUP_INNER_OUTSIDE_GRAMMAR`）：
+         維度 1 shell 值：乾淨的 `cat "$PR_TITLE" 2>&1 | …`（不是群組形式）× 會開 pipefail、又在神諭可比清單裡的樣板
+                （關鍵字 `bash` 三種拼法——runner 的樣板帶 `-o pipefail`——與明寫 `-o pipefail` 的四種）。不開 pipefail 的
+                樣板，神諭的 pipefail 探針看得到關閉、判一致；帶 `-x`／`-v`／`-l` 的判不可比。
+         維度 5 多段管線：gap=0（每一段都帶 `2>&1`）。缺 `2>&1` 的那幾格會外流。
+         維度 6 包管線：wrapped 的格，**除了** `brace` × `fd-redirect`——那一格在文法裡、lint 放行。
+         維度 8 群組內部：`if`、`for`、`case`、heredoc、`set -x`、`exec 3>&1`、子殼層裡關 pipefail——輸出都在群組裡進管線。
+  文法外-without-proc —— 維度 10 的 `proc-fd`：`/proc/$$/fd/1` 只在 Linux 外流；沒有 /proc 的平台量不到、神諭判這一類，
+         有 /proc 的平台宣告不計、必須判一致（見神諭的 `HAS_PROC`）。
   沒有「無法由構造決定」的檔：上面之外的構造，神諭歸進任何已知類別都是缺陷（lint 或神諭的），要讓它紅。
 
 「方向」指的是兩種構造，兩個都要有才擋得住兩個方向的錯：
@@ -447,6 +457,16 @@ def _pipeline_line(count, gap):
     return " | ".join(segs) + " | " + NEUT
 
 
+# 文法外的構造判準（R42；見檔頭的已知類別段）。兩份都是封閉列舉。
+STRICT_SHELLS_PF_ON = ("bash", "bash-dq", "bash-sq", "bash-eo-pipefail", "bash-euo-pipefail", "bash-o-pipefail-e",
+                       "bash-noprofile-eo-pipefail")
+GROUP_INNER_OUTSIDE_GRAMMAR = ("if", "for", "case", "heredoc", "xtrace", "saved-fd", "subshell-pipefail-off")
+
+
+def _cls(cls):
+    return "# KNOWN-CLASS: %s\n" % cls if cls else ""
+
+
 def group_strict():
     """`--strict` 組：六個封閉列舉維度各自的構造（見上方檔頭）。每個檔頭都帶 `# LINT-ARGS: --strict`。
     回傳 (name, full_text) —— 與 A-E 組的 (name, body, hdr) 不同形狀，因為這裡不重用 `wrap()`。"""
@@ -455,7 +475,8 @@ def group_strict():
     # 維度 1：shell 值 —— 每個模板一檔（乾淨、帶 2>&1 的管線）；三個字面 bash 拼法額外配一個「缺 2>&1」的對照
     for sn, tmpl in SHELL_TEMPLATES:
         body = ['cat "$PR_TITLE" 2>&1 | ' + NEUT]
-        yield "f-shell-%s" % sn, LA + _strict_doc("shell value %s" % sn, body, step_shell=tmpl)
+        yield "f-shell-%s" % sn, _cls("文法外" if sn in STRICT_SHELLS_PF_ON else None) + LA + _strict_doc(
+            "shell value %s" % sn, body, step_shell=tmpl)
         if sn in ("bash", "bash-dq", "bash-sq"):
             leak_body = ['cat "$PR_TITLE" | ' + NEUT]
             yield ("f-shell-%s-missing-2to1" % sn,
@@ -491,7 +512,8 @@ def group_strict():
         for gap in range(0, count + 1):
             body = [_pipeline_line(count, gap)]
             yield ("f-pipeseg-%d-gap%d" % (count, gap),
-                   LA + _strict_doc("pipeline of %d segments, gap=%d" % (count, gap), body, step_shell="bash"))
+                   _cls("文法外" if gap == 0 else None)
+                   + LA + _strict_doc("pipeline of %d segments, gap=%d" % (count, gap), body, step_shell="bash"))
 
     # 維度 6：子殼層包管線 —— WRAP_STYLES × WRAP_CONTENTS ×｛有包／沒包｝。同上，固定 `shell: bash`：
     # 「有包」的情境本來就該讓 lint pass（豁免適用），不寫 shell 會被 pipefail 規則單獨攔下、驗不到豁免本身。
@@ -499,7 +521,8 @@ def group_strict():
         for cn, clines in WRAP_CONTENTS:
             wrapped = [wfmt % ("; ".join(clines)) + " 2>&1 | " + NEUT]
             yield ("f-wrap-%s-%s-wrapped" % (wn, cn),
-                   LA + _strict_doc("%s wrapped %s" % (wn, cn), wrapped, step_shell="bash"))
+                   _cls(None if (wn, cn) == ("brace", "fd-redirect") else "文法外")
+                   + LA + _strict_doc("%s wrapped %s" % (wn, cn), wrapped, step_shell="bash"))
             bare = list(clines[:-1]) + [clines[-1] + " 2>&1 | " + NEUT]
             yield ("f-wrap-%s-%s-bare" % (wn, cn),
                    LA + _strict_doc("%s bare %s" % (wn, cn), bare, step_shell="bash"))
@@ -517,7 +540,7 @@ def group_strict():
     # 維度 8：群組內部內容（R39）
     for gn, glines in GROUP_INNER:
         yield ("f-inner-%s" % gn,
-               LA + _strict_doc("group inner %s" % gn, ["{"] + list(glines) + ["} 2>&1 | " + NEUT],
+               _cls("文法外" if gn in GROUP_INNER_OUTSIDE_GRAMMAR else None) + LA + _strict_doc("group inner %s" % gn, ["{"] + list(glines) + ["} 2>&1 | " + NEUT],
                                 step_shell="bash"))
 
     # 維度 10：只靠某一條規則擋下的群組形式（R40，#33 verify R39 第 11 列、放行條件 7）——群組形式本身合規，唯一的違規是那一條
@@ -525,7 +548,8 @@ def group_strict():
     # （要跨 step）、env 規則——`SHELLOPTS: xtrace` 在群組形式下，群組裡的 trace 走管線、被過濾，群組外只剩 `set` 那一行（R40 第一版
     # 放了這一格，神諭判誤擋才看到）；`BASH_ENV` 指的檔神諭帶不進去、`PYTHON*` 神諭的 python3 stub 不讀。env 規則在群組形式下是保守的。
     for rn, body, kw in RULE_ONLY_GROUPS:
-        yield ("f-only-%s" % rn, LA + _strict_doc("only rule %s" % rn, body, step_shell="bash", **kw))
+        yield ("f-only-%s" % rn, _cls("文法外-without-proc" if rn == "proc-fd" else None)
+               + LA + _strict_doc("only rule %s" % rn, body, step_shell="bash", **kw))
 
     # 維度 9：群組尾巴後（R39）
     for tn, tail, _safe in GROUP_TAILS:

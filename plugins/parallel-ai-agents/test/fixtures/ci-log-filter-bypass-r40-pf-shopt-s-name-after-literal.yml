@@ -11,6 +11,8 @@ jobs:
     steps:
       - name: shopt -s name after a literal name
         shell: bash
+        env:
+          OPT: 'lastpipe'
         run: |
           # LOG-FILTER: none — prints no PR text
           shopt -s nullglob "$OPT"

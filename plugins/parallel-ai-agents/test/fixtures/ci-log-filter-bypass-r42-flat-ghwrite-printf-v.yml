@@ -3,6 +3,9 @@
 # 沒走到 `printf` 的規則：`printf -v RUNNER_TEMP … >> "$GITHUB_ENV"` 的參數全是字面，於是 RUNNER_TEMP 在群組裡被改掉，之後的
 # `"$RUNNER_TEMP/…"` 不再是 runner 的暫存目錄。R42 移植時 `printf` 的規則在所有產生式之前檢查。
 # LINT-ARGS: --strict
+# R42：這一張的 1 步是**文法外**——不在 `--strict` 的正面文法裡、神諭實跑沒有外流（stdout／stderr／跨 step 通道都沒有）、
+# pipefail 探針沒看到關閉。保守擋下，由下面的宣告簽名（神諭的類別閘門是雙向的）。
+# KNOWN-CLASS: 文法外
 # EXPECT: rule-red
 name: t
 on: pull_request

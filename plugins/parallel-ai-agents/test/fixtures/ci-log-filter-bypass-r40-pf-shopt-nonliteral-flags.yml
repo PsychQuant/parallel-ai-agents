@@ -11,6 +11,8 @@ jobs:
     steps:
       - name: shopt with non-literal flags
         shell: bash
+        env:
+          O: '-uo'
         run: |
           # LOG-FILTER: none — prints no PR text
           shopt "$O" pipefail

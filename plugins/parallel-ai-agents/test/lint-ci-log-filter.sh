@@ -17,6 +17,9 @@
 #
 # 用法：test/lint-ci-log-filter.sh --strict [workflow.yml…]   **檢查真的 workflow 用這個**（CI 與 run.sh 都是）；
 #                                                             預設 ../../.github/workflows/*.yml *.yaml（全部 workflow）
+# 神諭（test/oracle.py）只在它自己用的 bash 落在下面這個集合時才對帳——詞法模型（bash 5.3 的 `${ cmd; }`、`FL_BUILTINS`／`FL_KEYWORDS`）
+# 是對這些版本寫的（R42，#33 verify R41）。CI 的 ubuntu 是 5.2、macOS 與本機是 5.3。
+# ORACLE-BASH-SUPPORTED: 5.2 5.3
 #       test/lint-ci-log-filter.sh [workflow.yml…]            預設模式：fixture 與產生語料用，量的是 lint 與 bash 的詞法對帳，
 #                                                             **假設 shell 是 bash**、不要求 pipefail 與群組形式
 #       test/lint-ci-log-filter.sh --selftest

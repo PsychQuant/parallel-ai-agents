@@ -2,6 +2,9 @@
 # 正面文法不收子殼層 `( … )`，保守擋下：`false | true` 仍在 pipefail 之下，PR 文字經 neutralise.py 過濾，是揭露的誤擋。
 # run 區塊逐字保留。
 # LINT-ARGS: --strict
+# R42：這一張的 1 步是**文法外**——不在 `--strict` 的正面文法裡、神諭實跑沒有外流（stdout／stderr／跨 step 通道都沒有）、
+# pipefail 探針沒看到關閉。保守擋下，由下面的宣告簽名（神諭的類別閘門是雙向的）。
+# KNOWN-CLASS: 文法外
 # EXPECT: rule-red
 # EXPECT-MSG: 不在 `--strict` 的正面文法裡
 # ── R42 之前的檔頭（當時是 good fixture；描述的是 R42 刪除前的 lint，只留作沿革）──

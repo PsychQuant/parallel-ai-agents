@@ -21,20 +21,35 @@ R39（#33 verify R38 第 3、6、7 列）再加六項，量的是**神諭的歸�
   7. 已觀察到外流、分類失敗、沒有類別宣告：必須判繞過（前一版判「量不到」、rc=0）。
   8. 已知類別 S-2 被與外流無關的原因擋下：同第 4 項。
 
-封閉列舉，只有這八項，不得依性質相似類推。
+R40 再加兩項（逾時之前的外流、ORACLE-COMPARABLE），R42（#33 verify R41）加五項，量的是 KD 條目與啟動檢查：
+  11. KNOWN_DISAGREE 比對方向：登記成誤擋的條目不得吞掉同名 step 的繞過（R41 DA-5）。
+  12. KNOWN_DISAGREE 比對內容雜湊：step 內容改了一個字元，條目就不再擔保它。
+  13. 版本守衛：神諭用的 bash 不在 lint 檔頭 `# ORACLE-BASH-SUPPORTED:` 宣告的集合裡就具名退出。
+  14. `GH_SAFE_EXPRS` 同步：神諭與 lint 各有一份，兩份不同就具名退出。
+  15. 文法外類別的閘門：lint 多拒絕一種寫法（`echo`），神諭把那些 step 歸進文法外、檔頭卻沒有宣告 ⇒ rc=1。
+第 14、15 項在暫存目錄裡產生突變版的神諭／lint（`mut` 欄，錨點必須在原檔裡恰好出現一次——錨點過期時這一項判失敗，
+不會安靜地拿沒突變的檔案去跑）。
 
-用法：test/oracle_selfcheck.py      rc=0：八項都照預期失敗；rc=1：至少一項沒有。
+R42 WP7 加四項：pipefail 探針看到關閉（lint 放行時判繞過）、探針被腳本換掉（判量不到、不是一致）、跨 step 通道，
+以及「唯一的 RULE 是 pipefail」不再整步跳過（接替退役的 must-fail 探針 `bypass-r37a-mustfail-strict-pipefail-hides-2to1`）。
+
+封閉列舉，只有這十九項，不得依性質相似類推。
+
+用法：test/oracle_selfcheck.py      rc=0：十九項都照預期（十八項失敗、一項判量不到）；rc=1：至少一項沒有。
 """
 import os
 import pathlib
 import subprocess
 import sys
+import tempfile
 
 HERE = pathlib.Path(__file__).resolve().parent
 ORACLE = HERE / "oracle.py"
 PROBES = HERE / "oracle-probes"
+LINT = HERE / "lint-ci-log-filter.sh"
 
-# (說明, 額外環境變數, 神諭的檔案參數, 期待的 rc, 輸出裡必須出現的字串)
+# (說明, 額外環境變數, 神諭的檔案參數, 期待的 rc, 輸出裡必須出現的字串[, 突變])
+# 突變：{"lint": (錨點, 替換)} 或 {"oracle": (錨點, 替換)}——在暫存目錄產生那一份再跑（見 `run_check`）。
 CHECKS = [
     ("must-fail 探針的理由比對",
      {}, [PROBES / "mustfail-wrong-reason.yml"], 1, "must-fail 探針沒有以宣告的理由失敗"),
@@ -66,18 +81,70 @@ CHECKS = [
     ("已知類別 S-2 被與外流無關的原因擋下",
      {"ORACLE_LINT": str(PROBES / "lint-strict-blocks-set-E.sh")},
      [PROBES / "s2-blocked-for-unrelated-reason.yml"], 1, "原因與外流無關"),
+    # 以下五項（R42，#33 verify R41）：KD 的方向與雜湊、版本守衛、GH_SAFE 同步、文法外的閘門。
+    ("KNOWN_DISAGREE 比對方向（R41 DA-5）",
+     {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "kd-direction" / "ci-log-filter-restrict-r40-undisclosed-false-blocks.yml"], 1, "方向不符"),
+    ("KNOWN_DISAGREE 比對內容雜湊",
+     {}, [PROBES / "kd-hash" / "ci-log-filter-restrict-r40-undisclosed-false-blocks.yml"], 1, "內容雜湊不符"),
+    ("版本守衛：bash 不在 lint 宣告的支援集合裡",
+     {"ORACLE_LINT": str(PROBES / "lint-bash-unsupported.sh")},
+     [HERE / "fixtures" / "ci-log-filter-good.yml"], 1, "ORACLE-BASH-SUPPORTED"),
+    ("GH_SAFE_EXPRS 神諭與 lint 同步",
+     {}, [HERE / "fixtures" / "ci-log-filter-good.yml"], 1, "GH_SAFE_EXPRS",
+     {"oracle": ('    "github.sha", "github.run_id",', '    "github.sha", "github.actor", "github.run_id",')}),
+    ("文法外類別的閘門：lint 多拒絕 `echo`",
+     {}, [HERE / "fixtures" / "ci-log-filter-good-strict-group-forms.yml"], 1, "歸了類卻沒宣告",
+     {"lint": ('FL_INERT = frozenset(("echo", "printf",', 'FL_INERT = frozenset(("printf",')}),
+    # 以下三項（R42 WP7）：pipefail 探針與跨 step 通道。lint 放行一切（`lint-pass-all.sh`）時，神諭自己要看得出來。
+    ("pipefail 探針：lint 放行、管線在 pipefail 關閉下完成",
+     {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [HERE / "fixtures" / "ci-log-filter-bypass-r40-pf-or-on.yml"], 1, "繞過（pipefail"),
+    ("pipefail 探針被腳本換掉：判量不到、不判一致",
+     {}, [HERE / "fixtures" / "ci-log-filter-bypass-r40-pf-trap-debug-off.yml"], 0, "量不到（pipefail 探針被換掉"),
+    ("跨 step 通道：lint 放行、PR 文字寫進 GITHUB_ENV",
+     {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [HERE / "fixtures" / "ci-log-filter-bypass-r42-ghenv.yml"], 1, "跨 step 通道"),
+    ("唯一的 RULE 是 pipefail、而 pipefail 其實開著：判誤擋，不整步跳過",
+     {"ORACLE_LINT": str(PROBES / "lint-strict-pipefail-only.sh")},
+     [HERE / "fixtures" / "ci-log-filter-good-strict-group-forms.yml"], 1, "歸了類卻沒宣告"),
 ]
+
+
+def run_check(extra, files, mut):
+    """跑一項：`mut` 給了就先在暫存目錄產生突變版（錨點必須恰好出現一次），回傳 (rc, 輸出)。"""
+    env = dict(os.environ, **extra)
+    oracle = ORACLE
+    with tempfile.TemporaryDirectory(prefix="oracle-selfcheck-") as d:
+        for kind, (anchor, repl) in (mut or {}).items():
+            src_path = LINT if kind == "lint" else ORACLE
+            src = src_path.read_text(encoding="utf-8")
+            if src.count(anchor) != 1:
+                return None, "突變錨點在 %s 裡出現 %d 次（要恰好 1 次）：%r" % (src_path.name, src.count(anchor), anchor)
+            if kind == "lint":
+                t = pathlib.Path(d) / "test"; t.mkdir()
+                dst = t / LINT.name
+                env["ORACLE_LINT"] = str(dst)
+            else:
+                dst = pathlib.Path(d) / ORACLE.name
+                oracle = dst
+                env.setdefault("ORACLE_LINT", str(LINT))   # 突變版神諭的 HERE 是暫存目錄，lint 要明確指回 repo 的那一支
+            dst.write_text(src.replace(anchor, repl), encoding="utf-8")
+        r = subprocess.run([sys.executable, str(oracle)] + [str(f) for f in files],
+                           env=env, capture_output=True, text=True, errors="replace")
+        return r.returncode, r.stdout + r.stderr
 
 
 def main():
     bad = 0
-    for what, extra, files, want_rc, want_text in CHECKS:
-        env = dict(os.environ, **extra)
-        r = subprocess.run([sys.executable, str(ORACLE)] + [str(f) for f in files],
-                           env=env, capture_output=True, text=True, errors="replace")
-        out = r.stdout + r.stderr
-        ok = r.returncode == want_rc and want_text in out
-        print("%s %s：rc=%d（期待 %d）、「%s」%s" % ("✓" if ok else "✗", what, r.returncode, want_rc, want_text,
+    for what, extra, files, want_rc, want_text, *mut in CHECKS:
+        rc, out = run_check(extra, files, mut[0] if mut else None)
+        if rc is None:
+            print("✗ %s：%s" % (what, out))
+            bad += 1
+            continue
+        ok = rc == want_rc and want_text in out
+        print("%s %s：rc=%d（期待 %d）、「%s」%s" % ("✓" if ok else "✗", what, rc, want_rc, want_text,
                                              "出現" if want_text in out else "沒有出現"))
         bad += not ok
     return 1 if bad else 0

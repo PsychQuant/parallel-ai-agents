@@ -1,0 +1,15 @@
+# 神諭反向探針（R42 WP6，#33 verify R41 DA-5）：KNOWN_DISAGREE 要比對 step 內容的**雜湊**。這一步與 repo 裡
+# `restrict-r40-undisclosed-false-blocks` 的 `python3 -u` 只差一個字元（`make` → `makf`），判定也一樣（lint 擋、不外流＝誤擋），
+# 但登記的理由是對原本那段文字寫的——內容變了，條目就不再擔保它。檔名與 KD 的鍵相同，所以放在子目錄。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: python3 -u
+        shell: bash
+        run: |
+          set -o pipefail
+          { makf; } 2>&1 | python3 -u scripts/neutralise.py

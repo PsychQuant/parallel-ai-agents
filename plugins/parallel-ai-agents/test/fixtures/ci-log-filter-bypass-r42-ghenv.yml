@@ -5,6 +5,8 @@
 # regression b3 的 param-* 三張不收：它們不含 `GITHUB_ENV`／`GITHUB_PATH`，量的是 `${ ` 的寫法，不是跨 step 通道。
 # 45dee04 的 `--strict` 擋下其中七個（a17-dd、a18-redir-first、a19-group-redir、a20-sed-w、a23-cmdsub-arg、ge-cat-file、
 # ghenv-control-direct；靠 R40 的 `github_env_write` 與群組規則），其餘全部放行。那兩段在 R42 刪除，這七個一起釘住。
+# R42 WP7：a21-ln 的連結路徑由原輸入的 `/tmp/e` 改成 `$RUNNER_TEMP/e`（唯一偏離逐字的地方）。神諭沒有沙箱，固定的 /tmp 路徑
+# 會把這一步建的符號連結留給之後的 step 與之後的執行——`ge-cp` 寫 `/tmp/e` 時寫進一個已刪除的暫存檔，通道外流因此量不到。
 # LINT-ARGS: --strict
 # EXPECT: rule-red
 name: t
@@ -122,8 +124,8 @@ jobs:
         run: |
           set -o pipefail
           {
-            ln -sf "$GITHUB_ENV" /tmp/e
-            echo "N=$PR_BODY" >> /tmp/e
+            ln -sf "$GITHUB_ENV" "$RUNNER_TEMP/e"
+            echo "N=$PR_BODY" >> "$RUNNER_TEMP/e"
           } 2>&1 | python3 scripts/neutralise.py
       - name: a22-gh-output
         shell: bash
