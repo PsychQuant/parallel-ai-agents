@@ -33,9 +33,11 @@ R40 再加兩項（逾時之前的外流、ORACLE-COMPARABLE），R42（#33 veri
 R42 WP7 加四項：pipefail 探針看到關閉（lint 放行時判繞過）、探針被腳本換掉（判量不到、不是一致）、跨 step 通道，
 以及「唯一的 RULE 是 pipefail」不再整步跳過（接替退役的 must-fail 探針 `bypass-r37a-mustfail-strict-pipefail-hides-2to1`）。
 
-封閉列舉，只有這十九項，不得依性質相似類推。
+R42 WP8 加六項：payload 的三種脈絡（註解、heredoc、算術）、運算式規則關掉的突變、取最嚴重的單元測試、S-2 機制差分的突變。
 
-用法：test/oracle_selfcheck.py      rc=0：十九項都照預期（十八項失敗、一項判量不到）；rc=1：至少一項沒有。
+封閉列舉，只有這二十五項，不得依性質相似類推。
+
+用法：test/oracle_selfcheck.py      rc=0：二十五項都照預期（二十三項失敗、一項判量不到、一項單元測試通過）；rc=1：至少一項沒有。
 """
 import os
 import pathlib
@@ -108,6 +110,19 @@ CHECKS = [
     ("唯一的 RULE 是 pipefail、而 pipefail 其實開著：判誤擋，不整步跳過",
      {"ORACLE_LINT": str(PROBES / "lint-strict-pipefail-only.sh")},
      [HERE / "fixtures" / "ci-log-filter-good-strict-group-forms.yml"], 1, "歸了類卻沒宣告"),
+    # 以下六項（R42 WP8，#33 verify R41 DA-4、logic F9、requirements s2-flip）：payload 的脈絡、取最嚴重、S-2 機制差分。
+    ("payload 脈絡：註解裡的運算式", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")}, [PROBES / "ctx-comment.yml"], 1, "繞過"),
+    ("payload 脈絡：heredoc 內文裡的運算式", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")}, [PROBES / "ctx-heredoc.yml"], 1, "繞過"),
+    ("payload 脈絡：算術裡的運算式", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")}, [PROBES / "ctx-arith.yml"], 1, "繞過"),
+    ("payload 脈絡：運算式規則關掉、正面文法接受非字面（突變）", {}, [PROBES / "ctx-comment.yml"], 1, "繞過",
+     {"lint": [('        elif not drop_nonliteral:\n            raise FlatReject("非字面的 runner 運算式")',
+                '        elif not drop_nonliteral:\n            out.append("")'),
+               ('    if not declared and any(not gh_literal(inner) for _a, _b, inner in runner_exprs(text)):',
+                '    if False:')]}),
+    ("取最嚴重：stdout 的外流勝過 stderr 的（單元測試）", {}, ["--selftest-severity"], 0, "select_most_severe ok"),
+    ("S-2 機制差分：多出 baseline 沒有的外流行（突變）", {}, [HERE / "fixtures" / "ci-log-filter-oracle-r42-s2-flip.yml"], 1,
+     "must-fail 探針沒有以宣告的理由失敗",
+     {"oracle": ("                and not (ml[1] - base_ml[1]))", "                )")}),
 ]
 
 
@@ -116,11 +131,13 @@ def run_check(extra, files, mut):
     env = dict(os.environ, **extra)
     oracle = ORACLE
     with tempfile.TemporaryDirectory(prefix="oracle-selfcheck-") as d:
-        for kind, (anchor, repl) in (mut or {}).items():
+        for kind, pairs in (mut or {}).items():
             src_path = LINT if kind == "lint" else ORACLE
             src = src_path.read_text(encoding="utf-8")
-            if src.count(anchor) != 1:
-                return None, "突變錨點在 %s 裡出現 %d 次（要恰好 1 次）：%r" % (src_path.name, src.count(anchor), anchor)
+            for anchor, repl in ([pairs] if isinstance(pairs, tuple) else pairs):
+                if src.count(anchor) != 1:
+                    return None, "突變錨點在 %s 裡出現 %d 次（要恰好 1 次）：%r" % (src_path.name, src.count(anchor), anchor)
+                src = src.replace(anchor, repl)
             if kind == "lint":
                 t = pathlib.Path(d) / "test"; t.mkdir()
                 dst = t / LINT.name
@@ -129,7 +146,7 @@ def run_check(extra, files, mut):
                 dst = pathlib.Path(d) / ORACLE.name
                 oracle = dst
                 env.setdefault("ORACLE_LINT", str(LINT))   # 突變版神諭的 HERE 是暫存目錄，lint 要明確指回 repo 的那一支
-            dst.write_text(src.replace(anchor, repl), encoding="utf-8")
+            dst.write_text(src, encoding="utf-8")
         r = subprocess.run([sys.executable, str(oracle)] + [str(f) for f in files],
                            env=env, capture_output=True, text=True, errors="replace")
         return r.returncode, r.stdout + r.stderr
