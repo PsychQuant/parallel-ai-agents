@@ -1,0 +1,15 @@
+# #33 verify R40 最終量測（opsweep `_param_end` drop-operand 第 1 條存活）：`${` 落在行尾時，前一版只有「`${` 後面緊接空白、tab、`|`」
+# 有 fixture，行尾那一半沒有——拿掉 `i + 2 >= len(line)` 守衛後 lint 在這裡丟 IndexError（traceback，不是不解析的訊息），沒有任何
+# 一張 fixture 翻色。bash 把 `${` 之後的換行讀進展開（bad substitution），不是合法用途，一律不解析、不放行。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: param-open-at-eol
+        run: |
+          set -o pipefail
+          echo ${
+          echo "$PR_TITLE" | python3 scripts/neutralise.py

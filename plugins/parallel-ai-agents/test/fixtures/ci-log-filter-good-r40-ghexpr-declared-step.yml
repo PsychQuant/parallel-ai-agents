@@ -1,0 +1,14 @@
+# #33 verify R40 最終量測：R40 的運算式規則只管**靠管線過濾**的 step；宣告了 `# LOG-FILTER:` 的 step 不在它的範圍裡（`not declared` 被拿掉時誤擋）。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: declared step with a matrix expression
+        shell: bash
+        run: |
+          # LOG-FILTER: none — prints no PR text
+          echo "${{ matrix.os }}"

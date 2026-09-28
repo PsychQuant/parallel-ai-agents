@@ -1,0 +1,16 @@
+# #33 verify R40 最終量測：opsweep 在 R40 的 pipefail 控制流程上報存活，R40 的 fixture 只釘住了點名的輸入、沒有釘住機制。
+# trap 的動作不是字面：看不出裡面有沒有 `set +o pipefail`，當成關掉（`trap_cmd` 少了 `is None` 守衛時在這裡當掉）。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: trap with non-literal action
+        shell: bash
+        run: |
+          # LOG-FILTER: none — prints no PR text
+          trap "$ACT" DEBUG
+          false | cat

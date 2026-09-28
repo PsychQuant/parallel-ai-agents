@@ -1,0 +1,18 @@
+# #33 verify R40 最終量測：opsweep 在 R40 的 pipefail 控制流程上報存活，R40 的 fixture 只釘住了點名的輸入、沒有釘住機制。
+# 條件深度在 `fi` 之後要回到 0：之後的「開」是無條件的（`ctl` 的 `cond += 1` 改成 2 時，這一步被當成條件裡的「開」而誤擋）。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: on after a closed if
+        shell: bash
+        run: |
+          # LOG-FILTER: none — prints no PR text
+          set +o pipefail
+          if true; then :; fi
+          set -o pipefail
+          false | cat

@@ -303,7 +303,7 @@ TAG_BANG_DOC = (HEAD + '      - name: tag-bang\n        run: !!str "echo hi | '
 # `shell:`、`defaults:`、`env:` 維度，624 檔全是預設模式。這一組補上這四個維度，每個檔頭帶 `# LINT-ARGS: --strict`
 # 讓 `oracle.py` 用 strict 模式對帳（機制見 oracle.py R35 段：`# LINT-ARGS:` 已經是既有機制，這裡只是餵它）。
 #
-# 九個封閉列舉的維度（**只有這九個，不得在別處「順便」擴充**——改動這份清單是另一次 change；R39 加了 7–9）：
+# 十個封閉列舉的維度（**只有這十個，不得在別處「順便」擴充**——改動這份清單是另一次 change；R39 加了 7–9，R40 加了 10）：
 #   1. shell 值（SHELL_TEMPLATES，18）：`--strict` 接受 `bash`／`/bin/bash`／`/usr/bin/bash` 加白名單選項的整個樣板家族（不含 xtrace/verbose 以外的選項一律拒）；樣板（`bash -e {0}`…）與非 bash
 #      shell（`sh`／`pwsh`／`python {0}`）本來就不接受。R36 第 4 列點名的是 pipefail 規則的 `is_bash` 旗標漏掉 `bash {0}`／`bash -e {0}`／`bash -l {0}`／`bash -el {0}`／`bash --noprofile --norc -e {0}` 五種**仍是 bash** 的樣板，不是非 bash shell 或另一條規則的字面清單問題。
 #   2. env 鍵（ENV_KEYS）：**只有 `SHELLOPTS`**，值只有 `xtrace`（`verbose` 被 `ENV_VALUES` 排除，理由見下），三層（workflow／job／step）各一檔，共 3 檔。
@@ -349,8 +349,9 @@ TAG_BANG_DOC = (HEAD + '      - name: tag-bang\n        run: !!str "echo hi | '
 #      詞元檢查與只收非空白碼行的字面檢查都看不到它們）。`set` 前綴只放在群組之前（群組之後的 `set` 不是前綴，照規則擋、不外流）。
 #   8. 群組內部內容（GROUP_INNER，R40 起各行不縮排——前一版縮兩格，heredoc 的 `EOF` 因此不是結束標記、heredoc 永不終止，
 #      `f-inner-heredoc` 什麼都沒量到（R39 verify 第 11 列）：群組裡的 `if`／`for`／`case`／heredoc／`>&2`／`set -x`／`exec 3>&1`／`trap`／子殼層裡關 pipefail／
-#      未加引號的 `${{ … }}`——全部安全、`--strict` 都該放行（R38 第 11 列：前一版沒有這個維度，群組規則的誤擋面沒被量到）。
+#      未加引號的 `${{ github.run_id }}`（R40 起只有 `GH_SAFE_EXPRS` 的 GitHub 產生純量與字面常數放行，其他運算式照規則擋）——全部安全、`--strict` 都該放行（R38 第 11 列：前一版沒有這個維度，群組規則的誤擋面沒被量到）。
 #   9. 群組尾巴後（GROUP_TAILS）：尾巴後的 `;`（該放行）、尾巴後接命令（該擋）。
+#  10. 只靠某一條規則擋下的群組形式（RULE_ONLY_GROUPS，R40）：見下方 `RULE_ONLY_GROUPS` 與產生迴圈的說明。
 SHELL_TEMPLATES = [
     ("bash", "bash"), ("bash-dq", '"bash"'), ("bash-sq", "'bash'"),
     ("bash-brace", "bash {0}"), ("bash-e", "bash -e {0}"), ("bash-l", "bash -l {0}"),

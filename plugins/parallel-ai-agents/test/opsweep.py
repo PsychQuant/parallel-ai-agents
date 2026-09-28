@@ -46,6 +46,8 @@ LINT = HERE / "lint-ci-log-filter.sh"
 # 突變體 id 的形狀：`<op>|<函式>|<該行去空白的原文>|<同一行第幾個>`。用原文不用 offset：offset 會隨任何改動漂移，
 # 原文只在那一行真的改了才變——而那時本來就該重新判讀。
 EXPECTED_SURVIVE = {   # id → 理由（依構造等價）。每一條都要能回答「為什麼關掉它沒有任何輸出會變」
+    "±1→±2|ctl|self.o[\"nloop\"] += 1|1": "迴圈 id 同範圍 id：只用來取交集（`_pipefail_holds` 的 `loop & set(e[\"loop\"])`）；間隔 1 或 2 都互不相同，沒有任何判定讀它的數值（R40）",
+    "drop-operand|ctl|if word == \"done\" and self.o[\"loops\"]:|2": "`loops` 空的時候遇到 `done` 只發生在多出來的 `done`——那是 bash 語法錯誤（`syntax error near unexpected token`），runner 不會跑；拿掉守衛只讓 lint 對無效輸入當掉，不改變任何合法輸入的判定。解析器共用 `self.o`，命令替換裡的迴圈與外面的 `done` 一樣配對（R40）",
     "±1→±2|new_scope|self.o[\"nscope\"] += 1|1": "範圍 id 只用來比相等與前綴（`_pipefail_holds`）；間隔 1 或 2 都互不相同，沒有任何判定讀它的數值（R39）",
     # `len(v) >= 2` 只擋單一字元的 `'`／`"`：那是沒收尾的引號，不是合法 YAML（PyYAML ScannerError、GitHub
     # 「workflow file issue」），runner 不會跑。拿掉守衛只改變 lint 對無效輸入的訊息，不改變任何合法輸入的判定。

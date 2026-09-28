@@ -89,17 +89,17 @@ if [ "${1:-}" = "--selftest" ]; then
   done
   # R24 regression F9：門檻寫成 `>=` 而實際值更高時，那個差額**沒有網**——刪掉一個 fixture 仍然綠。
   # 三個門檻一律改成**等於實測值**：要加 fixture 就同步改這裡，讓「少了一個」立刻紅。
-  if [ "${n_pass}" -ne 264 ]; then
-    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 264（改動 fixture 請同步改這個數字）" >&2
+  if [ "${n_pass}" -ne 273 ]; then
+    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 273（改動 fixture 請同步改這個數字）" >&2
     fail=1
   fi
-  if [ "${n_rule}" -ne 381 ]; then
-    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 381" >&2
+  if [ "${n_rule}" -ne 389 ]; then
+    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 389" >&2
     fail=1
   fi
   if [ "${fail}" -ne 0 ]; then exit 1; fi
-  if [ "${n_parse}" -ne 147 ]; then
-    echo "lint-ci-log-filter selftest FAILED: parse-red 是 ${n_parse} 個，預期恰好 147（先前這一類完全沒有下限）" >&2
+  if [ "${n_parse}" -ne 148 ]; then
+    echo "lint-ci-log-filter selftest FAILED: parse-red 是 ${n_parse} 個，預期恰好 148（先前這一類完全沒有下限）" >&2
     exit 1
   fi
   if [ "${n_msg}" -ne 5 ]; then
@@ -2254,7 +2254,8 @@ class _Sh:
         if "pipefail" in lits:
             self.pf_event(False, ctx)
         # 合寫的 `-euxo pipefail`（R40，#33 verify R39 第 7 列）：`o` 不在單字母表裡，前一版整串不匹配、裡面的 `x` 看不到。
-        bundles = [l for l in lits if l is not None and re.fullmatch(r"-[%s]*o?" % _SET_LETTERS, l) and len(l) > 1]
+        # 單獨的 `-` 也會 fullmatch，但它沒有字母、不以 `o` 結尾，下面兩個條件都不成立——前一版多寫的 `len(l) > 1` 是多餘的（R40 opsweep）。
+        bundles = [l for l in lits if l is not None and re.fullmatch(r"-[%s]*o?" % _SET_LETTERS, l)]
         if (any(set(l[1:]) & set("xv") for l in bundles)
                 or (any(l.endswith("o") for l in bundles) and any(l in _TRACE_OPTS for l in lits))):
             self.hit("命令名不是字面、參數像 `set -x`／`set -o xtrace`——看不出是不是開了 trace", ctx)
@@ -2321,24 +2322,30 @@ class _Sh:
     def trap_cmd(self, args, ctx):
         """`trap '<動作>' <訊號>`（R40，#33 verify R39 第 5 列）：DEBUG trap 在每個命令之前執行、EXIT／RETURN／ERR 在之後——動作裡的
         `set` 什麼時候生效，順序模型答不出來。動作不是字面、或字面裡有 `set`／`pipefail` ⇒ 從這裡起當成關掉，不分範圍。"""
-        a = [x for x in args if x["lit"] != "--"]
-        if not a or (a[0]["lit"] is not None and a[0]["lit"].startswith("-")):
-            return                                # `trap -l`／`trap -p`：只列出
-        act = a[0]["lit"]
+        # 選項不另外分辨（R40 最終量測，opsweep 在這裡的存活者）：前一版剝掉**所有** `--` 之後把以 `-` 開頭的當成選項、return——
+        # `trap -- '-:||:;set +o pipefail' DEBUG` 的動作以 `-` 開頭，因此看不到（bash 5.3 實跑 rc=0）。`-l`／`-p`／`-P`／`-`（重設）
+        # 當成動作也不含 `set`／`pipefail`、不記事件，所以只剝開頭那一個 `--`，其餘一律當動作看。
+        if args and args[0]["lit"] == "--":
+            args = args[1:]
+        if not args:
+            return                                # `trap`：只列出
+        act = args[0]["lit"]
         if act is None or re.search(r"\bset\b|pipefail", act):
             self.pf_event(False, ctx, glob=True)
 
     def shopt_cmd(self, args, ctx):
         # `shopt -s lastpipe`（R40，#33 verify R39 第 5 列）：管線最後一段改在目前的 shell 跑，「管線的每一段各開一層範圍」不再成立
         # ⇒ 之後的「關」一律作用到底（見 `_pipefail_holds`）。
-        lits = [a["lit"] for a in args]
-        if "lastpipe" in lits and any(l is not None and l.startswith("-") and "s" in l for l in lits):
-            self.o["events"].append({"k": "lastpipe", "scope": ctx["scope"]})      # `scope`：rescope 會走訪每個事件
+        # 非字面的地方一律 fail-closed（R40 最終量測，opsweep 在這裡的存活者引出三個繞過，bash 5.3 各自實跑 rc=0）：前一版只記外流類命中，
+        # 宣告了 `# LOG-FILTER:` 的 step 不看那一類，pipefail 規則卻照樣適用——`shopt "$O" pipefail`（O=-uo）、`shopt -uo "$N"`、
+        # `shopt -s "$OPT"`（OPT=lastpipe，之後 `true | set +o pipefail` 關掉的是目前的 shell）全部放行。
         flags, i = "", 0
         while i < len(args):
             a = args[i]["lit"]
             if a is None:
                 self.hit("`shopt` 的參數不是字面——開了什麼看不出來", ctx)
+                self.pf_event(False, ctx)                                          # 可能是 `-uo pipefail`
+                self.o["events"].append({"k": "lastpipe", "scope": ctx["scope"]})  # 也可能是 `-s lastpipe`
                 return
             if a == "--":
                 i += 1
@@ -2346,12 +2353,16 @@ class _Sh:
             if not re.fullmatch(r"-[A-Za-z]+", a):
                 break
             flags, i = flags + a[1:], i + 1
+        names = [w["lit"] for w in args[i:]]
         if "o" not in flags:
+            if "s" in flags and ("lastpipe" in names or None in names):
+                self.o["events"].append({"k": "lastpipe", "scope": ctx["scope"]})  # `scope`：rescope 會走訪每個事件
             return
-        for w in args[i:]:
-            nm = w["lit"]
+        for nm in names:
             if nm is None:
                 self.hit("`shopt -o` 的選項名不是字面——開了什麼看不出來", ctx)
+                if "u" in flags:
+                    self.pf_event(False, ctx)                                      # 可能是 `-uo pipefail`
             elif "s" in flags and nm in _TRACE_OPTS:
                 self.hit("`shopt -%s %s` 開了 %s" % (flags, nm, nm), ctx)
             elif nm == "pipefail" and ("s" in flags or "u" in flags):
@@ -2453,13 +2464,13 @@ def _pipefail_holds(events, on):
         for i, e in enumerate(events[:j]):
             if e["k"] != "pf":
                 continue
-            if e["glob"] and not e["on"]:
+            if e["glob"]:                        # glob 事件只由 `trap_cmd` 產生、恆為「關」（R40 opsweep：前一版多寫的 `not e["on"]` 是多餘的）
                 stuck = True                     # trap 的「關」在每個命令之前再執行一次：之後的「開」救不回來
             elif ((lastpipe_at is not None and lastpipe_at < i) or ev["scope"][:len(e["scope"])] == e["scope"]) \
                     and not ((e["fn"] or e["cond"]) and e["on"]):
                 st = e["on"]
         st = st and not stuck
-        if st and ev["loop"]:
+        if st:                                   # 迴圈外的管線：`loop` 是空集合，與任何事件的交集都是空的，`st` 不變（R40 opsweep）
             loop = set(ev["loop"])
             st = not any(e["k"] == "pf" and not e["on"] and loop & set(e["loop"])
                          and ev["scope"][:len(e["scope"])] == e["scope"] for e in events)
@@ -2597,7 +2608,9 @@ def runner_exprs(s):
         j, q = a + 3, False
         while j < len(s):
             if s[j] == "'":
-                if q and s[j + 1:j + 2] == "'":
+                # 連續兩個單引號當成一個單位跳過：字串裡是跳脫的單引號，字串外是空字串 `''`——一連串 k 個單引號走完之後，
+                # 「在不在字串裡」只由 k 的奇偶決定，與從哪一個開始配對無關（R40 opsweep：前一版只在字串裡配對，多寫的 `q` 是多餘的）。
+                if s[j + 1:j + 2] == "'":
                     j += 2
                     continue
                 q = not q
