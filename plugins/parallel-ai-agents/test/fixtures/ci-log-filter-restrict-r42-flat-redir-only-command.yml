@@ -1,0 +1,22 @@
+# #33 R42 opsweep（_fl_command 的 `if w0 is not None and ...`，drop `w0 is not None` 存活）：群組裡放一個「只有重導向、
+# 沒有命令」的指令（`> /dev/null` 單獨一行），w0=None。原碼靠 `w0 is not None` 短路、跳到 `if w0 is None: raise 只有重導向`；
+# 突變體拿掉守衛 → `None["pieces"]` TypeError（CRASHED＝殺）。語料不產生「只有重導向的命令」，故 partition 誤標等價。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-MSG: 只有重導向
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: redirect-only command inside the group
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            > /dev/null
+            echo hi
+          } 2>&1 | python3 scripts/neutralise.py
