@@ -459,7 +459,7 @@ elif LINT == (HERE / "lint-ci-log-filter.sh").resolve():
     sys.exit("✗ %s 裡找不到 GH_SAFE_EXPRS——神諭無法確認兩份同步" % LINT)
 # 已知類別在 repo 自己的 fixture 集（不給檔案參數）上的**確切**條數（R37，R36 第 2 列；同 selftest 門檻 R24 F9 的理由：
 # 寫成 `>=` 而實際更高時，那個差額沒有網——刪掉一張 G 範例 fixture 仍然綠）。must-fail 探針不算在內。
-FIXTURE_CLASS_TOTALS = {"G": 8, "S-2": 3, "文法外": 39, "文法外-without-proc": 2}
+FIXTURE_CLASS_TOTALS = {"G": 8, "S-2": 3, "文法外": 92, "文法外-without-proc": 2}
 # `文法外-without-proc` 只在沒有 /proc 的平台成立（見 `check_file` 的平台變體）；有 /proc 時預期是 0。
 FIXTURE_CLASS_PLATFORM_ONLY = frozenset(("文法外-without-proc",))
 # must-fail 探針的確切張數（同理：刪掉一張探針＝少一條負對照，必須立刻紅）。
