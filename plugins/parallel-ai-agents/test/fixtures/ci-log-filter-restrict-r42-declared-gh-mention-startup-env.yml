@@ -1,0 +1,19 @@
+# #33 R42 opsweep（flat_trigger 的 `return "|" in "".join(rest) or FL_GH_RE.search(text) is not None`，drop 第二運算元存活；combo_finder 找到）：
+# 宣告了 `# LOG-FILTER:` 的 step 即使**沒寫管線**，只要提到 `$GITHUB_ENV`／`$GITHUB_PATH` 也要落進文法（觸發的 GH 那一半）。此 step 沒有 `|`，
+# 只有 `>> "$GITHUB_ENV"`；env 帶 BASH_ENV（bash 啟動時就讀）——觸發後被啟動鍵規則擋。突變體拿掉 GH 運算元 → 不觸發 → 放行。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-MSG: bash 啟動時就讀它們
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: declared step mentions the channel, no pipe, startup key in env
+        shell: bash
+        env:
+          BASH_ENV: /tmp/x
+        run: |-
+          # LOG-FILTER: none — 執行 PR 自己的建置、不含 PR 文字
+          echo FOO=bar >> "$GITHUB_ENV"
