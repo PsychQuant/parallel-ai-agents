@@ -1,0 +1,38 @@
+# #33 R42 opsweep（第三輪手測，Sonnet 接手收斂時再找到兩個缺口）：
+# - 指派值提到 `$GITHUB_ENV`／`$GITHUB_PATH`：drop `FL_GH_RE.search(w0["raw"])` 放行（`name in FL_TRUSTED_VARS` 只擋 NAME 是信任變數）。
+# - 群組尾巴 `2>&1 |&`：drop `shape[1]==("OP","|")` 放行（shape[0] 已是 `2>&1`，光靠長度 4 通過）。
+# - 雙引號 trap 動作重組 body 時 `("" if t_ == "\\\n" else t_)`（==↔!= 存活）：突變體把每個普通字元 token 抹成空字串，
+#   動作含文法外命令（`shopt`）時 body 變空而放行——trap 動作裡的 `shopt -u lastpipe` 因此被漏掉。
+# EXPECT-EACH-STEP 確保每步各自紅；指派三個形狀各一步、尾巴一步、trap 動作一步。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-EACH-STEP: rule-red
+# EXPECT-MSG: 不得指派或當成值
+# EXPECT-MSG: 群組的 `}` 之後必須恰好
+# EXPECT-MSG: `shopt` 是 bash 的 builtin／保留字
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: assignment value is a bare channel var
+        shell: bash
+        run: |
+          { X=$GITHUB_ENV; echo hi; } 2>&1 | python3 scripts/neutralise.py
+      - name: assignment value glues text and a channel var
+        shell: bash
+        run: |
+          { X=a$GITHUB_PATH; echo hi; } 2>&1 | python3 scripts/neutralise.py
+      - name: assignment value is a quoted channel var
+        shell: bash
+        run: |
+          { X="$GITHUB_ENV"; echo hi; } 2>&1 | python3 scripts/neutralise.py
+      - name: group tail uses 2to1 then pipe-amp
+        shell: bash
+        run: |
+          { echo hi; } 2>&1 |& python3 scripts/neutralise.py
+      - name: dq trap action hides a forbidden builtin
+        shell: bash
+        run: |
+          { trap "shopt -u lastpipe" EXIT; echo hi; } 2>&1 | python3 scripts/neutralise.py
