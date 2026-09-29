@@ -2767,7 +2767,9 @@ def fl_tokens(s):
             continue
         for op in ("&&", "||", "|&", "|", ";"):
             if s.startswith(op, i):
-                if op == ";" and s.startswith(";;", i):
+                # `;;` 以 `;` 開頭，而 `&&`／`||`／`|&`／`|` 都不以 `;` 起頭，所以走到這裡 op 必為 `;`——不必再比 op（opsweep 存活的多餘運算元，
+                # R42：拿掉；`;;` 的訊息由 restrict-r42-flat-case-terminator-msg 釘住）。
+                if s.startswith(";;", i):
                     raise FlatReject("`;;`（case）不在文法裡")
                 toks.append(("OP", op))
                 i += len(op)
