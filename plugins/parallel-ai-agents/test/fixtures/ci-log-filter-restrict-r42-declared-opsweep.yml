@@ -1,0 +1,39 @@
+# #33 R42 opsweep（`flat_declared`／`_fl_declared_trigger`／`flat_step_rules` 的守衛，killer 假設驗證第二輪）：
+# 宣告 step 的每個「有沒有管線」「要不要進文法」判斷各被拿掉一次時放行的形狀。
+# 前兩步：沒有 `shell:` 鍵的樣板不帶 pipefail，宣告的管線（`|`、`|&`）因此被擋——只認其中一種運算子的突變體漏掉另一種。
+# 後兩步：觸發要看兩種讀法——原文有 `|`（第一種）、或字面代換後才相鄰出現 `|`（第二種）；只留一種都會漏。
+# 最後一步：一行只有重導向、沒有命令（`words` 為空，突變體對空串列取 `words[0]` 崩潰）。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-EACH-STEP: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: a declared pipe without pipefail
+        run: |
+          # LOG-FILTER: none — x
+          echo a | cat
+      - name: a declared pipe-ampersand without pipefail
+        run: |
+          # LOG-FILTER: none — x
+          echo a |& cat
+      - name: a declared step where only the raw text reads as a pipe
+        shell: bash
+        env:
+          BASH_ENV: /x
+        run: |
+          # LOG-FILTER: none — x
+          a |${{ null }}| b
+      - name: a declared step where only the substituted text reads as a pipe
+        run: |
+          # LOG-FILTER: none — x
+          echo a \${{ null }}||b
+      - name: a declared step with a line of only a redirect
+        shell: bash
+        run: |
+          # LOG-FILTER: none — x
+          > out.txt
+          echo b | cat

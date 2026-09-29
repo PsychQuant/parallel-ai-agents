@@ -2,6 +2,9 @@
 # 首詞是重導向（非 W 詞元）時走 else 分支用 `first[1]`（op 字串）；突變體翻成 `first[1]["raw"]`，對 R 三元組取 ["raw"] → TypeError。
 # 首詞是重導向＝沒有群組的 `{`，本來就該擋。原碼 RULE、突變體在這裡崩（opsweep 記 CRASHED＝殺）。
 # LINT-ARGS: --strict
+# R42：這一張的 1 步是**文法外**——不在 `--strict` 的正面文法裡、神諭實跑沒有外流（stdout／stderr／跨 step 通道都沒有）、
+# pipefail 探針沒看到關閉。保守擋下，由下面的宣告簽名（神諭的類別閘門是雙向的）。
+# KNOWN-CLASS: 文法外
 # EXPECT: rule-red
 # EXPECT-MSG: 不在 `--strict` 的正面文法裡
 name: t

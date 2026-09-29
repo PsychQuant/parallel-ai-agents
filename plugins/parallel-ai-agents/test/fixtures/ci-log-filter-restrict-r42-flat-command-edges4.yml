@@ -1,0 +1,143 @@
+# #33 R42 opsweep（killer 假設驗證第二輪，`_fl_command`／`_fl_word`／`fl_tokens`／`_fl_split_prefix`／`flat_filtered` 的守衛）：
+# 每一步只違反一個守衛，原碼全部 RULE。有的守衛拿掉後突變體放行，有的在特定輸入上崩潰（IndexError／TypeError），
+# 有的只是換成另一條訊息（`背景執行`、`群組沒有收尾`、`$?` 三條由 EXPECT-MSG 釘住，且各自只有一步產生）。
+# LINT-ARGS: --strict
+# R42：這一張的 15 步是**文法外**——不在 `--strict` 的正面文法裡、神諭實跑沒有外流（stdout／stderr／跨 step 通道都沒有）、
+# pipefail 探針沒看到關閉。保守擋下，由下面的宣告簽名（神諭的類別閘門是雙向的）。
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# EXPECT: rule-red
+# EXPECT-EACH-STEP: rule-red
+# EXPECT-MSG: 重導向 `>&2x` 不在文法裡
+# EXPECT-MSG: `&`（背景執行、`&>`）
+# EXPECT-MSG: 群組沒有收尾
+# EXPECT-MSG: 雙引號 trap 動作裡的 `$?`
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: an assignment whose value has three pieces
+        shell: bash
+        run: |
+          {
+            X=$(mktemp)a
+            echo hi
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: printf with no argument
+        shell: bash
+        run: |
+          {
+            printf
+            echo hi
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: printf with a quoted dash-v format
+        shell: bash
+        run: |
+          {
+            printf '-v' X hi
+            echo hi
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a command name that is a glob
+        shell: bash
+        run: |
+          {
+            a*
+            echo hi
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a command name made of two pieces
+        shell: bash
+        run: |
+          {
+            foo"bar" x
+            echo hi
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a mktemp assignment to the right of a logical and
+        shell: bash
+        run: |
+          {
+            true && T=$(mktemp)
+            trap "rm $T" EXIT
+            echo hi
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a mktemp assignment on the left of a pipe
+        shell: bash
+        run: |
+          {
+            T=$(mktemp) | cat
+            trap "rm $T" EXIT
+            echo hi
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a trap action that expands a registered variable with a default
+        shell: bash
+        run: |
+          {
+            T=$(mktemp)
+            trap "rm ${T:-x}" EXIT
+            echo hi
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a trap with a redirect
+        shell: bash
+        run: |
+          {
+            trap 'echo x' EXIT > out.txt
+            echo hi
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a double-quoted trap action with a backslash escape that is not special
+        shell: bash
+        run: |
+          {
+            trap "echo \a" EXIT
+            echo hi
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a double-quoted first piece before a mktemp substitution
+        shell: bash
+        run: |
+          {
+            "X="$(mktemp)
+            echo hi
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a double-quoted trap action that expands the exit status
+        shell: bash
+        run: |
+          {
+            trap "echo $?" EXIT
+            echo hi
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: an ampersand-greater-than redirect
+        shell: bash
+        run: |
+          {
+            echo hi &> out
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a duplicate to descriptor two glued to a word
+        shell: bash
+        run: |
+          {
+            echo hi >&2x
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a set prefix with a non-literal word
+        shell: bash
+        run: |
+          set -e "$X"
+          {
+            echo hi
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a closing brace right after a logical and
+        shell: bash
+        run: |
+          { echo hi && } 2>&1 | python3 scripts/neutralise.py

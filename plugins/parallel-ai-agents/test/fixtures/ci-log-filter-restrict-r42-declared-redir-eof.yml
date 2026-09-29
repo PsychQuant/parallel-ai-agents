@@ -1,0 +1,18 @@
+# #33 R42 opsweep（`fl_tokens` 的 `i >= n` 與 `while i < n and s[i] in " \t"`）：重導向運算子是 run 文字的最後一個詞元、後面沒有目標。
+# 只有宣告 step 會這樣（群組形式的尾巴一定在後面）；`run: |-` 讓文字不以換行結尾。原碼 RULE「沒有目標」；
+# 拿掉任一個 `i < n` 守衛的突變體在越界索引時崩潰。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-MSG: 重導向 `>` 沒有目標
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: a redirect operator at the very end of the run text
+        shell: bash
+        run: |-
+          # LOG-FILTER: none — x
+          echo a | cat
+          echo hi >

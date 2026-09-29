@@ -5,6 +5,13 @@
 #   動作含文法外命令（`shopt`）時 body 變空而放行——trap 動作裡的 `shopt -u lastpipe` 因此被漏掉。
 # EXPECT-EACH-STEP 確保每步各自紅；指派三個形狀各一步、尾巴一步、trap 動作一步。
 # LINT-ARGS: --strict
+# R42：這一張的 5 步是**文法外**——不在 `--strict` 的正面文法裡、神諭實跑沒有外流（stdout／stderr／跨 step 通道都沒有）、
+# pipefail 探針沒看到關閉。保守擋下，由下面的宣告簽名（神諭的類別閘門是雙向的）。
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
 # EXPECT: rule-red
 # EXPECT-EACH-STEP: rule-red
 # EXPECT-MSG: 不得指派或當成值

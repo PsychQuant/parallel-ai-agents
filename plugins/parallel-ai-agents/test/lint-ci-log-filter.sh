@@ -58,6 +58,25 @@ if [ "${1:-}" = "--selftest" ]; then
     printf 'lint-ci-log-filter selftest FAILED: %s\n' "${cg}" >&2
     fail=1
   fi
+  # R42（opsweep）：`--check-compgen` 的診斷（bash 版本、bash 自己跑不起來時的 stderr）用**假 bash**釘住——真的 bash 只會走到「一切正常」
+  # 那條路，版本字串與 rc≠0 的訊息從來沒有東西看過。假 bash 只放在 `--check-compgen` 這一個子行程的 PATH 最前面；跑 lint 的仍是真的 bash。
+  realbash=$(command -v bash)
+  fakebin=$(mktemp -d)
+  # 三種假 bash：(1) 印出版本與一個不在集合裡的名字、(2) 版本行是空的、(3) 以 rc=3 結束且 stderr 前後帶空白
+  for spec in "9.9.9-fake|printf '9.9.9-fake\\nzzz-not-a-builtin\\n'|bash 9.9.9-fake 列出的 \`zzz-not-a-builtin\`" \
+              "empty-version|printf '\\nzzz-not-a-builtin\\n'|bash ? 列出的 \`zzz-not-a-builtin\`" \
+              "rc3|printf '  boom  \\n' >&2; exit 3|rc=3：boom"; do
+    IFS='|' read -r _label body want <<< "${spec}"
+    printf '#!/bin/sh\n%s\n' "${body}" > "${fakebin}/bash"
+    chmod +x "${fakebin}/bash"
+    got=$(PATH="${fakebin}:${PATH}" "${realbash}" test/lint-ci-log-filter.sh --check-compgen 2>&1 || true)
+    case "${got}" in
+      *"${want}"*) ;;
+      *) echo "lint-ci-log-filter selftest FAILED: 假 bash（${_label}）的 --check-compgen 輸出沒有「${want}」" >&2
+         printf '%s\n' "${got}" | head -2 >&2; fail=1 ;;
+    esac
+  done
+  rm -rf "${fakebin}"
   for f in test/fixtures/ci-log-filter-*.yml; do
     want=$(sed -n 's/^# EXPECT: //p' "$f" | head -1)
     if [ -z "${want}" ]; then
@@ -121,12 +140,12 @@ if [ "${1:-}" = "--selftest" ]; then
   done
   # R24 regression F9：門檻寫成 `>=` 而實際值更高時，那個差額**沒有網**——刪掉一個 fixture 仍然綠。
   # 三個門檻一律改成**等於實測值**：要加 fixture 就同步改這裡，讓「少了一個」立刻紅。
-  if [ "${n_pass}" -ne 266 ]; then
-    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 266（改動 fixture 請同步改這個數字）" >&2
+  if [ "${n_pass}" -ne 268 ]; then
+    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 268（改動 fixture 請同步改這個數字）" >&2
     fail=1
   fi
-  if [ "${n_rule}" -ne 446 ]; then
-    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 446" >&2
+  if [ "${n_rule}" -ne 454 ]; then
+    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 454" >&2
     fail=1
   fi
   if [ "${fail}" -ne 0 ]; then exit 1; fi
@@ -134,12 +153,12 @@ if [ "${1:-}" = "--selftest" ]; then
     echo "lint-ci-log-filter selftest FAILED: parse-red 是 ${n_parse} 個，預期恰好 153（先前這一類完全沒有下限）" >&2
     exit 1
   fi
-  if [ "${n_msg}" -ne 59 ]; then
-    echo "lint-ci-log-filter selftest FAILED: 帶 EXPECT-MSG 的 fixture 是 ${n_msg} 張，預期恰好 59" >&2
+  if [ "${n_msg}" -ne 65 ]; then
+    echo "lint-ci-log-filter selftest FAILED: 帶 EXPECT-MSG 的 fixture 是 ${n_msg} 張，預期恰好 65" >&2
     exit 1
   fi
-  if [ "${n_each}" -ne 7 ]; then
-    echo "lint-ci-log-filter selftest FAILED: 帶 EXPECT-EACH-STEP 的 fixture 是 ${n_each} 張，預期恰好 7" >&2
+  if [ "${n_each}" -ne 11 ]; then
+    echo "lint-ci-log-filter selftest FAILED: 帶 EXPECT-EACH-STEP 的 fixture 是 ${n_each} 張，預期恰好 11" >&2
     exit 1
   fi
   echo "lint-ci-log-filter selftest ok: ${n_pass} 正向通過、${n_rule} 條規則紅、${n_parse} 條解析紅、${n_msg} 張訊息斷言（來源逐一比對相符）、${n_each} 張逐步斷言；${cg}"
