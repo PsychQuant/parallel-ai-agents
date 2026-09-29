@@ -125,8 +125,8 @@ if [ "${1:-}" = "--selftest" ]; then
     echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 264（改動 fixture 請同步改這個數字）" >&2
     fail=1
   fi
-  if [ "${n_rule}" -ne 439 ]; then
-    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 439" >&2
+  if [ "${n_rule}" -ne 440 ]; then
+    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 440" >&2
     fail=1
   fi
   if [ "${fail}" -ne 0 ]; then exit 1; fi
@@ -134,12 +134,12 @@ if [ "${1:-}" = "--selftest" ]; then
     echo "lint-ci-log-filter selftest FAILED: parse-red 是 ${n_parse} 個，預期恰好 153（先前這一類完全沒有下限）" >&2
     exit 1
   fi
-  if [ "${n_msg}" -ne 52 ]; then
-    echo "lint-ci-log-filter selftest FAILED: 帶 EXPECT-MSG 的 fixture 是 ${n_msg} 張，預期恰好 52" >&2
+  if [ "${n_msg}" -ne 53 ]; then
+    echo "lint-ci-log-filter selftest FAILED: 帶 EXPECT-MSG 的 fixture 是 ${n_msg} 張，預期恰好 53" >&2
     exit 1
   fi
-  if [ "${n_each}" -ne 4 ]; then
-    echo "lint-ci-log-filter selftest FAILED: 帶 EXPECT-EACH-STEP 的 fixture 是 ${n_each} 張，預期恰好 4" >&2
+  if [ "${n_each}" -ne 5 ]; then
+    echo "lint-ci-log-filter selftest FAILED: 帶 EXPECT-EACH-STEP 的 fixture 是 ${n_each} 張，預期恰好 5" >&2
     exit 1
   fi
   echo "lint-ci-log-filter selftest ok: ${n_pass} 正向通過、${n_rule} 條規則紅、${n_parse} 條解析紅、${n_msg} 張訊息斷言（來源逐一比對相符）、${n_each} 張逐步斷言；${cg}"

@@ -1,0 +1,26 @@
+# #33 R42 opsweep（killer_finder 迭代第三輪，手測命中的三個缺口）：
+# EXPECT-EACH-STEP 確保每步各自紅。三步都是原碼 RULE、突變體放行的判定翻轉。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-EACH-STEP: rule-red
+# EXPECT-MSG: `while` 不是外部命令名
+# EXPECT-MSG: `a*` 不是外部命令名
+# EXPECT-MSG: 指派後面還有東西
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: trap action is a keyword
+        shell: bash
+        run: |
+          { trap while EXIT; echo hi; } 2>&1 | python3 scripts/neutralise.py
+      - name: trap action fails the name regex
+        shell: bash
+        run: |
+          { trap a* EXIT; echo hi; } 2>&1 | python3 scripts/neutralise.py
+      - name: assignment followed by a redirect
+        shell: bash
+        run: |
+          { X=1 > out.txt; echo hi; } 2>&1 | python3 scripts/neutralise.py
