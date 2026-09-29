@@ -1,0 +1,33 @@
+# #33 R42 opsweep（_fl_command / _fl_word 的四個複合守衛，killer_finder 找到的可殺缺口，語料不產生這些形狀）：
+# 每一步原碼各以一個運算元擋下、突變體拿掉該運算元後放行。EXPECT-EACH-STEP 確保每步都各自紅（不是靠別步）。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-EACH-STEP: rule-red
+# EXPECT-MSG: 指派後面還有東西
+# EXPECT-MSG: trap 的動作
+# EXPECT-MSG: printf
+# EXPECT-MSG: mktemp
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: prefix assignment X=1 cmd
+        shell: bash
+        run: |
+          { X=1 echo hi; } 2>&1 | python3 scripts/neutralise.py
+      - name: trap action is a builtin name
+        shell: bash
+        run: |
+          { trap set EXIT; echo hi; } 2>&1 | python3 scripts/neutralise.py
+      - name: printf non-literal format
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          { printf "$PR_TITLE" hi; } 2>&1 | python3 scripts/neutralise.py
+      - name: mktemp not the whole assignment value
+        shell: bash
+        run: |
+          { X=a=$(mktemp); echo hi; } 2>&1 | python3 scripts/neutralise.py
