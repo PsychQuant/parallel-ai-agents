@@ -1,0 +1,18 @@
+# #33 R42 opsweep（fl_tokens 的 `if op == ";" and s.startswith(";;", i)`，四個突變體存活；combo_finder 組合搜尋找到區分輸入）：
+# 群組裡的 `echo a;;`（case 的 `;;` 落在非 case 位置）。原碼以「`;;`（case）不在文法裡」擋下；突變體讓 `;;` 不再被特判，落到別的
+# 訊息（運算子前面沒有命令），判定同為 RULE、只差訊息——先前 reason 寫「殊途同歸」是錯的：訊息就是能區分的東西。EXPECT-MSG 釘住。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-MSG: `;;`（case）不在文法裡
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: case terminator outside a case
+        shell: bash
+        run: |-
+          {
+            echo a;;
+          } 2>&1 | python3 scripts/neutralise.py
