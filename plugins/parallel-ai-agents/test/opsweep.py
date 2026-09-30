@@ -168,6 +168,9 @@ EXPECTED_SURVIVE = {   # id → 理由（依構造等價）。每一條都要能
     "drop-operand|flat_filtered|if ok and nl_pos:|2": "`ok` 為真時，`nl_pos` 為空則 `all(...)` 對空序列為真、`ok` 不變；`pipe_at = next(...)` 在 `ok` 為真時必找得到（shape 已含 `|` 或 `|&`）",
     "drop-operand|flat_filtered|if t[0] == \"W\" and at_cmd and _fl_plain(t[1]) == \"}\" and (not body_toks or body_toks[-1][0] == \"NL\"|2": "`at_cmd` 在每輪迴圈尾端被設成「剛加入的詞元是 NL 或 OP」、初值為真（緊接 `{`）；後面的括號條件 `not body_toks or body_toks[-1][0] == \"NL\" or body_toks[-1] == (\"OP\", \";\")` 已蘊含它：`body_toks` 為空時還在初值，否則最後一個詞元是 NL 或 OP",
     "drop-operand|flat_step_rules|triggered = not declared or _fl_declared_trigger(text)|1": "非宣告 step 只在 R1 的 `via_pipe` 為真時走到這裡；`PIPED_RE` 命中的 `|` 左邊（隔空白也一樣）不是 `|`、右邊也不是 `|`，是孤立的管線字元，而 `flat_trigger` 只略過**相鄰**的 `||` 配對，孤立的 `|` 一定被計入，所以 `_fl_declared_trigger` 對它也為真。前提：`text` 與 `PIPED_RE` 看的 code 在管線字元兩側的鄰字元相同（`shell_scan` 只挖空引號內容、不改引號外的字元）",
+    # R42 最終掃描（opsweep 全輪，`fa9f932`）：`_set_prefix_line` 因刪除死碼進入 `--since` 範圍，暴露兩個既有盲點——另一個（`len(toks) <= k + 1`）可殺、
+    # 補 `restrict-r42-flat-set-option-without-name`；這個依呼叫者的前置守衛等價。
+    "drop-operand|_set_prefix_line|if toks[:1] != [\"set\"] or len(toks) < 2:|1": "`_set_prefix_line` 唯一的呼叫者 `_fl_split_prefix` 在呼叫之前已 `break` 掉首詞不是 `set` 的行（`_fl_plain(items[0][1]) != \"set\"`），進來時 `toks[0]` 恆為 `\"set\"`，`toks[:1] != [\"set\"]` 恆為假；依賴那個呼叫前守衛（改它要連這裡重判）",
 }
 
 
