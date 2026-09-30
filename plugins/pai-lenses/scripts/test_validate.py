@@ -15,9 +15,15 @@
 mutation」，CHANGELOG 寫「十個 mutation 逐一確認轉紅」。**那三句話會讓下一個維護者以為改動 `validate.py` 有測試網接著。**
 
 現在用 `scripts/mutation_check.py` 量：跑一次就知道哪些閘門沒有測試網。
-**最近一次完整量測（R40 最終，於 `git archive 8f2d21a` 副本上跑，`--jobs 8`）：464 個靶 → 461 殺 / 0 存活 / 3 預期存活 / 0 靶壞**，
-牆鐘 **75.9 分鐘 / 464 靶 = 每靶 9.8 s**（8 個 worker 各一份不含 `.git` 的副本；開跑時一分鐘平均負載 18.1，同機另有其他 session）。
-這一輪沿用 0 靶：lint 與 fixture 都改了，每個靶的 key 都換了，等於完整一輪。同一棵樹立刻重跑：464 靶全部沿用快取、203 秒（R40 起全部命中也跑前置檢查——R39 的 16 秒沒有這一步）。
+**最近一次完整量測（R42 最終，於 `git archive fa9f932` 副本上跑，`--jobs 8`）：456 個靶 → 453 殺 / 0 存活 / 3 預期存活 / 0 靶壞**，
+牆鐘 **94.4 分鐘 / 456 靶 = 每靶 12.4 s**（8 個 worker 各一份不含 `.git` 的副本；開跑時一分鐘平均負載 23.4，同機另有其他 session）。
+這一輪沿用 0 靶（`--no-cache`）。最終 commit 與量測樹只差一張 fixture、selftest 的三組門檻、`oracle.py` 的類別總數與一條 `EXPECTED_SURVIVE`（CHANGELOG 的 R42 段列得出來）；
+這些改動讓 lint 與神諭兩個守備單位的快取 key 換掉，所以快取在最終樹上重建（`--no-cache` 全輪），不是沿用上面那一輪。
+**R42 的第一輪（`4faaea2`，`--no-cache`）不是零存活**：457 靶 → 452 殺 / **2 非預期存活** / 3 預期存活，78.9 分鐘。兩個都是 R42 改動讓先前的靶失去分辨力：
+`_set_prefix_line` 行尾 `;` 那一支是死碼（刪除、靶退役）；oracle 單一 payload 的 `|| :`（R42 起每組 payload 都判、取最嚴重，只改一組不改變任何判定，
+重新錨定成所有 payload 一起拿掉，並補 `oracle_selfcheck.py` 的 `payload-after-failing-command` 項目）。**所以最終量測不能用改動之前的樹。**
+R40 最終（`git archive 8f2d21a`）：464 個靶 → 461 殺 / 0 存活 / 3 預期存活 / 0 靶壞，75.9 分鐘 / 464 靶 = 每靶 9.8 s（開跑負載 18.1）；
+當時同一棵樹立刻重跑：464 靶全部沿用快取、203 秒。耗時不是效能指標，只是這一輪真的跑了多久。
 快取的 key 是「突變後被改寫檔的**原文**＋守備單位讀得到的輸入＋執行環境（platform、`/proc`、`/bin/sh`、PATH 上的
 `python3`、`ORACLE_LINT`）」，R40 起改 docstring 或註解也會讓它失效（`test_validate.py` 讀 `# READ-SITE` 註解）；不計入的只有
 `_NOT_READ` 點名的檔（CHANGELOG）與快取檔本身。發版前的量測用 `--no-cache`。
