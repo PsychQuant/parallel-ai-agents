@@ -361,7 +361,7 @@ def runner_exprs(s):
 
 
 # GitHub 產生、PR 作者控制不了的純量欄位（R40，#33 verify R39 第 12 列）。**封閉列舉，只有這八個**，點號寫法、大小寫不分（Actions 的
-# context 名稱不分大小寫）；索引寫法、函式呼叫、同一物件的其他欄位（`head.ref`、`title`…）不在裡面、照擋。lint 與神諭共用同一份（神諭把它們換成數值，不換成 payload）。
+# context 名稱不分大小寫）；索引寫法、函式呼叫、同一物件的其他欄位（`head.ref`、`title`…）不在裡面、照擋。lint 與神諭各寫一份（神諭把它們換成數值，不換成 payload）；神諭載入時與 lint 那一份比對，不同步就具名退出（見下方「`GH_SAFE_EXPRS` 同步檢查」）。
 GH_SAFE_EXPRS = frozenset((
     "github.event.pull_request.number", "github.event.number",
     "github.event.pull_request.base.sha", "github.event.pull_request.head.sha",

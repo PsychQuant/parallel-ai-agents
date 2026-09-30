@@ -96,7 +96,7 @@ SUITES = {
 # ── 結果快取（R39，使用者提議：沒改變就沿用 JSON 記錄）──────────────────────────────────
 # 每個守備單位的驗證指令讀得到的**輸入檔**（被突變的那個檔另外以正規化內容計入 key）。封閉列舉，只有這五組：
 #   · `lint`：selftest 只讀 fixture。
-#   · `oracle`／`oracle-inverted`：神諭讀 fixture、反向探針與假 lint，並執行 lint 本身（lint 以原文計入，見 `_key_content`）。
+#   · `oracle`／`oracle-inverted`：神諭讀 fixture、反向探針與假 lint，並執行 lint 本身（lint 以原文計入，見 `source_for_key`）。
 #   · `validate`／`neutralise`：`test_validate.py` 讀的範圍很廣（整個 `plugins/`、`.github/workflows/test.yml`、skills、bin
 #     …），逐一列舉必然漏——所以這兩組的輸入是**整個 repo**（不含 `.git`、`__pycache__` 與快取檔本身）。代價是任何改動
 #     都讓它們重跑；那是對的方向：漏列一個輸入，快取就會安靜地給出舊答案。
