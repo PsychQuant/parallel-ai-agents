@@ -1,0 +1,23 @@
+# #33 R42 opsweep 最終掃描（`fl_tokens` 的重導向鄰接檢查 `r.group(0) in ("2>&1", ">&2") and i + len(r.group(0)) < n and s[…] not in " \t\n;|&"`，
+# drop 第一個運算元「運算子是 `2>&1`／`>&2`」存活）：鄰接檢查只該對 `2>&1`／`>&2` 做——它們後面緊接非分隔字元（`2>&1x`）是別的記號。
+# 其餘重導向運算子（`>`、`>>`、`<`、`2>`、`2>>`）後面本來就可以不加空白直接接目標（`echo hi >out.txt`），這是**合法**寫法，應放行。
+# 突變體對每個重導向都套鄰接檢查，會把這些誤擋成 RULE。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: redirects with the target glued to the operator
+        shell: bash
+        run: |-
+          set -o pipefail
+          {
+            echo hi >out.txt
+            echo hi >>out.txt
+            echo hi 2>err.log
+            echo hi 2>>err.log
+            grep -q hi <out.txt
+          } 2>&1 | python3 scripts/neutralise.py
