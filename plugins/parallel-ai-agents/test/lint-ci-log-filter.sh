@@ -2489,7 +2489,7 @@ SET_OPT_NAMES = frozenset(("pipefail", "errexit", "nounset", "errtrace"))   # er
 def _set_prefix_line(toks):
     """`set` 前綴行：只收 `-e`／`-u`／`-E`（可合寫）與 `-o NAME`（可與 `-euE` 合寫成 `-euo NAME`），NAME 限 SET_OPT_NAMES。
     行尾的 `;`（R39，R38 第 11 列）不在這裡處理：`_fl_lines` 把 `;` 當命令分隔符、不是詞，`toks` 裡不會有它（R42：這裡原有的 `toks[-1:] == [";"]`
-    分支是死碼，opsweep 的靶 399 存活而刪除；`good-r39-strict-set-prefix-semicolon` 釘住行為）。"""
+    分支是死碼，mutation 全輪的靶 399 存活而刪除；`good-r39-strict-set-prefix-semicolon` 釘住行為）。"""
     if toks[:1] != ["set"] or len(toks) < 2:
         return False
     k = 1

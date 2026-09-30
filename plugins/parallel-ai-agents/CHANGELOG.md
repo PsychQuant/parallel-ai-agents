@@ -686,39 +686,39 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
     行後相同」確認只動了文字。第 16 列（快取）見量測；第 22 列（issue 狀態段）在推送後更新。
   - **mutation 快取的環境指紋（第 16 列）**：前一版只記 PATH 上的 bash，神諭卻優先用 `/opt/homebrew/bin/bash`；`/bin/sh` 記的是 realpath，
     而 macOS 的 `/bin/sh` 是轉接程式、realpath 恆為 `/bin/sh`。現在記神諭可能選用的每一支 bash（`BASH_CANDIDATES`，測試以 AST 讀 `pick_bash` 迴圈裡的字面路徑（`shutil.which("bash")` 那一項不讀，由 PATH 上的 bash 那條指紋與假 bash 測試覆蓋）、斷言它們是子集）與 `/bin/sh` 的內容雜湊，及 `/bin/sh -c` 實際執行時回報的 `BASH_VERSION`／`KSH_VERSION`／`ZSH_VERSION`（dash 等其他 shell 三欄全空、彼此分不出）。測試 152 → 153 條（`grep -c "    def test_" ../pai-lenses/scripts/test_validate.py`）。
-  - **opsweep 抓到的（`--since 45dee04`）**：第一次全輪掃描（程式碼在 trap 修法之前）：自 `45dee04` 起被改動的區域是 510 個突變體，**102 個非預期存活**（另有 9 個預期存活）——selftest 對它們一個也沒報紅；補 trap 修法與巢狀 `${` 的解析 fixture 之後重跑剩 100 個。HEAD 上區域是 513 個，最終結果見文末。逐個處置的經過與教訓：
+  - **opsweep 抓到的（`--since 45dee04`）**：第一次全輪掃描（程式碼在 trap 修法之前）：自 `45dee04` 起被改動的區域是 510 個突變體，**102 個非預期存活**（另有 9 個預期存活）——selftest 對它們一個也沒報紅；補巢狀 `${` 的行尾 fixture 與逐步斷言（`EXPECT-EACH-STEP`）之後重跑剩 100 個。`ef85adb` 上區域是 513 個，最終樹（`fa9f932`）是 519 個——多出來的是我刪死碼後進入範圍的 `_set_prefix_line`；最終結果見文末。逐個處置的經過與教訓：
     · 我先用「產生語料 712 檔上原碼與突變體的 (rc, stderr) 逐檔比對」把 100 個分成「可區分」與「零區分」，把零區分的當成等價候選。
       **這個分法是錯的**：零區分只說明語料沒有那個形狀。#29（`_fl_command` 拿掉 `w0 is not None`）被分在「零區分」，一行「只有重導向的
       命令」（`> out.txt`）就讓突變體崩潰。先用語料與候選庫（`killer_finder`／`combo_finder`，暫存工具、不在 repo）批次找殺手，最後 70 個改成讀突變後的那一行、逐一手寫殺手輸入並實測。
-    · 殺掉的都補了測試（新 fixture、既有 fixture 加 `EXPECT-MSG`、或 selftest 的假 bash 檢查）——反例 fixture 在原碼上紅、突變體上翻綠，正向 fixture 在原碼上綠、突變體上翻紅或崩潰——不進 `EXPECTED_SURVIVE`。其中一個是**真缺陷**（不是 opsweep 報的、是處置時另外發現），另一個是網的洞（原碼本來就擋、只是沒有測試釘住）：
+    · 殺掉的都補了測試（新 fixture、既有 fixture 加 `EXPECT-MSG`、或 selftest 的假 bash 檢查）——反例 fixture 在原碼上紅、突變體上翻綠，正向 fixture 在原碼上綠、突變體上翻紅或崩潰——不進 `EXPECTED_SURVIVE`。其中一個是**真缺陷**（不是 opsweep 報的、是處置時另外發現），其餘都是網的洞（原碼本來就擋、只是沒有測試釘住；下面第二個例子是我原本判成等價的）：
       `trap $X EXIT`（未加引號的變數當動作）被文法收下、bash 卻在離開時把 `$X` 的值當程式碼執行——`_fl_command` 的 trap 分支只寫了 P 與 D 的
       種類判斷、其餘落到「把 body 當文法剖析」，現在按種類拒絕（`bypass-r42-trap-unquoted-var-action`，mutation 靶 456 → 457 就是它）；
       宣告 step 的 `env:` 值寫在同一行（`env: ${{ fromJSON(…) }}`）時鍵名看不到，`_env_names` 記成 `?`、fail-closed，但我原本判等價的那條
       `k == "?"` 拿掉後突變體只留具名啟動鍵、放行——補 `restrict-r42-declared-unseen-env-keys`。
     · 一個運算元是**多餘**的（`fl_tokens` 的 `;;` 偵測裡 `op == ";"`：迴圈依序 `&&`／`||`／`|&`／`|`／`;`，`s.startswith(";;", i)` 為真時只有 `;` 命中）——
       與 R40 同做法，拿掉運算元而不是列進 `EXPECTED_SURVIVE`；712 檔新舊輸出（rc＋stderr）逐位元組相同。
-    · **最後一批 70 個我先用模板批量草擬了理由（草稿沒進 commit，開頭標「有界、非證明」，內文卻論證同判），逐條驗證後 58 條是假的**：拿掉 `p[0] == "D"` 在 `'Value'` 這類字串上 `IndexError`；
+    · **最後一批 70 個我先用模板批量草擬了理由（草稿沒進 commit，開頭標「【有界：712 語料＋1804 組合候選零區分，非證明】」，內文卻論證同判），逐條驗證後 58 條是假的**：拿掉 `p[0] == "D"` 在 `'Value'` 這類字串上 `IndexError`；
       `"${HOME:-x}"` 的預設值；兩行 `set` 前綴、pipefail 在第一行；`"${HOME}"` 的變數名；`printf` 無參數與 `printf '-v'`；群組內先放一條 neutralise
       管線讓 R1 放行、而尾巴才錯；宣告 step 結尾的 `>`。共同缺陷：把「語料＋我手寫的輸入零區分」寫成「同值」，而每個缺口都是這 712 檔裡沒有的輸入形狀（診斷訊息那三個則是語料根本走不到的 bash 環境）。
       改成逐一提殺手假設（兩輪共 101 個手寫輸入）：58 個殺掉——10 張新 fixture、selftest 加**假 bash**檢查（`--check-compgen` 的版本字串、空版本行、
       rc≠0 時 stderr 的 `strip()`，真的 bash 只會走「一切正常」那條路）；只差訊息的突變體加 `EXPECT-MSG`（六張新的裡四張是單步 fixture、另兩張是多步）；12 個依構造等價，
-      列進 `EXPECTED_SURVIVE`（44 → 56），**每一條給出結構理由，多數點名它依賴的上游不變式**（`_fl_word` 的 mktemp 條件、`_fl_lines` 的命令恆非空、`PIPED_RE` 命中的是孤立管線…）。
+      列進 `EXPECTED_SURVIVE`（44 → 56），**每一條給出理由：11 條是結構論證、互斥那一條是有界窮舉；其中 5 條點名它依賴的上游不變式，其餘靠區域代數或下游不讀該欄位**（`_fl_word` 的 mktemp 條件、`_fl_lines` 的命令恆非空、`PIPED_RE` 命中的是孤立管線…）。
       `FL_REDIR_BAD_RE` 與 `FL_REDIR_DUP_OK_RE` 互斥那一條用 `test/corpus/regexcheck.py` 窮舉：重導向字元加一個「其他字元」的字母表上長度 0 到 7
       的 21,435,888 個字串沒有一個同時命中（`--lint` 指向人為改成重疊的副本時會列出同時命中，我用它做過負對照，腳本本身不含這個對照；字母表與長度以外沒有量）。
     · 補簽：9 張既有 fixture（8 張 restrict、1 張 bypass）漏了 `# KNOWN-CLASS: 文法外`（21 條 step 簽名），fixture 神諭因此 rc=1；已簽，另有 5 張新 fixture 帶簽名（32 條），`FIXTURE_CLASS_TOTALS` 的文法外 39 → 92。
     · 另補 `parse-r42-default-nested-param-open-at-eol`：`_param_end` 巢狀檢查的 `j + 2 >= n` 拿掉後，巢狀的 `${` 落在行尾時突變體丟 `IndexError`
       （`echo ${X:-${` ⏎ `set -x; }}`，bash 5.3 是跨行的 `${ cmd; }`、會開 xtrace），與 R40 的最外層那條同形；parse-red 門檻 148 → 153（WP5 已到 152）。
-    selftest 門檻現為 268 正向／454 規則紅／153 解析紅／65 張訊息斷言／11 張逐步斷言（`EXPECT-EACH-STEP`：多步 fixture 每一步各自要有自己的 RULE 行——
+    selftest 門檻最終是 269 正向／455 規則紅／153 解析紅／66 張訊息斷言／12 張逐步斷言（這一段的 fixture 處理完時是 268／454／153／65／11）（`EXPECT-EACH-STEP`：多步 fixture 每一步各自要有自己的 RULE 行——
       先前只判整張檔紅，某個守衛被拿掉、放行其中幾步時，只要還有一步被別的規則擋下就照樣綠）。**結果見文末量測**
   - **mutation 全輪抓到的**（`4faaea2`，`git archive` 副本、`--no-cache --jobs 8`，78.9 分鐘）：457 靶 → 452 殺／**2 個非預期存活**／3 預期存活；兩個都是 R42 改動之後才出現的：
     · 靶「`set` 前綴行尾的 `;` 不收」：`_set_prefix_line` 的 `toks[-1:] == [";"]` 是**死碼**——R42 起它唯一的呼叫者 `_fl_split_prefix` 的 `toks` 來自
-      `_fl_lines`，`;` 是分隔符、不是詞，永遠不會出現在裡面。刪除；新舊 lint 對 875 張 fixture 與 813 個產生語料（1688 檔）的 rc 與 stderr 逐位元組相同；
+      `_fl_lines`，`;` 是分隔符、不是詞，永遠不會出現在裡面。刪除；新舊 lint 對 877 張 fixture 與 812 個產生語料（共 1689 檔）的 rc 與 stderr 逐位元組相同；
       靶退役（457 → 456）；`good-r39-strict-set-prefix-semicolon` 仍釘住「`set -o pipefail;` 放行」。
     · 靶「runner 運算式的 payload 依賴前一個命令成功」（只拿掉**一組** payload 的 `|| :`）：R42 起每一組 payload 都判、取最嚴重，同一脈絡裡有兩組會收掉群組的
-      payload（純標記那組與註解脈絡那組），只改其中一組不改變任何判定。重新錨定成**所有** payload 一起拿掉；但 RULE-red 的 fixture 分辨不出（兩邊都判「一致」，
+      payload（不加引號脈絡那組與註解脈絡那組），只改其中一組不改變任何判定。重新錨定成**所有** payload 一起拿掉；但 RULE-red 的 fixture 分辨不出（兩邊都判「一致」，
       只差 `oracle=` 欄的 `piped`／`not-invoked`），能分辨的只有替身 lint 全放行時的探針：補 `oracle-probes/payload-after-failing-command.yml`（`false ${{ … }}`，
       期待「把 PR 文字印到 stdout」那句來源分類），`oracle_selfcheck.py` 25 → 26 項，靶改由 `oracle-inverted` 守備，單靶實測殺掉。
-    這兩個是**同一類**：opsweep 之後我改的東西（刪死碼、payload 的判定方式）讓先前的靶失去分辨力，全輪才看得到——所以最終量測要在最終樹上整套重跑。
+    這兩個是**同一類**：R42 前半的改動（WP2 起 FLAT 改寫換掉 `_set_prefix_line` 的呼叫端、WP8 讓每組 payload 都判）讓先前的靶失去分辨力，到全輪才看得到；刪死碼與重新錨定是對全輪結果的處置，不是原因。所以最終量測不能用改動之前的樹。
   **我自己的錯**：WP5 把 `_lex` 的 `$(case …)` 追蹤列成預期存活候選，理由是「試了 22 種形狀找不到會翻色的輸入」——探針目錄留下 19 種（編號到 a22），多半是頂層或群組 `{ …; }`、沒有一個把 `$(case …)` 放進子殼層 `( … )`，而突變體多讀到的 `)` 在群組裡只是被略過的殘渣；翻色要子殼層 `( … )`（`good-r42-default-subshell-cmdsub-case`）。
   「找不到反例」被我當成等價的證據。WP6 的 commit 訊息把 KNOWN_DISAGREE 的帳記成「25 條改由類別宣告簽名」，34＋25＋7 只有 66、不是 69，漏了 without-proc 的 3 條；上面是逐條重算的數字。
   **同一個錯在這一輪反覆出現**：WP5 的 `$(case`、partition 的零區分、「殊途同歸」、測反方向的等價理由、最後一批 70 條的草稿，以及我暫存腳本
@@ -726,18 +726,17 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
   仍存活，補 `restrict-r42-flat-quoted-first-word` 才殺掉）。`test/opsweep.py` 的註解在 R36 就寫過「第二次踩」。這次寫進 `test/opsweep.py` 註解的規則：零區分只能寫「有界」，不能寫「等價」；「已殺要重跑對過」只寫在 `d725638` 的 commit 訊息裡（重跑用的 `rerun.py` 是暫存工具、不在 repo）。
   **量測（本機 macOS、bash 5.3；CI 以 Linux 為準）**：量測樹 `fa9f932`（mutation 全輪、opsweep）與最終 commit `d31ae51`（其餘）。兩者的差異是封閉列舉、只有這些：
   一張 fixture（`restrict-r42-flat-set-option-without-name`）、selftest 三組門檻（規則紅 454 → 455、訊息斷言 65 → 66、逐步斷言 11 → 12）、
-  `oracle.py` 的 `FIXTURE_CLASS_TOTALS`（文法外 92 → 95）、`opsweep.py` 的一條 `EXPECTED_SURVIVE`；lint 內嵌的 Python（opsweep 與 mutation 的突變對象）
-  逐位元相同（184,797 字元，已比對）。
+  `oracle.py` 的 `FIXTURE_CLASS_TOTALS`（文法外 92 → 95）、`opsweep.py` 的一條 `EXPECTED_SURVIVE`；lint 內嵌的 Python（opsweep 的突變對象，也是 mutation 456 靶裡 290 個 lint 靶的對象）從 `fa9f932` 到 `d31ae51` 逐位元相同（184,797 字元，已比對）；之後只改了 `_set_prefix_line` 的 docstring 一句話（AST 相同）。mutation 另有 oracle 系兩個單位共 51 靶（`oracle.py` 的 `FIXTURE_CLASS_TOTALS` 一行不同）、validate 114 靶、neutralise 1 靶，不在這句的範圍。
   · selftest 269 正向／455 規則紅／153 解析紅／66 張訊息斷言／12 張逐步斷言（`EXPECT-EACH-STEP`）。
-  · fixture 神諭 1216 個 step：一致 871、不一致 148（全部是已知類別：G 8、S-2 3、文法外 95、文法外-without-proc 2）、不可比 171、量不到 26。
+  · fixture 神諭 1216 個 step：一致 871、不一致 148（全部已知：107 步屬類別宣告——G 8、S-2 3、文法外 95、文法外-without-proc 2，其中一步同時算 G 與 S-2——另 41 步是逐條簽名的 `KNOWN_DISAGREE`）、不可比 171、量不到 26。
     產生語料：預設 624 個 step 一致 516／不一致 62（已知）／不可比 46／量不到 0；`--strict` 88 個 step 一致 58／不一致 22（已知）／不可比 8／量不到 0；
     文法語料 100 個 step 一致 100／不一致 0。`oracle_selfcheck.py` 26 項全數照預期。`--verify-expected` 57 條（712 檔，其中 `--strict` 組 66 檔）全部逐位元組相同。
-  · **mutation 全輪**（`fa9f932`，`git archive` 副本、`--no-cache --jobs 8`，開跑負載 23.4）：456 靶 → **453 殺／0 存活／3 預期存活／0 靶壞**，94.4 分鐘、每靶 12.4 s。
+  · **mutation 全輪**（`fa9f932`，`git archive` 副本、`--no-cache --jobs 8`，開跑負載 23.4）：456 靶 → **453 殺／0 存活／3 預期存活／0 靶壞**，94.4 分鐘、每靶 12.4 s（工具的單調時鐘、不含機器睡眠；bash 量到的牆鐘是 115.3 分鐘，中間機器睡了約 21 分鐘）。
     先前一輪（`4faaea2`）是 457 靶、452 殺／2 非預期存活（見上），處置後才是這一輪。
-  · **opsweep `--since 45dee04`**（`fa9f932`，519 個突變體、`--jobs 4`，193.3 分鐘）：殺 496（當掉 68、逾時 0、產生語料抓到而 selftest 沒抓到的 0）／存活 23（預期 21、**非預期 2**）。
+  · **opsweep `--since 45dee04`**（`fa9f932`，519 個突變體、`--jobs 4`，193.3 分鐘，單調時鐘、不含機器睡眠；牆鐘 215 分鐘）：殺 496（當掉 68、逾時 0、產生語料抓到而 selftest 沒抓到的 0）／存活 23（預期 21、**非預期 2**）。
     兩個非預期都在 `_set_prefix_line`——我刪死碼（靶 399）時動到這個函式，它因此進入 `--since` 的範圍，既有的盲點才暴露：
     `len(toks) <= k + 1` 拿掉後，`set -o`（與 `-e`、`-eu` 合寫）少選項名時突變體 `IndexError`，補 `restrict-r42-flat-set-option-without-name`（3 步逐步斷言、簽名 3 條），單靶重跑殺掉；
-    `toks[:1] != ["set"]` 拿掉後等價——唯一呼叫者 `_fl_split_prefix` 在呼叫前已 `break` 掉首詞不是 `set` 的行——列入 `EXPECTED_SURVIVE`（44 → 57）。
+    `toks[:1] != ["set"]` 拿掉後等價——唯一呼叫者 `_fl_split_prefix` 在呼叫前已 `break` 掉首詞不是 `set` 的行——列入 `EXPECTED_SURVIVE`（56 → 57；本輪自 WP10 的 44 起共 +13）。
     最終樹非預期 0：突變的程式碼逐位元相同，新 fixture 只會多殺，兩個存活另以單靶重跑確認（一個殺掉、一個列預期）；沒有在最終 commit 上重跑整輪（193 分鐘）。
   · **`run.sh`**：`✓ 全部通過`（255 ok、0 not ok，單獨跑、無其他量測並行，955 秒）。**第一次跑是在 `/var/folders` 底下的 `git archive` 副本裡，6 個 detach bats 案例紅**
     （`R7-D/R9`、`R9-A1`、`R10-L9-1`、`R10-FR1`、`R10-FR3`、`R11-HOOK`）：`own_workers` 用 `pwd -P`（`/private/var/…`）組 `pgrep` 的比對字串，worker 命令列卻是邏輯路徑

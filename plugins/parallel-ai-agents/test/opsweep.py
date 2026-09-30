@@ -151,11 +151,11 @@ EXPECTED_SURVIVE = {   # id → 理由（依構造等價）。每一條都要能
     "±1→±2|parse_case|self.i += 1|6": "到這一行時 tok() 已確定是非 None、非 esac 的詞元，前面的模式掃描必然前進，`self.i == i0` 的安全網不可達",
     # R42（`--since` 掃描新增的 `_fl_*`／`flat_*`／`fl_tokens`）：70 個存活突變體**逐一提殺手假設**再判（`test/opsweep.py` 之外的手寫候選，兩輪共約百個輸入），
     # 58 個殺掉——補 10 張 fixture（`*-r42-flat-gh-forms2`、`-command-edges4`、`-tails2`…）、selftest 的假 bash 檢查（`--check-compgen` 的版本字串與
-    # rc≠0 訊息），其餘 12 個依構造等價，列在下面、**每一條點名它依賴的上游不變式**。
+    # rc≠0 訊息），其餘 12 個依構造等價，列在下面：每一條都寫出理由，其中 5 條點名它依賴的上游不變式，其餘靠區域代數、下游不讀該欄位、或窮舉。
     # **先前用模板批量寫的 70 條 reason 有 58 條是假的**（例：拿掉 `p[0] == "D"` 會在 `'Value'` 這類字串上 IndexError；`"${HOME:-x}"` 的預設值；
     # 兩行 `set` 前綴的 pipefail；`"${HOME}"` 的變數名）。它們的共同缺陷：「語料＋手寫輸入零區分」被寫成「同值」——語料只有 712 檔，
     # 而每個缺口都是一個語料裡沒有的**形狀**（單引號字串、引號開頭的首詞、宣告 step 結尾的 `>`、群組內先放一條 neutralise 管線讓 R1 放行…）。
-    # 零區分只能寫成「有界」，不能寫成「等價」；下面 12 條每一條都有可指出的結構理由，不是靠語料沒抓到。
+    # 零區分只能寫成「有界」，不能寫成「等價」；下面 12 條每一條都有可指出的理由（11 條是結構論證、互斥那一條是有界窮舉），不是靠語料沒抓到。
     "drop-operand|_fl_command|if gh_targets and all(r[1] == \"<\" and FL_GH_TARGET_RE.fullmatch(r[2][\"raw\"]) for r in gh_targets) \\|1": "拿掉 `gh_targets` 守衛：它為空時 `all([])` 為真，之後的 `gh_targets = []` 是冪等賦值，`redirs` 的過濾又因為沒有任何重導向目標含 GH 字樣而一項都不刪；`not any(FL_GH_RE… for w in words)` 為假時兩版都不進這個 if。兩版在每個輸入上的後續狀態相同",
     "drop-operand|_fl_command|if len(w0[\"pieces\"]) != 2 or w0[\"pieces\"][0][1] != name + \"=\":|2": "`$(mktemp …)` 片段只在 `_fl_word` 看到 `pieces[0]` 是完全符合 `NAME=` 的未加引號字面時才產生（那裡的 `len(pieces) == 1 and FL_ASSIGN_RE.fullmatch(...)`），所以 `w0[\"pieces\"]` 含 M 片段時 `pieces[0][1] == name + \"=\"` 必然成立；依賴 `_fl_word` 的那個條件（改它要連這裡重判）",
     "drop-operand|_fl_command|text.append(t_[1:] if t_.startswith(\"\\\\\") and t_[1:] in ('\"', \"\\\\\", \"$\", \"`\") else|1": "`t_[1:]` 屬於 `\"`／`\\`／`$`／`` ` `` 這四個單字元時 `len(t_) == 2`；兩字元的 T 片段只在 `_fl_word` 的 `d == \"\\\\\"` 分支以 `s[j:j + 2]` 產生、必以反斜線開頭，所以 `t_.startswith(\"\\\\\")` 由後一個條件蘊含（單字元的 T 片段，`t_[1:]` 是空字串，不在那四個字元裡）",
@@ -164,7 +164,7 @@ EXPECTED_SURVIVE = {   # id → 理由（依構造等價）。每一條都要能
     "drop-operand|_fl_word|pieces.append((\"V\", m.group(1) or m.group(2) or \"?\", m.group(3)))|1": "未加引號的參數片段 `(\"V\", 名字, 預設值)` 的名字欄整個文法都不讀：`_fl_lit` 對 V／M 片段直接回 False、`_fl_command` 只看片段種類（`[0]`）、`trap` 的動作在種類不是 P／S／D 時就拒絕。名字被讀的只有雙引號裡的變數（`_fl_word` 的另一處 `parts.append`），那一處的三個運算元已由 fixture 殺掉",
     "drop-operand|_fl_word|pieces.append((\"V\", m.group(1) or m.group(2) or \"?\", m.group(3)))|2": "未加引號的參數片段 `(\"V\", 名字, 預設值)` 的名字欄整個文法都不讀：`_fl_lit` 對 V／M 片段直接回 False、`_fl_command` 只看片段種類（`[0]`）、`trap` 的動作在種類不是 P／S／D 時就拒絕。名字被讀的只有雙引號裡的變數（`_fl_word` 的另一處 `parts.append`），那一處的三個運算元已由 fixture 殺掉",
     "drop-operand|_fl_word|pieces.append((\"V\", m.group(1) or m.group(2) or \"?\", m.group(3)))|3": "未加引號的參數片段 `(\"V\", 名字, 預設值)` 的名字欄整個文法都不讀：`_fl_lit` 對 V／M 片段直接回 False、`_fl_command` 只看片段種類（`[0]`）、`trap` 的動作在種類不是 P／S／D 時就拒絕。名字被讀的只有雙引號裡的變數（`_fl_word` 的另一處 `parts.append`），那一處的三個運算元已由 fixture 殺掉",
-    "drop-operand|fl_tokens|if m and FL_REDIR_BAD_RE.match(s, i) and not FL_REDIR_DUP_OK_RE.match(s, i):|3": "`FL_REDIR_BAD_RE` 與 `FL_REDIR_DUP_OK_RE` 互斥：在重導向運算子的十個字元加一個「其他字元」的字母表上窮舉長度 0 到 7 的 21,435,888 個字串，沒有任何一個在位置 0 同時命中（`test/corpus/regexcheck.py`，含人為重疊的負對照），所以 `BAD` 命中時 `not DUP_OK` 恆為真。範圍：字母表與長度之外沒有量",
+    "drop-operand|fl_tokens|if m and FL_REDIR_BAD_RE.match(s, i) and not FL_REDIR_DUP_OK_RE.match(s, i):|3": "`FL_REDIR_BAD_RE` 與 `FL_REDIR_DUP_OK_RE` 互斥：在重導向運算子的十個字元加一個「其他字元」的字母表上窮舉長度 0 到 7 的 21,435,888 個字串，沒有任何一個在位置 0 同時命中（`test/corpus/regexcheck.py`；人為重疊的負對照用 `--lint` 指向改過的副本做過，腳本本身不含），所以 `BAD` 命中時 `not DUP_OK` 恆為真。範圍：字母表與長度之外沒有量",
     "drop-operand|flat_filtered|if ok and nl_pos:|2": "`ok` 為真時，`nl_pos` 為空則 `all(...)` 對空序列為真、`ok` 不變；`pipe_at = next(...)` 在 `ok` 為真時必找得到（shape 已含 `|` 或 `|&`）",
     "drop-operand|flat_filtered|if t[0] == \"W\" and at_cmd and _fl_plain(t[1]) == \"}\" and (not body_toks or body_toks[-1][0] == \"NL\"|2": "`at_cmd` 在每輪迴圈尾端被設成「剛加入的詞元是 NL 或 OP」、初值為真（緊接 `{`）；後面的括號條件 `not body_toks or body_toks[-1][0] == \"NL\" or body_toks[-1] == (\"OP\", \";\")` 已蘊含它：`body_toks` 為空時還在初值，否則最後一個詞元是 NL 或 OP",
     "drop-operand|flat_step_rules|triggered = not declared or _fl_declared_trigger(text)|1": "非宣告 step 只在 R1 的 `via_pipe` 為真時走到這裡；`PIPED_RE` 命中的 `|` 左邊（隔空白也一樣）不是 `|`、右邊也不是 `|`，是孤立的管線字元，而 `flat_trigger` 只略過**相鄰**的 `||` 配對，孤立的 `|` 一定被計入，所以 `_fl_declared_trigger` 對它也為真。前提：`text` 與 `PIPED_RE` 看的 code 在管線字元兩側的鄰字元相同（`shell_scan` 只挖空引號內容、不改引號外的字元）",
