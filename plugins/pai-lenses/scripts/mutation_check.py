@@ -1317,8 +1317,8 @@ MUTATIONS += [
     ("lint: run 裡的非字面運算式不擋（R39 第 14 列；R40，R39 verify 第 1 列 → bypass-r40-ghexpr-*）",
      '        elif not declared and any(not gh_literal(inner) for _a, _b, inner in\n',
      '        elif False and any(not gh_literal(inner) for _a, _b, inner in\n', "lint"),
-    ("lint: `set` 前綴行尾的 `;` 不收（R39，R38 第 11 列 → good-r39-strict-set-prefix-semicolon）",
-     '    if toks[-1:] == [";"]:\n        toks = toks[:-1]', '    if False:\n        toks = toks[:-1]', "lint"),
+    # R42：`_set_prefix_line` 的行尾 `;` 分支是死碼（唯一呼叫者 `_fl_split_prefix` 的 toks 來自 `_fl_lines`，`;` 是分隔符、不是詞），全輪存活後刪除，
+    # 這個靶隨之退役；`good-r39-strict-set-prefix-semicolon` 仍釘住「`set -o pipefail;` 放行」。
     # R40（#33 verify R39 第 9 列）：寫進 $GITHUB_ENV／$GITHUB_PATH。
     # R40（#33 verify R39 第 3、8 列、放行條件 12）：神諭的逾時、bash 樣板、payload。
     ("oracle: ORACLE-COMPARABLE 的宣告不檢查（R40 → oracle_selfcheck 的 comparable-declared-but-sh 探針）",
@@ -1333,8 +1333,14 @@ MUTATIONS += [
      '                        note, prefix = None, "set -e; "', '                        note, prefix = None, ""', "oracle"),
     ("oracle: 樣板的 `-e`／`-u` 不翻譯（R40 → gen-f-shell-bash-e 等七條 KNOWN_DISAGREE 會過期）",
      '        elif re.fullmatch(r"-[eu]+", x):', '        elif False:', "oracle"),
-    ("oracle: runner 運算式的 payload 依賴前一個命令成功（R40 → restrict-r40-ghexpr-matrix-in-group）",
-     '    "x || :; }; echo %s; { :" % PR_MARKER,', '    "x; }; echo %s; { :" % PR_MARKER,', "oracle"),
+    # R42 重新錨定：原本只拿掉**一組** payload 的 `|| :`。R42 起每一組 payload 都判、取最嚴重，同一脈絡裡有兩組會收掉群組的 payload
+    # （純標記那組與註解脈絡那組），只改其中一組不改變任何判定（全輪存活，opsweep 之外的 mutation 全輪發現）。改成所有 payload 一起拿掉：
+    # `bash -e` 下運算式前面的命令失敗時腳本就停了，標記印不出來。RULE-red 的 fixture（`restrict-r40-ghexpr-matrix-in-group`）分辨不出——
+    # 兩邊都判「一致」，差別只在 `oracle=` 欄；能分辨的只有替身 lint 全放行時的 selfcheck：`payload-after-failing-command`
+    # （`false ${{ … }}`，期待「把 PR 文字印到 stdout」那句來源分類），所以守備單位是 oracle-inverted。
+    ("oracle: 所有 runner 運算式的 payload 都依賴前一個命令成功（R40 → restrict-r40-ghexpr-matrix-in-group；R42 重新錨定）",
+     '    "x || :; }; echo %s; { :" % PR_MARKER,\n    \'x" || :; }; echo %s; { : "\' % PR_MARKER,\n    "x\' || :; }; echo %s; { : \'" % PR_MARKER,\n    "x || :; echo %s >&2; :" % PR_MARKER,\n    \'x" || :; echo %s >&2; : "\' % PR_MARKER,\n    "x\' || :; echo %s >&2; : \'" % PR_MARKER,\n    # R42（#33 verify R41 DA-4）：前一版逃不出去的三種脈絡，各一組收掉群組、一組印到 stderr。\n    "\\nx || :; }; echo %s; { :; #" % PR_MARKER,       # 註解：先換行結束註解，結尾的 `#` 把同一行剩下的原文再變回註解\n    "\\nx || :; echo %s >&2; : #" % PR_MARKER,',
+     '    "x; }; echo %s; { :" % PR_MARKER,\n    \'x"; }; echo %s; { : "\' % PR_MARKER,\n    "x\'; }; echo %s; { : \'" % PR_MARKER,\n    "x; echo %s >&2; :" % PR_MARKER,\n    \'x"; echo %s >&2; : "\' % PR_MARKER,\n    "x\'; echo %s >&2; : \'" % PR_MARKER,\n    # R42（#33 verify R41 DA-4）：前一版逃不出去的三種脈絡，各一組收掉群組、一組印到 stderr。\n    "\\nx; }; echo %s; { :; #" % PR_MARKER,       # 註解：先換行結束註解，結尾的 `#` 把同一行剩下的原文再變回註解\n    "\\nx; echo %s >&2; : #" % PR_MARKER,', "oracle-inverted"),
     # R40（#33 verify R39 第 7、10 列）：前綴詞、合寫的 set 選項、bash 5.3 的 `${ cmd; }`。
     ("lint: 前綴詞一律用挖空後的 code 判（R40 → bypass-r40-lead-builtin-escaped、bypass-r40-pf-quoted-builtin-off）",
      '            lead = w["lit"] if w["lit"] in _LEAD_BUILTINS else w["code"]', '            lead = w["code"]', "lint"),

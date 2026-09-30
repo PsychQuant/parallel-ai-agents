@@ -119,6 +119,10 @@ CHECKS = [
                 '        elif not drop_nonliteral:\n            out.append("")'),
                ('    if not declared and any(not gh_literal(inner) for _a, _b, inner in runner_exprs(text)):',
                 '    if False:')]}),
+    # R42（mutation 全輪，靶 406 重新錨定）：payload 不得依賴運算式前面的命令成功。`bash -e` 下 `false` 之後腳本就停了，
+    # 每一組 payload 都要先 `|| :`；拿掉之後神諭量不到外流、只剩 fail-closed 的「繞過」（沒有「把 PR 文字印到 stdout」那句來源分類）。
+    ("payload 不依賴前一個命令成功：`false ${{ … }}` 之後仍量得到外流", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "payload-after-failing-command.yml"], 1, "把 PR 文字印到 stdout"),
     ("取最嚴重：stdout 的外流勝過 stderr 的（單元測試）", {}, ["--selftest-severity"], 0, "select_most_severe ok"),
     ("S-2 機制差分：多出 baseline 沒有的外流行（突變）", {}, [HERE / "fixtures" / "ci-log-filter-oracle-r42-s2-flip.yml"], 1,
      "must-fail 探針沒有以宣告的理由失敗",
