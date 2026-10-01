@@ -733,14 +733,20 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
     文法語料 100 個 step 一致 100／不一致 0。`oracle_selfcheck.py` 26 項全數照預期。`--verify-expected` 57 條（712 檔，其中 `--strict` 組 66 檔）全部逐位元組相同。
   · **mutation 全輪**（`fa9f932`，`git archive` 副本、`--no-cache --jobs 8`，開跑負載 23.4）：456 靶 → **453 殺／0 存活／3 預期存活／0 靶壞**，94.4 分鐘、每靶 12.4 s（工具的單調時鐘、不含機器睡眠；bash 量到的牆鐘是 115.3 分鐘，中間機器睡了約 21 分鐘）。
     先前一輪（`4faaea2`）是 457 靶、452 殺／2 非預期存活（見上），處置後才是這一輪。
+    · **mutation 在最終 commit（`120fbd4`）上重建**：`--no-cache --jobs 8`、worktree 上跑（快取 key 把整個 repo 當輸入，上面任何一處改動都讓它整批換掉，所以最終 commit 的快取只能是一輪全輪，不是沿用）：
+    456 靶 → **453 殺／0 存活／3 預期存活／0 靶壞**，84.9 分鐘、每靶 11.2 s（單調時鐘與牆鐘一致，5094 秒，這一輪機器沒有休眠）。結果寫回 `mutation-cache.json`。
+    驗證：在這個 commit 的 fresh `git archive` 加這份快取上跑 `--only 0,1`，沿用 2 靶、重跑 0 靶；再改 `test_validate.py` 一行，同一個靶沿用 0 靶、重跑 1 靶（快取確實會失效）。
   · **opsweep `--since 45dee04`**（`fa9f932`，519 個突變體、`--jobs 4`，193.3 分鐘，單調時鐘、不含機器睡眠；牆鐘 215 分鐘）：殺 496（當掉 68、逾時 0、產生語料抓到而 selftest 沒抓到的 0）／存活 23（預期 21、**非預期 2**）。
     兩個非預期都在 `_set_prefix_line`——我刪死碼（靶 399）時動到這個函式，它因此進入 `--since` 的範圍，既有的盲點才暴露：
     `len(toks) <= k + 1` 拿掉後，`set -o`（與 `-e`、`-eu` 合寫）少選項名時突變體 `IndexError`，補 `restrict-r42-flat-set-option-without-name`（3 步逐步斷言、簽名 3 條），單靶重跑殺掉；
     `toks[:1] != ["set"]` 拿掉後等價——唯一呼叫者 `_fl_split_prefix` 在呼叫前已 `break` 掉首詞不是 `set` 的行——列入 `EXPECTED_SURVIVE`（56 → 57；本輪自 WP10 的 44 起共 +13）。
-    最終樹非預期 0：突變的程式碼逐位元相同，新 fixture 只會多殺，兩個存活另以單靶重跑確認（一個殺掉、一個列預期）；沒有在最終 commit 上重跑整輪（193 分鐘）。
-  · **`run.sh`**：`✓ 全部通過`（255 ok、0 not ok，單獨跑、無其他量測並行，955 秒）。**第一次跑是在 `/var/folders` 底下的 `git archive` 副本裡，6 個 detach bats 案例紅**
-    （`R7-D/R9`、`R9-A1`、`R10-L9-1`、`R10-FR1`、`R10-FR3`、`R11-HOOK`）：`own_workers` 用 `pwd -P`（`/private/var/…`）組 `pgrep` 的比對字串，worker 命令列卻是邏輯路徑
-    `/var/…`，兩邊對不上——位置造成、不是 R42（R42 沒動 `bin/` 與 bats）；同一批案例在真實路徑下全過。這個測試對「樹放在 symlink 底下」敏感，本 PR 不處理。
+    最終樹非預期 0：突變的程式碼逐位元相同，新 fixture 只會多殺，兩個存活另以單靶重跑確認（一個殺掉、一個列預期）；沒有在最終 commit 上重跑整輪（193 分鐘）；最終 commit 上重跑的是 mutation 全輪與 `run.sh`（見下）。
+  · **`run.sh`**（最終 commit `120fbd4`，worktree＝git checkout，單獨跑——我的量測腳本串行、開跑一分鐘負載 23.1，同機其他 session 無法排除）：`✓ 全部通過`，rc=0、1187 秒；
+    bats 194 案例 0 not ok、0 skip（`grep -c '^ok'` 數出 255 是含 node 與 pack 檢查的雜行，不是 255 個 bats 案例）。
+    **先前在 `git archive` 副本裡跑過兩次**：放在 macOS 臨時目錄（`/var` 是指向 `/private/var` 的 symlink）底下的那次 6 個 detach bats 案例紅（`R7-D/R9`、`R9-A1`、`R10-L9-1`、`R10-FR1`、`R10-FR3`、`R11-HOOK`）：
+    `own_workers` 用 `pwd -P`（`/private/var/…`）組 `pgrep` 的比對字串，worker 命令列卻是邏輯路徑 `/var/…`，兩邊對不上——位置造成、不是 R42（R42 沒動 `bin/` 與 bats）；
+    放在沒有 symlink 的路徑底下的副本全過（255 ok、0 not ok，955 秒）。副本不是 git checkout，8 個 #48 的 bats 案例因此 skip、builtin-lenses 的 drift 檢查略過——所以最終的跑法
+    是 worktree 這一次。這個測試對「樹放在 symlink 底下」敏感，本 PR 不處理。
 - **verify R39（4 lens + DA + Codex 跨模型 leg，`gpt-6-astra`／medium）— 1 HIGH、11 MEDIUM blocking、6 LOW；六條 leg 全部判 FAIL。**
   CI 在 `6aced19` 上是綠的（R38 的平台那一半部分修好）。報告的中心發現：這一輪找到的每一個繞過，都落在神諭結構上
   看不到的地方——runner 運算式不代換、pipefail 不可比、每個 step 單獨跑所以看不到跨 step 的 `GITHUB_ENV`、逾時丟掉輸出、bash 版本；
