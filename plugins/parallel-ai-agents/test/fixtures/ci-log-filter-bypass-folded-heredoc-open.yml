@@ -1,0 +1,17 @@
+name: t
+on: push
+# EXPECT: rule-red
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: line continuation splits the heredoc opener
+        run: |
+          cat <\
+          <EOF
+          # LOG-FILTER: none — heredoc data, not a declaration
+          also mentions | python3 scripts/neutralise.py
+          EOF
+          echo "$PR_TITLE"
+      - name: compliant control
+        run: echo hi | python3 scripts/neutralise.py

@@ -1,0 +1,28 @@
+# #33 R42 opsweep 處置時發現（不是 opsweep 報的）：`_fl_command` 的 trap 分支只處理命令名（P）與雙引號（D），其餘一律把 body 當成
+# 文法字串剖析——未加引號的參數 `trap $X EXIT` 的 body 是**變數名** `X`，被當成一個叫 `X` 的外部命令收下。bash 卻是在設 trap 時展開
+# `$X`、離開時把**值**當程式碼執行——PR 文字因此成了會執行的程式碼，可以寫跨 step 的通道，推翻 lint 的 P1（run 文字提到
+# `$GITHUB_ENV` 只有字面寫入與唯讀兩種形狀）。bash 5.3 實跑確認。神諭量不到：它的 PR 文字是固定標記，當成程式碼只會
+# 「找不到命令」，錯誤又在群組裡被過濾。
+# LINT-ARGS: --strict
+# R42：這一張的 1 步是**文法外**——不在 `--strict` 的正面文法裡、神諭實跑沒有外流（stdout／stderr／跨 step 通道都沒有）、
+# pipefail 探針沒看到關閉。保守擋下，由下面的宣告簽名（神諭的類別閘門是雙向的）。
+# KNOWN-CLASS: 文法外
+# EXPECT: rule-red
+# EXPECT-MSG: 不在 `--strict` 的正面文法裡
+# EXPECT-MSG: trap 的動作是未加引號的參數
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: trap with an unquoted variable action
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            X=$PR_TITLE
+            trap $X EXIT
+            echo hi
+          } 2>&1 | python3 scripts/neutralise.py

@@ -1,0 +1,15 @@
+# #33 verify R35：**已知類別 G 的 stderr 版本**：`cat "$PR_TITLE"` 單獨一行，錯誤訊息帶著 PR 文字走 stderr；另一行才是
+# 帶 `2>&1` 的真管線。印出 PR 文字的是管線以外的命令——與 G 同一個限制（一個區塊任一條管線＝整個區塊已過濾）。
+# 神諭必須把它歸 G：S-2 的判定若退回「只要 stderr 外流就算 S-2」（按症狀），這一檔會被錯歸 ⇒ KNOWN-CLASS 過期 ⇒ rc=1。
+# KNOWN-CLASS: G
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: stderr from a command outside the filtered pipeline
+        run: |
+          cat "$PR_TITLE" || true
+          echo safe 2>&1 | python3 scripts/neutralise.py

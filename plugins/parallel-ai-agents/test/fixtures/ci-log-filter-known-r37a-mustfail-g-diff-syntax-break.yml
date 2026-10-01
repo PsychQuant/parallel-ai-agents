@@ -1,0 +1,22 @@
+# #33 verify R37（R36 第 1 列）：**must-fail 探針**——差分不可比時**絕不歸 G**。
+# 由構造這是 G（PR 文字由第一行印出，lint 限制第 2 條）。但含 `neutralise.py` 的那一行同時開了 `if … then`，換成中性命令後
+# 留下沒有對應的 `fi`，語法壞掉 ⇒ 神諭量不到「外流是誰印的」⇒ 必須判量不到、不給已知類別 ⇒ 檔頭的 G 宣告過期。
+# 拿掉語法守衛，壞掉的腳本照樣先跑完第一行、外流原封不動 ⇒ 被歸 G、宣告相符、不再失敗 ⇒ 神諭 rc=1。
+# （`neutralise.py` 與 `;` 之間的空白是必要的：lint 的 `PIPED_RE` 要求 `neutralise.py` 後面是空白或行尾，
+#  `neutralise.py;` 會被 lint 判成「沒有經 neutralise.py」——那是另一個 lint 誤擋，R37 另行回報，不在這張探針的範圍。）
+# （宣告的理由比對的是判定裡的「語法壞掉」：失敗本身是 G 宣告過期，理由指明是哪一道守衛讓它量不到。）
+# ORACLE-MUST-FAIL: 語法壞掉
+# KNOWN-CLASS: G
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: the filtered line also opens an if-block
+        run: |
+          echo "::notice::$PR_TITLE"
+          echo safe 2>&1 | python3 scripts/neutralise.py ; if true; then
+            echo more
+          fi

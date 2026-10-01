@@ -1,0 +1,20 @@
+# #33 verify R40 最終量測（定向 opsweep 在 `shopt_cmd` 的 `None in names` 上的存活）：非字面的名字前面有一個字面名字時，旗標迴圈已經結束、
+# 它落在名字清單裡——`OPT=lastpipe` 時 `shopt -s nullglob "$OPT"` 同時開了 lastpipe，之後 `true | set +o pipefail` 關掉的是目前的 shell
+# （bash 5.3 實跑 rc=0）。`bypass-r40-pf-shopt-s-nonliteral-lastpipe` 的 `shopt -s "$OPT"` 走的是旗標位置的非字面，這兩張各守一邊。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: shopt -s name after a literal name
+        shell: bash
+        env:
+          OPT: 'lastpipe'
+        run: |
+          # LOG-FILTER: none — prints no PR text
+          shopt -s nullglob "$OPT"
+          true | set +o pipefail
+          false | cat

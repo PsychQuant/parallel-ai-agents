@@ -1,0 +1,13 @@
+# R30 MB-4：heredoc 餵進 neutralise 不是管線——規則要求的是管線
+# EXPECT: rule-red
+name: t
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: heredoc fed
+        run: |
+          python3 scripts/neutralise.py <<EOF
+          $PR_TITLE
+          EOF

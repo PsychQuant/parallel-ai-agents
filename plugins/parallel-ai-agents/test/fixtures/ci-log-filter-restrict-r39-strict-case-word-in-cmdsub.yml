@@ -1,0 +1,22 @@
+# R38 第 11 列（codex 第 6 條，協調者核對）：`$(printf '%s' case)` 的 `case` 是普通參數，bash 照常執行；掃描器對命令替換裡**不在
+# 命令起點**的 `case` 刻意 fail-closed（`shell_scan` 的封閉列舉第 (1) 類）——放寬要靠 `_at_command` 判得準，判錯就是繞過。保守擋、揭露。
+# LINT-ARGS: --strict
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [a]
+    steps:
+      - name: case as a plain word
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            printf '%s\n' "$(printf '%s' case)"
+            echo "$PR_TITLE"
+          } 2>&1 | python3 scripts/neutralise.py

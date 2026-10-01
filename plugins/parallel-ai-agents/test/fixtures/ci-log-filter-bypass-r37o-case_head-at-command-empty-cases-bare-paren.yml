@@ -1,0 +1,26 @@
+# #33 verify R37 opsweep 補件：殺 `_at_command` 的 drop-operand 第2個突變體（拿掉 `cases` 這個布林運算元，
+# `if s.endswith(")") and cases and cases[-1][0] == lvl and cases[-1][1] == "cmd":` 的第二個 and 子句）。
+# 原版：主掃描器（未加引號的 `$(…)`）在遇到 `case`／`esac` 關鍵字時呼叫 `_at_command`。這裡 `$(true)` 先把
+# csub 開到 1 又收回 1（内層 `$(` 開、`)` 收），累積的 code 桶此時是 `$($(true)`（以 `)` 結尾），但 `cases`
+# 還是空清單（外層還沒開過任何 case）。原版條件式短路在 `cases`（空清單，falsy）就整個 and 判 False，落到
+# `AT_CMD_RE.search(s)`——`s` 結尾是 `)`，不是 `;&|(`` 或行首，比對不到，回 False；`_at_command` 回 False；
+# 呼叫端因此判定這個 `case` 不在命令起點，run 區塊 fail-closed（`PARSE:`）。
+# 突變體拿掉 `cases` 這個子句後，條件式在 `cases[-1][0] == lvl` 直接對空清單取 `[-1]`，丟
+# `IndexError: list index out of range`，整個 lint 當掉（非零 rc，訊息裡沒有 `RULE:`／`PARSE:`／`VACUOUS`）——
+# 與原版的 parse-red 判定不同，殺得掉。
+# bash 5.3 實測（`bash -c '...'`）：`x=$($(true)case x in a) foo;;esac)` 是語法錯誤
+# （`syntax error near unexpected token ';;'`，rc=2）——`$(true)case` 沒有分隔字，bash 詞法上讀成
+# **一個詞**（不是保留字 `case`），所以後面的 `a)`／`;;`／`esac` 在 bash 眼中不成立、報錯；本 fixture
+# 測的是本 lint 自己詞法層的行為（它與 `cases` 是否為空清單有關），不依賴這段命令實際執行的語意。
+# EXPECT: parse-red
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: cmdsub-empty-cases-bare-paren-before-case
+        run: |
+          x=$($(true)case x in a) foo;;esac)
+          echo "$x" 2>&1 | python3 scripts/neutralise.py

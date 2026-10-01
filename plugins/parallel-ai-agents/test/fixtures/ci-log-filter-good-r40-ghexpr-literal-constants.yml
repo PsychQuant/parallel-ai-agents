@@ -1,0 +1,15 @@
+# #33 verify R39 第 1 列的負對照：純字面常數的運算式（引號字串、數字、true／false／null）不帶任何 context，代換後的值作者
+# 寫死了，照常放行。R40 的規則只擋非字面的運算式。`'a}}b'`：引號字串裡的 `}}` 不結束運算式（掃描器要認單引號）。
+# EXPECT: pass
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: literal constants
+        shell: bash
+        run: |
+          set -o pipefail
+          { echo ${{ 'fixed text' }} ${{ 42 }} ${{ true }} ${{ null }} "${{ 'it''s' }}" ${{ 'a}}b' }}; } 2>&1 | python3 scripts/neutralise.py

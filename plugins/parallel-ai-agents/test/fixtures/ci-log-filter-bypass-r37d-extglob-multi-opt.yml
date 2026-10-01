@@ -1,0 +1,14 @@
+# R37 相鄰輸入（不是 R36 點名的那個檔）：同一個「extglob 沒有偵測」缺陷，換一個 `shopt` 的寫法——`extglob`
+# 不是**第一個**選項名（前面還有 `nullglob`），R36 探針只測了 `shopt -s extglob` 這種 extglob 緊跟旗標的
+# 寫法。`EXTGLOB_RE` 要能在旗標與 `extglob` 之間容許別的選項名，不能只認「緊接著」。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: extglob-multi-opt
+        run: |
+          shopt -s nullglob extglob
+          echo "$PR_TITLE" @(x 2>&1| python3 scripts/neutralise.py )

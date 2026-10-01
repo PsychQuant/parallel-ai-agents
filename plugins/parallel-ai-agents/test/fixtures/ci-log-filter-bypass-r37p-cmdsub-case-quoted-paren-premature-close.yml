@@ -1,0 +1,32 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺
+# `drop-operand|_cmdsub_end_case|if c == '"' or c == "`" or line.startswith("${", k) or line.startswith("$(", k):|1`（L570）。
+#
+# `_cmdsub_end_case` 掃自己的內容時，遇到雙引號、反引號、`${…}`、`$(…)` 四種構造要整段跳過（各自的收尾配對，
+# 裡面的 `)` 不影響外層深度／case 追蹤）。這份 fixture 的雙引號命令替換裡有一個字面帶 `)` 的內層字串：
+# `echo "x)" "$PR_TITLE" >&2`——原版遇到那個內層 `"` 時，L570 的第一個 operand（`c == '"'`）命中，交給
+# `_dq_end` 把 `"x)"` 整段跳過（裡面的 `)` 不算數），繼續掃到後面的 `"$PR_TITLE" >&2` 與真正的收尾 `)`，
+# 正確判定整段是一個命令替換、把 `>&2` 複製 fd 暴露給規則層——RULE。
+#
+# 拿掉這個 operand 後，遇到內層字串開頭的 `"` 不再進 `_dq_end` 分支，改當一般字元逐位掃描；字串裡的 `)`
+# （`x)` 的 `)`）因此被本函式自己的深度計算看到——`cases` 是空的（這裡沒有 `case`），命中
+# `elif c == ")": … else: depth -= 1; if not depth: return … k+1`，把這個字面引號裡的 `)` 誤判成整個命令
+# 替換的收尾，在 `"x` 那裡就提早收口（把 `_cmdsub_end_case` 標成「安全、已解析」的一段其實只有 `echo "x`，
+# 連引號都沒收完）。收尾提早，shell_scan 恢復雙引號掃描時，直接把接下來的 `"` 當成**外層** `"pre…post"`
+# 的收尾字元——外層引號在這裡就結束，其餘 `"$PR_TITLE" >&2 )post" 2>&1 | python3 …` 整段掉出雙引號、變成一般
+# 未加引號的程式碼；而這段程式碼裡沒有收尾用的雙引號（`"$PR_TITLE"` 的開頭引號在提早收口之後又被當成
+# **新的**未終結雙引號起點），導致整個 run 區塊到結尾都沒有東西能把引號收掉——PARSE，與原版的 RULE 不同，
+# 構成殺點。
+#
+# bash 5.3 實測：`bash -n` 通過；實際執行時 `$PR_TITLE` 經 `>&2` 直接印到目前 stderr（命令替換求值發生在外層
+# `echo … 2>&1 | …` 的重導向對它生效之前），不經過後面的 `| python3 scripts/neutralise.py`，原版判 RULE 是對的
+# 方向。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: quoted-paren-premature-close
+        run: |
+          echo "pre$(echo "x)" "$PR_TITLE" >&2 )post" 2>&1 | python3 scripts/neutralise.py

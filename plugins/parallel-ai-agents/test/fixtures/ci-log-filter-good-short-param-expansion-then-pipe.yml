@@ -1,0 +1,12 @@
+# R31 opsweep：`${…}` 內的前進步長（`j += 1`）沒有網——步長變 2 時會**跳過**收尾的 `}`。
+# 這一條需要**奇數長度**的內容才翻色：`${PR_TITLE#${SEP}}` 的奇偶性剛好讓步長 2 也落在 `}` 上，
+# 所以另外釘一條一個字元的。**這正是「fixture 過度決定」的反面：形狀對了才驗得到。**
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: one-character parameter expansion then a real pipeline
+        run: echo ${A}| python3 scripts/neutralise.py

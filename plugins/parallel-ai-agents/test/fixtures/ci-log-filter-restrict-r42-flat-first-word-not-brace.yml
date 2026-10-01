@@ -1,0 +1,22 @@
+# #33 R42 opsweep（flat_filtered 的 `if not (first[0]=="W" and _fl_plain(first[1])=="{")`，drop `_fl_plain==` 存活）：
+# 靠管線過濾的 step 首詞是普通命令（非 `{`）時，原碼在這裡就以「第一個詞必須是群組的 `{`」擋下；突變體只剩 `not (first[0]=="W")`，
+# 首詞是 W 詞 → 不在這裡擋、往下走到「群組沒有收尾」（訊息不同）。EXPECT-MSG 釘住原碼的訊息，突變體因訊息不符被殺。
+# LINT-ARGS: --strict
+# R42：這一張的 1 步是**文法外**——不在 `--strict` 的正面文法裡、神諭實跑沒有外流（stdout／stderr／跨 step 通道都沒有）、
+# pipefail 探針沒看到關閉。保守擋下，由下面的宣告簽名（神諭的類別閘門是雙向的）。
+# KNOWN-CLASS: 文法外
+# EXPECT: rule-red
+# EXPECT-MSG: 第一個詞必須是群組的 `{`
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: first word is a plain command, no group
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          echo hi 2>&1 | python3 scripts/neutralise.py

@@ -1,0 +1,20 @@
+# #33 verify R37 opsweep 補件（sh-opts K）：`_Sh.shell_opts` 逐字元掃描最後一支
+# `elif on and ch in "xv": self.hit(…)` 兩個運算元各拿掉一個，用兩行各自獨立的輸入殺掉：
+#   1) 拿掉 `on`——只剩 `(ch in "xv")`。`bash +x -c 'true'`：`+` 開頭 ⇒ `on=False`，這是**關閉**
+#      xtrace（bash 5.3 實測 `bash +x -c 'echo $-'` 不含 `x`）；原版靠 `on` 擋掉 `+x`，拿掉後
+#      只看字元是不是 `x`／`v`，把 `+x`（關閉）也誤判成開了 trace。
+#   2) 拿掉 `ch in "xv"`——只剩 `(on)`。`bash -e -c 'true'`：`-e` 是 errexit，跟 trace 無關
+#      （bash 5.3 實測 `bash -e -c 'echo $-'` 不含 `x`／`v`）；原版靠 `ch in "xv"` 把 `e` 這種
+#      無關字元擋在外面，拿掉後任何 `on=True` 的短選項字元（只要沒被前面的 `oO`／`c` 分支
+#      攔截）都會誤判成開了 trace，`-e` 剛好符合。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        run: |
+          bash +x -c 'true' 2>&1 | python3 scripts/neutralise.py || true
+          bash -e -c 'true' 2>&1 | python3 scripts/neutralise.py || true

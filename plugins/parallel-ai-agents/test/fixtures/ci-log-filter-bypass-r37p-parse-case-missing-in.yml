@@ -1,0 +1,28 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺 `parse_case` 消費主詞那行的 `±1→±2` 突變體
+# （`self.i += 1  # 主詞` 改成 `self.i += 2`）。fail-closed、無外流（見下）。
+# 原版：主詞詞元的 `self.subs()` 在這一行**之前**（呼叫端是上一行）就已經執行過，這行只負責把游標移過
+# 主詞。之後 `self.skip_nl()` 與 `self.word(self.tok(), "in")` 是**容錯**設計——就算源碼沒有 `in`
+# （bash 語法錯誤），guard 為假、不消費，游標原地不動，outer while 直接從當前詞元（其實是模式的第一個
+# 詞）開始掃描，行為與正常有 `in` 時完全一樣。
+# 突變體：`self.i += 2` 多跳一格，把緊接在主詞後面、原本該是模式起點的那個詞（本檔是含 `>&2` 洩漏的
+# 命令替換）直接跳過，游標落在它後面的 `)`。pattern-scan 迴圈條件立刻為假、跑 0 輪，那個詞的
+# `subs()` 從未被呼叫，hit 永遠不會登記。
+# 為什麼是 fail-closed、無外流：`case x in a"$(echo ...)"` 之間夾了一個不是 `in` 的模式詞
+# 是刻意去掉 `in` 關鍵字所致——bash 對「`case WORD 後面不是 in`」直接判語法錯誤，不會真的執行到
+# 命令替換那一段。
+# bash 5.3 實測：
+#   bash -n -c 'case x "$(echo hi)") echo ok ;; esac'
+#   syntax error near unexpected token `"$(echo hi)"'
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          case x "$(echo "$PR_TITLE" >&2)") echo ok ;; esac | python3 scripts/neutralise.py

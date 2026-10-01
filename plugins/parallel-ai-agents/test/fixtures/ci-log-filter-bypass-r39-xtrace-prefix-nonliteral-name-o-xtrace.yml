@@ -1,0 +1,15 @@
+# R39（R38 第 4 列）：命令名不是字面、參數是 `-o xtrace`——`${X:-set}` 展開成 `set`，開了 xtrace。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: nonliteral command name with -o xtrace
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          ${X:-set} -o xtrace
+          echo "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py

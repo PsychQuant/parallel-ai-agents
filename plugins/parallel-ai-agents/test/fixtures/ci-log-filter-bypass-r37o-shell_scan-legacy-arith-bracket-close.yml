@@ -1,0 +1,29 @@
+# #33 verify R37 opsweep 補件：殺 ==↔!=|shell_scan|elif ch == "]":|1|L962（舊式算術 `$[…]` 收尾判定）。
+# 原版（`elif brk:` 分支）：
+#   if ch == "[": brk += 1
+#   elif ch == "]": brk -= 1
+# 只有真正的 "]" 才收掉一層 `$[…]`；中間任何其他字元只是被吃掉（落到分支尾端 `code.append(" ")`），
+# 不動 brk。突變體把 `==` 換成 `!=`，於是 **`$[` 之後第一個「不是 `]`」的字元就把 brk 減成 0**——
+# 對本例是緊接在 `$[` 後面的空白，一格就把 `$[ … ]` 提早收掉。收掉之後 brk=0，
+# 後面「1 + $PR_TITLE | python3 scripts/neutralise.py」整段脫離「舊式算術內容一律吃掉、不當 code」
+# 的保護，被當成**真正會執行的 code** 掃出來——`|` 前面沒有跳脫、後面接的又剛好是
+# `python3 …neutralise.py`，規則層的 PIPED_RE 因此判定「這是一條乾淨接到 neutralise 的管線」而放行。
+# 原版正確地把整個 `$[ … ]` 吃成空白（`echo` 後面等於沒有引數），沒有管線可言，
+# 這個 run 區塊也沒有任何 `# LOG-FILTER:` 宣告 → RULE:「既沒有經 neutralise.py，也沒有 LOG-FILTER」。
+# bash 5.3 實測（`$PR_TITLE` 帶一段不會被引號吃掉的字串，模擬攻擊者可控的 PR 標題）：
+#   PR_TITLE='fake title' bash -c 'echo $[ 1 + $PR_TITLE | python3 scripts/neutralise.py ]'
+#   → 「1 + fake title  | python3 scripts/neutralise.py : arithmetic syntax error in expression」，
+#   rc=1——`echo` 根本沒有執行（`$[…]` 展開先失敗），而且**這段錯誤訊息本身把 PR_TITLE 印到 stderr**、
+#   完全沒經過任何管線過濾，正是 RULE 要擋的那類外流，原版判紅是對的方向。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: legacy-arith-bracket-fake-pipe
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo $[ 1 + $PR_TITLE | python3 scripts/neutralise.py ]

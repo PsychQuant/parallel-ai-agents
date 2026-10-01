@@ -1,0 +1,19 @@
+# #33 的 R42 決策紀錄 (a)：R42 放行條件 1 的負對照（`shopt -s lastpipe` 之後頂層的 `set -o pipefail`，pipefail 確實開著）與
+# 條件 2（有管線的 step 出現任何 `shopt` 就 RULE）互相矛盾，以條件 2 為準。這個 step 不外流、pipefail 也開著，正面文法保守擋下。
+# 逐字取自 R41 DA 的 reg 輸入 c2-pos-toplevel-on。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-MSG: 不在 `--strict` 的正面文法裡
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: c2-pos-toplevel-on
+        shell: bash {0}
+        run: |
+          # LOG-FILTER: none — this step only tests exit statuses
+          shopt -s lastpipe
+          set -o pipefail
+          false | true

@@ -1,0 +1,22 @@
+# R38 第 5 列（五條 leg）：群組豁免的論證是「群組裡 fd 1、fd 2 都是管線」，只涵蓋寫到 fd 1／2 的目標。群組跑在子殼層，但 `$$` 仍是
+# 外層 shell 的 PID——在 Linux 上 `/proc/$$/fd/1` 就是外層原本的 stdout（step log）。前一版把群組內的所有 fd 命中一起豁免。
+# LINT-ARGS: --strict
+# R42：沒有 /proc 的平台上（macOS）這一步量不到外流、判**文法外-without-proc**；有 /proc 的平台（CI 的 Linux）必須判一致——
+# 宣告在那裡不計，神諭照一般的外流對帳（前一版列在 KNOWN_DISAGREE_WITHOUT_PROC）。
+# KNOWN-CLASS: 文法外-without-proc
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: group writes to exec-proc-pid
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            exec > /proc/$$/fd/2
+            echo "$PR_TITLE"
+          } 2>&1 | python3 scripts/neutralise.py

@@ -1,0 +1,16 @@
+# R38 第 7 列：已知類別 G 的形狀，但假 lint 在 `--strict` 下擋它只因為前綴有 `set -E`——刪掉那一行，`--strict` 放行。
+# KNOWN-CLASS: G
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -Eeuo pipefail
+          echo "$PR_TITLE"
+          { echo hi; } 2>&1 | python3 scripts/neutralise.py

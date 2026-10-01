@@ -1,0 +1,56 @@
+# #33 R42 opsweep（`flat_filtered` 的尾巴檢查與收尾）：R1 只看有沒有 `| python3 …neutralise.py` 這樣的管線，
+# 群組**裡面**放一條就能讓 R1 放行；真正的尾巴由文法檢查。前一版的存活突變體都是「R1 已擋所以文法這一半多餘」的推論，
+# 這裡逐一反證：尾巴的過濾器名不是 python3、路徑不是 neutralise.py、過濾器位置是重導向、路徑位置是重導向、
+# `|&` 尾巴多一個參數、群組後沒有尾巴、群組後接了不相干的一行。
+# LINT-ARGS: --strict
+# R42：這一張的 8 步是**文法外**——不在 `--strict` 的正面文法裡、神諭實跑沒有外流（stdout／stderr／跨 step 通道都沒有）、
+# pipefail 探針沒看到關閉。保守擋下，由下面的宣告簽名（神諭的類別閘門是雙向的）。
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# EXPECT: rule-red
+# EXPECT-EACH-STEP: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: the tail filter is not python3
+        shell: bash
+        run: |
+          { echo hi | python3 scripts/neutralise.py; } 2>&1 | python scripts/neutralise.py
+      - name: the tail path is not neutralise
+        shell: bash
+        run: |
+          { echo hi | python3 scripts/neutralise.py; } 2>&1 | python3 scripts/other.py
+      - name: the tail filter position is a redirect
+        shell: bash
+        run: |
+          { echo hi | python3 scripts/neutralise.py; } 2>&1 | >f y
+      - name: the tail path position is a redirect
+        shell: bash
+        run: |
+          { echo hi | python3 scripts/neutralise.py; } 2>&1 | python3 >f
+      - name: the pipe-ampersand tail has an extra argument
+        shell: bash
+        run: |
+          { echo hi; } |& python3 scripts/neutralise.py extra
+      - name: the pipe-ampersand tail filter is not python3
+        shell: bash
+        run: |
+          { echo hi | python3 scripts/neutralise.py; } |& python scripts/neutralise.py
+      - name: the group has no tail at all
+        shell: bash
+        run: |
+          { echo hi | python3 scripts/neutralise.py; }
+      - name: an unrelated line follows the group
+        shell: bash
+        run: |
+          { echo hi | python3 scripts/neutralise.py; }
+          foo

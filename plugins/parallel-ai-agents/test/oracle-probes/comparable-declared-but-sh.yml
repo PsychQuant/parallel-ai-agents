@@ -1,0 +1,13 @@
+# R40（#33 verify R39 放行條件 12）：宣告 ORACLE-COMPARABLE 的檔，每個 step 都必須可比——`shell: sh` 不可比，神諭必須 rc=1。
+# 量的是那條檢查本身（fixture 集上所有宣告的檔都可比，拿掉檢查不會讓任何 fixture 變色）。
+# ORACLE-COMPARABLE
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: sh
+        run: |
+          echo ok

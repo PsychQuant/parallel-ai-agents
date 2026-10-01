@@ -1,0 +1,16 @@
+# R38 第 13 列（logic MEDIUM-5）：R37 列為「殺不掉也證明不了等價」的 8 條存活者之一，logic lens 找到殺法。
+# `_rule_lines` 的 drop-operand#1：突變體在這個輸入上 TypeError 當掉。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: rule lines backtick herestring crash
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo safe `<<<<` |
+          python3 scripts/neutralise.py

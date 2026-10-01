@@ -1,0 +1,14 @@
+# R33 opsweep（`drop_first` 的 `not nxt_more` 運算元）：空行後面接 more-indented 行時，空行是真的空行
+# （PyYAML：`['a','','  b']` → `'a\n\n  b'`）。空分隔字的 heredoc 靠它終止。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: blank before a more-indented line stays a line
+        run: >
+          cat <<''
+          
+            echo hi | python3 scripts/neutralise.py

@@ -1,0 +1,14 @@
+# #33 verify R35（R34 修法的誤擋守衛）：`<<-` 會剝掉內文與終止行開頭的 tab。YAML 縮排只剝空白之後，tab 留在內容裡，`<<-` 照樣把 `\tEOF` 認成終止字；後面的真管線是 code。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: tab-stripping heredoc with tab-indented body
+        run: |
+          cat <<-EOF
+          	hi
+          	EOF
+          echo hi 2>&1 | python3 scripts/neutralise.py

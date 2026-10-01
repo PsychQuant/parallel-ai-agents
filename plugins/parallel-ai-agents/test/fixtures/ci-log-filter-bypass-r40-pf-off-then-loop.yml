@@ -1,0 +1,18 @@
+# #33 verify R40 最終量測：opsweep 在 R40 的 pipefail 控制流程上報存活，R40 的 fixture 只釘住了點名的輸入、沒有釘住機制。
+# 迴圈外先關、迴圈裡沒有再開：迴圈裡的管線仍然是關的（前一版的迴圈檢查若不先看 `st`，會把它算回「開」）。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: off before a loop
+        shell: bash
+        run: |
+          # LOG-FILTER: none — prints no PR text
+          set +o pipefail
+          for c in a; do
+            false | cat
+          done

@@ -1,0 +1,15 @@
+# t8 CP2（`CMD_POS_CHARS` 的 `&`：`&&` 之後是命令位置）：`true && [[ … =~ (a| python3 …) ]]` 的 `[[` 是條件式、`|` 是正規式的「或」；`&` 不觸發命令位置時 `[[` 被當成普通詞、假管線被當真而放行，bash 實測第一行裸印 PR 文字。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$PR_TITLE"
+          true && [[ "$PR_TITLE" =~ (a| python3 scripts/neutralise.py ) ]]

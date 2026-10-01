@@ -1,0 +1,13 @@
+# 正向 fixture：`# LOG-FILTER:` 合法地寫在 `run:` 自己的 block scalar 內（header 明文允許）
+# EXPECT: pass
+name: t
+on:
+  pull_request:
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: a
+        run: |
+          # LOG-FILTER: none — runs the PR's own code, prints no PR text
+          make build

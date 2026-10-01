@@ -1,0 +1,12 @@
+# #33 verify R35（opsweep --since 6cf6864 的存活者）：最短的 `${X:-$(a)}`：`_cmdsub_end` 一格一格前進才找得到 `)`。殺 `_cmdsub_end` 結尾的 `k += 1`（±1→±2 會跳過 `)` ⇒ PARSE）。
+# 預期判定用 bash 實測（oracle 一致／bash -n）。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: cmdsub-short
+        run: |
+          echo "${HOME:-$(a)}" 2>&1 | python3 scripts/neutralise.py

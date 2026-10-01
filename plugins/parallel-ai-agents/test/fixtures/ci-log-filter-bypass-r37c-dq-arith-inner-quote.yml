@@ -1,0 +1,14 @@
+# #33 verify R37（`_arith_end` 對引號回 None）：雙引號算術裡又有 `"))"`。bash 5.3 把它當巢狀字串讀、算術到後面的 `))` 才收
+# （實跑：算術語法錯誤、沒有管線），第一行裸印 PR 文字。若 `_arith_end` 把 `"` 當普通字元，會在引號裡的 `))` 收尾、
+# 外層在下一個 `"` 收掉 ⇒ 假管線變 code ⇒ 放行。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: dq-arith-inner-quote
+        run: |
+          echo "$PR_TITLE"
+          : "$(( "))" 2>&1 | python3 scripts/neutralise.py ))" #"

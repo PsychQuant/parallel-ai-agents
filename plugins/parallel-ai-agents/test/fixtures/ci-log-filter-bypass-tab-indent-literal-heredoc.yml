@@ -1,0 +1,16 @@
+# YAML 的縮排只算空白，tab 是內容。R33 的 `dedent_block` 用 `lstrip()` 連 tab 一起剝 ⇒ runner 眼中的 `\tEOF` 在 lint 眼中是 `EOF`＝終止字 ⇒ heredoc 提早結束、假管線變 code（logic F4 p6）。
+# 來源（#33 verify R34 logic F1／F3／F4 的探針；DA 的 n 系列是它在 da-work/probes 留下的檔案）
+# EXPECT: rule-red
+name: t
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: p6
+        run: |
+          	cat <<EOF
+          	$PR_TITLE
+          	EOF
+          	x| python3 scripts/neutralise.py
+          	EOF

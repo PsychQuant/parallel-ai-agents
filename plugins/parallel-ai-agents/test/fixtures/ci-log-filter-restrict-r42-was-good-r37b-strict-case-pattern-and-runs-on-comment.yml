@@ -1,0 +1,24 @@
+# #33 R42：這兩個 step 原本在 `good-r37b-strict-case-pattern-and-runs-on-comment`（EXPECT: pass）裡，R37 用它們釘住
+# `case … in a|b)` 的模式 `|` 不是管線（R36 第 22 列的誤擋）。R42 的宣告 step 觸發是字元測試（模式的 `|` 也算），正面文法又不收
+# `case`，保守擋下：兩個 step 只印常數，是揭露的誤擋——R36 第 22 列的這一半以誤擋的形式回來了。step 逐字搬過來。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-MSG: 不在 `--strict` 的正面文法裡
+name: t
+on: pull_request
+jobs:
+  a:
+    runs-on: ubuntu-latest
+    steps:
+      - name: case alternation is not a pipe
+        # LOG-FILTER: none — prints a constant
+        run: |
+          case "$GITHUB_EVENT_NAME" in push|pull_request) echo ok;; esac
+      - name: multi-line case alternation
+        # LOG-FILTER: none — prints a constant
+        run: |
+          case "$GITHUB_EVENT_NAME" in
+            push|pull_request)
+              echo ok ;;
+            *) echo other ;;
+          esac

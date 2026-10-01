@@ -1,0 +1,32 @@
+# #33 R42 opsweep（_fl_lit 的 `if p[0] == "P" and re.search(r"[*?\[\]{}~]", p[1])`，drop `p[0]=="P"` 存活；combo_finder 找到區分輸入）：
+# GITHUB_ENV／GITHUB_PATH 的字面寫入。值的片段可以是未加引號字面（P）、單引號（S）、雙引號（D）。glob 檢查只該對 P 片段做——
+# D 片段的 p[1] 是 list，突變體對它做 `re.search` 會 TypeError（CRASHED）。這是**合法**寫入（值全字面，`$HOME` 在准展開集合內），應放行。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: literal GITHUB_ENV write with an unquoted value
+        shell: bash
+        run: |-
+          set -o pipefail
+          {
+            echo FOO=bar >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: literal GITHUB_PATH write with a double-quoted value
+        shell: bash
+        run: |-
+          set -o pipefail
+          {
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: literal GITHUB_ENV write with a single-quoted value
+        shell: bash
+        run: |-
+          set -o pipefail
+          {
+            echo 'FOO=b a r' >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py

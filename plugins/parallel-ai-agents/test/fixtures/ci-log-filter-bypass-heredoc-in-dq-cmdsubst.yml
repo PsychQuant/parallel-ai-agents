@@ -1,0 +1,18 @@
+# #33 verify R35（雙引號分支）：雙引號裡的 `$(cat <<'EOF'` 開了 heredoc。R33 的雙引號分支把整段挖空、不登記 heredoc，
+# 內文那一行的 `"` 在 lint 眼中收掉雙引號，`| python3 …neutralise.py` 變成 code；bash 眼中那整行是 heredoc 資料，
+# `echo "$PR_TITLE"` 照樣裸印。6cf6864 版 rc=0（繞過）。R35 照 bash 做：暫時離開雙引號、登記 heredoc、讀完再回雙引號
+# ⇒ 內文是資料、沒有管線 ⇒ RULE。（R35 第一版是 fail-closed PARSE，三軸量到合成 A 語料 8 個合法檔因此翻紅，改掉。）
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: heredoc opened by a command substitution inside double quotes
+        run: |
+          x="$(cat <<'EOF'
+          " | python3 scripts/neutralise.py "
+          EOF
+          )"
+          echo "$PR_TITLE"

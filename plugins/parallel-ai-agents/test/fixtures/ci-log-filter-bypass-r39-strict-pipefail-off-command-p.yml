@@ -1,0 +1,21 @@
+# R38 第 8 列（regression HIGH-1、logic MEDIUM-3a）：群組內 `command -p set +o pipefail` 關掉 pipefail，之後群組內 `false | true` 的失敗被吞，
+# 外層 step rc=0（bash 5.3 實測；負對照拿掉那一行 rc=1）。R37 只修了裸寫的 `set +o pipefail`。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: pipefail off via command-p
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            command -p set +o pipefail
+            false | true
+            echo "$PR_TITLE"
+          } 2>&1 | python3 scripts/neutralise.py

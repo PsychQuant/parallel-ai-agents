@@ -1,0 +1,27 @@
+# #33 verify R37 opsweep 補件：殺 drop-operand|shell_scan|if ch == "`" and bt:|1|L864。
+# 原版（雙引號分支，決定「$(…)`／反引號在這一行沒收尾時要不要 fail-closed」）：
+#   if ch == "`" and bt: unparsed = "反引號裡的雙引號又開了一個跨行的反引號…"; break
+# 只在「這一格字元本身就是反引號、而且我們已經在一個反引號裡（bt=True）」才 fail-closed——
+# 那是「反引號裡的雙引號又開了一個反引號」這個本 lint 真的表示不了的形狀。
+# 突變體拿掉 `ch == "`"` 只留 `if bt:`，於是**只要 bt 是 True，不管這一格是什麼字元都 fail-closed**。
+# 這裡的 run 區塊是：反引號裡一個雙引號字串，字串裡開了一個 `$(` 但這一行沒收尾（要到下一行才收）。
+# 原版走到「$(」那一格時 ch 是 "$" 不是 "`"，bt 是 True，`ch == "`" and bt` 為 False，
+# 正常進 else 分支登記 dq_ret、把這段當 code 掃；下一行 "`" 收尾反引號、"$(" 的 ")" 收尾命令替換，
+# 雙引號正常收尾，最後管線是真的、乾淨接到 neutralise.py。突變體在「$」那一格就已經 `bt` 為 True
+# 而 fail-closed，整個 run 區塊判 PARSE。
+# bash 5.3 實測（兩行接續，`$(` 跨行到下一行才收）：
+#   echo `echo "$(
+#   echo safe)"`
+# 印出 "safe"，rc=0——乾淨執行，沒有 PR 文字、沒有語法錯誤。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: dq-nested-cmdsub-inside-backtick
+        # LOG-FILTER: none — 印的是常數字串 "safe"，不含任何 PR-controlled 文字
+        run: |
+          echo `echo "$(
+          echo safe)"`

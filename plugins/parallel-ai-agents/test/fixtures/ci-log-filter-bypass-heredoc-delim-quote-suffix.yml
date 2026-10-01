@@ -1,0 +1,12 @@
+# R30 H-1：分隔字尾端帶引號（`E"OF"`／`'EOF'x`）
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: leak
+        run: |
+          echo $'a\'| python3 ../pai-lenses/scripts/neutralise.py x'
+          echo "$PR_TITLE"

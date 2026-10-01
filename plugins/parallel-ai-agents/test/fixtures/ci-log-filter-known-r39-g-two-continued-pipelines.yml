@@ -1,0 +1,25 @@
+# #33 R39（mutation 全輪的存活者）：**續行判定的 bash 那一支**（行尾 `|` 後面帶註解）要有自己的網。
+# `known-r37a-g-continued-pipeline` 原本殺它，靠的是「只換掉下一行 ⇒ 上一行 `… | # 註解` 懸空 ⇒ 語法壞掉」。R39 的差分在
+# 語法壞掉時會往上擴到最短的完整範圍，而中性命令 `! ! :` 接在 `|` 後面本身就是語法錯誤——所以**只有一條**這樣的管線時，
+# 擴範圍剛好補回續行判定該給的範圍，關掉 bash 那一支也不變色。
+# 擴範圍是逐段貪婪的：每一段都要求**整份腳本**語法完整才算擴成功。同一個 run 區塊裡有**兩條**以註解續行的管線時：
+#   · 續行判對 ⇒ 兩條管線各自整條換掉（相鄰合併成一段），語法完整 ⇒ `cat` 的外流原封不動 ⇒ G。
+#   · 關掉 bash 那一支 ⇒ 只換兩個下一行 ⇒ 擴第一段時第二段還壞著、擴第二段時第一段還壞著 ⇒ 量不到；已觀察到外流而
+#     分類失敗 ⇒ 繞過 ⇒ 這裡宣告的 G 過期 ⇒ rc=1。
+# 我先前以為它是等價突變（上一行以 `|` 懸空時「換不換都一樣」），又試了 stderr 版與 `echo; true |` 版——兩者都被擴範圍補上、
+# 不變色；會變色的是這個兩段的形狀。
+# KNOWN-CLASS: G
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: two pipes continued after trailing comments, stderr from another command
+        run: |
+          cat "$PR_TITLE" || true
+          echo safe 2>&1 | # first
+            python3 scripts/neutralise.py
+          echo safe 2>&1 | # second
+            python3 scripts/neutralise.py

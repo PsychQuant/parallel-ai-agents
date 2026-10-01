@@ -1,0 +1,12 @@
+# #33 verify R35（opsweep --since 6cf6864 的存活者）：雙引號命令替換裡的 `<<<` 是 here-string。殺 `not line.startswith("<<<", i)`（拿掉 ⇒ 雙引號狀態沒被恢復）。
+# 預期判定用 bash 實測（oracle 一致／bash -n）。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: dq-herestring
+        run: |
+          echo "$(cat <<< hi)" 2>&1 | python3 scripts/neutralise.py

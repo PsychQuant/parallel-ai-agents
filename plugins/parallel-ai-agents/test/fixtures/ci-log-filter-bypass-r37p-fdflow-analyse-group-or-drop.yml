@@ -1,0 +1,22 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺 drop-operand|_analyse|if segs[k]["kind"] == "group" and (|2
+# （拿掉整個 OR 子式,只剩 `segs[k]["kind"] == "group"`）。
+# 群組完全沒有收尾重導向、用普通的 `|` 接 `neutralise.py`：`{ echo "$PR_TITLE" >&2; } | python3
+# scripts/neutralise.py`。bash 實測（`bash -c '{ echo SECRET >&2; } | cat'`）：SECRET 出現在真的
+# stderr，完全沒有經過管線／`cat`——群組沒有任何 `2>&1`／`|&` 之類的保護，內部 `>&2` 真的外流。
+# 原版：`segs[k]["kind"] == "group"` 為真，但後面的 OR（`|&` 且無收尾，或 `|` 且收尾恰一個 `2>&1`）
+# 兩支都假（連接子是 `|`、且沒有任何收尾重導向，`len(trail) == 1` 不成立）→ 整個 AND 為假 → 群組不
+# 豁免 → 群組內 `>&2` 的命中留在 `an["fd"]` → RULE 紅（與 bash 實測一致，真的外流，非 fail-closed）。
+# 突變體拿掉整個 OR 子式後，判斷式只剩 `segs[k]["kind"] == "group"`——只要是群組，不管連接子是什麼、
+# 收尾有沒有 `2>&1`，一律豁免。本例的群組完全沒有保護卻被誤判豁免，`>&2` 的命中被吞掉，
+# 突變體放行，漏掉真的外流。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: unprotected group piped without 2>&1 or |&
+        shell: bash
+        run: |
+          { echo "$PR_TITLE" >&2; } | python3 scripts/neutralise.py

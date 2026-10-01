@@ -1,0 +1,19 @@
+# R31 opsweep：`$'…'` 的邊界守衛（`j < n`）沒有網。bash 5.3 對未收尾的 `$'` 直接報
+# 「尋找符合的 `'` 時遇到了未預期的檔案結束符」——整個 step 是語法錯誤、不會執行。
+# 本 lint 詞法上把它吃到行尾，下一行重新當新行掃，結果沒有任何管線 → 紅。
+# **R34 起判 parse-red**（#33 verify R34 logic F1／F3）：同一行沒收尾的 `${…}`／`$'…'` 在 bash 可以跨行，
+# 本 lint 的狀態表示不了 ⇒ fail-closed `PARSE:`，不再「吃到行尾、下一行重新掃」——那正是跨行繞過的來源
+#（`bypass-param-expansion-multiline`、`bypass-ansic-quote-multiline`）。這一檔仍然是紅，理由改成誠實的那一個。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: unterminated ansi-c quote
+        run: |
+          echo $'abc
+          echo "$PR_TITLE"
+      - name: compliant control
+        run: echo hi | python3 scripts/neutralise.py

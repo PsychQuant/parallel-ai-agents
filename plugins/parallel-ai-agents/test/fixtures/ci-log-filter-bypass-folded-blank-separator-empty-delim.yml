@@ -1,0 +1,21 @@
+# R33 自查（642 檔產生語料抓到 10 檔）：YAML 折疊裡，**內容行之後的第一個空行是分隔符**——它換來一個換行、
+# 自己不留在值裡（PyYAML：`['a','','b']` → `'a\nb'`）。前一版把它留成一個真的空行，於是 lint 的行比 runner 多一行；
+# 而**空分隔字**的 heredoc（`cat <<''`，bash 實測終止字是空字串）會被任何空行終止 ⇒ lint 在 runner 沒有的行上
+# 終止 heredoc、把後面的管線當 code 而放行；bash 則整段吞掉、什麼都沒跑（PR 文字沒外流，所以不是繞過，
+# 是「lint 宣稱解析並放行，bash 根本沒形成命令」——Codex 說的第三個方向）。正確判定：heredoc 永不終止 → 無管線 → 紅。
+# 還原「空行留成真的一行」的版本會讓這一檔翻成 pass（negative control 紀錄在 CHANGELOG R33 段）。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: blank line after content inside a folded scalar is a separator, not an empty line
+        run: >
+          cat <<''
+          plain data
+
+          echo hi | python3 scripts/neutralise.py
+      - name: compliant control
+        run: echo hi | python3 scripts/neutralise.py

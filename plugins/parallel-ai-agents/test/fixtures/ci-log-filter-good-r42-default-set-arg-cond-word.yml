@@ -1,0 +1,18 @@
+# #33 R42 plan WP5：`good-r37t8-strict-set-arg-cond-word` 的預設模式雙胞胎。那張在 R42 轉成 restrict（正面文法不收），
+# 它殺的 mutation 靶（`_lex` 只有在內容被挖空時才把 `[[`／`((` 當不透明詞，R37 完整性審查缺陷 e）因此沒有別的 fixture 會走到。
+# 引數位置的 `[[ -n x ]]` 是 `set` 的位置參數（bash 5.3：`set -o pipefail [[ -n x ]]` 設了 pipefail、`$1` 是 `[[`），不是條件式；
+# 突變體一看到 `[[` 就當不透明詞，判「`set` 的參數不是字面」、擋下。預設模式（不帶 `--strict`）。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail [[ -n x ]]
+          echo "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py

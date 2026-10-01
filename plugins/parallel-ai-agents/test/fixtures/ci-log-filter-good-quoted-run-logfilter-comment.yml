@@ -1,0 +1,9 @@
+name: t
+on: push
+# EXPECT: pass
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: quoted run whose justification is the YAML trailing comment
+        run: 'sleep 1' # LOG-FILTER: none — fixture, prints nothing

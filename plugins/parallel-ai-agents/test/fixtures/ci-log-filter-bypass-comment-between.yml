@@ -1,0 +1,16 @@
+# R20 security S-2：註解歸屬先前會跨 step 邊界記到前一個 step
+# EXPECT: rule-red
+name: t
+on:
+  pull_request:
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: compliant
+        run: echo hi | python3 ../pai-lenses/scripts/neutralise.py
+      - name: unfiltered
+        run: echo "$PR_TITLE"
+        # LOG-FILTER: none — belongs to the NEXT step, reads as its header
+      - name: another
+        run: echo ok | python3 ../pai-lenses/scripts/neutralise.py

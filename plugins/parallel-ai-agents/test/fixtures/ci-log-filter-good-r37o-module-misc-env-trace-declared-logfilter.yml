@@ -1,0 +1,32 @@
+# #33 verify R37 opsweep 補件：殺
+# `drop-operand|<module>|elif not declared and env_hit:|1`
+# ——把「靠管線過濾卻帶了會影響 bash 啟動的 env」檢查裡的 `not declared` 拿掉，變成
+# `elif env_hit:`。
+# 這個 step 的 `env:` 帶了 `SHELLOPTS`（`ENV_TRACE_KEYS` 之一，bash 啟動時就會讀，
+# 理論上可能讓輸出繞過管線），但 `run:` 的 block scalar 內容裡自己寫了合法的
+# `# LOG-FILTER: none — …` 宣告——這是白名單裡「不受管線規則限制」的自我聲明來源 (2)。
+# 原版：`ok = via_pipe or declared` 因為 `declared=True` 已經是 True，`if not ok:` 跳過；
+# `an["fd"]` 這裡沒有 fd 相關內容，跳過；到 `elif not declared and env_hit:`，
+# `not declared` 是 False（因為 `declared=True`），整個 `and` 短路成 False，**不拒絕**——
+# 這正是白名單存在的意義：已經明講「我知道、我不靠管線過濾」的 step，不該再被 env trace
+# 規則擋下。整體 `pass`。
+# 突變體拿掉 `not declared`，只剩 `env_hit`——只要 `env_hit` 非空就拒絕，**不管這個 step
+# 有沒有 `# LOG-FILTER:` 宣告**，變成 `rule-red`。這等於讓白名單對 env trace 這條規則
+# 完全失效。與原版的 `pass` 不同，這張 fixture 殺得掉它。
+# bash 5.3 實測：`SHELLOPTS=xtrace bash -c 'echo hi'` 確實會把 `+ echo hi` 這行 xtrace
+# 印到 stderr（`SHELLOPTS` 啟動時生效），所以 `env_hit` 命中 `SHELLOPTS` 是正確的訊號；
+# 但這個 step 的 `run:` 本身沒有管線（只有 `make build` 這種本地指令），`# LOG-FILTER:`
+# 明白宣告「跑 PR 自己的程式碼，不印 PR 文字」，原版的白名單設計就是要放行這種情形。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: a
+        env:
+          SHELLOPTS: xtrace
+        run: |
+          # LOG-FILTER: none — runs the PR's own code, prints no PR text
+          make build

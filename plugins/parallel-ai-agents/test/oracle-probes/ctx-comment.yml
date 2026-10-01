@@ -1,0 +1,17 @@
+# 神諭反向探針（R42 WP8，#33 verify R41 DA-4）：runner 運算式落在「comment」脈絡時，payload 要逃得出去，神諭才看得到外流。
+# 逐字取自 R41 DA 的 ctx/comment；另加 LINT-ARGS 讓突變版 lint 在 `--strict` 下跑（原輸入沒有）。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: comment
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            # note: ${{ github.event.pull_request.body }}
+            echo ok
+          } 2>&1 | python3 scripts/neutralise.py

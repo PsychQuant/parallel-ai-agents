@@ -1,0 +1,20 @@
+# #33 R42 opsweep（`--since 45dee04`，`_param_end` 巢狀檢查 drop-operand 第 1 條存活）：巢狀的 `${` 落在行尾時，WP5 的
+# `parse-r42-default-nested-funsub` 六個 step 都是「`${` 後面緊接空白或 `|`」，行尾那一半沒有——拿掉 `j + 2 >= n` 守衛後 lint 在這裡
+# 丟 IndexError（traceback，不是不解析的訊息），沒有任何一張 fixture 翻色。與 R40 的 `parse-r40-param-open-at-eol`（最外層）同形。
+# bash 5.3 把 `${` 之後的換行當成空白：`${X:-${` ⏎ `set -x; }}` 是跨行的 `${ cmd; }`，在目前的 shell 開 xtrace——不解析、不放行。
+# 預設模式（不帶 `--strict`）。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: nested-param-open-at-eol
+        env:
+          PR_TITLE: "::error::PWN"
+        run: |
+          set -o pipefail
+          echo ${X:-${
+          set -x; }}
+          echo "$PR_TITLE" | python3 scripts/neutralise.py

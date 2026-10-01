@@ -1,0 +1,14 @@
+# #33 verify R37（`_arith_end` 深度 0 的單一 `)`）：`"$((echo x) 2>&1 | … ))"` 在 bash 5.3 不是算術——`$((` 配到的
+# 不是 `))`，bash 改讀成「命令替換裡的子殼層」（實跑：管線在命令替換裡執行）。本 lint 不猜 ⇒ fail-closed。
+# 若照算術配到後面的 `))`，整段被當不透明內容吞掉、只剩第一行 ⇒ RULE。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: dq-arith-subshell-form
+        run: |
+          echo "$PR_TITLE"
+          : "$((echo x) 2>&1 | python3 scripts/neutralise.py ))"

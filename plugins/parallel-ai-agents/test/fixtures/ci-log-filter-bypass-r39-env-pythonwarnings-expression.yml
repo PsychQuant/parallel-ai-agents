@@ -1,0 +1,19 @@
+# R38 第 9 列（Codex 第 2 條，協調者實跑）：CPython 在執行 `neutralise.py` 之前解析 `PYTHONWARNINGS`，不合法的值印到**管線右端**
+# 的 stderr（`Invalid -W option ignored: invalid action: '<值>'`），不經左端的 `2>&1`。值是 runner 運算式時就可能是 PR 文字。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: PYTHONWARNINGS from the PR title
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PYTHONWARNINGS: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            echo "$PR_TITLE"
+          } 2>&1 | python3 scripts/neutralise.py

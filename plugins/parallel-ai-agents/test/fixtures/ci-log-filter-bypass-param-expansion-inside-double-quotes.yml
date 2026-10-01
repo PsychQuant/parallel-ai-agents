@@ -1,0 +1,12 @@
+# 雙引號裡的 `${…}`：`"${X#"…"}"` 的內層 `"…"` 是 pattern 的一部分，展開到最後的 `}` 才結束。R33 的雙引號分支根本不進 `${` ⇒ 每遇到一個 `"` 就切換狀態、假管線變 code（logic F1 p3）。
+# 來源（#33 verify R34 logic F1／F3／F4 的探針；DA 的 n 系列是它在 da-work/probes 留下的檔案）
+# EXPECT: rule-red
+name: t
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: p3-dq-nested-brace
+        run: |
+          echo "${PR_TITLE#"| python3 scripts/neutralise.py "}"

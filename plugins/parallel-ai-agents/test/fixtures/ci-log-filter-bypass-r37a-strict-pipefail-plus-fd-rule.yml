@@ -1,0 +1,15 @@
+# #33 verify R37（R36 第 18 列）：**pipefail 的「不可比」只在它是 step 唯一的 RULE 時成立**。這個 step 沒寫 shell
+# （GitHub 預設 `bash -e {0}`，沒有 pipefail）⇒ `--strict` 的 pipefail 規則紅；同時 `>&2` 讓 PR 文字繞過管線 ⇒ fd 流向規則也紅。
+# 兩條 RULE 都掛在 step 起始行。前一版按行號扣掉 pipefail 那一行，fd 那條一起被扣掉，整個 step 判「不可比」、不做外流對帳；
+# 現在照常對帳：lint 擋下、bash 建了管線、PR 文字從 stderr 外流 ⇒ 擋下是對的 ⇒ 一致。
+# EXPECT: rule-red
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: no pipefail and an fd route in the same step
+        run: |
+          echo "$PR_TITLE" >&2 2>&1 | python3 scripts/neutralise.py

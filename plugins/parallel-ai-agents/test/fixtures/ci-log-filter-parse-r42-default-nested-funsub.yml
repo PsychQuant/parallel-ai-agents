@@ -1,0 +1,54 @@
+# #33 verify R41 requirements F1：巢狀在 `${…}` 裡的 bash 5.3 `${ cmd; }`／`${| cmd; }`。`_param_end` 只檢查最外層的 `${`
+# 後面是不是空白、tab、`|` 或行尾；巢狀的 `${` 直接加深度，於是 `echo ${X:-${ set -x; }}` 被讀成一般的參數展開、放行。
+# bash 5.3 實跑：之後的命令原樣印到 stderr（`+ echo ::error::PWN`），不經 neutralise.py。六個 step 逐字取自 R41 的
+# requirements c4/{g3,h1,h2,h3,h4,h5}（R42 plan WP5，D8）：參數展開、雙引號裡、`${|`、`:+`、`#`、三層巢狀。
+# 每個 step 各有一行 EXPECT-MSG（`run:` 那一行的行號）——整張紅不代表每一步都紅。預設模式（不帶 `--strict`）。
+# EXPECT: parse-red
+# EXPECT-MSG: nested-funsub.yml:22: PARSE:
+# EXPECT-MSG: nested-funsub.yml:28: PARSE:
+# EXPECT-MSG: nested-funsub.yml:34: PARSE:
+# EXPECT-MSG: nested-funsub.yml:40: PARSE:
+# EXPECT-MSG: nested-funsub.yml:46: PARSE:
+# EXPECT-MSG: nested-funsub.yml:52: PARSE:
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: g3-in-param
+        env:
+          PR_TITLE: "::error::PWN"
+        run: |
+          echo ${X:-${ set -x; }}
+          echo "$PR_TITLE" | python3 scripts/neutralise.py
+      - name: h1-nested-in-dq
+        env:
+          PR_TITLE: "::error::PWN"
+        run: |
+          echo "${X:-${ set -x; }}"
+          echo "$PR_TITLE" | python3 scripts/neutralise.py
+      - name: h2-nested-valsub
+        env:
+          PR_TITLE: "::error::PWN"
+        run: |
+          echo ${X:-${| set -x; }}
+          echo "$PR_TITLE" | python3 scripts/neutralise.py
+      - name: h3-nested-alt
+        env:
+          PR_TITLE: "::error::PWN"
+        run: |
+          echo ${X:+${ set -x; }}
+          echo "$PR_TITLE" | python3 scripts/neutralise.py
+      - name: h4-nested-trim
+        env:
+          PR_TITLE: "::error::PWN"
+        run: |
+          echo ${X#${ set -x; }}
+          echo "$PR_TITLE" | python3 scripts/neutralise.py
+      - name: h5-nested-deep
+        env:
+          PR_TITLE: "::error::PWN"
+        run: |
+          echo ${X:-${Y:-${ set -x; }}}
+          echo "$PR_TITLE" | python3 scripts/neutralise.py

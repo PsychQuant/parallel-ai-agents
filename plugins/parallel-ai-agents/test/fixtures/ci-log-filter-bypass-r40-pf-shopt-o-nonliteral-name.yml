@@ -1,0 +1,19 @@
+# #33 verify R40 最終量測：`shopt -uo -- "$N"` 的選項名不是字面——`N=pipefail` 時關掉 pipefail（bash 5.3 實跑 rc=0）。前一版只記外流類命中，
+# 宣告了 `# LOG-FILTER:` 的 step 放行。帶 `u` 的旗標配上非字面的名字 ⇒ 當成關掉。`--` 讓 `"$N"` 落在名字清單裡：沒有 `--` 時它在旗標位置，
+# 走的是 `bypass-r40-pf-shopt-nonliteral-flags` 那一條（第一版這張沒有 `--`，名字清單的判定被拿掉時它照樣紅——mutation 靶存活才看到）。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: shopt -uo with non-literal name
+        shell: bash
+        env:
+          N: 'pipefail'
+        run: |
+          # LOG-FILTER: none — prints no PR text
+          shopt -uo -- "$N"
+          false | cat

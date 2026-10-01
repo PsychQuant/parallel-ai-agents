@@ -1,0 +1,68 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺三個 wave3-strict 存活突變體：
+#   drop-operand|_pipefail_holds|elif ev["k"] == "pipe" and not on:|1
+#   drop-operand|_bash_template|rest = toks[1:-1] if len(toks) > 1 and toks[-1] == "{0}" else toks[1:]|2
+#   drop-operand|_set_prefix_line|if len(toks) <= k + 1 or toks[k + 1] not in SET_OPT_NAMES:|1
+#
+# **R42**：`--strict` 改成正面文法，`_pipefail_holds` 與 `strict_group_violation` 都已刪除。step 1（`( set -o pipefail )` 子殼層）
+# 不在文法裡，搬到 `restrict-r42-was-good-r37p-strict-pipefail-template-set-prefix`；step 3 沒有寫出來的管線，`--strict` 不再對它套文法
+# （實測：把 `_set_prefix_line` 改成一進來就結束，這一步照樣放行）。剩下兩步還殺不殺得到上面列的突變體，R42 重整 mutation 靶時
+# 重新量；以下是 R37 當時的說明，step 編號照原本的三步。
+#
+# 三個 step 各自單獨命中一個突變體；原版三個都不擋（EXPECT: pass），突變後恰好各自
+# 拆掉一個 step 的判斷，讓整份 fixture 翻紅。
+#
+# step 1（`_pipefail_holds`）：`( set -o pipefail )` 在子殼層裡把 pipefail 開起來——依 docstring
+# 「子殼層裡的『開』照舊不算數」，`on` 不變（維持 False）。原版的 elif 只在 `ev["k"] == "pipe"` 時才看
+# `not on`，這個 pf 事件的 k 是 `"pf"`，elif 條件短路為假，迴圈續行；下一行頂層 `set -o pipefail`
+# （非子殼層）才是真的把 `on` 設成 True；再下一行 `true | true` 的 pipe 事件此時 `on=True`，
+# `_pipefail_holds` 回 True（通過）。拿掉 `ev["k"] == "pipe"` 這個運算元後，elif 退化成
+# `elif not on:`——對**任何**事件都成立；那個子殼層 pf 事件發生時 `on` 還是 False，`not on` 為真，
+# 突變體在還沒看到頂層的真開關與真管線之前就提早 `return False`，把整段判成「沒有跑在
+# pipefail 之下」（RULE-red）。bash 5.3 實測：`( set -o pipefail ); set -o pipefail; true | true` rc=0
+# （三行都是良性 shell 內建呼叫，不印 PR 文字）。
+#
+# step 2（`_bash_template` 的 `rest = … else …` 三元式）：`shell: "/bin/bash -o pipefail"`（沒有
+# 結尾的 `{0}` 佔位符，GitHub 允許這種寫法、由 runner 自動把腳本路徑接在後面）。原版：
+# `len(toks) > 1 and toks[-1] == "{0}"` 為假（`toks[-1]` 是 `"pipefail"` 不是 `"{0}"`），
+# `rest = toks[1:] = ["-o", "pipefail"]`——正確解析出 `{"pipefail": True, "trace": False}`，
+# 樣板被接受，之後的 `true | true` 通過 pipefail 檢查（`on` 從樣板來就是 True）。拿掉
+# `len(toks) > 1` 這個運算元後，三元式的條件退化成只看 `toks[-1] == "{0}"`——**恆假**於這個輸入
+# 沒有變化，但另一個位置（tuple 裡剩的那個運算元）的效果是：三元式改成
+# `rest = toks[1:-1] if len(toks) > 1 else toks[1:]`，於是誤把 `"pipefail"` 當成要丟掉的 `{0}`
+# 佔位符，`rest = ["-o"]`——`_bash_template` 讀到 `-o` 卻找不到選項名，回 `None`；呼叫端把 `shell`
+# 判成本 lint 不認得的樣板（PARSE-red）。這是 `_bash_template` 的獨立函式測試，不涉及 bash 執行
+# ——樣板字串本身不是要被 `bash -c` 跑的程式碼，已用抽出的同一份原始碼直接呼叫
+# `_bash_template("/bin/bash -o pipefail")` 驗證過：原版回 `{'pipefail': True, 'trace': False}`，
+# 這個突變體回 `None`。
+#
+# step 3（`_set_prefix_line` 的邊界檢查）：`set -o`（單獨一行，沒有選項名）在**宣告**
+# （`# LOG-FILTER:`）的 step 裡；宣告會跳過群組規則的**拒絕**，但 `strict_group_violation` 仍然
+# 會被呼叫（用來計算 `group_why`，只是宣告時不使用它）——`_set_prefix_line(["set","-o"])` 因此
+# 一定會執行到。原版：`len(toks) <= k + 1` 為真（`k+1` 已經等於 `len(toks)`，`-o` 後面沒有選項名），
+# 短路回 False，不索引 `toks[k+1]`，函式安全回 False（正確：`set -o` 單獨不是合法前綴行）；
+# `strict_group_violation` 正常算出一個違規字串但因為宣告而不使用，這個 step 判 pass。拿掉
+# `len(toks) <= k + 1` 這個運算元後，只剩 `toks[k + 1] not in SET_OPT_NAMES`——對 `toks=["set","-o"]`
+# 索引 `toks[2]` 直接 `IndexError`；這個例外在 `strict_group_violation` 的呼叫處**沒有**被
+# `except (IndexError, KeyError, ValueError, RecursionError)` 以外的東西攔下——等等，IndexError
+# 其實在那個 tuple 裡，會被攔下轉成 `reject(...)`（PARSE-red），不是整支腳本崩潰。bash 5.3 實測：
+# `bash -c 'set -o'` 只是列出目前的選項狀態，rc=0，不印 PR 文字。
+#
+# 神諭對帳：三個 step 都是良性 shell 內建呼叫，沒有印 PR_TITLE，`oracle` 對前兩個 step 判「一致」，
+# 第二個 step（另類 shell 樣板）神諭只會用 bash 跑、判「不可比」（已知類別，不是「誤擋」）。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: bash template without trailing placeholder still recognises -o pipefail
+        shell: "/bin/bash -o pipefail"
+        # LOG-FILTER: none — only an inert command, nothing prints PR text
+        run: |
+          true | true
+      - name: bare set -o inside a declared step does not crash the group check
+        # LOG-FILTER: none — only an inert `set` builtin invocation, nothing prints PR text
+        run: |
+          set -o

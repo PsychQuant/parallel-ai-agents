@@ -1,0 +1,43 @@
+# #33 verify R37 opsweep 補件：殺兩個 drop-operand|shell_scan|if not (cases and cases[-1][0] == csub + cpar and cases[-1][1] == "pat"):
+# （|2|L1033、|3|L1033；同一行三個運算元中的兩個，各拿掉一個，兩步各自單獨殺一個）。
+# 這行決定一個 `(` 該不該計進 `cpar`（是真正的子殼層／群組括號）：只有「`cases` 非空、深度
+# 對上目前的 `csub+cpar`、而且頂端正在等模式（"pat"）」三者同時成立時，這個 `(` 才是
+# **case 模式的前導括號**（`(a) cmd;;` 那種選用寫法），不計深度；其餘情況一律當成真正的括號、
+# `cpar += 1`。
+#
+# step 1（殺 |2|，拿掉深度檢查 `cases[-1][0]==csub+cpar`，只留 `cases and cases[-1][1]=="pat"`）：
+# 只要頂端案例還在等模式，**不管目前實際深度有沒有對上**，都當成前導括號、不計 cpar。
+# 本例：外層 case 的模式本身塞了一個命令替換 `$(echo y; (echo z); w)`（模式文字可以含
+# 展開，這是合法寫法），裡面又真的開了一個子殼層 `(echo z)`。當這個內層 `(` 出現時，
+# `cases[-1]` 還是外層那個 [1,"pat"]（沒人動過），但目前深度已經因為巢狀 `$(` 變成 2，
+# 跟 `cases[-1][0]=1` 對不上——原版靠深度檢查正確排除，把它算成 cpar（真正的子殼層），
+# 後面對應的 `)` 也正常靠 cpar 收平。突變體無視深度、只看 "pat"，把這個內層 `(`
+# 誤判成前導括號、不計 cpar；它自己的 `)` 因此找不到 cpar 可以減，改去動了原本該留給
+# 「案例前導括號自己那個 `)`」的裸括號／`csub` 路徑，狀態一路錯下去，最後
+# run 區塊結尾判「有東西沒收尾」→ PARSE。
+#
+# step 2（殺 |3|，拿掉 "pat" 狀態檢查，只留 `cases and cases[-1][0]==csub+cpar`）：只要深度
+# 對上，**不管頂端案例是在等模式（"pat"）還是已經進了命令（"cmd"）**，都當成前導括號、
+# 不計 cpar。本例：case 的模式已經收尾（`cases[-1][1]` 是 "cmd"），命令子句裡有一個
+# **真正的子殼層** `(echo sub)`，深度剛好對上（都在同一層，沒有中間巢狀 `$(`）。原版靠
+# "pat" 檢查正確排除（此時是 "cmd"，不成立）、把它算成 cpar；突變體無視狀態、只看深度，
+# 誤判成前導括號、不計 cpar，它的收尾 `)` 因為 `cases[-1][1]` 已經是 "cmd" 而被別的檢查
+# （`elif ch == ")" and cases…`）判成「case 子句命令之後又出現同層單獨 `)`」──bash 語法錯誤
+# 的訊號──直接 `unparsed`（PARSE）。
+# bash 5.3 實測兩者皆語法合法：
+#   bash -n -c 'x=$(case $a in $(echo y; (echo z); w)) ;; esac) 2>&1 | python3 scripts/neutralise.py'
+#   bash -n -c 'x=$(case $a in p) (echo sub); more;; esac) 2>&1 | python3 scripts/neutralise.py'
+# 兩者 rc=0。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: nested-cmdsub-in-pattern-real-subshell
+        run: |
+          x=$(case $a in $(echo y; (echo z); w)) ;; esac) 2>&1 | python3 scripts/neutralise.py
+      - name: real-subshell-in-case-command-clause
+        run: |
+          x=$(case $a in p) (echo sub); more;; esac) 2>&1 | python3 scripts/neutralise.py

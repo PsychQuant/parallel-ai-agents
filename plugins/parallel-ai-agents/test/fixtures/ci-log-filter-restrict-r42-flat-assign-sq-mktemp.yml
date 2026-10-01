@@ -1,0 +1,22 @@
+# #33 R42 opsweep（`_fl_word` 的 `$(mktemp …)` 只在「整個指派的值」才認，`len(pieces) == 1`）：`X='a'$(mktemp)` 前面已經有兩個片段。
+# 原碼不認它是 mktemp、走「文法只收 `$NAME`…」那條訊息；拿掉 `len(pieces) == 1` 則認成 mktemp 片段、
+# 改由 `_fl_command` 說「只能是整個指派的值」。兩者都 RULE，只有訊息不同——單步、EXPECT-MSG 釘住。
+# LINT-ARGS: --strict
+# R42：這一張的 1 步是**文法外**——不在 `--strict` 的正面文法裡、神諭實跑沒有外流（stdout／stderr／跨 step 通道都沒有）、
+# pipefail 探針沒看到關閉。保守擋下，由下面的宣告簽名（神諭的類別閘門是雙向的）。
+# KNOWN-CLASS: 文法外
+# EXPECT: rule-red
+# EXPECT-MSG: `$(m`——文法只收 `$NAME`
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: a mktemp substitution after a single-quoted piece
+        shell: bash
+        run: |
+          {
+            X='a'$(mktemp)
+            echo hi
+          } 2>&1 | python3 scripts/neutralise.py

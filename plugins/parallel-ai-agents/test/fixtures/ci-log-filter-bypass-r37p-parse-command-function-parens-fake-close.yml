@@ -1,0 +1,26 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺 drop-operand|parse_command|if self.op(self.tok(), "(") and self.op(self.tok(1), ")"):|1。
+# `function` 名字之後檢查「接下來是不是空括號 `()`」，用 `self.op(self.tok(), "(") and
+# self.op(self.tok(1), ")")` 兩個條件夾住。`function f >&2 )`：名字 `f` 消耗後，`self.tok()`
+# 是 `>&2`（重導向，不是 `(`）、`self.tok(1)` 剛好是 `)`。原版：兩個條件都要成立才跳兩格，
+# 第一個條件（`self.tok()` 是不是 `(`）就不成立，不觸發跳格；`skip_nl()`；遞迴呼叫
+# `parse_command`，把 `>&2` 當函式主體收詞迴圈的第一個 token 正常吃掉、呼叫 `self.redir()`、
+# 記一筆 hit，接著再吃到那個孤立的 `)`（落回一般字，不影響重點）。
+#
+# 拿掉第一個 operand（`self.op(self.tok(), "(")`）之後，條件只剩 `self.op(self.tok(1), ")")`——
+# 完全不管 `self.tok()` 本身是什麼，只要**下一格**是 `)` 就成立。`>&2` 後面剛好是 `)`，
+# 條件恆真，`self.i += 2` 盲目跳過 `>&2` 和 `)` 兩格，`>&2` 永遠沒被 `self.redir()` 看到。
+#
+# 接了 `true | python3 scripts/neutralise.py` 讓 `ok=True`，逼 lint 走到 fd 檢查那一支。
+# bash 5.3 實測：`bash -n -c 'function f >&2 )'` → `syntax error near unexpected token '>&'`——
+# 本來就不是合法語法；原版判 RULE 是對讀不懂的殘骸 fail-closed。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: function name, redirect, then a lone close-paren
+        run: |
+          function f >&2 )
+          true | python3 scripts/neutralise.py

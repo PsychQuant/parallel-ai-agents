@@ -1,0 +1,17 @@
+# R38 第 3 列：分類失敗（換掉接 neutralise 的那一行後留下沒有對應的 `fi`，往上擴也救不回來）但 PR 文字已經外流。
+# 沒有 KNOWN-CLASS 宣告——前一版判「量不到」、rc=0。必須判繞過。
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "::notice::$PR_TITLE"
+          echo safe 2>&1 | python3 scripts/neutralise.py ; if true; then
+            echo more
+          fi

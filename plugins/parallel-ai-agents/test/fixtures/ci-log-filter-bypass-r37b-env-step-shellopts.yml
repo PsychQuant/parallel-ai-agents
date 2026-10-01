@@ -1,0 +1,14 @@
+# #33 verify R36 第 8 列 → R37：`env:`（workflow／job／step 三層，以及 job 的 container.env）帶進 SHELLOPTS、BASHOPTS、BASH_ENV、ENV、BASH_XTRACEFD ⇒ RULE。
+# step 層 `SHELLOPTS: xtrace`（R36 點名，DA 的 shellopts-step）。神諭要載入 YAML 的 env 才量得到外流（工作包 a）。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: step env enables xtrace
+        env:
+          SHELLOPTS: xtrace
+        run: |
+          printf '%s\n' "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py

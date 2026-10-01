@@ -1,0 +1,14 @@
+# `${…}` 裡的 `$(…)`：`$(: })` 的 `}` 屬於命令替換。（logic F1 p2）。
+# 來源（#33 verify R34 logic F1／F3／F4 的探針；DA 的 n 系列是它在 da-work/probes 留下的檔案）
+# **R35 起判 rule-red**：`_param_end` 對`$(…)`照 bash 配對（第一版 fail-closed，三軸量到常見寫法 `${X:-$(cmd)}` 因此翻紅）——
+# 展開到最後的 `}` 才結束，假管線在展開裡、沒有真管線 ⇒ RULE。
+# EXPECT: rule-red
+name: t
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: p2-cmdsub-in-brace
+        run: |
+          echo ${PR_TITLE#$(: })| python3 scripts/neutralise.py }

@@ -1,0 +1,15 @@
+name: t
+on: push
+# EXPECT: rule-red
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: nested arithmetic then heredoc
+        run: |
+          x=$(((1+2)*3)); cat <<EOF
+          x | python3 scripts/neutralise.py
+          EOF
+          echo "$PR_TITLE"
+      - name: compliant control
+        run: echo hi | python3 scripts/neutralise.py

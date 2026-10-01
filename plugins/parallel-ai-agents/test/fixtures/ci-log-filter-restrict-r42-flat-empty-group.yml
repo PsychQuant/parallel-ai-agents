@@ -1,0 +1,14 @@
+# #33 R42 WP10：殺 FLAT 靶「空群組不擋」。`{ }` 在 bash 是語法錯誤（什麼都不執行、不外流），正面文法照樣擋——保守的方向。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-MSG: 群組是空的
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: empty group
+        shell: bash
+        run: |
+          { } 2>&1 | python3 scripts/neutralise.py

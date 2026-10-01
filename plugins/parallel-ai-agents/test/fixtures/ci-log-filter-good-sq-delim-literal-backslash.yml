@@ -1,0 +1,16 @@
+# R31 opsweep：`q == '"'` 這個守衛沒有網。**單引號**分隔字裡反斜線是字面，不是逃脫——
+# bash 5.3 實測 `cat <<'E\$OF'` 的終止字是 `E\$OF`（一行 `E$OF` 不終止它）。
+# 把守衛拿掉（或反向）會讓 lint 的 delim 變成 `E$OF`，終止字永遠對不上 → 真管線被吞 → 誤擋。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: backslash in a single-quoted delimiter is literal
+        run: |
+          cat <<'E\$OF'
+          data
+          E\$OF
+          echo hi | python3 scripts/neutralise.py

@@ -1,0 +1,17 @@
+# #33 verify R37 opsweep 補件：`_cmdsub_end` 的 `case` 判定要求「詞首」且「後面是詞界」，兩個條件各有一個
+# 存活的突變體（拿掉 `at_word`、拿掉 `line[k + 4:k + 5] in (…)`）。`showcase now` 裡的 `case` 不在詞首、`casefold`
+# 的 `case` 後面不是詞界——原版都不當 case、放行；任一條件拿掉就回 None，`${…}` fail-closed → PARSE。
+# bash 5.3：兩行各印 `showcase now`／`casefold`。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: case-not-at-word-start
+        run: |
+          echo ${PR_TITLE:-$(echo showcase now)} 2>&1 | python3 scripts/neutralise.py
+      - name: case-prefix-of-longer-word
+        run: |
+          echo ${PR_TITLE:-$(echo casefold)} 2>&1 | python3 scripts/neutralise.py

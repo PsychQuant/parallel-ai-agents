@@ -1,0 +1,18 @@
+# R32 logic L-0／Codex 第 1 條／DA-2：`fold_block` 前一版**兩兩折**——折完把佔位留在 `out[-1]`，
+# 下一輪的守衛看到它就把鏈斷掉。於是 R30 H-1(族B) 的繞過用**三行**內容就復發：
+# runner 把三行折成一行、`#` 註解吃到底、PR 文字裸印，而 lint 把第三行當成獨立一行、看到管線就放行。
+# **釘 R30 H-1 的那個 fixture 用的是兩行**，正好是兩兩折唯一正確的情形——網守住的是它守得住的那一點。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: three content lines in a folded scalar
+        run: >
+          echo "$PR_TITLE"
+          # note
+          echo x | python3 scripts/neutralise.py
+      - name: compliant control
+        run: echo hi | python3 scripts/neutralise.py

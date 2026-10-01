@@ -1,0 +1,13 @@
+name: t
+on: push
+# EXPECT: parse-red
+jobs:
+  j:
+    runs-on: ${{ matrix.platform.os }}
+    strategy:
+      matrix:
+        include:
+          - platform: { name: macOS, os: macos-14, shell: bash }
+    steps:
+      - name: compliant control
+        run: echo hi | python3 scripts/neutralise.py

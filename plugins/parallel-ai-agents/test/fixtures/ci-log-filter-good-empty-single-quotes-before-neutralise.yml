@@ -1,0 +1,10 @@
+# R30 MB-12（單引號那一半）：引號字元要留在 code 裡，`\S*` 讀得到它
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: empty single-quoted word next to neutralise
+        run: echo "$PR_TITLE" | python3 ''scripts/neutralise.py

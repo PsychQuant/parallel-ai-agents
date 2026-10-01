@@ -1,0 +1,14 @@
+# #33 verify R35：**已知類別 G 的範例**：一個 run 區塊裡任一條邏輯行接了管線，整個區塊就算已過濾（限制第 2 條）。
+# `echo "::notice::$PR_TITLE"` 因此放行——偽造 annotation。這條限制有追蹤 issue；神諭必須把這一檔歸成 G，否則 rc=1。
+# KNOWN-CLASS: G
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: one filtered pipeline makes the whole block count as filtered
+        run: |
+          echo "::notice::$PR_TITLE"
+          echo safe 2>&1 | python3 scripts/neutralise.py

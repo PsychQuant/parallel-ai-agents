@@ -1,0 +1,46 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺 drop-operand|parse_command|neut = (len(words) >= 2 and words[0]["code"] == "python3"|2。
+# `neut`（這段管線的接收端是不是被信任的 `python3 …neutralise.py`）由三個條件 and 起來，這裡
+# 拿掉「第一個字是 `python3`」那個 operand。`{ echo "$PR_TITLE" >&2; } |& node x/neutralise.py`：
+# 群組內把 `$PR_TITLE` 導向 fd2，群組收尾接 `|&` 到一個叫 `node x/neutralise.py` 的命令——
+# 檔名長得像本規則信任的 neutralise 腳本，但直譯器是 `node` 不是 `python3`。
+#
+# 原版：`words[0]["code"] == "python3"` 正確判定 `node` 不是 `python3`，`neut=False`，這段
+# 管線不被承認為「已消毒」，`_analyse` 的豁免迴圈找不到任何 `neut=True` 的段、群組不被豁免、
+# `>&2` 那個 hit 留在 `an["fd"]` 裡 → RULE。
+#
+# 拿掉「第一個字是 python3」這個 operand 後，`neut` 只看檔名比對（`re.fullmatch(r"\S*
+# neutralise\.py", …)`），`node x/neutralise.py` 的第二個字 `x/neutralise.py` 符合這個樣式，
+# `neut` 被誤判成 `True`，群組被誤豁免，`>&2` 那個 hit 消失，`an["fd"]` 變空 → 突變體放行。
+#
+# 這一行後面接了一段跟它無關、但字面上真的符合 `python3 …neutralise.py` 的 `true | python3
+# scripts/neutralise.py`，讓整個 step 的 `ok=True`，逼 lint 走到 `elif not declared and
+# an["fd"]:` 這一支，才量得到「接收端是不是真的被信任」這個分歧點。
+#
+# bash 5.3 實測（本機有裝 node，PATH 完整）：`bash -c '{ echo SECRET >&2; } |& node
+# x/neutralise.py' 2>/tmp/e; cat /tmp/e`——`PIPESTATUS` 長度是 2（真的建立了管線），`node`
+# 找不到 `x/neutralise.py` 那個檔案會失敗，但 `$PR_TITLE` 的內容已經進了這個未經
+# `python3 …neutralise.py` 認證的接收端，不是本規則信任的消毒路徑。
+#
+# **fail-closed、量不到外流（誠實記錄）**：test/oracle.py 用受限 PATH（只有它自己的 stub 與
+# `/usr/bin:/bin`）真的跑過這個 step，結果是「lint RULE-red ∧ piped ∧ 無外流」→「不一致：誤擋」，
+# 不是「一致」。原因是 oracle 的沙箱裡 `node` 不在受限 PATH 上（`command not found`），
+# 右手邊的殼層在 `echo` 真的把內容寫進管線之前就已經因為找不到命令而結束、讀端關閉，
+# 左手邊的寫入撞上 broken pipe，內容從沒被 oracle 觀察到。**這不代表判定錯誤**——本規則的設計
+# 本來就是保守／fail-closed：直譯器對不上就一律不採信，不管那個接收端在真實 CI（有裝 node）
+# 裡會不會真的讀到、印出、外流那份文字，lint 沒有能力（也不該假設）知道 runner 的 PATH 上
+# 裝了什麼。這裡殺的是「拿掉直譯器檢查會讓 lint 誤信」這個真實缺陷，不是在測「node 存不存在」；
+# 那份不一致留給協調者按 oracle 的 KNOWN_DISAGREE 機制另行處置（是否要在 oracle 端記一條
+# 「piped 但下游命令在受限 PATH 找不到」的已知類別）。
+# **不是繞過，是限制**（fail-closed；神諭記在 KNOWN_DISAGREE）：這個輸入 bash 實際跑起來不會外流 PR 文字，lint 依設計保守地拒絕它；
+# 這張 fixture 釘住的是那個拒絕（突變體放寬後會放行）。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: group piped through a same-named script under the wrong interpreter
+        run: |
+          { echo "$PR_TITLE" >&2; } |& node x/neutralise.py
+          true | python3 scripts/neutralise.py

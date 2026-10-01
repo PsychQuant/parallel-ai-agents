@@ -1,0 +1,13 @@
+name: t
+on: push
+# EXPECT: pass
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: backslash in an unquoted delimiter quotes it, so the body backslash does not continue and EOF terminates
+        run: |
+          cat <<E\OF
+          literal backslash \
+          EOF
+          echo "$PR_TITLE" | python3 scripts/neutralise.py

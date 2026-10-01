@@ -1,0 +1,20 @@
+# #33 verify R39 第 1 列的代價（揭露的保守誤擋）：群組內未加引號的 `${{ matrix.target }}`。R39 放寬過它（R38 第 10 列），R40 收回：
+# 靠管線過濾的 step，run 裡任何非字面的 runner 運算式一律 RULE——`matrix.*` 可以經 `fromJSON(needs.*.outputs…)` 帶進 PR 文字。
+# 改經 step 的 `env:` 傳進來。神諭代換運算式後同意它會外流：判「一致」。原本在 `good-r39-strict-group-github-expression-unquoted`。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [a]
+    steps:
+      - name: unquoted runner expression in the group
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          { make ${{ matrix.target }}; } 2>&1 | python3 scripts/neutralise.py

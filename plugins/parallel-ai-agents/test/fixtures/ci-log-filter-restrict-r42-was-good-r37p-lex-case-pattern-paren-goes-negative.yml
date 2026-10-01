@@ -1,0 +1,54 @@
+# #33 R42：原名 `good-r37p-lex-case-pattern-paren-goes-negative`（EXPECT: pass）。R37 用它經 `--strict` 的 pipefail 模擬觀察 `_lex` 在 `$(case …)` 裡的括號深度，那套模擬在 R42 刪除。
+# 正面文法不收 mktemp 以外的 `$(`，保守擋下：step 只印常數、管線之前 `set -o pipefail` 已經打開，是揭露的誤擋。
+# run 區塊逐字保留。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-MSG: 不在 `--strict` 的正面文法裡
+# ── R42 之前的檔頭（當時是 good fixture；描述的是 R42 刪除前的 lint，只留作沿革）──
+# #33 verify R37 opsweep 補件（最終 lint，lex 群）：殺
+#   drop-operand|_lex|elif op == ")" and depth:|2
+# （`elif op == ")" and depth: depth -= 1` 的 `and` 有兩個運算元：`op == ")"`、`depth`；拿掉第二個
+# `depth`，只留 `elif op == ")": depth -= 1`──不管 `depth` 目前是不是已經是 0，只要看到裸 `)` 就
+# 一律減一，可以減到負的）。
+#
+# 構造：`X=$(case $x in a) true ;; esac)`──`case` 模式裡的 `a)` 是**單邊**括號（bash 的 case 模式
+# 語法，不是子殼層分組，見 `_lex` 對 `cased` 這個獨立變數的追蹤：`stop==")" and w["lit"] in ("case",
+# "esac")` 專門處理這個情形，避免這個單邊 `)` 被誤判成命令替換自己的收尾）。這個 `)` 出現時
+# `depth` 本來就是 0（前面沒有任何裸 `(` 開過）。
+#
+# 原版：`elif op == ")" and depth:` 的 `depth` 這半在 `depth==0` 時是假，整個 `elif` 不成立──這個
+# `)` 什麼都不做（`depth` 維持 0，正確：它根本不是子殼層分組的收尾，不該去動 `depth`）。之後
+# `true ;; esac` 讓 `cased` 歸零，真正的外層 `)` 出現時 `depth==0`、`cased==0`，正確在那裡收尾——
+# `set -o pipefail` 落在**頂層**（`sub=False`），真的把 `--strict` 要求的 pipefail 打開，後面
+# `echo ok | cat` 這條管線通過檢查，PASS。
+#
+# 突變體拿掉 `depth` 這個守衛後，`depth==0` 也照樣執行 `depth -= 1`──這個單邊的 case 模式括號讓
+# `depth` 從 0 變成 **-1**。等到真正的外層 `)` 出現時：`depth == -1`（非零，`not depth` 為假），
+# 提早收尾的判斷式失敗，這個 `)` 沒有 return，迴圈繼續往下讀，把換行後面的
+# `set -o pipefail` 與 `echo ok | cat` 全部吞進這次遞迴呼叫的 token 序列（命令替換的 `subs`，
+# `sub=True`）。原本應該是頂層陳述的 `set -o pipefail` 因此被誤判成巢狀設定，對外層 pipefail 狀態
+# 沒有作用；頂層從未被打開（`shell: bash -e {0}` 本身不帶 `-o pipefail`），`echo ok | cat` 在
+# `--strict` 下因為沒有跑在 pipefail 之下被判紅，RULE-red，不等於 `EXPECT` 的 `pass`，KILL。
+#
+# LOG-FILTER 宣告理由同群組內另外三張姊妹 fixture（`ci-log-filter-bypass-r37p-lex-nested-paren-
+# depth-in-cmdsub.yml`／`ci-log-filter-good-r37p-lex-depth-double-increment-swallows-tail.yml`（R42 改名 `restrict-r42-was-good-…`）／
+# `ci-log-filter-bypass-r37p-lex-depth-decrement-missing-op-guard.yml`）：跳過「有沒有接管線」
+# 「fd 流向」「群組規則」三條，只看 pipefail 模擬本身（這個構造本來就寫不成
+# `{ …; } 2>&1 | python3 …` 的群組形狀）。
+#
+# 神諭對帳：本檔 `shell: bash -e {0}` 不是關鍵字 `bash`，神諭（`test/oracle.py`）只用關鍵字 `bash`
+# 實跑對照，對這個 shell 樣板一律回「不可比」──與本群組另外兩張同樣用這個樣板測 pipefail 模擬的
+# fixture 一致，不是本檔獨有的缺口。
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: t1
+        shell: bash -e {0}
+        run: |
+          # LOG-FILTER: none — fixture 只測 `_lex` 對 `$(…)` 裡 case 模式單邊括號讓 depth 提早變負，不測群組／fd 規則
+          X=$(case $x in a) true ;; esac)
+          set -o pipefail
+          echo ok | cat

@@ -1,0 +1,16 @@
+# R38 第 7 列（S-2 那一半）：S-2 的形狀（`cat` 的錯誤訊息從管線的 stderr 外流），但假 lint 在 `--strict` 下擋它只因為
+# 前綴有 `set -E`——刪掉那一行，`--strict` 放行。
+# KNOWN-CLASS: S-2
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -Eu
+          cat "$PR_TITLE" | python3 scripts/neutralise.py

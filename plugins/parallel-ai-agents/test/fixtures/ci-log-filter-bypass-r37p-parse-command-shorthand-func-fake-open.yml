@@ -1,0 +1,27 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺 drop-operand|parse_command|if len(words) == 1 and not rs and self.op(self.tok(), "(") and self.op(self.tok(1), ")"):|4。
+# 同一組四個條件，這次拿掉第四個（`self.op(self.tok(1), ")")`）。`f (>&2)`：收了字 `f` 後，
+# `self.tok()` 是 `(`、`self.tok(1)` 是 `>&2`（不是 `)`）。原版：第四個條件不成立，不觸發
+# 跳格；迴圈繼續，`(` 是 OP 型別、不在 `("W","R")` 裡，迴圈停止，`simple(["f"], ctx)` 之後
+# `self.i` 停在 `(` 上——這個「command」就是單獨一個字 `f`、沒收到任何重導向，回傳
+# `{"kind":"simple","trail":[],"neut":False}`；`(>&2)` 留給外層繼續解析，被正確辨識成
+# 子殼層群組，內部的 `>&2` 由子殼層自己的收詞迴圈吃掉、呼叫 `self.redir()`、記一筆 hit。
+#
+# 突變體只看當下這格是不是 `(`，不檢查下一格，`self.i += 2` 盲目跳過 `(` 和 `>&2` 兩格
+# （不是跳過「`(` 和 `)`」），`>&2` 永遠沒被 `self.redir()` 看到，直接被當成 `f()` 簡寫、
+# 遞迴呼叫 `parse_command` 解析剩下的 `)`（回傳 `None`，`kind` 變成 `"func"`）。
+#
+# 接了 `true | python3 scripts/neutralise.py` 讓 `ok=True`，逼 lint 走到 fd 檢查那一支。
+# bash 5.3 實測：`bash -n -c 'f (>&2)'` → `syntax error near unexpected token '>&'`——本來
+# 就不是合法語法（不是函式定義，`f` 後面直接接 `(...)` 在 bash 裡沒有這種語法）；原版判 RULE
+# 是對讀不懂的殘骸 fail-closed。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: bare word, open-paren glued to a redirect inside
+        run: |
+          f (>&2)
+          true | python3 scripts/neutralise.py

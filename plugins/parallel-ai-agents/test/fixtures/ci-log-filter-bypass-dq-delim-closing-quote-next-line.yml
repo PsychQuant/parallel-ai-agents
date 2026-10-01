@@ -1,0 +1,20 @@
+# R31 opsweep：續行條件裡的 `line[j] == "\\"`（這一格是不是反斜線）沒有網——拿掉之後**任何**
+# 位於行尾的字元都會觸發續行，於是收尾引號落在下一行時 lint 會把它接起來、算出一個終止字。
+# bash 5.3 實測 `cat <<"XY` ⏎ `data"`：分隔字是**含換行的** `XY⏎data`，heredoc 永不終止，
+# bash 只警告並把後面全部當內文（`echo` 沒有執行）。本 lint 表示不了它 → `PARSE:`。
+# 這個 fixture 是本輪唯一分得出「不解析」與「解析成別的東西」的形狀：突變體會把 `PARSE:` 變成 `RULE:`。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: closing quote of the delimiter lands on the next line
+        run: |
+          cat <<"XY
+          data"
+          XY
+          echo hi | python3 scripts/neutralise.py
+      - name: compliant control
+        run: echo hi | python3 scripts/neutralise.py

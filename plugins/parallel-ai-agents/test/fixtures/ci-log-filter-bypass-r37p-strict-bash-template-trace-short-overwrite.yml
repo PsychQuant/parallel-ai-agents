@@ -1,0 +1,41 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺一個 wave3-strict 存活突變體：
+#   drop-operand|_bash_template|trace = trace or on|3
+#
+# 與 `ci-log-filter-bypass-r37p-strict-bash-template-trace-o-overwrite.yml` 是同一句原始碼
+# （`trace = trace or on`）在**不同**物理行的兩個獨立命中——那份殺的是 `elif nm in
+# _TRACE_OPTS:` 分支（`-o xtrace` 長選項形式）；這份殺的是 `elif ch in "xv":` 分支
+# （`-x`／`-v` 短選項形式），是兩個不同的 AST 節點、兩個不同的突變體 id，opsweep 對同一段
+# 原始碼文字的重複出現各自編號，不能互相替代殺。
+#
+# `shell: "/bin/bash -x +v {0}"`——先用 `-x` 開 xtrace，再用 `+v` 關掉 verbose（`v` 也在
+# `_TRACE_OPTS` 判定的短選項集合裡）。原版：處理 `-x` 時 `trace = False or True = True`；
+# 處理 `+v` 時 `on=False`，`trace = True or False = True`——同樣是「曾經開過就不因後面關掉
+# 而重置」的保守設計。原版 `tmpl["trace"]` 為真，呼叫端 PARSE-red 拒絕。
+#
+# 拿掉 `trace` 這個運算元（只剩 `trace = on`）後，處理 `+v` 時變成覆寫：`trace = on = False`，
+# 蓋掉前面 `-x` 設出來的 True。最終 `trace` 變成 False，樣板被誤判成「不含 trace」，回
+# `{"pipefail": False, "trace": False}`。
+#
+# `shell:` 的值是樣板字串，不是要交給 `bash -c`／`bash -n` 執行的腳本；已用抽出的同一份
+# 原始碼直接呼叫驗證：`_bash_template("/bin/bash -x +v {0}")` 原版回
+# `{"pipefail": False, "trace": True}`，拿掉這個運算元後回
+# `{"pipefail": False, "trace": False}`。
+#
+# 神諭對帳：另類 shell 樣板神諭判「不可比」（已知類別）；run 區塊本身有正常接 neutralise
+# 的管線，不是靠「安全但被擋」的輸入殺——`-x` 生效那段期間 `set -x` 印出的展開後指令
+# （若含 `$PR_TITLE`）走 shell 自己的 stderr，在群組的 `2>&1` 之前就已經寫出，不受後面
+# 過濾管線保護。
+# LINT-ARGS: --strict
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: bash template that turns on xtrace then later turns off -v still flags xtrace
+        shell: "/bin/bash -x +v {0}"
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$PR_TITLE" | python3 scripts/neutralise.py

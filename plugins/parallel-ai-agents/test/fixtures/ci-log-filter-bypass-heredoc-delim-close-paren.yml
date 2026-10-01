@@ -1,0 +1,23 @@
+# #33 verify R34（logic F2／regression H-1，DA G-A）：R33 的 `DELIM_WORD_BREAK` 把 `(` `)` 一起拿掉了，但單獨的
+# `(`、`)` 是 bash 的 metacharacter、**會**斷詞：`(cat <<EOF)` 的終止字是 `EOF`（bash 5.3 實測），lint 讀成 `EOF)`。
+# lint 的終止字比 bash 長 ⇒ bash 已經當 code 執行的 `echo "$PR_TITLE"`，lint 還當 heredoc 資料；接著那段 code 開
+# 一個 bash 自己的 `cat <<X`，把 lint 認得的 `EOF)` 與假管線都收進 bash 的資料。runner：PR 文字裸印、管線從未建立。
+# R32 版 lint rc=1、R33 版 rc=0（R33 回歸）。還原 `(` `)` 出 DELIM_WORD_BREAK ⇒ 本檔翻綠。
+# EXPECT: rule-red
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: close paren after heredoc delimiter
+        run: |
+          (cat <<EOF)
+          plain data
+          EOF
+          echo "$PR_TITLE"
+          cat <<X
+          EOF)
+          y | python3 scripts/neutralise.py
+          X
+      - name: compliant control
+        run: echo hi | python3 scripts/neutralise.py

@@ -1,0 +1,23 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺 drop-operand|_redir_hit|if t is None or t.get("psub"):|2
+# （拿掉 `t.get("psub")`）。
+# `echo "$PR_TITLE" > >(sed …) | python3 …neutralise.py`：echo 的 stdout 被 `>` 導進 process
+# substitution，而 process substitution 的子行程繼承的是**設立當下**的 fd1——那正是外層管線的 fd1
+# （即 `python3 …neutralise.py` 的 stdin）。bash 實測（`bash -c 'echo SECRET > >(sed "s/^/SUBST:/") |
+# sed "s/^/PIPE:/"'`）：印出 `PIPE:SUBST:SECRET`——文字先被 process substitution 處理、又真的流進外層
+# 管線，兩層都經過、沒有繞開過濾。原版對 `t.get("psub")` 這個分支本來就 `return None`（docstring 明寫
+# 「process substitution 繼承當下的 fd 1」）——判定放行，`EXPECT: pass` 與 bash 實測一致。
+# 突變體拿掉 `t.get("psub")` 這個 guard 後只剩 `t is None`——process substitution 的目標不是 `None`
+# （它是一個不透明的 `W` 節點,`psub=True`）→ 這個 if 不成立,往下掉到 `sk = t["skel"]`；process
+# substitution 的 `skel` 依構造恆為 `None`（`_opaque()` 一律不填 skel）→ 命中「目標看不到原文……不解析
+# 就不放行」→ 突變體誤判紅（明明真的有經過濾，卻被擋下）。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: stdout to process substitution that itself feeds the outer pipe
+        shell: bash
+        run: |
+          echo "$PR_TITLE" > >(sed "s/^/x/") | python3 scripts/neutralise.py

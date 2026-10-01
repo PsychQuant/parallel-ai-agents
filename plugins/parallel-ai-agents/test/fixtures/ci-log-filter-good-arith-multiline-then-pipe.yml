@@ -1,0 +1,13 @@
+# #33 verify R35（R34 修法的誤擋守衛）：跨行的 `$((1 +` ⏎ `2))` 結束之後，算術深度回到 0，下一行的真管線是 code、`<<` 恢復成 heredoc 判定。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: multi-line arithmetic, then a real pipe
+        run: |
+          x=$((1 +
+          2))
+          echo "$x" 2>&1 | python3 scripts/neutralise.py

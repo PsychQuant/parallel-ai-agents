@@ -1,0 +1,13 @@
+# #33 verify R37 opsweep 補件：`_cmdsub_end` 遇到反引號要整段交給 `_backtick_end`，拿掉 `c == "`"` 那個運算元的
+# 突變體存活。這裡反引號裡有 `case`：原版整段跳過、放行；突變體逐字掃進去，在詞首撞到 `case` 就回 None → PARSE。
+# bash 5.3：`echo ${PR_TITLE:-$(echo `case a in a) echo b;; esac`)}` 印 b。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: nested-backtick-case
+        run: |
+          echo ${PR_TITLE:-$(echo `case a in a) echo b;; esac`)} 2>&1 | python3 scripts/neutralise.py

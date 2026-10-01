@@ -1,0 +1,14 @@
+# #33 verify R35（opsweep 存活者：`_cmdsub_end` 雙引號分支開頭的 `k += 1`）：`${…}` 裡的命令替換含**空字串** `""`。
+# 那一步若多跳一格，就會把收尾的 `"` 當成字串內容、一路找不到收尾而回 None ⇒ 這個合法寫法被 fail-closed 誤擋。
+# 既有 fixture 在那個位置的雙引號都至少有一個字元，多跳一格仍落在同一個字串裡，看不出差別。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: default a branch name with an empty-string fallback
+        run: |
+          BR="${GITHUB_HEAD_REF:-$(git branch --show-current || echo "")}"
+          echo "$BR" | python3 scripts/neutralise.py

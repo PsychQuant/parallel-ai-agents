@@ -1,0 +1,13 @@
+# `[[ … =~ (a| python3 … ) ]]` 裡的 `|` 是正規式的「或」，不是管線。`[[ … ]]` 裡的內容不是 code（DA 的 n5b）。
+# 來源（#33 verify R34 logic F1／F3／F4 的探針；DA 的 n 系列是它在 da-work/probes 留下的檔案）
+# EXPECT: rule-red
+name: t
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: regex-alternation
+        run: |
+          echo "$PR_TITLE"
+          if [[ "$PR_TITLE" =~ (a| python3 scripts/neutralise.py ) ]]; then :; fi

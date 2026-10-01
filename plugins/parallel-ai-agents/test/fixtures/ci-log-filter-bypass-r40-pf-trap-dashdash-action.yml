@@ -1,0 +1,18 @@
+# #33 verify R40 最終量測（opsweep 在 `trap_cmd` 上的存活者）：`--` 之後的第一個參數就是動作，即使它以 `-` 開頭。前一版先剝掉 `--`、
+# 再把以 `-` 開頭的當成選項（`-l`／`-p`）而 return——動作裡的 `set +o pipefail` 看不到。bash 5.3 實跑：
+# `bash -eo pipefail -c "trap -- '-:||:;set +o pipefail' DEBUG; false | cat"` rc=0（沒有 trap 時 rc=1）。
+# 選項分支整個拿掉：`-l`、`-p`、`-` 當成動作也不含 `set`／`pipefail`，不記事件——判定相同。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: trap -- dash action
+        shell: bash
+        run: |
+          # LOG-FILTER: none — prints no PR text
+          trap -- '-:||:;set +o pipefail' DEBUG
+          false | cat

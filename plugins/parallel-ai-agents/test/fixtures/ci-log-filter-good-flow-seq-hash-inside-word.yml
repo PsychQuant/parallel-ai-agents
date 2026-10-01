@@ -1,0 +1,12 @@
+name: t
+on: push
+# EXPECT: pass
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        tag: [build#1, build#2]
+    steps:
+      - name: compliant control
+        run: echo hi | python3 scripts/neutralise.py

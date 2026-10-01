@@ -1,0 +1,9 @@
+name: t
+on: push
+# EXPECT: pass
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: double-quoted run with a trailing YAML comment
+        run: "echo hi | python3 scripts/neutralise.py" # note

@@ -1,0 +1,21 @@
+# R38 第 10 列（regression MEDIUM-3）：未加引號的 `${{ … }}` 在群組裡。runner 在 bash 之前就代換掉它，對 bash 而言那裡沒有大括號；
+# 前一版把它讀成 bash 的 `${…}`、在第一個 `}` 收尾，剩下的 `}` 被算成一個獨立的大括號（「`}` 有 2 個」）——R32 HIGH-1 修過的那一類。
+# R40（#33 verify R39 第 1 列）：run 裡的非字面運算式一律擋，所以 `matrix.target` 改成**帶 `}` 的字面字串**——群組計數要遮掉的
+# 仍是同一件事（運算式裡的大括號不算群組的大括號）。原本的寫法移到 `restrict-r40-ghexpr-matrix-in-group`（揭露的保守誤擋）。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [a]
+    steps:
+      - name: unquoted runner expression in the group
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          { make ${{ 'target}' }}; } 2>&1 | python3 scripts/neutralise.py

@@ -1,0 +1,22 @@
+# R38 第 11 列（regression MEDIUM-4）：`set -E`（errtrace）只讓 ERR trap 被函式繼承，不印任何東西；前綴收 `-E` 與 `-o errtrace`。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [a]
+    steps:
+      - name: set -E prefix
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -Eeuo pipefail
+          set -o errtrace
+          {
+            echo "$PR_TITLE"
+          } 2>&1 | python3 scripts/neutralise.py

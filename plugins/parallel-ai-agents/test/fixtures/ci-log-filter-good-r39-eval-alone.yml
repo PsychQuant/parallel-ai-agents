@@ -1,0 +1,15 @@
+# R39 opsweep 存活者（`--since c53ac22`）：`simple` 的 `eval --` 判斷的 `args[:1]`。`eval` 單獨一行（bash 不做事）——拿掉那個運算元就索引越界。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: eval alone
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          eval
+          echo "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py

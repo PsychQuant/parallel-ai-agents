@@ -1,0 +1,15 @@
+# R38 第 13 列（logic MEDIUM-5）：R37 列為「殺不掉也證明不了等價」的 8 條存活者之一，logic lens 找到殺法。
+# `_cmdsub_end_case` 的 drop#2（`)` 分支）：原碼 RULE、突變體 PARSE。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: cmdsub case paren branch
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$(case x in a) (: shopt -s extglob) ;; esac)" | python3 scripts/neutralise.py

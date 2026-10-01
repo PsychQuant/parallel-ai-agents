@@ -1,0 +1,15 @@
+# R30 H-1：`<<'E'OF` —— 引號在詞中間
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: leak
+        run: |
+          cat <<""EOF
+          
+          echo marker | python3 ../pai-lenses/scripts/neutralise.py
+          EOF
+          echo "$PR_TITLE"

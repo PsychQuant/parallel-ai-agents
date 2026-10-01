@@ -1,0 +1,26 @@
+# #33 verify R36 第 22 列 → R37：`--strict` 的兩個誤擋——`runs-on` 行尾註解裡的 windows、`case … in a|b)` 的模式 `|`。
+# R36 點名的兩個，加相鄰輸入：跨行的 case、block 清單形式的 runs-on 帶註解。
+# R37 移植 #61 群組規則後：`--strict` 只收 `{ …; } 2>&1 | python3 …neutralise.py` 群組，管線改寫成群組形式。
+# R42：`case` 的兩個 step 搬到 `restrict-r42-was-good-r37b-strict-case-pattern-and-runs-on-comment`——宣告 step 的觸發是字元
+# 測試（`case` 模式的 `|` 也算），而正面文法不收 `case`。這裡剩 `runs-on` 註解的兩個 step。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  a:
+    runs-on: ubuntu-latest  # windows runners are not supported here
+    steps:
+      - name: pipeline on a runner whose comment mentions windows
+        run: |
+          set -o pipefail
+          { printf 'ok\n'; } 2>&1 | python3 scripts/neutralise.py
+  b:
+    runs-on:
+      - self-hosted
+      - linux  # not windows
+    steps:
+      - name: block runs-on list with a comment
+        run: |
+          set -o pipefail
+          { printf 'ok\n'; } 2>&1 | python3 scripts/neutralise.py

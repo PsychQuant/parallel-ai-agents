@@ -1,0 +1,18 @@
+# #33 verify R35（R34 logic F3 r1 的反引號版本）：bash 5.3 在反引號裡以「以終止字開頭」的行（`` EOF` ``）結束 heredoc，
+# lint 要等到恰好是 `EOF` 的那一行。6cf6864 版 rc=0（繞過）。開在命令替換／反引號裡的 heredoc 遇到這種行 ⇒ fail-closed PARSE。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: heredoc inside backticks ended by a line that starts with the delimiter
+        run: |
+          x=`cat <<EOF
+          hi
+          EOF`
+          echo "$PR_TITLE"; cat <<'Z'
+          EOF
+          x| python3 scripts/neutralise.py
+          Z

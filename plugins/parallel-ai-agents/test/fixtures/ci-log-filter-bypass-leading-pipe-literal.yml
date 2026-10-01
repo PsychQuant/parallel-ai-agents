@@ -1,0 +1,12 @@
+# R30 H-6：literal 區塊裡行首的 `|` 是 bash 語法錯誤，不是管線續行
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: bare pipe at the start of a literal block line
+        run: |
+          echo "$PR_TITLE"
+          | python3 scripts/neutralise.py

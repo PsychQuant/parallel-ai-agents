@@ -1,0 +1,13 @@
+# #33 verify R35（opsweep 存活者 `elif ch == ")" and arith_par` 的 `==`↔`!=`）：算術裡巢狀的內層括號 `(1+(2))` 之後還有 `<<`（左移）。
+# 內層括號計數錯了，`2))` 就被當成算術收尾，`<< 1` 變成 heredoc、吞掉下一行的真管線 ⇒ 誤擋。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: arith-nested-inner-shift
+        run: |
+          x=$(( (1+(2)) << 1 ))
+          echo "$x" 2>&1 | python3 scripts/neutralise.py

@@ -1,0 +1,12 @@
+# R31 opsweep：`$'…'` 的收尾判定（`line[j] != "'"`）沒有網——把它拿掉讓掃描器吃到行尾，
+# 後面的**真管線**就被當成字串內容吞掉＝誤擋。這一條由產生語料的神諭先抓到、fixture 沒抓到。
+# bash 5.3：`$'x'` 在第一個未逃脫的 `'` 結束，`| python3 …neutralise.py` 真的執行。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: ansi-c quoted word then a real pipeline
+        run: echo $'x' | python3 scripts/neutralise.py

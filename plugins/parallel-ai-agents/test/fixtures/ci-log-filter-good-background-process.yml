@@ -1,0 +1,12 @@
+# R30 MB-5：背景程序讓神諭逾時＝量不到，不是繞過
+# EXPECT: pass
+name: t
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: background server
+        run: |
+          sleep 14 &
+          echo hi | python3 scripts/neutralise.py

@@ -1,0 +1,19 @@
+# #33 verify R41 第 10 列：`$GITHUB_PATH` 的值只含 runner 設定的 `$HOME`，以及以唯讀的 `< "$GITHUB_ENV"` 讀取——兩者都不把
+# PR 文字寫進跨 step 的通道。45dee04 的 `--strict` 擋下（誤擋，`$HOME` 被當成非字面的寫入）；R42 的正面文法放行：值裡只准
+# `$HOME`／`$RUNNER_TEMP`／`$GITHUB_WORKSPACE`，唯讀只收 `<` 重導向。這個 step 照 R42 計畫 WP1 的描述寫成，不是 R41 輸入的複本。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: home-and-read
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+            grep -q X < "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py

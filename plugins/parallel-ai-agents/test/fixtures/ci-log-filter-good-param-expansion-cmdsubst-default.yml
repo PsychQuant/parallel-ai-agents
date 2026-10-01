@@ -1,0 +1,13 @@
+# #33 verify R35（`_param_end` 的誤擋守衛）：`${GITHUB_REF:-$(git …)}`、`${X#`…`}` 這類「展開裡放命令替換」是常見寫法。
+# R35 第一版對它們一律 fail-closed，三軸量到合成 A 語料的合法檔因此翻紅；現在照 bash 的規則配對括號與反引號。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: command substitution inside a parameter expansion
+        run: |
+          ref="${GITHUB_REF:-$(git symbolic-ref -q HEAD || echo "refs/heads/(none)")}"
+          echo "${ref#`printf refs/heads/`}" 2>&1 | python3 scripts/neutralise.py

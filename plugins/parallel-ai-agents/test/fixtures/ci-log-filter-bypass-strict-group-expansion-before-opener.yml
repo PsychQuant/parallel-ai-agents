@@ -1,0 +1,16 @@
+# 字面檢查（`{` 之前）：`${PR_TITLE} {` 挖空後第一個詞是 `{`，bash 卻把 PR 文字當命令名執行——
+# 「command not found」在群組外、帶著 PR 文字印到 stderr（後面的 `}` 行才是語法錯誤，那時已經印了）。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: expansion before the opening brace
+        shell: bash
+        run: |
+          ${PR_TITLE} {
+          echo safe
+          } 2>&1 | python3 scripts/neutralise.py

@@ -1,0 +1,14 @@
+name: t
+on: push
+# EXPECT: pass
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: block scalar with a whitespace-only line shallower than the content
+        run: |
+          cat <<EOF
+          data
+          EOF
+    
+          echo "$PR_TITLE" | python3 scripts/neutralise.py

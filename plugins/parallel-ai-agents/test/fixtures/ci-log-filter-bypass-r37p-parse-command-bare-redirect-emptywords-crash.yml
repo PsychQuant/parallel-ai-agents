@@ -1,0 +1,24 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺 drop-operand|parse_command|neut = (len(words) >= 2 and words[0]["code"] == "python3"|1。
+# 一條命令若只有重導向、沒有任何字（例如裸的 `> /tmp/x`），`parse_command` 收詞迴圈跑完後
+# `words` 是空串列。原版 `neut` 判斷式用 `len(words) >= 2 and words[0]["code"] == "python3" and …`
+# 短路：`len(words) >= 2` 先擋住，`words[0]` 永遠不會在空串列上被取值——`neut=False`、
+# 這條命令的 `trail` 只有那個重導向，`kind` 是 `"simple"`。因為沒有管線，`ok=False`，
+# 印 RULE「既沒有經 neutralise.py」。
+# 拿掉 `len(words) >= 2` 這個 operand 後，條件變成 `words[0]["code"] == "python3" and …`——`words`
+# 是空的，`words[0]` 直接 `IndexError: list index out of range`。這個例外**有**被
+# `_analyse()` 呼叫處的 `except (IndexError, KeyError, ValueError, RecursionError)` 接住，
+# 變成 `reject(r, "規則層剖析這個 run 區塊時出錯…")`——印的是 `PARSE:`，不是原版的 `RULE:`，
+# 判定種類不同。
+# bash 5.3 實測：`bash -n -c '> /tmp/x'` → rc=0（合法語法），`bash -c '> /tmp/x; echo ok'` 正常
+# 執行、不外流任何 PR 文字（只是建立/清空一個檔案）；原版判 RULE 是因為它沒有任何管線可以
+# 認證，屬「沒有東西可以豁免」的一般規則，不是針對這行本身有洞。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: bare redirect with no command words
+        run: |
+          > /tmp/x

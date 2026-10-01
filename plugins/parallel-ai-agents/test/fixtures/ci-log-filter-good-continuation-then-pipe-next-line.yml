@@ -1,0 +1,12 @@
+name: t
+on: push
+# EXPECT: pass
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: continuation line, then the pipe on the very next physical line
+        run: |
+          echo a \
+            b
+          echo "$PR_TITLE" | python3 scripts/neutralise.py

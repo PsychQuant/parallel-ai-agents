@@ -1,0 +1,42 @@
+# #33 verify R37 opsweep 補件：殺 3 個 drop-operand|shell_scan|elif cases and cases[-1][0] == csub + cpar and (cases[-1][1] == "pat" or at_cmd):
+# （|1|L1028、|4|L1028、|5|L1028；同一行三個運算元各拿掉一個，三步各自單獨殺一個）。
+# 這行是「`esac` 是不是真的收掉目前 `cases` 堆疊頂端那個 `case`」的判定：非空、深度對上、
+# 而且（還在等第一個模式 `"pat"` ／或落在命令起點 `at_cmd`）。
+#
+# step 1（殺 |1|，拿掉 `cases` 非空檢查，只留 `cases[-1][0]==csub+cpar and (...)`）：
+# 遇到頂層文字 "esac"（不是真的 case 收尾、`cases` 是空 list）時，`cases[-1]` 直接
+# **IndexError**、整支 lint 當掉（rc≠0 且不是 RULE／PARSE 也不是乾淨的 0，是 Python traceback）。
+# 原版 `cases` 是空 list、短路直接跳過，"esac" 只是普通文字，管線正常。
+#
+# step 2（殺 |4|，拿掉內層 or 的 `cases[-1][1] == "pat"`，只留 `at_cmd`）：`case $a in esac`
+# 是空模式表（一個模式都沒有、"esac" 緊接在 "in " 後面），這時 `cases[-1][1]` 還是 "pat"
+# （從沒進到 "cmd"），但 `esac` 出現的位置不是命令起點（前面是 "case $a in "，`_at_command`
+# 比對不到），`at_cmd=False`。原版靠 `"pat"` 這個分支單獨放行（空 case 是合法收尾）；突變體
+# 拿掉這個分支、只剩 `at_cmd`，兩者皆非 → 不收尾 → `cases` 堆疊卡在非空狀態、`csub` 也連帶
+# 卡住未收尾 → PARSE。
+#
+# step 3（殺 |5|，拿掉內層 or 的 `at_cmd`，只留 `cases[-1][1]=="pat"`）：`case hi in h*) echo
+# match;esac`——最後一個子句省略 `;;`（bash 合法，只要有任何一個命令分隔字元），`esac` 出現時
+# `cases[-1][1]` 已經是 "cmd"（模式 `h*)` 已經收尾），不是 "pat"；但 `esac` 前面是單一個 `;`，
+# 落在命令起點（`AT_CMD_RE` 認得 `;` 這個錨點），`at_cmd=True`。原版靠 `at_cmd` 放行；突變體
+# 拿掉這個分支、只剩 `cases[-1][1]=="pat"`（此時是 "cmd"，不成立）→ 不收尾 → 卡住 → PARSE。
+# bash 5.3 實測三段皆語法合法：
+#   bash -n -c 'x=$(echo esac hi) 2>&1 | python3 scripts/neutralise.py'                     → rc=0
+#   bash -n -c 'x=$(case $a in esac) 2>&1 | python3 scripts/neutralise.py'                  → rc=0
+#   bash -n -c 'x=$(case hi in h*) echo match;esac) 2>&1 | python3 scripts/neutralise.py'   → rc=0
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: esac-as-plain-word-no-open-case
+        run: |
+          x=$(echo esac hi) 2>&1 | python3 scripts/neutralise.py
+      - name: empty-case-no-patterns
+        run: |
+          x=$(case $a in esac) 2>&1 | python3 scripts/neutralise.py
+      - name: last-clause-single-semicolon-no-double
+        run: |
+          x=$(case hi in h*) echo match;esac) 2>&1 | python3 scripts/neutralise.py

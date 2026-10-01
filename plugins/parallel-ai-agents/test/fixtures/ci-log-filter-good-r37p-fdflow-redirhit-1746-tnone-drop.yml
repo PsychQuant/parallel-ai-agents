@@ -1,0 +1,23 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺 drop-operand|_redir_hit|if t is None or t.get("psub"):|1
+# （拿掉 `t is None`）。
+# `echo "$PR_TITLE" > | python3 …neutralise.py`：`>` 後緊接管線、沒有目標字，custom lexer 對這個位置
+# （下一個字元 `|` 在 `_WORD_END` 裡）留 `t=None`；bash 對這個寫法本身是語法錯誤（已用
+# `bash -c 'echo SECRET > | cat'` 實測：rc=2, "syntax error near unexpected token `|'"，整條命令不會跑，
+# PR_TITLE 不會外流）。原版對這個位置的判法本來就是 `return None`（docstring 明寫：「缺目標是 bash
+# 語法錯誤；process substitution 繼承當下的 fd 1」——刻意不判命中），對這個 fixture 原版直接放行
+# （EXPECT: pass），`_is_2to1`／群組規則都不涉入。
+# 突變體拿掉 `t is None` 這個 guard 後,只剩 `t.get("psub")`——而 `t` 本身就是 `None`,對 `None` 呼叫
+# `.get(...)` 會丟出未被 `except (IndexError, KeyError, ValueError, RecursionError)` 接住的
+# `AttributeError`,整支 lint 當掉（非 0 exit、無 `RULE:`/`PARSE:`/`VACUOUS` 字樣），與原版的 pass
+# 可機械區分。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: missing plain-redir target glued to pipe
+        shell: bash
+        run: |
+          echo "$PR_TITLE" > | python3 scripts/neutralise.py

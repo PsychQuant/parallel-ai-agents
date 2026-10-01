@@ -1,0 +1,12 @@
+  name: t
+  on: push
+# EXPECT: parse-red
+  jobs:
+    j:
+      runs-on: ubuntu-latest
+      strategy:
+        matrix:
+          include: [{os: ubuntu-latest, hidden: b}]
+      steps:
+        - name: compliant control
+          run: echo hi | python3 scripts/neutralise.py

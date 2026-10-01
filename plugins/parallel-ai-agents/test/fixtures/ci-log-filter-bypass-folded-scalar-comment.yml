@@ -1,0 +1,12 @@
+# R30 H-5：折疊 scalar 的換行是空白，`#` 之後整條邏輯行都是註解
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: folded scalar hides the pipeline behind a shell comment
+        run: >
+          echo "$PR_TITLE" # note
+          | python3 scripts/neutralise.py

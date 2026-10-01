@@ -1,0 +1,63 @@
+# #33 verify R39 第 12 列：R39 宣稱「沒揭露的誤擋是 0」，regression 與 DA 另外量到這七種（第八種在預設模式，見 `restrict-r40-default-export-pythonpath`）——R40 不放寬、改成揭露：
+# 這一張釘住現狀，每一格都是「lint 擋、這一步不外流」。R42 起：過濾器尾巴與 `PYTHON*` 那 4 步仍在 oracle.py 的 KNOWN_DISAGREE
+# （理由逐條寫在那裡）；群組前的 `set +e`、`shopt` 與 `..` 那 3 步是正面文法的文法外，由下面的 KNOWN-CLASS 簽名。
+#   · `python3 -u`／`-I`：過濾器的路徑之前多了直譯器選項——群組尾巴只認 `python3 <路徑>/neutralise.py`（R38 放行條件 9 建議的 `-I`
+#     也在這裡被擋）；`"$GITHUB_WORKSPACE/…"`：路徑不是字面，lint 看不出那是不是 neutralise.py。
+#   · 群組前的 `set +e`、`shopt`：前綴只收白名單的 `set`（`-e`／`-u`／`-E`／`-o pipefail|errexit|nounset|errtrace`）。
+#   · `PYTHONPATH` 是運算式或非字面：過濾器 python3 啟動時讀它，lint 不分辨哪個 `PYTHON*` 鍵危險。
+#   · `> ../dev/…`：路徑含 `..` 又經過名為 dev 的目錄——lint 不知道工作目錄有多深，足夠多的 `..` 走得到 /dev，fail-closed。
+# #33 verify R41 第 19 列（LOW）：`python3 -u` 那一格的訊息原本是「既沒有經 neutralise.py」，而管線明明接到了 neutralise.py。
+# R42 起 `--strict` 對這種寫法印另一句（EXPECT-MSG 釘住）；擋不擋不變。
+# LINT-ARGS: --strict
+# R42：這一張的 3 步是**文法外**——不在 `--strict` 的正面文法裡、神諭實跑沒有外流（stdout／stderr／跨 step 通道都沒有）、
+# pipefail 探針沒看到關閉。保守擋下，由下面的宣告簽名（神諭的類別閘門是雙向的）。
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# EXPECT: rule-red
+# EXPECT-MSG: 接到了 neutralise.py，但過濾器不是恰好 `python3 <字面路徑>/neutralise.py`
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: python3 -u
+        shell: bash
+        run: |
+          set -o pipefail
+          { make; } 2>&1 | python3 -u scripts/neutralise.py
+      - name: python3 -I
+        shell: bash
+        run: |
+          set -o pipefail
+          { make; } 2>&1 | python3 -I scripts/neutralise.py
+      - name: workspace path
+        shell: bash
+        run: |
+          set -o pipefail
+          { make; } 2>&1 | python3 "$GITHUB_WORKSPACE/scripts/neutralise.py"
+      - name: set +e before the group
+        shell: bash
+        run: |
+          set -o pipefail
+          set +e
+          { make; } 2>&1 | python3 scripts/neutralise.py
+      - name: shopt before the group
+        shell: bash
+        run: |
+          set -o pipefail
+          shopt -s nullglob
+          { make; } 2>&1 | python3 scripts/neutralise.py
+      - name: PYTHONPATH from github.workspace
+        shell: bash
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
+        run: |
+          set -o pipefail
+          { make; } 2>&1 | python3 scripts/neutralise.py
+      - name: parent dir named dev
+        shell: bash
+        run: |
+          set -o pipefail
+          { make > ../dev/build.log; } 2>&1 | python3 scripts/neutralise.py

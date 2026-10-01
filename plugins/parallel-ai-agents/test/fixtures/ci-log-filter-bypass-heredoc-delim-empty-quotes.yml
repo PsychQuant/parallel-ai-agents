@@ -1,0 +1,15 @@
+# R30 H-1：`<<""EOF` —— 前一版把分隔字讀成空字串，整段內文變成 code
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: leak
+        run: |
+          cat <<'EOF'x
+          EOF
+          echo marker | python3 ../pai-lenses/scripts/neutralise.py
+          EOFx
+          echo "$PR_TITLE"

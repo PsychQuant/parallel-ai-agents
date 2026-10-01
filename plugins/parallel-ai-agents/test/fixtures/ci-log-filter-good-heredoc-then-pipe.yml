@@ -1,0 +1,13 @@
+name: t
+on: push
+# EXPECT: pass
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: heredoc then a real pipe
+        run: |
+          cat <<'NOTE'
+          just data
+          NOTE
+          echo "$PR_TITLE" | python3 scripts/neutralise.py
