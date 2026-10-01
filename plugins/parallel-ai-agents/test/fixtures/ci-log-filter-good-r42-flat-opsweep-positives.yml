@@ -1,0 +1,65 @@
+# #33 R42 opsweep（killer 假設驗證第二輪）：**合法**的群組形式輸入，各自對應一個守衛——突變體在這些輸入上崩潰或誤擋。
+# `${{ 1 }}` 字面代換成 `1`（拿掉 null 特判的突變體把它換成空字串，重導向就沒有目標）；GITHUB_ENV 的值是未加引號字面或單引號字串
+# （`p[1]` 是字串，突變體對它逐字元取 `q[1]` 崩潰）；`${HOME}` 雙引號變數名要讀 `${NAME}` 那一組；
+# `grep … < "$GITHUB_ENV" 2>&1`（重導向清單裡有沒有目標的 `2>&1`）；兩行 `set` 前綴、pipefail 在第一行；
+# 雙引號 trap 動作裡的 `\"` 要去掉反斜線再剖析；`trap "rm ${T}"` 讀 `${NAME}` 形式的已登記變數。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: a literal runner expression as a redirect target
+        shell: bash
+        run: |
+          {
+            echo hi > ${{ 1 }}
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: an unquoted literal value in GITHUB_ENV
+        shell: bash
+        run: |
+          {
+            echo Value >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a single-quoted value in GITHUB_ENV
+        shell: bash
+        run: |
+          {
+            echo 'Value=1' >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a braced allowed variable inside a double-quoted GITHUB_ENV value
+        shell: bash
+        run: |
+          {
+            echo "X=${HOME}/bin" >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a read of GITHUB_ENV with a descriptor duplicate
+        shell: bash
+        run: |
+          {
+            grep -q x < "$GITHUB_ENV" 2>&1
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: pipefail on the first of two set lines without a shell key
+        run: |
+          set -o pipefail
+          set -e
+          {
+            echo hi
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a double-quoted trap action with escaped quotes
+        shell: bash
+        run: |
+          {
+            trap "echo \"hi\"" EXIT
+            echo hi
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a double-quoted trap action with a braced registered variable
+        shell: bash
+        run: |
+          {
+            T=$(mktemp)
+            trap "rm ${T}" EXIT
+            echo hi
+          } 2>&1 | python3 scripts/neutralise.py

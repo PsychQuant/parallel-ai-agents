@@ -30,9 +30,10 @@ pipeline 的每段狀態，長度 ≥2 就代表它真的是 pipeline。這是 b
 原本沒有的外流 ⟹ 差分不可比 ⟹ **分類**失敗，絕不歸 G。**外流是 baseline 已觀察到的事實，分類失敗不抵銷它**：判不一致：繞過
 （R39，#33 verify R38 第 3 列；前一版判「量不到」而量不到不改 rc，lint 與神諭兩張網因此同時看不到多行群組裡的外流）。
 外流行是 xtrace 的輸出（神諭把 PS4 設成自己的標記）⟹ 繞過，不歸任何已知類別（R39，R38 第 4、6 列）。
-S-2 的定義是「預設模式不要求 `2>&1`、`--strict` 要求」：管線自己只從 stderr 外流、`--strict` 的群組規則真的擋下這個 step，
+S-2 的定義是「預設模式不要求 `2>&1`、`--strict` 要求」：管線自己只從 stderr 外流、`--strict` 真的擋下這個 step（R37–R41 是群組規則；
+R42 起要求擋下它的 RULE 帶正面文法的標記 `GRAMMAR_RULE_TAG`），
 **而且機制成立**（R39，R38 第 6 列；見 `s2_mechanism`）——每一段補上 `2>&1` 外流就消失，或外流行全是 bash 自己的錯誤訊息、
-左邊包成群組就消失。前一版只看前兩條，而群組規則擋下所有非群組管線，於是 fd 轉向、xtrace 這些 fd 規則該擋的外流在規則失效時
+左邊包成群組就消失。前一版只看前兩條，而 `--strict` 擋下所有非群組管線，於是 fd 轉向、xtrace 這些 fd 規則該擋的外流在規則失效時
 被收進 S-2。G 同理（#59／#60，R37 自 PR #61 移植）：`--strict` 對那個 step 印 pipefail 以外的 RULE 或 PARSE 才算已知 G，
 否則判 `STRICT_MISS`（繞過）。**兩個類別都另外要求原因檢查**（R39，R38 第 7 列）：刪掉與外流無關的行之後 `--strict` 仍擋，
 否則判 `CAUSE_MISS`（繞過）。這些判準都不含任何 lint 規則的正規式副本。
@@ -47,11 +48,39 @@ S-2 的定義是「預設模式不要求 `2>&1`、`--strict` 要求」：管線�
   lint pass     ∧ 非 piped ∧ 有**真**宣告        → 一致（宣告的豁免）
   lint RULE-red ∧ 非 piped                      → 一致
   lint RULE-red ∧ piped ∧ 外流                  → 一致（擋下是對的，R35）
-  lint RULE-red ∧ piped ∧ 無外流                → **不一致：誤擋**
-  step 唯一的 RULE 是 `[--strict]` pipefail      → 不可比（量的是退出碼遮蔽；同 step 另有 RULE 時照常對帳，R37）
+  lint RULE-red ∧ piped ∧ 無外流                → **不一致：誤擋**；RULE 全是文法標記或 pipefail 時歸已知類別「文法外」（R42，見下）
   lint pass     ∧ 非 piped ∧ 無宣告 ∧ 有外流    → **不一致：繞過**；無外流時是**量不到**
   lint PARSE    ∧ piped ∧ PyYAML 解析成功        → **不一致：誤擋（PARSE）**，除非該檔自己宣告 `# EXPECT: parse-red`
-  timeout／stub 沒被呼叫到但腳本逾時             → **量不到**（不是繞過，也不算一致；逐項具名）
+  timeout／stub 沒被呼叫到但腳本逾時             → **量不到**（不是繞過，也不算一致；逐項具名）；逾時之前已經外流：lint 放行判繞過、
+                                                   lint 擋下判一致（R42，#33 verify R41 第 20 列）
+  **`--strict` 的檔再疊一層**（R42；逾時的那次不疊）：
+  lint RULE-red ∧（pipefail 探針看到關閉 ∨ 通道帶 PR 文字） → 一致（擋下是對的）
+  lint pass     ∧ 通道帶 PR 文字                            → **不一致：繞過（跨 step 通道）**
+  lint pass     ∧ pipefail 探針看到關閉                     → **不一致：繞過（pipefail）**
+  pipefail 探針被換掉（腳本改了 DEBUG trap、主 shell 沒跑到 EXIT）→ **量不到**（已判繞過的不改：外流是事實）
+  step 唯一的 RULE 是 pipefail ∧ 沒有任何多段管線跑完 ∧ 通道沒帶 → 不可比（量不到退出碼遮蔽）
+
+## `--strict` 的兩個額外觀測（R42，#33 verify R41 第 1–7、11 列）
+`--strict` 宣稱兩件預設模式不宣稱的事——寫出來的每條管線跑在 pipefail 之下、靠管線過濾的 step 不把 PR 文字寫進跨 step 的通道。
+前一版兩件都量不到（pipefail 的 step 一律不可比；一次跑一個 step，看不到 `$GITHUB_ENV`），R39–R41 那兩類的繞過因此全在神諭的盲區裡。
+  · **pipefail 探針**（`PRELUDE_PF`、`pf_observation`）：DEBUG trap 在每條多段管線跑完時記下管線**開始時**的 pipefail（bash 在那時決定
+    退出碼怎麼算）與退出碼有沒有被遮蔽；每個子殼層第一次觸發時裝一個 EXIT 收尾。完整性檢查：DEBUG trap 被換掉、或主 shell 沒跑到
+    EXIT，判「量不到」而不是「一致」。腳本自己的 `trap <動作> EXIT` 經 `trap` 函式與神諭的收尾組合——不組合的話，文法接受的每一個
+    trap step 都會讀成量不到。探針自己的程式碼不產生 xtrace（`local -; set +xv`）。
+  · **跨 step 通道**（`CHANNELS`）：`GITHUB_ENV`／`PATH`／`OUTPUT`／`STATE`／`STEP_SUMMARY` 指到暫存檔，跑完看有沒有 PR 文字。
+    比 lint 嚴：lint 收 `$GITHUB_OUTPUT`、`$GITHUB_STEP_SUMMARY` 的寫入，神諭五個一起看。一次仍只跑一個 step：之後的 step 怎麼讀它，
+    神諭不模擬——看到 PR 文字寫進去就算外流。
+
+## 已知類別「文法外」（R42）
+`--strict` 對靠管線過濾的 step 用正面文法，文法的補集一律 RULE——多數是保守的誤擋。這一格只在誤擋、KNOWN_DISAGREE 之後判，
+三個條件同時成立：step 的每一條 RULE 都帶 `GRAMMAR_RULE_TAG` 或是 pipefail 那一條；沒有外流；pipefail 探針與通道都沒看到東西
+（看到的話上面的疊加已判一致）。與 G、S-2 同一道雙向閘門：由檔頭 `# KNOWN-CLASS: 文法外` 簽名、數量必須相等。平台變體
+「文法外-without-proc」只在沒有 `/proc` 的平台計數（`/proc/$$/fd/…` 那一類在 Linux 會外流、判一致）；有 `/proc` 的平台不計它的宣告。
+
+## KNOWN_DISAGREE 的格式（R42，#33 verify R41 第 14 列）
+鍵是（檔名, step 名），值是 `{dir, hash, why}`：`dir` 是登記的方向（誤擋／繞過），`hash` 是運算式代換之前 run 區塊的
+`kd_hash`（`--print-kd-hash FILE STEP` 印出）。方向與雜湊都相符才算已知；不符 ⇒ 照一般的不一致處理並具名（前一版只比鍵，
+一條登記成誤擋的條目吞掉了同名 step 的繞過）。`KNOWN_DISAGREE_WITHOUT_PROC` 同格式，只在沒有 `/proc` 的平台生效。
 
 **適用邊界**：lint 依設計不判可達性（`if false; then … | python3 …; fi` 它算「有管線」），神諭是真的跑——
 這類差異多數落在「量不到」，根本不會走到「不一致」（用不到 `KNOWN_DISAGREE`）；只有真的判成「不一致」的設計性分歧，才會列在 `KNOWN_DISAGREE` 並寫理由（可達性本身目前沒有對應條目）。神諭不用 `-e`：runner 用 `bash -e`，但這裡要問的是
@@ -65,7 +94,9 @@ PyYAML 拒絕、GitHub 照樣執行；R29 探針實測整份縮排的文件 PyYA
 stdin `/dev/null`、逾時 5 秒。但那不是沙箱——fixture 寫絕對路徑就寫得出去、背景程序活得過逾時。
 **加 fixture 等於加一段會被執行的 shell**，review 時請當成程式碼看。
 **`env:` 會帶進去**（R37，R36 第 8 列）：workflow／job／step 三層的純量值依序覆蓋（step 最後），`SHELLOPTS: xtrace`、
-`BASHOPTS`、`BASH_XTRACEFD` 因此量得到；含 `${{` 的值 runner 才知道，不設。PATH、HOME、`PR_TITLE` 永遠用神諭自己的值。
+`BASHOPTS`、`BASH_XTRACEFD` 因此量得到；含 `${{` 的值照 run 區塊的規則代換（R42：字面常數換成值、GH_SAFE 換成數字、其餘換成
+PR 標記——前一版不設，`PR_BODY` 寫到哪裡都量不到）。PATH、HOME、`PR_TITLE` 永遠用神諭自己的值；`RUNNER_TEMP`、`GITHUB_WORKSPACE`
+照 runner 的語意設成臨時目錄（R42：前一版不設，`> "$RUNNER_TEMP/e"` 變成寫 `/e`、失敗，那一步做了什麼就量不到）。
 **盲區**：`BASH_ENV`／`ENV` 指向的檔案在臨時 cwd 裡不存在（神諭不把 repo 的檔案帶進去），那些檔案的內容量不到；
 `/proc/self/fd/2` 在 macOS 上不存在，那一類 fd 轉向在本機量不到外流、在 Linux runner 上量得到（R39 起這幾張
 fixture 的誤擋只在沒有 /proc 的平台列為已知，見 `KNOWN_DISAGREE_WITHOUT_PROC`）；`/bin/sh` 在 macOS 是 bash、在 ubuntu
@@ -80,19 +111,25 @@ PR 文字固定是 `ORACLE-PR-TITLE-MARKER`：算術展開（`$(( PR_TITLE ))` �
   · **差分的往上擴範圍是逐段貪婪的**：每一段都要求整份腳本語法完整才擴成功。同一個 run 區塊有兩段都需要擴時判量不到；擴進來的行
     若恰好是另一條外流的命令（`echo "::notice::$PR_TITLE"; {` ⏎ … ⏎ `} 2>&1 | …`），外流跟著消失、被歸成「管線自己印的」而不是 G。
     兩者都判繞過（rc=1），方向是吵、不是藏，但原因可能寫錯（`known-r39-g-two-continued-pipelines` 的檔頭有細節）。
-  · **S-2 的機制差分禁止多出 baseline 沒有的外流行**（stdout 與 stderr 都禁）。能讓這一條翻色的形狀要靠 Linux 的 `/proc`
-    （`tee /proc/$$/fd/2`），本機做不出會翻色的 fixture——這一條目前**沒有會翻色的網**，也沒有列進 EXPECTED_SURVIVE（它不是等價突變）。
-  · **runner 運算式的代換是一組封閉的 payload**（`RUNNER_PAYLOADS`）：不在那張表上的脈絡（heredoc 內文、`$'…'`、算術…）神諭不保證
-    逃得出去，判的是「沒看到外流」。bash 樣板照旗標跑（`bash_template_prefix`），封閉清單以外的樣板（`-x`、`-v`、`-l`…）仍不可比。
+  · **S-2 的機制差分禁止多出 baseline 沒有的外流行**（stdout 與 stderr 都禁）。R40 這裡寫「本機做不出會翻色的 fixture」——
+    不對：R41 requirements 用背景子殼層看 `/dev/fd/1 -ef /dev/fd/2` 在 macOS 做出來了，R42 收成 must-fail 探針
+    `oracle-r42-s2-flip`（拿掉這個條件，它就被收成 S-2、探針不再以宣告的理由失敗）。
+  · **runner 運算式的代換是一組封閉的 payload**（`RUNNER_PAYLOADS`）：R42 起多了註解、算術、heredoc 內文三種脈絡（#33 verify
+    R41 DA-4），每一組都跑、lint 放行時取最嚴重的一份（`select_most_severe`）。仍不在表上的脈絡（`$'…'`、case 模式…）神諭不保證
+    逃得出去，判的是「沒看到外流」；每一組代換之後語法都壞掉時判量不到。bash 樣板照旗標跑（`bash_template_prefix`），封閉清單以外的樣板（`-x`、`-v`、`-l`…）仍不可比。
 
 依賴：PyYAML（`python3 -m pip install pyyaml`）。缺就 fail-loud，不靜默跳過。
 用法：test/oracle.py [FILE…]   不給檔案 → 全部 test/fixtures/ci-log-filter-*.yml
+      test/oracle.py --print-kd-hash FILE STEP   印出 step 的 `kd_hash`（新增或更新 KNOWN_DISAGREE 條目時用）
+      test/oracle.py --selftest-severity         `select_most_severe` 的單元測試
       環境變數 `ORACLE_LINT=<path>` 換掉被對帳的 lint（只給突變測試用：量「神諭抓不抓得到某個 lint 突變」）。
-退出碼：有 `KNOWN_DISAGREE` 之外的不一致 → 1；`KNOWN_DISAGREE` 裡的項目變成一致（理由不再成立）→ 1；
+退出碼：神諭用的 bash 不在 lint 檔頭 `# ORACLE-BASH-SUPPORTED:` 的集合裡 → 1（`bash_supported`，第 13 列）；神諭與 lint 的
+`GH_SAFE_EXPRS` 不同步 → 載入時具名退出；有 `KNOWN_DISAGREE` 之外的不一致（含方向或雜湊不符的條目）→ 1；`KNOWN_DISAGREE` 裡的項目變成一致（理由不再成立）→ 1；
 已知類別的歸類數與檔頭宣告數不相等（任一方向）→ 1；must-fail 探針沒有以宣告的理由失敗 → 1；不給檔案參數執行整個 fixture 集時，已知類別總數／must-fail 探針總數與寫死常數 `FIXTURE_CLASS_TOTALS`／`FIXTURE_MUSTFAIL_TOTAL` 不符 → 1；否則 0。
 「量不到」不改變退出碼，但一定逐項印出來。
 """
 import collections
+import hashlib
 import os
 import pathlib
 import re
@@ -116,35 +153,26 @@ except ImportError:                       # 依賴缺席不是「沒有不一致
 # (fixture 檔名, step 名) → 理由。每一條都要能說出「runner 與 lint 為什麼依設計會不同」；說不出來的就是缺陷。
 KNOWN_DISAGREE = {
     # ── R40（#33 verify R39 第 12 列）：R39 宣稱「沒揭露的誤擋是 0」之外的八種——不放寬，揭露（lint 的代價清單與 #60 同步）──
-    ("ci-log-filter-restrict-r40-undisclosed-false-blocks.yml", "python3 -u"): "群組尾巴只認 `python3 <路徑>/neutralise.py`，直譯器選項 `-u` 讓它看不出後面是不是過濾器。",
-    ("ci-log-filter-restrict-r40-undisclosed-false-blocks.yml", "python3 -I"): "同上：`-I`（R38 放行條件 9 建議的加固寫法）同樣被擋——放寬要先讓尾巴的比對認直譯器選項，R40 未做。",
-    ("ci-log-filter-restrict-r40-undisclosed-false-blocks.yml", "workspace path"): "路徑 `\"$GITHUB_WORKSPACE/…\"` 不是字面，lint 看不出它指向的是不是 neutralise.py。",
-    ("ci-log-filter-restrict-r40-undisclosed-false-blocks.yml", "set +e before the group"): "群組前只收白名單的 `set` 前綴；`set +e` 不印任何東西，但不在白名單裡。",
-    ("ci-log-filter-restrict-r40-undisclosed-false-blocks.yml", "shopt before the group"): "同上：`shopt` 不在前綴白名單裡（`shopt -s extglob` 會改變詞法，白名單不收任何 shopt）。",
+    ("ci-log-filter-restrict-r40-undisclosed-false-blocks.yml", "python3 -u"): {"dir": "誤擋", "hash": "sha256:090762cebe17c84ab8e2a685deec79f87029945fc9fc4b245da16e390e3bec11", "why": "群組尾巴只認 `python3 <路徑>/neutralise.py`，直譯器選項 `-u` 讓它看不出後面是不是過濾器。"},
+    ("ci-log-filter-restrict-r40-undisclosed-false-blocks.yml", "python3 -I"): {"dir": "誤擋", "hash": "sha256:b67c1039ed3306bc8475eb3f3f34a045458d11bd06da36ea605719e1a2efcb47", "why": "同上：`-I`（R38 放行條件 9 建議的加固寫法）同樣被擋——放寬要先讓尾巴的比對認直譯器選項，R40 未做。"},
+    ("ci-log-filter-restrict-r40-undisclosed-false-blocks.yml", "workspace path"): {"dir": "誤擋", "hash": "sha256:afc2206f8baf2d6c0e942fc026d055735201c6dc34a6d1470583a6f3c1d1f1c1", "why": "路徑 `\"$GITHUB_WORKSPACE/…\"` 不是字面，lint 看不出它指向的是不是 neutralise.py。"},
     ("ci-log-filter-restrict-r40-undisclosed-false-blocks.yml", "PYTHONPATH from github.workspace"):
-        "`PYTHON*` 的值是運算式就擋（R39 第 9 列）；`github.workspace` 是 runner 給的路徑、不是 PR 文字，lint 不分辨鍵與運算式。",
-    ("ci-log-filter-restrict-r40-undisclosed-false-blocks.yml", "parent dir named dev"):
-        "路徑含 `..` 又經過名為 dev 的目錄：lint 不知道工作目錄有多深，足夠多的 `..` 走得到 /dev——fail-closed。",
+        {"dir": "誤擋", "hash": "sha256:04dda1214c6c95363007ed6dc1445d4db866a9f26934507cfd79ffeaa71d5fc3", "why": "`PYTHON*` 的值是運算式就擋（R39 第 9 列）；`github.workspace` 是 runner 給的路徑、不是 PR 文字，lint 不分辨鍵與運算式。"},
     ("ci-log-filter-restrict-r40-default-export-pythonpath.yml", "export PYTHONPATH at top level"):
-        "頂層 export 的 `PYTHON*` 值不是字面就擋；這一步的值是本地路徑，不外流。",
-    # ── R40（#33 verify R39 第 9 列）：跨 step 的 `GITHUB_ENV`——神諭每個 step 單獨跑，看不到下一個 step 讀進來的環境 ──
-    ("ci-log-filter-bypass-r40-github-env-redirect.yml", "github-env-redirect"):
-        "寫進 `$GITHUB_ENV` 的東西只在**之後的 step** 生效；神諭一次跑一個 step（這一步本身不外流），量不到下一步的注入。",
-    ("ci-log-filter-bypass-r40-github-env-tee-stdin.yml", "github-env-tee-stdin"): "同上：經 `tee -a \"$GITHUB_ENV\"`。",
-    ("ci-log-filter-bypass-r40-github-path-heredoc.yml", "github-path-heredoc"): "同上：heredoc 寫進 `$GITHUB_PATH`。",
+        {"dir": "誤擋", "hash": "sha256:64fc9029b985ff00db07c6c0ee750987da9eb517073407c7c0a3771f43e2a784", "why": "頂層 export 的 `PYTHON*` 值不是字面就擋；這一步的值是本地路徑，不外流。"},
     # ── R40：神諭照 bash 樣板的旗標跑（`bash_template_prefix`）之後才量得到的五條。它們前一版刻意用帶旗標的樣板讓神諭判不可比
     #    （檔頭寫著「神諭量不到這一條」）；現在量得到了，結果是「lint 擋、這一次執行不外流」。擋的是**機制**，不是這個輸入 ──
     ("ci-log-filter-bypass-r37b-env-policy-BASH_XTRACEFD.yml", "job env BASH_XTRACEFD"):
-        "`BASH_XTRACEFD` 單獨設定不會打開 xtrace（lint 的訊息也這樣寫）；擋的是它與 xtrace 並存時把 trace 轉到別的 fd。",
-    ("ci-log-filter-bypass-r37b-fd-bash-xtracefd-assign.yml", "run assigns BASH_XTRACEFD"): "同上：run 裡指派。",
+        {"dir": "誤擋", "hash": "sha256:aa2fa76f86d686a69925a4ee1ecd7ac2eb07cd1033b861b13ff1e57b1ae8efee", "why": "`BASH_XTRACEFD` 單獨設定不會打開 xtrace（lint 的訊息也這樣寫）；擋的是它與 xtrace 並存時把 trace 轉到別的 fd。"},
+    ("ci-log-filter-bypass-r37b-fd-bash-xtracefd-assign.yml", "run assigns BASH_XTRACEFD"): {"dir": "誤擋", "hash": "sha256:9a750ad6cd65ee44131b5fe4eb4a53085d367ae1d61519a0cd1916ff91a9e988", "why": "同上：run 裡指派。"},
     ("ci-log-filter-bypass-r37b-env-policy-ENV.yml", "step env ENV"):
-        "非互動的 bash 不讀 `ENV`（只有 sh 模式或互動 shell 才讀）；擋的是 `shell:` 換成 sh 或互動時它會執行別的檔。",
+        {"dir": "誤擋", "hash": "sha256:aa2fa76f86d686a69925a4ee1ecd7ac2eb07cd1033b861b13ff1e57b1ae8efee", "why": "非互動的 bash 不讀 `ENV`（只有 sh 模式或互動 shell 才讀）；擋的是 `shell:` 換成 sh 或互動時它會執行別的檔。"},
     ("ci-log-filter-bypass-r37b-xtrace-verbose-set-o.yml", "verbose on a pipe-filtered step"):
-        "`set -o verbose` 印的是原始碼；這一步的原始碼裡沒有 PR 文字——run 裡寫了 runner 運算式時（runner 先代換）才外流，"
-        "那一類另由運算式規則擋。擋的是機制。",
+        {"dir": "誤擋", "hash": "sha256:be52a2ebb9fe176759f98a26723285436ac273ddf27def8201c4933b9a07ad0d", "why": "`set -o verbose` 印的是原始碼；這一步的原始碼裡沒有 PR 文字——run 裡寫了 runner 運算式時（runner 先代換）才外流，"
+        "那一類另由運算式規則擋。擋的是機制。"},
     ("ci-log-filter-bypass-r37p-parse-misc-parse-list-fallback-skip-amount.yml", "stray close-paren before an xtrace bash call"):
-        "第二行是語法錯誤，bash（`-e`）什麼也不外流；lint 擋的是剖析殘渣裡的 `bash -x`（fail-closed）。前一版照裸 bash 跑時"
-        "判「一致」，靠的是 `called-unpiped` 這個狀態，不是外流。",
+        {"dir": "誤擋", "hash": "sha256:133aa8bd74063fb393670ea743a3e64ae97805a3f3d9d4bd0e79f76a97b08915", "why": "第二行是語法錯誤，bash（`-e`）什麼也不外流；lint 擋的是剖析殘渣裡的 `bash -x`（fail-closed）。前一版照裸 bash 跑時"
+        "判「一致」，靠的是 `called-unpiped` 這個狀態，不是外流。"},
     # **YAML tag 一律 fail-closed，而 `!!str` 的值 bash 照跑** ⇒ 誤擋。這是**刻意保留**的，
     # 理由與代價都寫在這裡（R33，由 642 檔產生語料的 `R31-5 tag 值` 那一列量出來）：
     #   · 那道守衛是 R30 MB-8 加的，堵的是 `jobs: !!map {…}` 讓 flow 規則、`steps:` flow 檢查、
@@ -154,130 +182,99 @@ KNOWN_DISAGREE = {
     #   · 所以本輪**不動它**，改成記在這裡：數字誠實地印成「不一致 1（已知 1）」，
     #     而不是讓它在「量不到」或某個寬鬆的述詞後面消失。
     # 這一條若哪天變成「一致」（有人放行了 tag），神諭會 rc=1 要求重判——理由不再成立就要拿掉。
-    # **已知類別（G、S-2）不在這裡逐檔列**：它們按類別處理——`classify_piped_leak` 用差分判定外流是誰印的、
+    # **已知類別（G、S-2、文法外）不在這裡逐檔列**：它們按類別處理——`classify_piped_leak` 用差分判定外流是誰印的、
     # S-2 另外要 `--strict` 真的擋下那個 step，歸了類的 step 由所在檔頭的 `# KNOWN-CLASS:` 逐條簽名（雙向閘門，R37）。
     # 逐檔列會讓產生語料上的幾十條各佔一行、沒人讀；類別讓規則改掉的那一天，整類一起翻並被逼重判。
     ("gen-d-yaml-tag-bang.yml", "tag-bang"):  # 這個檔名只在 shellgen.py 產生語料時動態產生（R31-5 tag 值 shape），repo 內沒有這個靜態 fixture 檔案
-        "YAML tag 一律 fail-closed（R30 MB-8 堵 `jobs: !!map` 隱形 job）；`!!str` 因此被連帶擋下。"
-        "野外 0/1565，不值得為它動那條守著真洞的路徑。",
+        {"dir": "誤擋", "hash": "sha256:95dc6aea18e5450ae2b019c68ddbf304ef3507e636bf4460bda96bca789a34d3", "why": "YAML tag 一律 fail-closed（R30 MB-8 堵 `jobs: !!map` 隱形 job）；`!!str` 因此被連帶擋下。"
+        "野外 0/1565，不值得為它動那條守著真洞的路徑。"},
     # **`env:` 整張來自 runner 運算式** ⇒ 誤擋（R37 完整性審查補的 fixture）。lint 看不到鍵名，記成 `?` 並 fail-closed：
-    # 那張 map 可以帶進 `SHELLOPTS: xtrace`，bash 啟動時就生效、trace 行帶著 PR 文字裸印（實測）。神諭依設計不設含
-    # `${{` 的值（runner 才知道），所以量不到那個外流、判誤擋。這是兩邊資訊量不同造成的設計差異，不是 lint 的缺陷。
+    # 那張 map 可以帶進 `SHELLOPTS: xtrace`，bash 啟動時就生效、trace 行帶著 PR 文字裸印（實測）。神諭（R42 起）會代換 `env:`
+    # 裡各個鍵的運算式值，但整張 map 是一個運算式時沒有鍵可設，所以量不到那個外流、判誤擋。這是兩邊資訊量不同造成的設計差異，不是 lint 的缺陷。
     ("ci-log-filter-bypass-r37t8-step-env-inline-expression.yml", "s"):
-        "`env:` 整張來自 `${{ … }}`，lint 看不到鍵名而 fail-closed；神諭不設 runner 運算式的值，量不到它可能帶進的 SHELLOPTS。",
+        {"dir": "誤擋", "hash": "sha256:de75717165ba9dfcb60236e5bdb4b353bc9c16915bb4c1ab02004a7af9dbdd37", "why": "`env:` 整張來自 `${{ … }}`，lint 看不到鍵名而 fail-closed；神諭不設 runner 運算式的值，量不到它可能帶進的 SHELLOPTS。"},
     # **頂層 `case` 的模式 `|` 被預設模式讀成管線** ⇒ 繞過（R37 完整性審查缺陷 d，刻意保留的已知限制）：`--strict` 擋下它；
     # 預設模式要修得把 case 追蹤延伸到頂層，代價與理由見 lint 已知不涵蓋第三組第 5 條。修好之後這一列變一致，神諭 rc=1 逼人拿掉。
     # **根層級 `env:` 是純量**（R37 opsweep 補件 `bypass-r37o-module-misc-root-env-nonflow-colon-value`）：`env: FOO:bar` 讀不到
     # 鍵名，lint 記成 `?` 並 fail-closed（那張 map 可能帶進 SHELLOPTS）；神諭沒有鍵可設、量不到外流而判誤擋。與上面
     # `step-env-inline-expression` 同一種兩邊資訊量不同的設計差異。GitHub 本身也不接受非 mapping 的 `env`。
     ("ci-log-filter-bypass-r37o-module-misc-root-env-nonflow-colon-value.yml", "probe"):
-        "根層級 `env:` 是純量、看不到鍵名，lint fail-closed；神諭沒有鍵可設，量不到它可能帶進的 SHELLOPTS。",
+        {"dir": "誤擋", "hash": "sha256:15de4b262daa1b9e9ab959aa68fe699378b0567e4685f3af5aa626e2b8393f11", "why": "根層級 `env:` 是純量、看不到鍵名，lint fail-closed；神諭沒有鍵可設，量不到它可能帶進的 SHELLOPTS。"},
     # **R37 最終 lint 的 opsweep 補件裡的限制型 fixture**（`restrict-r37p-*`）：突變體把保守的拒絕放寬，這些 fixture 釘住拒絕本身。
     # 輸入實際都不外流，神諭因此判誤擋——那是刻意的 fail-closed，不是 lint 的缺陷。
     ('ci-log-filter-restrict-r37p-fdflow-analyse-amp-trail-drop.yml', 'group has its own trailer plus |& connector'):
-        '群組豁免只收收尾後恰好接 `2>&1 |` 或 `|&`（沒有別的 trailer）的群組；這個形狀實際不外流，但豁免不涵蓋它。',
+        {"dir": "誤擋", "hash": "sha256:6ebc8ae93b8e0c90138fc6fe6c23527faa8fac70e5984490d3ae370bd0020751", "why": '群組豁免只收收尾後恰好接 `2>&1 |` 或 `|&`（沒有別的 trailer）的群組；這個形狀實際不外流，但豁免不涵蓋它。'},
     ('ci-log-filter-restrict-r37p-fdflow-analyse-pipe-conn-drop.yml', 'exact 2>&1 trailer combined with |& connector'):
-        '群組豁免只收收尾後恰好接 `2>&1 |` 或 `|&`（沒有別的 trailer）的群組；這個形狀實際不外流，但豁免不涵蓋它。',
+        {"dir": "誤擋", "hash": "sha256:3c9b94dda5e8773da4b6c823a856739afbde58a11d663e35084273610df1a124", "why": '群組豁免只收收尾後恰好接 `2>&1 |` 或 `|&`（沒有別的 trailer）的群組；這個形狀實際不外流，但豁免不涵蓋它。'},
     ('ci-log-filter-restrict-r37p-fdflow-is2to1-lit-drop.yml', 'group trailer closes fd2, does not dup to fd1'):
-        '群組豁免要求收尾恰好是 `2>&1`（fd 2 複製到 fd 1）；`2>&-`、`2>1` 這類實際不外流，但不是豁免的形狀。',
+        {"dir": "誤擋", "hash": "sha256:2b125c420c2a549a471e3315a0e82385bae2450c09afc1858c62978149a51406", "why": '群組豁免要求收尾恰好是 `2>&1`（fd 2 複製到 fd 1）；`2>&-`、`2>1` 這類實際不外流，但不是豁免的形狀。'},
     ('ci-log-filter-restrict-r37p-fdflow-is2to1-op-drop.yml', 'group trailer redirects to a file literally named 1, not fd dup'):
-        '群組豁免要求收尾恰好是 `2>&1`（fd 2 複製到 fd 1）；`2>&-`、`2>1` 這類實際不外流，但不是豁免的形狀。',
+        {"dir": "誤擋", "hash": "sha256:9d149f876a7a923bd4f31e87d77a8d427a918367df34702f6e0594e76be8e001", "why": '群組豁免要求收尾恰好是 `2>&1`（fd 2 複製到 fd 1）；`2>&-`、`2>1` 這類實際不外流，但不是豁免的形狀。'},
     ('ci-log-filter-restrict-r37p-fdflow-redirhit-1740-op-drop.yml', 'input-direction fd dup treated same as output-direction'):
-        '輸入方向的 fd 複製（`<&`）一律當成 fd 流向命中（fail-closed）；這個形狀實際不外流。',
+        {"dir": "誤擋", "hash": "sha256:9e1da96bdbe09ef4a1cb0697e1bdd3d8b65af5bbc3d28ccf27ddce8013d14a29", "why": '輸入方向的 fd 複製（`<&`）一律當成 fd 流向命中（fail-closed）；這個形狀實際不外流。'},
     ('ci-log-filter-restrict-r37p-fdflow-redirhit-1743-op-drop.yml', 'input-direction fd dup to a literal non-digit word'):
-        '輸入方向的 fd 複製（`<&`）一律當成 fd 流向命中（fail-closed）；這個形狀實際不外流。',
+        {"dir": "誤擋", "hash": "sha256:aaaa04d863ce5630d05abef969073288549b983fd34c2991e37828c0d06f9255", "why": '輸入方向的 fd 複製（`<&`）一律當成 fd 流向命中（fail-closed）；這個形狀實際不外流。'},
     ('ci-log-filter-restrict-r37p-parse-command-neut-wrong-filename.yml', 'group piped through python3 running the wrong script'):
-        '管線的過濾端不是 `python3 <路徑>/neutralise.py`，照規則拒絕；實際執行會報錯、不把 stdin 印出來，神諭量不到外流。',
+        {"dir": "誤擋", "hash": "sha256:5d30953066faa495ba1cc1cccbeb88259ea34a49c727faab074142ee85f05161", "why": '管線的過濾端不是 `python3 <路徑>/neutralise.py`，照規則拒絕；實際執行會報錯、不把 stdin 印出來，神諭量不到外流。'},
     ('ci-log-filter-restrict-r37p-parse-command-neut-wrong-interpreter.yml', 'group piped through a same-named script under the wrong interpreter'):
-        '管線的過濾端不是 `python3 <路徑>/neutralise.py`，照規則拒絕；實際執行會報錯、不把 stdin 印出來，神諭量不到外流。',
-    ('ci-log-filter-restrict-r37p-strict-set-prefix-eu-skip.yml', 'set -e followed by a bad token is not accepted as a group prefix line'):
-        '群組規則的 `set` 前綴只收 `-e`／`-u`／`-o pipefail|errexit|nounset`；bash 對壞選項報錯，這一步實際不外流，被擋是限制。',
-    ('ci-log-filter-restrict-r37p-strict-set-prefix-o-skip.yml', 'set -o pipefail followed by a bad token is not accepted as a group prefix line'):
-        '群組規則的 `set` 前綴只收 `-e`／`-u`／`-o pipefail|errexit|nounset`；bash 對壞選項報錯，這一步實際不外流，被擋是限制。',
+        {"dir": "誤擋", "hash": "sha256:df24f36b345b5276d3025c0c190edb817afc7b3983b945a36ea6c04cf4f04f0e", "why": '管線的過濾端不是 `python3 <路徑>/neutralise.py`，照規則拒絕；實際執行會報錯、不把 stdin 印出來，神諭量不到外流。'},
     ("ci-log-filter-known-r37t8-default-case-pattern-pipe.yml", "s"):
-        "頂層 case 模式的 `|` 是「或」，預設模式的 `PIPED_RE` 算它接了 neutralise；`--strict` 由群組規則擋下（區塊不是 `{ …; } 2>&1 | python3 …` 群組）。",
-    # **`--strict` 群組規則只收恰好一對大括號**（#59／#60）⇒ 群組裡再包一個群組是誤擋。刻意保留：計深度要判斷每個
-    # `{`／`}` 在 bash 眼中是不是保留字，而 `case` 模式的 `{)` 會讓計數器以為群組還開著（`bypass-strict-group-case-pattern-brace`
-    # 實測外流）。代價只落在 `--strict`（真 workflow）：要短路改寫成 `if`，repo 自己的 workflow 沒有巢狀群組。
-    ("ci-log-filter-restrict-strict-group-nested.yml", "nested group"):
-        "群組規則只收恰好一對大括號（計深度會被 `case` 的 `{)` 騙過）；巢狀群組因此被連帶擋下，改寫成 `if` 即可。",
+        {"dir": "繞過", "hash": "sha256:386a13f6fdfe38ddae75a87bb794d95694df84c0faadd42c0894cebf568290d3", "why": "頂層 case 模式的 `|` 是「或」，預設模式的 `PIPED_RE` 算它接了 neutralise；`--strict` 由正面文法擋下（R42 以前是群組規則）。"},
     # **神諭的 python3 是 stub**：它不檢查路徑存不存在，所以真 python3 的「can't open file '<路徑>'」（路徑裡帶著展開後的
     # PR 文字、寫在 python3 自己的 stderr）在這裡不會出現。lint 擋下是對的，神諭量不到——這是儀器的盲區，不是 lint 的誤擋。
     ("ci-log-filter-bypass-strict-group-expansion-in-filter-path.yml", "expansion in the filter path"):
-        "stub python3 不報「can't open file」；真 python3 會把含 PR 文字的路徑印到群組外的 stderr。",
+        {"dir": "誤擋", "hash": "sha256:732780584052d765f038290a1f00b8fd91a57c2e34d77a16475c020dbc715f56", "why": "stub python3 不報「can't open file」；真 python3 會把含 PR 文字的路徑印到群組外的 stderr。"},
     ("ci-log-filter-bypass-strict-group-variable-filter-path.yml", "variable in the filter path"):
-        "同上：路徑是 `$PR_TITLE/neutralise.py`，stub python3 不報「can't open file」。",
-    # **子殼層群組 `( … ) 2>&1 |` 被擋**（R37 移植 #61 群組規則）：安全，但 `(`／`)` 也出現在 `$(`、`$((`、陣列、`case` 模式裡，
-    # 「恰好一對」的論證對它不成立。改寫成 `{ …; }` 即可。
-    ("ci-log-filter-restrict-r37-strict-subshell-group.yml", "subshell group"):
-        "群組規則只收大括號群組；子殼層群組安全但被連帶擋下，改寫成 `{ …; }` 即可。",
-    # **產生語料 `--strict` 組（shellgen 維度 1／5／6）上的同兩種代價**（R37 移植 #61 群組規則後重跑產生語料神諭才量到——
-    # 移植當下只重跑了 fixture 神諭，而 CI 的產生語料 step 兩組都跑）。這一組是移植前按「逐段 `2>&1`」規則設計的，
-    # 它的「該放行」基準在群組規則下變成保守擋下；lint 行為是設計，不是回歸：
-    #   · 逐段 `2>&1`（5 檔）：群組規則刻意不收逐段形式——那一段的 `2>&1` 生效前的展開期／重導向錯誤不經過濾（#60 第 2 類）。
-    #     這幾個形狀剛好沒有這種錯誤，但規則不分辨哪一段會出錯。改寫成 `{ …; } 2>&1 | …` 即可。
-    #   · `( … )` 子殼層包裹（3 檔）：同上一條 `restrict-r37-strict-subshell-group`。`{ … }` 那三檔照樣放行、判一致。
-    ("gen-f-shell-bash.yml", "shell value bash"):
-        "群組規則不收逐段 `2>&1`（#60 第 2 類：那一段的 `2>&1` 生效前的錯誤不經過濾）；這個形狀剛好不出錯，規則不分辨。",
-    ("gen-f-shell-bash-dq.yml", "shell value bash-dq"): "同 `gen-f-shell-bash`：逐段 `2>&1`，群組規則保守擋下。",
-    # R40：神諭照 bash 樣板的旗標跑之後，同一個 `gen-f-shell-bash` 維度裡原本判不可比的七個樣板也量得到了——同一類保守誤擋。
-    ("gen-f-shell-bash-brace.yml", "shell value bash-brace"): "同 `gen-f-shell-bash`：逐段 `2>&1`，群組規則保守擋下（R40 起樣板可比）。",
-    ("gen-f-shell-bash-e.yml", "shell value bash-e"): "同 `gen-f-shell-bash`：逐段 `2>&1`，群組規則保守擋下（R40 起樣板可比）。",
-    ("gen-f-shell-bash-eo-pipefail.yml", "shell value bash-eo-pipefail"): "同 `gen-f-shell-bash`：逐段 `2>&1`，群組規則保守擋下（R40 起樣板可比）。",
-    ("gen-f-shell-bash-euo-pipefail.yml", "shell value bash-euo-pipefail"): "同 `gen-f-shell-bash`：逐段 `2>&1`，群組規則保守擋下（R40 起樣板可比）。",
-    ("gen-f-shell-bash-noprofile-e.yml", "shell value bash-noprofile-e"): "同 `gen-f-shell-bash`：逐段 `2>&1`，群組規則保守擋下（R40 起樣板可比）。",
-    ("gen-f-shell-bash-noprofile-eo-pipefail.yml", "shell value bash-noprofile-eo-pipefail"): "同 `gen-f-shell-bash`：逐段 `2>&1`，群組規則保守擋下（R40 起樣板可比）。",
-    ("gen-f-shell-bash-o-pipefail-e.yml", "shell value bash-o-pipefail-e"): "同 `gen-f-shell-bash`：逐段 `2>&1`，群組規則保守擋下（R40 起樣板可比）。",
-    ("gen-f-shell-bash-sq.yml", "shell value bash-sq"): "同 `gen-f-shell-bash`：逐段 `2>&1`，群組規則保守擋下。",
-    ("gen-f-pipeseg-2-gap0.yml", "pipeline of 2 segments, gap=0"): "同 `gen-f-shell-bash`：每段都帶 `2>&1`，仍不是群組形式。",
-    ("gen-f-pipeseg-3-gap0.yml", "pipeline of 3 segments, gap=0"): "同 `gen-f-shell-bash`：每段都帶 `2>&1`，仍不是群組形式。",
-    ("gen-f-wrap-subshell-fd-redirect-wrapped.yml", "subshell wrapped fd-redirect"):
-        "同 `restrict-r37-strict-subshell-group`：群組規則只收 `{ …; }`，子殼層包裹安全但被連帶擋下。",
-    ("gen-f-wrap-subshell-saved-fd-wrapped.yml", "subshell wrapped saved-fd"): "同上：子殼層包裹。",
-    ("gen-f-wrap-subshell-xtrace-wrapped.yml", "subshell wrapped xtrace"): "同上：子殼層包裹。",
+        {"dir": "誤擋", "hash": "sha256:cabe4af65c222775ab172c47b9b073ee695fee9dbd2266b9a8893bccedca43b6", "why": "同上：路徑是 `$PR_TITLE/neutralise.py`，stub python3 不報「can't open file」。"},
+    # **R42：`--strict` 的保守擋下改由檔頭簽名**。群組規則時代逐條登記在這裡的誤擋——巢狀群組、子殼層群組、群組前的 `cd`／
+    # `export`／`set +e`／`shopt`、兩個群組、函式定義、`..` 經過 dev 的路徑，以及產生語料 `--strict` 組維度 1／5／6 的逐段 `2>&1`
+    # 與子殼層包裹——在正面文法下都是「不在文法裡、沒有外流」：神諭把它們歸進已知類別**文法外**，由所在檔頭的
+    # `# KNOWN-CLASS: 文法外` 簽名（產生語料由 shellgen 依構造寫出）。只有神諭**量不到**外流的（下面那一段）才留在這裡。
     # ── R39（#33 verify R38 第 5、9 列）：神諭結構上量不到的外流 ──
     ("ci-log-filter-bypass-r39-strict-group-proc-ppid-fd1.yml", "group writes to proc-ppid-fd1"):
-        "`/proc/$PPID/fd/1` 在 runner 上是 runner 自己的 log；在神諭裡 `$PPID` 是神諭行程，它的 fd 1 不在神諭擷取的輸出裡。",
+        {"dir": "誤擋", "hash": "sha256:8e7c9c9cb222536cd93fd77b668f0145eebdd184919a7b44803511596062c0ca", "why": "`/proc/$PPID/fd/1` 在 runner 上是 runner 自己的 log；在神諭裡 `$PPID` 是神諭行程，它的 fd 1 不在神諭擷取的輸出裡。"},
     ("ci-log-filter-bypass-r39-strict-group-dev-tty.yml", "group writes to dev-tty"):
-        "`/dev/tty` 是控制終端；神諭與 GitHub runner 都沒有，寫入失敗、錯誤訊息在群組裡進管線。lint 擋下是保守的方向"
-        "（控制終端存在的 runner——自架、互動式——寫進去的東西不經過濾）。",
+        {"dir": "誤擋", "hash": "sha256:89bcaba7f39dd27476ea4103c75938cd181305a2406e465bc60ac680ec7a04b3", "why": "`/dev/tty` 是控制終端；神諭與 GitHub runner 都沒有，寫入失敗、錯誤訊息在群組裡進管線。lint 擋下是保守的方向"
+        "（控制終端存在的 runner——自架、互動式——寫進去的東西不經過濾）。"},
     ("ci-log-filter-bypass-r39-env-pythonwarnings-expression.yml", "PYTHONWARNINGS from the PR title"):
-        "神諭的 `python3` 是 shell stub，不解析 `PYTHONWARNINGS`；真的 CPython 會把不合法的值印到管線右端的 stderr（協調者實跑）。",
-    ("ci-log-filter-bypass-r39-env-pythonwarnings-expression-default.yml", "PYTHONWARNINGS from the PR title"): "同上：stub。",
-    ("ci-log-filter-bypass-r39-run-export-pythonwarnings.yml", "export PYTHONWARNINGS in run"): "同上：stub。",
-    # ── R39（R38 第 11 列）：群組規則的保守誤擋，逐條揭露（放寬會動到「恰好一對大括號、前綴只收 `set`」的論證）──
-    ("ci-log-filter-restrict-r39-strict-function-def.yml", "function def"):
-        "群組內定義函式：多一對大括號。群組規則只收恰好一對（`case` 模式、陣列裡的大括號不是保留字，計深度要判斷那個）。",
-    ("ci-log-filter-restrict-r39-strict-github-env-group.yml", "github env group"): "同上：巢狀的 `{ …; } >> \"$GITHUB_ENV\"`。",
-    ("ci-log-filter-restrict-r39-strict-two-groups.yml", "two groups"): "同上：一個 step 兩個群組。",
-    ("ci-log-filter-restrict-r39-strict-cd-before-group.yml", "cd before group"):
-        "群組前只收 `set` 前綴：`cd`、`export` 放進群組或改用 `working-directory:`／`env:`。",
-    ("ci-log-filter-restrict-r39-strict-export-before-group.yml", "export before group"): "同上。",
-    # ── R39 opsweep 存活者的殺法 fixture ──
-    ("ci-log-filter-bypass-r39-env-shellopts-expression.yml", "SHELLOPTS from an expression"):
-        "神諭不設 runner 運算式的值（`SHELLOPTS: ${{ … }}` 在沙箱裡不存在），量不到它可能開的 xtrace；這張的用途是殺 `_env_names` 的突變體。",
-    ("ci-log-filter-restrict-r39-strict-group-dotdot-stderr.yml", "group writes through dotdot"):
-        "`/dev/fd/../stderr`：`..` 經過 /dev 就不給群組豁免（fail-closed）。bash 寫到群組自己的 stderr（macOS）或寫不出去（Linux），不外流。",
+        {"dir": "誤擋", "hash": "sha256:5421eda798594418bb957e112a59b815cccca3f788666a60821442614b90dfa5", "why": "神諭的 `python3` 是 shell stub，不解析 `PYTHONWARNINGS`；真的 CPython 會把不合法的值印到管線右端的 stderr（協調者實跑）。"},
+    ("ci-log-filter-bypass-r39-env-pythonwarnings-expression-default.yml", "PYTHONWARNINGS from the PR title"): {"dir": "誤擋", "hash": "sha256:de75717165ba9dfcb60236e5bdb4b353bc9c16915bb4c1ab02004a7af9dbdd37", "why": "同上：stub。"},
+    ("ci-log-filter-bypass-r39-run-export-pythonwarnings.yml", "export PYTHONWARNINGS in run"): {"dir": "誤擋", "hash": "sha256:99c2ded5fce312cafe5acb56e4ea737f2eb05d03dc41ccfdcd10cdfc44d6a7cd", "why": "同上：stub。"},
     # ── R39（R38 第 13 列）：殺 `_cmdsub_end_case` 四條存活突變的 fixture——原碼保守判 RULE（命令替換裡的 `shopt -s extglob`
     # 改變之後的詞法，本 lint 不追蹤就擋），bash 照常執行、不外流 ──
     ("ci-log-filter-restrict-r39-cmdsub-case-esac-at-cmd.yml", "cmdsub case esac at cmd"):
-        "命令替換裡 `shopt -s extglob`：保守擋（見 `restrict-r37p-*` 的同類理由）；這張的用途是殺 `_cmdsub_end_case` 的突變體。",
-    ("ci-log-filter-restrict-r39-cmdsub-case-hash-word-start.yml", "cmdsub case hash word start"): "同上。",
-    ("ci-log-filter-restrict-r39-cmdsub-case-paren-branch.yml", "cmdsub case paren branch"): "同上。",
-    ("ci-log-filter-restrict-r39-cmdsub-case-herestring.yml", "cmdsub case herestring"): "同上。",
+        {"dir": "誤擋", "hash": "sha256:f73b2f88fe063741fa3344fc990630b9f6411370273a119d92b42253be1c627f", "why": "命令替換裡 `shopt -s extglob`：保守擋（見 `restrict-r37p-*` 的同類理由）；這張的用途是殺 `_cmdsub_end_case` 的突變體。"},
+    ("ci-log-filter-restrict-r39-cmdsub-case-hash-word-start.yml", "cmdsub case hash word start"): {"dir": "誤擋", "hash": "sha256:2f9fdfacbb13346ce31a5ba7dacc7c22e83f27bec3f2ba49055cf2963a4107f1", "why": "同上。"},
+    ("ci-log-filter-restrict-r39-cmdsub-case-paren-branch.yml", "cmdsub case paren branch"): {"dir": "誤擋", "hash": "sha256:38ef1ddd006c9d0a223112b2b9634a909327459aa7c7f289f93490745b74799e", "why": "同上。"},
+    ("ci-log-filter-restrict-r39-cmdsub-case-herestring.yml", "cmdsub case herestring"): {"dir": "誤擋", "hash": "sha256:07a4d18ba7906d4efae201035b3480b1cb8ee0f49a40c3a56b531407e8c65356", "why": "同上。"},
+    # ── R42：神諭（WP5–WP7 之後）仍然量不到的外流，逐條寫出盲區 ──
+    ("ci-log-filter-bypass-r42-default-k3.yml", "s"):
+        {"dir": "誤擋", "hash": "sha256:bccc8e5de706da2d6392bf0230af19daf8d0c92fd6388efb94fbb792c3505e8f", "why": "fd 流向規則不看內容：`>&2` 那一行只印 `a hi x`，沒有 PR 文字。這張的用途是殺 `_word` 雙引號進 code 那一支的位移突變（R41 logic F7）。"},
+    ("ci-log-filter-bypass-r42-ghenv.yml", "a13-python"):
+        {"dir": "誤擋", "hash": "sha256:4e53dd39864e4550329bfa1042f315848a5548faeaf39c5092627566c4aff310", "why": "神諭的 `python3` 是 stub，`python3 -c` 不會真的寫 `$GITHUB_ENV`；真 CPython 會。"},
+    ("ci-log-filter-bypass-r42-ghenv.yml", "ge-python"): {"dir": "誤擋", "hash": "sha256:13385b7d8a6a65a07897c0c8890aa8f8bc3ca3fa883216ec7f7dbd87890b129c", "why": "同上：stub。"},
+    ("ci-log-filter-bypass-r42-ghenv.yml", "a25-git-log"):
+        {"dir": "誤擋", "hash": "sha256:b2169564fabfb93bee6575ee56ee33a345844138f0b85d2e55bf185c91f6095b", "why": "神諭的工作目錄不是 git repo，`git log` 讀不到 commit 訊息；在 runner 上那是 PR 作者寫的文字。"},
+    ("ci-log-filter-bypass-r42-flat-fd-dup-3.yml", "fd 3 dup"):
+        {"dir": "誤擋", "hash": "sha256:190b3a43ed23e34e218e4e4dc2d10e1892a9cfe317ff80dfb6baff5707afbc68", "why": "`>&3` 寫到外層 shell 繼承的 fd 3：神諭跑的時候 fd 3 沒開、寫入失敗；runner 上開著時就是群組管線以外的輸出。不歸文法外——它不是安全的寫法，只是神諭量不到。"},
+    ("ci-log-filter-bypass-r42-trap-action-registers-mktemp.yml", "trap action registers mktemp"):
+        {"dir": "誤擋", "hash": "sha256:23afe3d88e9a9dde676b719aa0294488554458cf96917a903ad46eae89662fa5", "why": "這是注入不是外流：`trap \"rm -rf $tmp\" EXIT` 把 PR 文字接進動作字串、結束時當程式碼執行。神諭的標記不含 shell 字元，觸發不了（WP2 以真 bash 與 `x; …` 的值實跑確認會執行）。"},
 }
 # **只在沒有 /proc 的平台上成立**的已知分歧（R39，#33 verify R38 第 1、5 列）：macOS 沒有 `/proc`，`/dev/fd` 也不是指向
 # `/proc/self/fd` 的 symlink，這幾個外流在本機量不到、判誤擋。Linux（CI）上**不列入**——在那裡神諭必須看到外流、判一致，
 # 否則就是 lint 擋錯了或 fixture 寫錯了。R38 的教訓：ground truth 在 CI 的平台上量，本機數字要註明平台。
 KNOWN_DISAGREE_WITHOUT_PROC = {
-    ("gen-f-only-proc-fd.yml", "only rule proc-fd"): "產生語料維度 10（R40）：`/proc/$$/fd/1` 只在 Linux 寫到外層 shell 的 fd。",
-    ("ci-log-filter-bypass-r39-strict-group-proc-pid-fd1.yml", "group writes to proc-pid-fd1"):
-        "`/proc/$$/fd/1`：本機沒有 /proc。Linux 上 `$$` 是外層 shell，那個 fd 就是 step log。",
-    ("ci-log-filter-bypass-r39-strict-group-exec-proc-pid.yml", "group writes to exec-proc-pid"): "同上：`exec >/proc/$$/fd/2`。",
     ("ci-log-filter-bypass-r39-fd-dotdot-dev-target.yml", "dotdot path under /dev"):
-        "`/dev/fd/../../self/fd/2`：Linux 的 `/dev/fd` 是指向 `/proc/self/fd` 的 symlink，實際是 stderr；本機沒有那個 symlink。",
+        {"dir": "誤擋", "hash": "sha256:5baf0b11467c08bc512e7069112a4b038899ef65c9fbf6c46ec4da92fb512a1d", "why": "`/dev/fd/../../self/fd/2`：Linux 的 `/dev/fd` 是指向 `/proc/self/fd` 的 symlink，實際是 stderr；本機沒有那個 symlink。"},
+    ("ci-log-filter-bypass-r42-default-group-proc-pid-fd1.yml", "group writes to proc-pid-fd1"):
+        {"dir": "誤擋", "hash": "sha256:923cbb058aab2662553bab6b9313fb820dd4083f9f45e75ebacfba500cc6732c", "why": "預設模式的雙胞胎（R42 WP5）：`/proc/$$/fd/1` 只在 Linux 寫到外層 shell 的 fd。擋它的是 fd 流向規則、不是正面文法，所以不歸文法外。"},
+    # macOS 的 BSD `dd` 不認 `oflag=append`（不是 /proc 的差別，但同樣只在這個平台成立——Linux 的 GNU dd 照寫，神諭判一致）。
+    ("ci-log-filter-bypass-r42-ghenv.yml", "a17-dd"):
+        {"dir": "誤擋", "hash": "sha256:51795bdbe6da9584355a17610a6abfa3e92f02e63b13d2c041ce5d3b63cef19a", "why": "BSD `dd` 拒絕 `oflag=append`、什麼都沒寫；GNU dd 會把 PR 文字寫進 `$GITHUB_ENV`。"},
 }
-if not os.path.isdir("/proc/self/fd"):
+# 文法外類別的平台變體（`文法外-without-proc`）也看這個旗標，見 `check_file`。
+HAS_PROC = os.path.isdir("/proc/self/fd")
+if not HAS_PROC:
     KNOWN_DISAGREE.update(KNOWN_DISAGREE_WITHOUT_PROC)
 
 # lint 自己的宣告正規式（與 `lint-ci-log-filter.sh` 的 `LOGFILTER_RE` 同形）。這裡只用它判**文字長相**；
@@ -294,9 +291,10 @@ PR_MARKER = "ORACLE-PR-TITLE-MARKER"
 # ── runner 運算式的代換（R40，#33 verify R39 第 1 列、DA N3）─────────────────────────────────────────────────────────────
 # 前一版不代換 `${{ … }}`：bash 看到的是錯誤的替換，量不到代換之後的注入——R39 的 `${{ }}` 規則只認兩種拼法，其餘寫法在
 # `--strict` 放行而真的外流，神諭卻看不見（三條 KNOWN_DISAGREE 寫的就是「神諭不代換運算式」，R40 刪掉）。現在：純字面常數換成它的值；
-# 其餘每一個運算式都當成 PR 可控，依序換成下面這組 payload 各跑一次，**任何一組外流就算外流**，後續的差分與歸類都用那一份。
+# 其餘每一個運算式都當成 PR 可控，換成下面這組 payload 各跑一次、各判一次，選一份（見 `check_file` 與 `select_most_severe`）。
 # payload 的集合是封閉的：純標記（值直接被印出來）＋三種引號脈絡（不加引號、雙引號、單引號）× 兩種位置（收掉群組、群組外的
-# 同一行）。不在這張表上的脈絡（例如 heredoc 內文、`$'…'`）神諭不保證逃得出去——那時它判的是「沒看到外流」，方向是寬。
+# 同一行）＋ R42 的三種脈絡（註解、算術、heredoc 內文，#33 verify R41 DA-4）。不在這張表上的脈絡（例如 `$'…'`）神諭不保證
+# 逃得出去——那時它判的是「沒看到外流」，方向是寬。**每一組都跑**，lint 放行時取最嚴重的一份（R42，logic F9，見 `check_file`）。
 # 每一組都先 `|| :`：runner 用 `bash -e`（神諭也照樣板跑，見 `bash_template_prefix`），運算式前面那個命令失敗時腳本就停了，
 # 標記印不出來——payload 不得依賴它前面的命令成功（R40 自查：`{ make ${{ matrix.target }}; }` 的 make 失敗，前一版的 payload 量不到）。
 RUNNER_PAYLOADS = (
@@ -307,7 +305,35 @@ RUNNER_PAYLOADS = (
     "x || :; echo %s >&2; :" % PR_MARKER,
     'x" || :; echo %s >&2; : "' % PR_MARKER,
     "x' || :; echo %s >&2; : '" % PR_MARKER,
+    # R42（#33 verify R41 DA-4）：前一版逃不出去的三種脈絡，各一組收掉群組、一組印到 stderr。
+    "\nx || :; }; echo %s; { :; #" % PR_MARKER,       # 註解：先換行結束註解，結尾的 `#` 把同一行剩下的原文再變回註解
+    "\nx || :; echo %s >&2; : #" % PR_MARKER,
+    "0 )); }; echo %s; { : $(( 0" % PR_MARKER,         # 算術：收掉 `$((`，最後開一個新的接住原文的 `+ 1 ))`
+    "0 )); echo %s >&2; : $(( 0" % PR_MARKER,
+    "\n{D}\n}; echo %s; { cat <<{D}" % PR_MARKER,      # heredoc 內文：`{D}` 換成所在 heredoc 的終止字（`_heredoc_delim_at`）
+    "\n{D}\necho %s >&2; cat <<{D}" % PR_MARKER,
 )
+# heredoc 的開頭：`<<WORD`、`<<-WORD`、`<<'WORD'`、`<<"WORD"`（不認 `<<<`）。只用來判斷 heredoc 那一組 payload 適不適用——
+# 認錯只會多試或少試一組，不會讓神諭少看已經觀察到的外流。
+HEREDOC_OPEN_RE = re.compile(r"(?<!<)<<(?!<)(-?)[ \t]*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2")
+
+
+def _heredoc_delim_at(run, pos):
+    """`pos` 落在某個 heredoc 的**內文**行裡時，回傳那個 heredoc 的終止字；否則 None。"""
+    off, cur, pending = 0, None, []
+    for line in run.split("\n"):
+        start, end = off, off + len(line)
+        if cur is not None:
+            strip, d = cur
+            if (line.lstrip("\t") if strip else line) == d:
+                cur = pending.pop(0) if pending else None
+            elif start <= pos <= end:
+                return d
+        else:
+            pending += [(m.group(1) == "-", m.group(3)) for m in HEREDOC_OPEN_RE.finditer(line)]
+            cur = pending.pop(0) if pending else None
+        off = end + 1
+    return None
 GH_LITERAL_RE = re.compile(r"\s*(?:'(?:[^']|'')*'|-?\d+(?:\.\d+)?|true|false|null)\s*")
 
 
@@ -335,7 +361,7 @@ def runner_exprs(s):
 
 
 # GitHub 產生、PR 作者控制不了的純量欄位（R40，#33 verify R39 第 12 列）。**封閉列舉，只有這八個**，點號寫法、大小寫不分（Actions 的
-# context 名稱不分大小寫）；索引寫法、函式呼叫、同一物件的其他欄位（`head.ref`、`title`…）不在裡面、照擋。lint 與神諭共用同一份（神諭把它們換成數值，不換成 payload）。
+# context 名稱不分大小寫）；索引寫法、函式呼叫、同一物件的其他欄位（`head.ref`、`title`…）不在裡面、照擋。lint 與神諭各寫一份（神諭把它們換成數值，不換成 payload）；神諭載入時與 lint 那一份比對，不同步就具名退出（見下方「`GH_SAFE_EXPRS` 同步檢查」）。
 GH_SAFE_EXPRS = frozenset((
     "github.event.pull_request.number", "github.event.number",
     "github.event.pull_request.base.sha", "github.event.pull_request.head.sha",
@@ -349,7 +375,9 @@ def _literal_value(inner):
 
 
 def substitute_runner_exprs(run, payload):
-    """把 `run` 裡的運算式換成 runner 會代入的東西：字面常數換成值，其餘換成 `payload`（None ⇒ 只換字面、非字面原樣留著）。"""
+    """把 `run` 裡的運算式換成 runner 會代入的東西：字面常數換成值，其餘換成 `payload`（None ⇒ 只換字面、非字面原樣留著）。
+    payload 帶 `{D}`（heredoc 那一組）時，每個非字面運算式都要落在 heredoc 內文裡、`{D}` 換成那個終止字；有一個不在 ⇒ 回傳 None
+    （這一組不適用這個 step）。"""
     parts, last = [], 0
     for a, b, inner in runner_exprs(run):
         parts.append(run[last:a])
@@ -357,6 +385,11 @@ def substitute_runner_exprs(run, payload):
             parts.append(_literal_value(inner))
         elif inner.strip().lower() in GH_SAFE_EXPRS:
             parts.append("123")
+        elif payload is not None and "{D}" in payload:
+            d = _heredoc_delim_at(run, a)
+            if d is None:
+                return None
+            parts.append(payload.replace("{D}", d))
         else:
             parts.append(run[a:b] if payload is None else payload)
         last = b
@@ -400,22 +433,37 @@ VERDICT_KINDS = ("一致", "不一致：繞過", "不一致：誤擋", "不可�
 # 下面兩個是 lint 的**訊息**字面，不是規則：神諭用它們認出「這條 RULE 是哪一條規則」。lint 改了訊息而這裡沒跟上時，
 # pipefail 那條會被當成一般 RULE 對帳（→ 誤擋、rc=1），S-2 的「`--strict` 的群組規則擋下了」查核會失敗（→ 繞過＋
 # KNOWN-CLASS 過期、rc=1）——兩個方向都是 fail-closed，不會靜默放行。R37 移植 #61 時，`--strict` 的 `2>&1` 規則
-# 換成群組規則，這裡的第二個字面跟著換。
+# 換成群組規則，這裡的第二個字面跟著換；R42 群組規則換成正面文法（#33 verify R41），第二個字面換成文法的標記——
+# 文法拒絕的每一句訊息都帶它（lint 的 `flat_*`），神諭用它認出「這條 RULE 是文法擋的」（文法外類別、S-2 的查核）。
 PIPEFAIL_RULE_MSG = "卻沒有跑在 pipefail 之下"
-STRICT_GROUP_RULE_MSG = "不是整個包在一個群組裡"
+GRAMMAR_RULE_TAG = "不在 `--strict` 的正面文法裡"
 RULE_LINE_RE = re.compile(r":(\d+): RULE: ([^\n]*)")
 # **耦合檢查**（R37 合併時加）：上面兩個字面必須真的出現在 lint 裡。R37 合併 r37a 與 r37b 時，r37b 把 `2>&1` 那條的訊息
 # 改寫了、這裡沒跟上——上一段說那是 fail-closed，但它只會讓某張 fixture 碰巧變紅、不會說出原因。直接查字面，對不上就
 # 具名失敗。
 _LINT_SRC = LINT.read_text(encoding="utf-8", errors="replace") if LINT.is_file() else ""
-for _msg in (PIPEFAIL_RULE_MSG, STRICT_GROUP_RULE_MSG):
+for _msg in (PIPEFAIL_RULE_MSG, GRAMMAR_RULE_TAG):
     if _msg not in _LINT_SRC:
         sys.exit("✗ oracle.py 用來認 RULE 的字面「%s」不在 %s 裡——lint 改了訊息，這裡要同步改" % (_msg, LINT))
+# **`GH_SAFE_EXPRS` 同步檢查**（R42，#33 verify R41）：lint 放行這些運算式、神諭把它們換成數值——兩份清單各寫一次。
+# 不同步時一邊當成作者寫死的值、另一邊當成 PR 可控，對帳量的就不是同一件事，而且沒有任何一張 fixture 會因此變紅。
+# 直接讀 lint 原始碼裡那一份比對。假 lint（`oracle-probes/lint-*.sh`）不解析運算式、沒有這份清單，不比；repo 自己的
+# lint 找不到清單則具名退出。
+_GH_M = re.search(r"^GH_SAFE_EXPRS = frozenset\(\((.*?)\)\)", _LINT_SRC, re.M | re.S)
+if _GH_M is not None:
+    _GH_LINT = frozenset(re.findall(r'"([^"]+)"', _GH_M.group(1)))
+    if _GH_LINT != GH_SAFE_EXPRS:
+        sys.exit("✗ GH_SAFE_EXPRS 在神諭與 %s 裡不同步：只在神諭 %s、只在 lint %s"
+                 % (LINT, sorted(GH_SAFE_EXPRS - _GH_LINT), sorted(_GH_LINT - GH_SAFE_EXPRS)))
+elif LINT == (HERE / "lint-ci-log-filter.sh").resolve():
+    sys.exit("✗ %s 裡找不到 GH_SAFE_EXPRS——神諭無法確認兩份同步" % LINT)
 # 已知類別在 repo 自己的 fixture 集（不給檔案參數）上的**確切**條數（R37，R36 第 2 列；同 selftest 門檻 R24 F9 的理由：
 # 寫成 `>=` 而實際更高時，那個差額沒有網——刪掉一張 G 範例 fixture 仍然綠）。must-fail 探針不算在內。
-FIXTURE_CLASS_TOTALS = {"G": 8, "S-2": 3}
+FIXTURE_CLASS_TOTALS = {"G": 8, "S-2": 3, "文法外": 95, "文法外-without-proc": 2}
+# `文法外-without-proc` 只在沒有 /proc 的平台成立（見 `check_file` 的平台變體）；有 /proc 時預期是 0。
+FIXTURE_CLASS_PLATFORM_ONLY = frozenset(("文法外-without-proc",))
 # must-fail 探針的確切張數（同理：刪掉一張探針＝少一條負對照，必須立刻紅）。
-FIXTURE_MUSTFAIL_TOTAL = 8
+FIXTURE_MUSTFAIL_TOTAL = 8   # R42：`bypass-r37a-mustfail-strict-pipefail-hides-2to1` 退役（見該檔頭）、新增 `oracle-r42-s2-flip`
 KNOWN_CLASS_RE = re.compile(r"^# KNOWN-CLASS: (\S+)", re.M)
 MUSTFAIL_RE = re.compile(r"^# ORACLE-MUST-FAIL: (.+?)\s*$", re.M)
 # 差分用的中性命令：單獨一行是合法的空操作（rc=0），接在懸空的 `|`／`|&` 後面則是**語法錯誤**——`!` 只能出現在
@@ -437,10 +485,66 @@ cat >/dev/null 2>&1; exit 0
 # 實測差別（468 檔產生語料）：文字哨兵 `一致 408、不一致 0、量不到 60`；EXIT trap
 # `一致 413、不一致 55、量不到 0`。**那個被宣傳成「不一致 0」的數字，量到的是儀器答不出來。**
 # EXIT trap 不是腳本正文的一部分，heredoc 的資料區吞不掉它——這是「非文字哨兵」的意思。
-PRELUDE = '''set -T
-__orc_prev=""
-trap '[ ${#PIPESTATUS[@]} -ge 2 ] && case "$__orc_prev" in *neutralise.py*) echo "piped" >> "$ORACLE_MARK";; esac; __orc_prev=$BASH_COMMAND' DEBUG
-trap ':' EXIT
+#
+# **pipefail 探針**（R42，#33 verify R41 放行條件 5；原型 r42-design 的 pfprobe2）：同一個 DEBUG trap 另外記每一條跑完的
+# 多段管線開始時 pipefail 開著沒有（`pf … start=`）、以及退出碼有沒有被遮蔽（`masked=1`：整條 rc=0 但有一段非 0）。
+# 每個 shell 行程（子殼層也算）第一次觸發時記 `start`，結束時由 EXIT trap 的 `__orc_fin` 比對 DEBUG trap 還是不是神諭裝的
+# ——腳本自己改了 DEBUG trap（`trap … DEBUG`）或換掉了 EXIT trap（`builtin trap … EXIT`），探針就量不到（`pf_observation`）。
+# **EXIT 的組合**：腳本裡的 `trap <動作> EXIT`（或 `0`）——正面文法唯一收的 trap 形狀——經 `trap` 函式接到 `__orc_fin` 之後，
+# `$?` 先存後還；其他任何寫法都交給內建 trap，由完整性檢查判量不到。管線判定（`piped`）與前一版逐字相同。
+PRELUDE = r'''set -T
+__orc_dbg() {
+  local -; set +xv
+  case " ${FUNCNAME[*]:1} " in *" __orc_"*|*" trap "*) return 0;; esac
+  local __s=$1 __new=0 __x __m=0 __cur=off
+  shift
+  if [ "$BASHPID" != "$__orc_pid" ]; then
+    __orc_pid=$BASHPID; __new=1
+    echo "start $BASHPID" >> "$ORACLE_PF"
+    builtin trap '__orc_fin' EXIT
+  fi
+  if [ $# -ge 2 ]; then
+    case "$__orc_prev" in *neutralise.py*) echo "piped" >> "$ORACLE_MARK";; esac
+    if [ $__new = 0 ]; then
+      if [ "$__s" = 0 ]; then for __x in "$@"; do if [ "$__x" != 0 ]; then __m=1; fi; done; fi
+      if [[ -o pipefail ]]; then __cur=on; fi
+      echo "pf $BASHPID start=$__orc_pf end=$__cur masked=$__m rc=$__s" >> "$ORACLE_PF"
+    fi
+  fi
+  __orc_prev=$BASH_COMMAND
+  __orc_pf=off; if [[ -o pipefail ]]; then __orc_pf=on; fi
+  return 0
+}
+__orc_fin() {
+  local -; set +xv
+  local __t=""
+  builtin trap -p DEBUG >| "$ORACLE_PF.t$BASHPID"
+  IFS= read -r __t < "$ORACLE_PF.t$BASHPID" || :
+  if [ "$__t" = "$__orc_want" ]; then echo "fin $BASHPID ok" >> "$ORACLE_PF"
+  else echo "fin $BASHPID dbg-changed" >> "$ORACLE_PF"; fi
+}
+__orc_ret() { return "$1"; }
+trap() {
+  local -; set +xv
+  if [ $# -eq 2 ] && { [ "$2" = EXIT ] || [ "$2" = 0 ]; }; then
+    __orc_uexit=$1
+    builtin trap '__orc_x=$?; __orc_fin; __orc_ret "$__orc_x"; eval -- "$__orc_uexit"' EXIT
+    return 0
+  fi
+  builtin trap "$@"
+}
+__orc_init() {
+  local -; set +xv
+  __orc_prev=""
+  __orc_pid=$BASHPID
+  __orc_pf=off; if [[ -o pipefail ]]; then __orc_pf=on; fi
+  builtin trap '__orc_dbg "$?" "${PIPESTATUS[@]}"' DEBUG
+  builtin trap -p DEBUG >| "$ORACLE_PF.want"
+  IFS= read -r __orc_want < "$ORACLE_PF.want"
+  echo "start $BASHPID main" >> "$ORACLE_PF"
+  builtin trap '__orc_fin' EXIT
+}
+__orc_init
 '''
 
 
@@ -451,25 +555,66 @@ def pick_bash():
     raise SystemExit("找不到 bash")
 
 
-def run_script(run, bash, stub_bin, yaml_env=None):
+# 跨 step 的通道（R42，#33 verify R41 放行條件 3 的神諭那一半）：runner 在 step 結束後讀這些檔。神諭把它們指到空的暫存檔，
+# 跑完看裡面有沒有 PR 文字。GITHUB_ENV／GITHUB_PATH 決定之後每一個 step 的環境；GITHUB_OUTPUT／GITHUB_STATE 經運算式流到
+# 之後的 step；GITHUB_STEP_SUMMARY 顯示在執行摘要。神諭五個都看——比 lint 的規則範圍（ENV／PATH）嚴格，方向是寬。
+CHANNELS = ("GITHUB_ENV", "GITHUB_PATH", "GITHUB_OUTPUT", "GITHUB_STATE", "GITHUB_STEP_SUMMARY")
+
+
+def pf_observation(recs):
+    """pipefail 探針的判讀（`on`／`off`／`no-pipeline`／`unmeasured`）。`off`：有一條多段管線開始時 pipefail 是關的——看到了就是
+    事實，優先於完整性檢查；`unmeasured`：某個行程的 DEBUG trap 被換掉、或某個行程沒有跑到 `__orc_fin`；`no-pipeline`：沒有任何
+    多段管線跑完。"""
+    main = {l.split()[1] for l in recs if l.startswith("start ") and l.endswith(" main")}
+    fins = dict(l.split()[1:3] for l in recs if l.startswith("fin "))
+    pipes = [l for l in recs if l.startswith("pf ")]
+    if any(" start=off " in l for l in pipes):
+        return "off"
+    # 缺 `fin` 只看**主 shell**：子殼層最後一個命令是外部程式時 bash 直接 exec，EXIT trap 本來就不會跑（`$(mktemp -d)`、管線裡的
+    # `git …`）——那不是竄改（R42 自查：`good-r42-trap-exit` 因此被判量不到）。子殼層換掉 DEBUG trap 仍由 `dbg-changed` 抓到；
+    # 子殼層同時換掉 DEBUG 與 EXIT 的雙重竄改看不到——正面文法拒絕任何 `trap … DEBUG` 與非 `trap <動作> EXIT` 的寫法，
+    # 這種 step 一定是 lint 擋下的，看不到只會讓「量不到」變成「一致」，不改退出碼。
+    if any(v != "ok" for v in fins.values()) or not main or main - set(fins):
+        return "unmeasured"
+    return "on" if pipes else "no-pipeline"
+
+
+def run_script(run, bash, stub_bin, yaml_env=None, extra=False):
     """跑一次 run 區塊，回傳 (verdict, observable, leaked, marker_lines)。
     verdict: 'piped' / 'called-unpiped' / 'not-invoked' / 'timeout'
     observable: 差分用的可觀察結果（rc, stdout, stderr, mark 內容）——逾時的那次不拿來差分。
     leaked: (stdout 有 PR 文字, stderr 有 PR 文字)。
     marker_lines: (stdout, stderr) 各自「含 PR 文字的行」的多重集合（Counter），臨時目錄路徑換成 `<TMP>`——
       已知類別 G 的差分比的是它（`classify_piped_leak`）：兩次執行的臨時目錄不同，bash 的錯誤訊息又帶腳本路徑。
-    yaml_env: 從 YAML `env:` 收來的變數（R37，R36 第 8 列）；神諭自己的 PATH／HOME／PR_TITLE／ORACLE_MARK 一律蓋過它。"""
+    yaml_env: 從 YAML `env:` 收來的變數（R37，R36 第 8 列）；神諭自己的 PATH／HOME／PR_TITLE／ORACLE_MARK 一律蓋過它。
+    extra=True 時另外回傳第五項 dict：`pf`（`pf_observation`）與 `chan`（帶 PR 文字的通道名，見 `CHANNELS`）。"""
     with tempfile.TemporaryDirectory() as d:
         mark = os.path.join(d, "mark")
         open(mark, "w").close()
+        pf = os.path.join(d, "pf")
+        open(pf, "w").close()
+        chan = {c: os.path.join(d, "chan-" + c) for c in CHANNELS}
+        for c in chan.values():
+            open(c, "w").close()
         script = os.path.join(d, "s.sh")
         with open(script, "w") as fh:
             # 收尾命令由 PRELUDE 的 `trap ':' EXIT` 提供——**不要**在這裡再補文字，
             # 那正是 R32 DA-6 抓到的缺陷（heredoc 會吞掉它）。
             fh.write(PRELUDE); fh.write(run); fh.write("\n")
         env = dict(yaml_env or {})
-        env.update({"PATH": stub_bin + ":/usr/bin:/bin", "ORACLE_MARK": mark,
-                    "PR_TITLE": PR_MARKER, "HOME": d, "PS4": PS4_MARK})
+        # runner 一定會設、lint 的正面文法也信任的兩個變數（R42：`FL_TARGET_VARS`／`FL_GHVALUE_VARS`）。前一版不設，
+        # `> "$RUNNER_TEMP/e"` 在神諭裡變成寫 `/e`、失敗，那一步做了什麼就量不到（`bypass-r42-ghenv` 的 ge-alias-var、ge-cat-file）。
+        runner_temp = os.path.join(d, "runner_temp")
+        os.mkdir(runner_temp)
+        env.update({"PATH": stub_bin + ":/usr/bin:/bin", "ORACLE_MARK": mark, "ORACLE_PF": pf,
+                    "PR_TITLE": PR_MARKER, "HOME": d, "PS4": PS4_MARK,
+                    "RUNNER_TEMP": runner_temp, "GITHUB_WORKSPACE": d})
+        env.update(chan)
+
+        def more():
+            recs = open(pf).read().split("\n")
+            got_chan = [c for c, path in chan.items() if PR_MARKER in open(path, errors="replace").read()]
+            return {"pf": pf_observation(recs), "chan": got_chan}
         try:
             # stdin **一定要**是 /dev/null：繼承呼叫端的 stdin 會讓任何讀 stdin 的指令卡住，
             # 於是「量不到」變成隨呼叫環境而定的東西（R31 自查：同一個 fixture 在終端機下逾時、
@@ -483,18 +628,18 @@ def run_script(run, bash, stub_bin, yaml_env=None):
             leaked = (PR_MARKER.encode() in so, PR_MARKER.encode() in se)
             mlines = tuple(collections.Counter(l.replace(d, "<TMP>") for l in s.decode("utf-8", "replace").split("\n")
                                                if PR_MARKER in l) for s in (so, se))
-            return "timeout", None, leaked, mlines
+            return ("timeout", None, leaked, mlines) + (({"pf": "unmeasured", "chan": []},) if extra else ())
         got = open(mark).read().split("\n")
         # 分開記 stdout 與 stderr：外流走哪一條流是歸類的輸入（S-2 只可能走 stderr；管線自己印到 stdout 一律是繞過）。
         leaked = (PR_MARKER.encode() in r.stdout, PR_MARKER.encode() in r.stderr)
-        obs = (r.returncode, r.stdout, r.stderr, sorted(got))
+        # 暫存目錄換成 `<TMP>`（R42 自查）：bash 的錯誤訊息帶腳本路徑，每次執行的暫存目錄不同——前一版的差分（`real_declaration`）
+        # 因此在任何會印 bash 錯誤的宣告 step 上都判「不是宣告」（`gen-g-d-008`：`[ -n a{b,c} ]` 的錯誤訊息）。`mlines` 早就這樣做。
+        tmpb = d.encode()
+        obs = (r.returncode, r.stdout.replace(tmpb, b"<TMP>"), r.stderr.replace(tmpb, b"<TMP>"), sorted(got))
         mlines = tuple(collections.Counter(l.replace(d, "<TMP>") for l in s.decode("utf-8", "replace").split("\n")
                                            if PR_MARKER in l) for s in (r.stdout, r.stderr))
-        if "piped" in got:
-            return "piped", obs, leaked, mlines
-        if any(l.startswith("called ") for l in got):
-            return "called-unpiped", obs, leaked, mlines
-        return "not-invoked", obs, leaked, mlines
+        o = "piped" if "piped" in got else ("called-unpiped" if any(l.startswith("called ") for l in got) else "not-invoked")
+        return (o, obs, leaked, mlines) + ((more(),) if extra else ())
 
 
 MARKER_RE = re.compile(r"#\s*LOG-FILTER:\s*(?:in-process|none — .+)")
@@ -763,15 +908,19 @@ def strict_blocks_text(run_text):
 
 
 def _env_of(node):
-    """mapping 節點的 `env:`（純量值才收；鍵非空、鍵不含 `=`、鍵值合併不含 NUL byte；含 `${{` 的值只有 runner 知道，不設）。R37，R36 第 8 列。"""
+    """mapping 節點的 `env:`（純量值才收；鍵非空、鍵不含 `=`、鍵值合併不含 NUL byte）。R37，R36 第 8 列。
+    **含 `${{` 的值照 run 區塊的規則代換**（R42，#33 verify R41）：字面常數換成值、`GH_SAFE_EXPRS` 換成數字、其餘當成 PR 可控，
+    換成 `PR_MARKER`。前一版不設這些變數，`env: PR_BODY: ${{ github.event.pull_request.body }}` 的 step 把 `$PR_BODY` 寫到哪裡
+    神諭都看不到（R42 自查：`bypass-r42-ghenv` 42 步只量到 13 步的通道外流）。env 的值是資料、不會被 shell 剖析，
+    所以只用純標記、不用 `RUNNER_PAYLOADS` 的逃脫形式。"""
     if not isinstance(node, yaml.MappingNode):
         return {}
     e = {kk.value: vv for kk, vv in node.value if isinstance(kk, yaml.ScalarNode)}.get("env")
     if not isinstance(e, yaml.MappingNode):
         return {}
-    return {k.value: v.value for k, v in e.value
+    return {k.value: substitute_runner_exprs(v.value, PR_MARKER) for k, v in e.value
             if isinstance(k, yaml.ScalarNode) and isinstance(v, yaml.ScalarNode)
-            and k.value and "=" not in k.value and "\0" not in k.value + v.value and "${{" not in v.value}
+            and k.value and "=" not in k.value and "\0" not in k.value + v.value}
 
 
 def steps_with_lines(text):
@@ -921,6 +1070,50 @@ def block_scalar_body_lines(text):
     return out
 
 
+def kd_hash(run):
+    """KNOWN_DISAGREE 條目的內容雜湊（R42，#33 verify R41 DA-5）：`steps_with_lines` 給的 run 區塊——YAML 已經去掉縮排、
+    照 block scalar 的規則接好行，**運算式代換之前**——換行一律 `\n`，UTF-8 位元組的 sha256。條目只擔保它被寫下時的那段
+    文字：內容改了，理由就要重新判斷。算法改了這裡，所有條目的 `hash` 都要重算（`--print-kd-hash`）。"""
+    return "sha256:" + hashlib.sha256(run.replace("\r\n", "\n").encode("utf-8")).hexdigest()
+
+
+def _severity(verdict, classes):
+    """`select_most_severe` 的等級：stdout 外流的繞過＝跨 step 通道的繞過 > 其他繞過 > 已知類別 > 量不到 > 其他。"""
+    if verdict.startswith("不一致：繞過") and not classes:
+        return 4 if ("印到 stdout" in verdict or "跨 step 通道" in verdict) else 3
+    if classes:
+        return 2
+    return 1 if verdict.startswith("量不到") else 0
+
+
+def select_most_severe(results):
+    """`results`：[(verdict, classes), …]，依 payload 的順序。回傳最嚴重那一份的索引（同級取最前面）。R42（#33 verify R41
+    logic F9）：前一版取「第一個外流的 payload」，一組只從 stderr 外流、被歸進 S-2 的 payload 因此蓋掉後面一組印到 stdout 的繞過。"""
+    best = 0
+    for i, (v, c) in enumerate(results):
+        if _severity(v, c) > _severity(*results[best]):
+            best = i
+    return best
+
+
+def selftest_severity():
+    """`--selftest-severity`：`select_most_severe` 的單元測試（`oracle_selfcheck.py` 呼叫），合成的判定，不跑 bash。"""
+    out = ("不一致：繞過（接 neutralise 的管線自己把 PR 文字印到 stdout——不是 G 也不是 S-2）", [])
+    err = ("不一致：繞過（接 neutralise 的管線自己把 PR 文字印到 stderr，但每一段補上 `2>&1`…——不是 S-2）", [])
+    s2 = ("不一致：繞過（已知類別 S-2：管線自己只從 stderr 外流——…）", ["S-2"])
+    chan = ("不一致：繞過（跨 step 通道：GITHUB_ENV 帶 PR 文字——之後的 step 讀得到）", [])
+    ok, unm = ("一致", []), ("量不到（逾時 5s）", [])
+    cases = [([err, out], 1), ([out, err], 0), ([s2, err], 1), ([s2, out], 1), ([ok, s2], 1), ([ok, ok], 0),
+             ([s2, chan], 1), ([ok, unm], 1), ([chan, out], 0)]
+    for items, want in cases:
+        got = select_most_severe(items)
+        if got != want:
+            print("✗ select_most_severe(%s) = %d，預期 %d" % ([v[:24] for v, _ in items], got, want))
+            return 1
+    print("select_most_severe ok（%d 組）" % len(cases))
+    return 0
+
+
 def run_lint(largs, f):
     return subprocess.run(["bash", str(LINT)] + largs + [str(f)], capture_output=True, text=True)
 
@@ -973,16 +1166,15 @@ def check_file(f, text, bash, stub_bin):
     # 前一版在每個 step 內各算一次，於是別的 step 的 PARSE 讓這個 step 也變成 PARSE
     # （`bypass-duplicate-key` 的合規對照 step 被算成「PARSE ∧ piped」＝誤擋，R31 自查）。
     struct_parse = any(not any(lo <= x <= hi for lo, hi in ranges) for x in parse_lines)
+    declared = collections.Counter(KNOWN_CLASS_RE.findall(text))
     for _job, name, run, (a, b), shell_note, yenv in steps:
         key = (f.name, name, a + 1)     # **含行號**（#33 verify R34 DA n1）：同名 step 不得共用一個 key
+        run0 = run                      # KD 的雜湊算在運算式代換之前（`kd_hash`）
         in_step = lambda ln: a + 1 <= ln <= b + 1
         step_rules = [m for ln, m in rules if in_step(ln)]
-        # `[--strict]` 的 pipefail 規則管的是**退出碼被遮蔽**，不是 PR 文字外流——神諭量不到它（R35）。
-        # **只在它是這個 step 唯一的 RULE 時**才判不可比（R37，R36 第 18 列）：前一版只要 step 起始行上有一條 pipefail
-        # RULE 就整個 step `continue`，同一行的 fd 流向、`2>&1` 規則一起被藏起來、不做外流對帳。
-        if step_rules and all(PIPEFAIL_RULE_MSG in m for m in step_rules):
-            rows.append((f.name, name, "RULE-pipefail", "-", "不可比（`--strict` 的 pipefail 規則是這個 step 唯一的 RULE：量的是退出碼遮蔽，不是外流）"))
-            continue
+        # `[--strict]` 的 pipefail 規則管的是**退出碼被遮蔽**，不是 PR 文字外流。R35–R41 神諭量不到它，這種 step 一律判不可比；
+        # R42 起有 pipefail 探針（PRELUDE），照常跑，再依探針判（見下方 strict 檔的疊加）。探針說「沒有管線跑完」時仍是不可比。
+        pf_only = bool(step_rules) and all(PIPEFAIL_RULE_MSG in m for m in step_rules)
         if shell_note:
             rows.append((f.name, name, "-", "-", "不可比（%s——神諭只會用 bash 跑）" % shell_note))
             # R40（#33 verify R39 放行條件 12）：不可比的 step 前一版直接跳過——掛在它上面的 KNOWN_DISAGREE 條目因此永遠不會過期
@@ -993,123 +1185,195 @@ def check_file(f, text, bash, stub_bin):
                 res["uncomparable"].append(key)
                 res["failures"].append("%s（第 %d 行）：宣告了 ORACLE-COMPARABLE，卻不可比（%s）" % (name, a + 1, shell_note))
             continue
-        if has_nonliteral_expr(run):
-            # 依序試 RUNNER_PAYLOADS，取第一個外流的那一份（沒有任何一份外流就用第一份）；下游的差分、機制與原因檢查都用它。
-            tried = []
-            for payload in RUNNER_PAYLOADS:
-                cand = substitute_runner_exprs(run, payload)
-                tried.append((cand, run_script(cand, bash, stub_bin, yenv)))
-                if tried[-1][1][2][0] or tried[-1][1][2][1]:
-                    break
-            run, (o, obs, leaked, mlines) = next((c for c in tried if c[1][2][0] or c[1][2][1]), tried[0])
-        else:
-            run = substitute_runner_exprs(run, None)
-            o, obs, leaked, mlines = run_script(run, bash, stub_bin, yenv)
-        # step 範圍外的 PARSE 是**結構性**的（整檔不可信）→ 所有 step 都不可比；
-        # 範圍內的 PARSE 只影響那一個 step。前一版對整檔一視同仁，於是
-        # `bypass-duplicate-key` 的合規對照 step 被算成「PARSE ∧ piped」＝誤擋（R31 自查）。
-        # **lint 自己 fail-loud（rc=2：檔案不存在／用法錯誤）不是 pass**（R32 DA-8）。
-        # 前一版只看 stderr 裡的 RULE/PARSE 標記，rc=2 時兩者都沒有 ⇒ 落到 `pass` ⇒ 一個
-        # 刻意的 fail-loud 被神諭讀成「lint 放行」。命名為 ERROR、歸不可比，不進一致也不進不一致。
-        if r.returncode == 2:
-            lint = "ERROR"
-        else:
-            lint = ("RULE-red" if step_rules
-                    else ("PARSE" if (any(in_step(x) for x in parse_lines) or struct_parse) else "pass"))
-        classes = []
-        if o == "timeout" and lint == "pass" and (leaked[0] or leaked[1]):
-            verdict = ("不一致：繞過（逾時之前已經觀察到 PR 文字外流——量不到的只是之後的部分，不抵銷已觀察到的外流）")
-        elif o == "timeout":
-            verdict = "量不到（逾時 %ds）" % TIMEOUT_S
-            res["unmeasured"].append(key)
-        elif lint == "ERROR":
-            verdict = "不可比（lint rc=2：fail-loud，不是判定）"
-        elif lint == "PARSE":
-            if o == "piped" and expect != "parse-red":
-                verdict = "不一致：誤擋（PARSE）"
+        def judge(run, o, obs, leaked, mlines, more):
+            """一次執行的判定（R42 WP8 抽出來：每一組 payload 各判一次，再選一份）。回傳 (verdict, classes, 量不到?, lint)。"""
+            unm = False
+            # step 範圍外的 PARSE 是**結構性**的（整檔不可信）→ 所有 step 都不可比；
+            # 範圍內的 PARSE 只影響那一個 step。前一版對整檔一視同仁，於是
+            # `bypass-duplicate-key` 的合規對照 step 被算成「PARSE ∧ piped」＝誤擋（R31 自查）。
+            # **lint 自己 fail-loud（rc=2：檔案不存在／用法錯誤）不是 pass**（R32 DA-8）。
+            # 前一版只看 stderr 裡的 RULE/PARSE 標記，rc=2 時兩者都沒有 ⇒ 落到 `pass` ⇒ 一個
+            # 刻意的 fail-loud 被神諭讀成「lint 放行」。命名為 ERROR、歸不可比，不進一致也不進不一致。
+            if r.returncode == 2:
+                lint = "ERROR"
             else:
-                verdict = "不可比（fail-closed%s）" % ("，檔案自己宣告 parse-red" if expect == "parse-red" else "")
-        elif lint == "pass" and o == "piped":
-            # **「某處有管線」≠「沒有洩漏」**（R32 Codex 第 4 條／security S-3／requirements F4）：洩漏就要問是誰印的。
-            # 前一版用兩條 lint 規則的正規式副本回答，R36 第 1 列證明那是按症狀收容（見 `classify_piped_leak`）。
-            if not (leaked[0] or leaked[1]):
+                lint = ("RULE-red" if step_rules
+                        else ("PARSE" if (any(in_step(x) for x in parse_lines) or struct_parse) else "pass"))
+            classes = []
+            if o == "timeout" and lint == "pass" and (leaked[0] or leaked[1]):
+                verdict = ("不一致：繞過（逾時之前已經觀察到 PR 文字外流——量不到的只是之後的部分，不抵銷已觀察到的外流）")
+            elif o == "timeout" and lint == "RULE-red" and (leaked[0] or leaked[1]):
+                # lint 擋下、逾時之前已經觀察到外流（R42，#33 verify R41 第 20 列）：同「RULE ∧ 外流 → 一致」，擋下是對的。
+                # 前一版落到下一格「量不到」，逐項印出卻不是事實——外流已經看到了。
                 verdict = "一致"
-            else:
-                kind, detail, ctx = classify_piped_leak(run, bash, stub_bin, yenv, mlines)
-                if any(XTRACE_LINE_RE.match(l) for c in mlines for l in c):
-                    # xtrace 的外流（R39，#33 verify R38 第 4、6 列）：前一版把 `command -p set -x` 之後的 `+ echo …` 收進 S-2，
-                    # 訊息還說「缺 `2>&1`」——那條管線帶了 `2>&1`。xtrace 是 lint 兩種模式都要求的 fd 規則，漏了就是繞過。
-                    verdict = XTRACE_LEAK
-                elif kind == "unmeasured":
-                    # **已觀察到外流、只是分類失敗 ⇒ 繞過，不是量不到**（R39，#33 verify R38 第 3 列）。前一版判「量不到」，
-                    # 而量不到不改 rc：Codex 的多行群組輸入讓 lint 與神諭同時 rc=0。外流是 baseline 的事實，分類是額外的歸屬；
-                    # 歸屬失敗不抵銷事實。
-                    verdict = "不一致：繞過（PR 文字已經外流，來源分類量不到：%s——分類失敗不抵銷已觀察到的外流）" % detail
-                elif kind == "G":
-                    # 換掉接 neutralise 的邏輯行，外流原封不動 ⇒ 印它的是**另一條命令**——lint 明寫的「已知不涵蓋，第二組」第 2 條
-                    # 「一條管線＝整個區塊已過濾」（Codex R32 第 4 條）。按類別記已知：整類在「什麼算已過濾」改掉的那一天一起翻。
-                    if not strict_blocks(in_step):
-                        verdict = STRICT_MISS % "G"
-                    else:
-                        why = strict_blocks_text(reduce_leaking_run(run, ctx[0], bash, stub_bin, yenv))
-                        if why is None:
-                            verdict = CAUSE_MISS % "G"
-                        else:
-                            verdict = ("不一致：繞過（已知類別 G：一條管線＝整個區塊已過濾——差分：換掉接 neutralise 的邏輯行後外流原封不動，"
-                                       "限制第 2 條；刪掉與外流無關的行之後 `--strict` 仍擋：%s）" % why[:80])
-                            classes = ["G"]
+            elif o == "timeout":
+                verdict = "量不到（逾時 %ds）" % TIMEOUT_S
+                unm = True
+            elif lint == "ERROR":
+                verdict = "不可比（lint rc=2：fail-loud，不是判定）"
+            elif lint == "PARSE":
+                if o == "piped" and expect != "parse-red":
+                    verdict = "不一致：誤擋（PARSE）"
                 else:
-                    streams, g_part = detail
-                    if "stdout" in streams:
-                        verdict = "不一致：繞過（接 neutralise 的管線自己把 PR 文字印到 stdout——不是 G 也不是 S-2）"
-                    elif any(in_step(ln) and STRICT_GROUP_RULE_MSG in m for ln, m in strict_out()[0]):
-                        # 檔案本身是 `--strict` 時，這裡查的就是剛才放行它的同一次 lint ⇒ 結構上不可能成立——所以不需要另外的
-                        # 「模式是不是 strict」判斷（那會是一條等價突變）。S-2 另外要求**機制**成立（`s2_mechanism`）與原因檢查。
-                        mech = s2_mechanism(run, ctx[0], bash, stub_bin, yenv, mlines, ctx[1])
-                        why = mech and strict_blocks_text(reduce_leaking_run(run, ctx[0], bash, stub_bin, yenv))
-                        if not mech:
-                            verdict = ("不一致：繞過（接 neutralise 的管線自己把 PR 文字印到 stderr，但每一段補上 `2>&1`、"
-                                       "或（bash 自己的錯誤訊息時）左邊包成群組，外流都不消失——不是 S-2）")
-                        elif why is None:
-                            verdict = CAUSE_MISS % "S-2"
+                    verdict = "不可比（fail-closed%s）" % ("，檔案自己宣告 parse-red" if expect == "parse-red" else "")
+            elif lint == "pass" and o == "piped":
+                # **「某處有管線」≠「沒有洩漏」**（R32 Codex 第 4 條／security S-3／requirements F4）：洩漏就要問是誰印的。
+                # 前一版用兩條 lint 規則的正規式副本回答，R36 第 1 列證明那是按症狀收容（見 `classify_piped_leak`）。
+                if not (leaked[0] or leaked[1]):
+                    verdict = "一致"
+                else:
+                    kind, detail, ctx = classify_piped_leak(run, bash, stub_bin, yenv, mlines)
+                    if any(XTRACE_LINE_RE.match(l) for c in mlines for l in c):
+                        # xtrace 的外流（R39，#33 verify R38 第 4、6 列）：前一版把 `command -p set -x` 之後的 `+ echo …` 收進 S-2，
+                        # 訊息還說「缺 `2>&1`」——那條管線帶了 `2>&1`。xtrace 是 lint 兩種模式都要求的 fd 規則，漏了就是繞過。
+                        verdict = XTRACE_LEAK
+                    elif kind == "unmeasured":
+                        # **已觀察到外流、只是分類失敗 ⇒ 繞過，不是量不到**（R39，#33 verify R38 第 3 列）。前一版判「量不到」，
+                        # 而量不到不改 rc：Codex 的多行群組輸入讓 lint 與神諭同時 rc=0。外流是 baseline 的事實，分類是額外的歸屬；
+                        # 歸屬失敗不抵銷事實。
+                        verdict = "不一致：繞過（PR 文字已經外流，來源分類量不到：%s——分類失敗不抵銷已觀察到的外流）" % detail
+                    elif kind == "G":
+                        # 換掉接 neutralise 的邏輯行，外流原封不動 ⇒ 印它的是**另一條命令**——lint 明寫的「已知不涵蓋，第二組」第 2 條
+                        # 「一條管線＝整個區塊已過濾」（Codex R32 第 4 條）。按類別記已知：整類在「什麼算已過濾」改掉的那一天一起翻。
+                        if not strict_blocks(in_step):
+                            verdict = STRICT_MISS % "G"
                         else:
-                            verdict = ("不一致：繞過（已知類別 S-2%s：管線自己只從 stderr 外流——%s；預設模式不要求，"
-                                       "刪掉與外流無關的行之後 `--strict` 仍擋：%s）"
-                                       % ("＋G（同一 step 另有別的命令也印）" if g_part else "",
-                                          "缺 `2>&1`（每一段補上就消失）" if mech == "missing-2to1"
-                                          else "展開期／重導向錯誤早於 `2>&1` 生效（左邊包成群組就消失）", why[:80]))
-                            classes = ["S-2"] + (["G"] if g_part else [])
+                            why = strict_blocks_text(reduce_leaking_run(run, ctx[0], bash, stub_bin, yenv))
+                            if why is None:
+                                verdict = CAUSE_MISS % "G"
+                            else:
+                                verdict = ("不一致：繞過（已知類別 G：一條管線＝整個區塊已過濾——差分：換掉接 neutralise 的邏輯行後外流原封不動，"
+                                           "限制第 2 條；刪掉與外流無關的行之後 `--strict` 仍擋：%s）" % why[:80])
+                                classes = ["G"]
                     else:
-                        verdict = ("不一致：繞過（接 neutralise 的管線自己把 PR 文字印到 stderr，而 `--strict` 的群組規則"
-                                   "沒有擋下這個 step——不是預設模式獨有的缺口，不是 S-2）")
-        elif lint == "pass":
-            decl = (yaml_declaration(text, a, b, bodies)
-                    or real_declaration(run, bash, stub_bin, obs, yenv))
-            if decl:
+                        streams, g_part = detail
+                        if "stdout" in streams:
+                            verdict = "不一致：繞過（接 neutralise 的管線自己把 PR 文字印到 stdout——不是 G 也不是 S-2）"
+                        elif any(in_step(ln) and GRAMMAR_RULE_TAG in m for ln, m in strict_out()[0]):
+                            # 檔案本身是 `--strict` 時，這裡查的就是剛才放行它的同一次 lint ⇒ 結構上不可能成立——所以不需要另外的
+                            # 「模式是不是 strict」判斷（那會是一條等價突變）。S-2 另外要求**機制**成立（`s2_mechanism`）與原因檢查。
+                            mech = s2_mechanism(run, ctx[0], bash, stub_bin, yenv, mlines, ctx[1])
+                            why = mech and strict_blocks_text(reduce_leaking_run(run, ctx[0], bash, stub_bin, yenv))
+                            if not mech:
+                                verdict = ("不一致：繞過（接 neutralise 的管線自己把 PR 文字印到 stderr，但每一段補上 `2>&1`、"
+                                           "或（bash 自己的錯誤訊息時）左邊包成群組，外流都不消失——不是 S-2）")
+                            elif why is None:
+                                verdict = CAUSE_MISS % "S-2"
+                            else:
+                                verdict = ("不一致：繞過（已知類別 S-2%s：管線自己只從 stderr 外流——%s；預設模式不要求，"
+                                           "刪掉與外流無關的行之後 `--strict` 仍擋：%s）"
+                                           % ("＋G（同一 step 另有別的命令也印）" if g_part else "",
+                                              "缺 `2>&1`（每一段補上就消失）" if mech == "missing-2to1"
+                                              else "展開期／重導向錯誤早於 `2>&1` 生效（左邊包成群組就消失）", why[:80]))
+                                classes = ["S-2"] + (["G"] if g_part else [])
+                        else:
+                            verdict = ("不一致：繞過（接 neutralise 的管線自己把 PR 文字印到 stderr，而 `--strict` 的正面文法"
+                                       "沒有擋下這個 step——不是預設模式獨有的缺口，不是 S-2）")
+            elif lint == "pass":
+                decl = (yaml_declaration(text, a, b, bodies)
+                        or real_declaration(run, bash, stub_bin, obs, yenv))
+                if decl:
+                    verdict = "一致"
+                elif leaked[0] or leaked[1]:
+                    verdict = "不一致：繞過"
+                else:
+                    # lint 放行、runner 沒過濾，但這一次執行**沒有把 PR 文字印出去**——
+                    # 沒有洩漏就沒有繞過，可是也證不了「不會洩漏」。第三格，逐項具名。
+                    verdict = "量不到（沒有觀察到 PR 文字外流）"
+                    unm = True
+            elif o != "piped":
                 verdict = "一致"
             elif leaked[0] or leaked[1]:
-                verdict = "不一致：繞過"
+                # **有管線不等於沒有外流**（R35）：lint 擋下、bash 也確實建了接 neutralise 的管線，但 PR 文字
+                # 仍然出去了（fd 轉向到 stderr、xtrace、管線以外的命令）——擋下是對的。前一版這一格一律判誤擋。
+                verdict = "一致"
             else:
-                # lint 放行、runner 沒過濾，但這一次執行**沒有把 PR 文字印出去**——
-                # 沒有洩漏就沒有繞過，可是也證不了「不會洩漏」。第三格，逐項具名。
-                verdict = "量不到（沒有觀察到 PR 文字外流）"
-                res["unmeasured"].append(key)
-        elif o != "piped":
-            verdict = "一致"
-        elif leaked[0] or leaked[1]:
-            # **有管線不等於沒有外流**（R35）：lint 擋下、bash 也確實建了接 neutralise 的管線，但 PR 文字
-            # 仍然出去了（fd 轉向到 stderr、xtrace、管線以外的命令）——擋下是對的。前一版這一格一律判誤擋。
-            verdict = "一致"
+                verdict = "不一致：誤擋"
+            # **strict 檔的疊加**（R42，#33 verify R41 放行條件 3、5）：lint 在 `--strict` 下額外宣稱兩件事——每條管線跑在 pipefail
+            # 之下、過濾 step 不寫跨 step 的通道——神諭各有一個觀測（`pf_observation`、`CHANNELS`）。預設模式不宣稱這兩件事，不疊加。
+            # 逾時的那次兩個觀測都不可信，也不疊加。判準：lint 擋下 ∧（pipefail 關了或通道帶 PR 文字）⇒ 擋下是對的，一致；
+            # lint 放行 ∧ 其一成立 ⇒ 繞過；探針被換掉 ⇒ 量不到（已經看到外流的繞過不改：外流是事實）。
+            if "--strict" in largs and o != "timeout" and lint in ("pass", "RULE-red"):
+                pfo, chans = more["pf"], more["chan"]
+                if pf_only and pfo == "no-pipeline" and not chans:
+                    verdict = "不可比（`--strict` 的 pipefail 規則是這個 step 唯一的 RULE，而沒有任何多段管線跑完——量不到退出碼遮蔽）"
+                elif lint == "RULE-red" and (pfo == "off" or chans) and not verdict.startswith("一致"):
+                    verdict = "一致"
+                elif lint == "pass" and chans and not verdict.startswith("不一致：繞過"):
+                    verdict = "不一致：繞過（跨 step 通道：%s 帶 PR 文字——之後的 step 讀得到）" % "、".join(chans)
+                elif lint == "pass" and pfo == "off" and not verdict.startswith("不一致：繞過"):
+                    verdict = "不一致：繞過（pipefail：管線在 pipefail 關閉下完成，退出碼被遮蔽）"
+                elif pfo == "unmeasured" and not verdict.startswith("不一致：繞過") and not verdict.startswith("不可比"):
+                    verdict = "量不到（pipefail 探針被換掉：腳本改了 DEBUG trap 或繞過了 EXIT 的組合）"
+                    unm = True
+            return verdict, classes, unm, lint
+
+        if has_nonliteral_expr(run):
+            # **每一組 payload 都跑、都判定，再選一份**（R42，#33 verify R41 logic F9）：lint 放行時取最嚴重的（`select_most_severe`），
+            # lint 擋下時取第一份判一致的（任何一組外流都證明擋下是對的）。前一版取第一個外流的 payload，stderr 的 S-2 蓋掉了 stdout 的繞過。
+            # 不適用的 payload（heredoc 那一組，運算式不在 heredoc 內文裡）跳過；每一組都語法壞掉 ⇒ 量不到。
+            cands = []
+            for payload in RUNNER_PAYLOADS:
+                cand = substitute_runner_exprs(run, payload)
+                if cand is not None:
+                    cands.append((cand,) + run_script(cand, bash, stub_bin, yenv, extra=True))
+            judged = [(judge(*c), c) for c in cands]
+            syn = [_bash_n(c[0], bash)[0] == 0 for c in cands]
+            lint0 = judged[0][0][3]
+            if lint0 == "pass":
+                # 語法壞掉、又沒有任何外流的那一組不參與排序：bash 一行都沒跑，它的「量不到」只是代換的假象（R42 自查：
+                # `good-r40-ghexpr-declared-step` 被雙引號與算術那幾組蓋成量不到）。語法壞掉但**有**外流的照算——bash 逐條命令讀、
+                # 語法錯誤之前的命令已經跑了，那些外流是真的。
+                ranked = [i for i, c in enumerate(cands) if syn[i] or c[3][0] or c[3][1] or c[5]["chan"]] or [0]
+                pick = ranked[select_most_severe([(judged[i][0][0], judged[i][0][1]) for i in ranked])]
+            else:
+                pick = next((i for i, j in enumerate(judged) if j[0][0] == "一致"), 0)
+            (verdict, classes, unm, lint), (run, o, obs, leaked, mlines, more) = judged[pick]
+            if (lint == "pass" and not (leaked[0] or leaked[1]) and verdict.startswith("一致") and not any(syn)):
+                verdict, unm = "量不到（每一組 payload 代換之後語法都壞掉——運算式所在的脈絡逃不出去）", True
         else:
-            verdict = "不一致：誤擋"
+            run = substitute_runner_exprs(run, None)
+            o, obs, leaked, mlines, more = run_script(run, bash, stub_bin, yenv, extra=True)
+            verdict, classes, unm, lint = judge(run, o, obs, leaked, mlines, more)
+        if unm:
+            res["unmeasured"].append(key)
+        if not classes and verdict.startswith("不一致"):
+            # **KD 條目要對上方向與內容**（R42，#33 verify R41 DA-5）：前一版只比 (檔名, step 名)，一條登記成誤擋的條目吞掉了
+            # 同名 step 的繞過（`oracle-probes/kd-direction`）。現在方向與 `kd_hash` 都要相符，否則照一般的不一致處理。
+            kd = KNOWN_DISAGREE.get(key[:2])
+            kdir = "誤擋" if verdict.startswith("不一致：誤擋") else "繞過"
+            if kd is None:
+                # **文法外**（R42）：只在誤擋這一格、KD 之後判。三個條件同時成立：這個 step 的每一條 RULE 都是文法擋的
+                # （帶 `GRAMMAR_RULE_TAG`）或 pipefail 那一條；沒有任何外流（走到這一格已經是「無外流」）；
+                # 整個判定只在 `lint == "RULE-red"` 時成立（PARSE 的誤擋另一格）。由檔頭 `# KNOWN-CLASS: 文法外` 簽名。
+                if (verdict == "不一致：誤擋" and step_rules
+                        and all(GRAMMAR_RULE_TAG in m or PIPEFAIL_RULE_MSG in m for m in step_rules)):
+                    cls = "文法外"
+                    # 平台變體：只在沒有 /proc 的平台成立（`/proc/$$/fd/…` 那一類在 Linux 會外流、判一致）。
+                    if not HAS_PROC and res["seen"]["文法外-without-proc"] < declared["文法外-without-proc"]:
+                        cls = "文法外-without-proc"
+                    classes = [cls]
+                    verdict = "不一致：誤擋（已知類別 %s：這個 step 不在 `--strict` 的正面文法裡、沒有外流——檔頭簽名的保守擋下）" % cls
+            elif kd["dir"] != kdir:
+                verdict += "——KNOWN_DISAGREE 方向不符（登記的是%s，實測是%s）" % (kd["dir"], kdir)
+                res["disagree"].append(key)
+                res["failures"].append("%s（第 %d 行）：%s" % (name, a + 1, verdict))
+                kd = "mismatch"
+            elif kd["hash"] != kd_hash(run0):
+                verdict += "——KNOWN_DISAGREE 內容雜湊不符（條目擔保的是另一段文字，重新判斷後用 `--print-kd-hash` 更新）"
+                res["disagree"].append(key)
+                res["failures"].append("%s（第 %d 行）：%s" % (name, a + 1, verdict))
+                kd = "mismatch"
+            else:
+                verdict += "（已知：%s）" % kd["why"]
+                kd = "matched"
+            if kd is None and not classes:
+                res["disagree"].append(key)
+                res["failures"].append("%s（第 %d 行）：%s" % (name, a + 1, verdict))
         if classes:
             res["seen"].update(classes)             # 已知**類別**：印出、計入「已知」、由檔頭宣告簽名（見下方的雙向閘門）
         elif verdict.startswith("不一致"):
-            if key[:2] in KNOWN_DISAGREE:
-                verdict += "（已知：%s）" % KNOWN_DISAGREE[key[:2]]
-            else:
-                res["disagree"].append(key)
-                res["failures"].append("%s（第 %d 行）：%s" % (name, a + 1, verdict))
+            pass                                    # 已在上面處理（KD 相符、不符，或列入 disagree）
         elif key[:2] in KNOWN_DISAGREE:
             res["stale"].append(key)
             res["failures"].append("KNOWN_DISAGREE 過期：%s（第 %d 行）" % (name, a + 1))
@@ -1118,7 +1382,9 @@ def check_file(f, text, bash, stub_bin):
     # **類別閘門是雙向的，數量釘死**（R37，#33 verify R36 第 2 列）。前一版只查「宣告了卻沒歸進去」（R34 security LOW-1），
     # 反方向不查、門檻又是「至少一條」——於是一張**沒有宣告**的正向 fixture 被歸進已知類別時 selftest 與神諭都綠
     # （DA 實測：`不一致 5（已知 5）`）。現在每個類別的歸類數必須**等於**檔頭 `# KNOWN-CLASS:` 的行數。
-    declared = collections.Counter(KNOWN_CLASS_RE.findall(text))
+    if HAS_PROC:
+        # 有 /proc 的平台上，那幾步會外流、判一致——平台變體的宣告不計（判不一致時由一般的不一致路徑攔下）。
+        declared.pop("文法外-without-proc", None)
     for c in sorted(set(declared) | set(res["seen"])):
         d_, s_ = declared[c], res["seen"][c]
         if d_ > s_:
@@ -1130,12 +1396,50 @@ def check_file(f, text, bash, stub_bin):
     return res
 
 
+def print_kd_hash(argv):
+    """`--print-kd-hash FILE STEP`：印出那個 step 的 `kd_hash`（新增或更新 KNOWN_DISAGREE 條目時用）。同名的 step 逐一列出行號。"""
+    if len(argv) != 2:
+        print("用法：oracle.py --print-kd-hash FILE STEP", file=sys.stderr)
+        return 2
+    f, want = pathlib.Path(argv[0]), argv[1]
+    hits = [(a + 1, run) for _j, name, run, (a, _b), _sh, _e in steps_with_lines(f.read_text(encoding="utf-8")) if name == want]
+    if not hits:
+        print("✗ %s 裡沒有叫 %r 的 step" % (f, want), file=sys.stderr)
+        return 1
+    for ln, run in hits:
+        print("%s\t第 %d 行\t%s" % (want, ln, kd_hash(run)))
+    return 0
+
+
+def bash_supported(bash):
+    """版本守衛（R42，#33 verify R41）：神諭用的 bash 必須在被對帳的 lint 檔頭 `# ORACLE-BASH-SUPPORTED:` 宣告的集合裡
+    （`主版號.次版號`，空白分隔）。lint 的詞法模型是對特定版本寫的（bash 5.3 的 `${ cmd; }`、`compgen` 的兩份集合）；
+    版本對不上時，對帳量的是另一個語言。回傳 None 表示通過，否則是具名的理由。"""
+    sup = re.search(r"^# ORACLE-BASH-SUPPORTED:(.*)$", _LINT_SRC, re.M)
+    mm = subprocess.run([bash, "-c", 'echo "${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}"'],
+                        capture_output=True, text=True).stdout.strip()
+    if sup is None:
+        return "%s 沒有 `# ORACLE-BASH-SUPPORTED:` 檔頭——神諭無法確認自己用的 bash（%s）是 lint 支援的版本" % (LINT, mm)
+    if mm not in sup.group(1).split():
+        return ("神諭用的 bash %s（%s）不在 %s 檔頭 `# ORACLE-BASH-SUPPORTED:%s` 宣告的集合裡——lint 的詞法模型沒有對這個版本寫"
+                % (mm, bash, LINT.name, sup.group(1)))
+    return None
+
+
 def main(argv):
+    if argv[:1] == ["--print-kd-hash"]:
+        return print_kd_hash(argv[1:])
+    if argv == ["--selftest-severity"]:
+        return selftest_severity()
     # 給定的檔案一律轉成絕對路徑：lint 會先 cd 到 plugin 目錄，相對路徑會變成「檔案不存在」（rc=2）。
     files = [pathlib.Path(a).resolve() for a in argv] or sorted(FIXTURES.glob("ci-log-filter-*.yml"))
     bash = pick_bash()
     ver = subprocess.run([bash, "-c", 'echo "$BASH_VERSION"'], capture_output=True, text=True).stdout.strip()
     print("bash: %s (%s)  管線判定：DEBUG trap + PIPESTATUS（bash 自己的剖析）" % (bash, ver))
+    why = bash_supported(bash)
+    if why:
+        print("✗ %s" % why)
+        return 1
     if LINT != (HERE / "lint-ci-log-filter.sh").resolve():
         print("⚠ ORACLE_LINT：對帳的是 %s（不是 repo 自己的 lint）" % LINT)
     rows, disagree, stale, unmeasured, uncomparable = [], [], [], [], []
@@ -1223,10 +1527,11 @@ def main(argv):
     # **類別與探針的數量釘死**（R37，R36 第 2 列；同 selftest 門檻 R24 F9）：已知類別依設計不改 rc，但只有「某類別所有宣告它的 fixture 都被刪除」在 rc 上看不出來（「類別路徑整個壞掉」只要還有 fixture 宣告該類別且被掃描到，就會被 `cls_stale`／`cls_undeclared` 逐檔攔下、使 rc=1）。只在跑 repo 自己的 fixture 集（沒有給檔案參數）時檢查。
     if not argv:
         for c in sorted(set(FIXTURE_CLASS_TOTALS) | set(cls_count)):
-            if cls_count[c] != FIXTURE_CLASS_TOTALS.get(c, 0):
+            want = 0 if (c in FIXTURE_CLASS_PLATFORM_ONLY and HAS_PROC) else FIXTURE_CLASS_TOTALS.get(c, 0)
+            if cls_count[c] != want:
                 rc = 1
                 print("\n✗ 已知類別 %s 在 fixture 集上是 %d 條，預期恰好 %d（改動已知類別的 fixture 請同步改 FIXTURE_CLASS_TOTALS）"
-                      % (c, cls_count[c], FIXTURE_CLASS_TOTALS.get(c, 0)))
+                      % (c, cls_count[c], want))
         if len(mf_report) != FIXTURE_MUSTFAIL_TOTAL:
             rc = 1
             print("\n✗ must-fail 探針是 %d 張，預期恰好 %d（改動探針請同步改 FIXTURE_MUSTFAIL_TOTAL）"

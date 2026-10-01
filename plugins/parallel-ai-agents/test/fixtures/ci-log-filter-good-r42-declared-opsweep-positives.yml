@@ -1,0 +1,50 @@
+# #33 R42 opsweep（killer 假設驗證第二輪）：**合法**的宣告 step，各自對應一個守衛——突變體在這些輸入上誤擋。
+# 提到 `$GITHUB_ENV` 但沒有管線（沒有 `shell:` 鍵）：`piped` 必須是假；env 設了信任變數但這個宣告 step 沒有觸發：
+# 信任變數的檢查只在觸發時做；宣告 step 的重導向目標不受群組的目標限制；`||`（或）不是管線、env 有啟動鍵也不觸發；
+# heredoc 內含換行的字面運算式 `${{ 'a⏎b' }}`（heredoc 本體不經 `shell_scan` 的 `${…}` 檢查，才走得到 `flat_substitute`）：
+# 觸發的第二種讀法把字面代換掉、不該因換行而拋例外；
+# 單行雙引號純量 `run: "|| true \\"`：文字第一個字元就是 `||`（`flat_trigger` 對 `i == 0` 不看前一字元，突變體會取到 `text[-1]`，
+# 而它剛好是反斜線）。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: a declared GITHUB_ENV write without a pipe and without pipefail
+        run: |
+          # LOG-FILTER: none — x
+          echo A=b >> "$GITHUB_ENV"
+      - name: a declared step that sets a trusted variable but never triggers
+        shell: bash
+        env:
+          RUNNER_TEMP: /x
+        run: |
+          # LOG-FILTER: none — x
+          echo hi
+      - name: a declared step that redirects to a target outside the group grammar
+        shell: bash
+        run: |
+          # LOG-FILTER: none — x
+          echo a > /tmp/r42-out.txt
+          echo b | cat
+      - name: a declared step with a logical or and a startup key in env
+        shell: bash
+        env:
+          BASH_ENV: /x
+        run: |
+          # LOG-FILTER: none — x
+          echo a || echo b
+      - name: a declared step whose heredoc holds a literal runner expression with a newline
+        shell: bash
+        run: |
+          # LOG-FILTER: none — x
+          cat <<EOF
+          ${{ 'a
+          b' }}
+          EOF
+      - name: a declared single-line scalar that starts with a logical or and ends with a backslash
+        shell: bash
+        run: "|| true \\" # LOG-FILTER: none — x

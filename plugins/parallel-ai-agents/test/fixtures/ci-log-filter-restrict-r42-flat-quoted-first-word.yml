@@ -1,0 +1,30 @@
+# #33 R42 opsweep（_fl_command 的指派判定「第一個片段是未加引號字面」）：首詞以引號開頭時它不是指派，是命令名。
+# 單引號 `'X=1'` 的片段字面正好長得像指派、雙引號 `"…"` 的片段是巢狀清單而不是字串——兩者在原碼都是「命令名不是純字面」，
+# 拿掉種類判斷後前者被當成指派放行、後者在比對時崩潰。EXPECT-EACH-STEP 讓三步各自紅。
+# LINT-ARGS: --strict
+# R42：這一張的 3 步是**文法外**——不在 `--strict` 的正面文法裡、神諭實跑沒有外流（stdout／stderr／跨 step 通道都沒有）、
+# pipefail 探針沒看到關閉。保守擋下，由下面的宣告簽名（神諭的類別閘門是雙向的）。
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# EXPECT: rule-red
+# EXPECT-EACH-STEP: rule-red
+# EXPECT-MSG: 命令名不是純字面
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: single-quoted assignment-looking first word
+        shell: bash
+        run: |
+          { echo hi; 'X=1'; } 2>&1 | python3 scripts/neutralise.py
+      - name: double-quoted assignment-looking first word
+        shell: bash
+        run: |
+          { echo hi; "X=1"; } 2>&1 | python3 scripts/neutralise.py
+      - name: double-quoted expansion as first word
+        shell: bash
+        run: |
+          { echo hi; "$X"; } 2>&1 | python3 scripts/neutralise.py

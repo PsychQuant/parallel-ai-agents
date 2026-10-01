@@ -1,0 +1,28 @@
+# #33 verify R41 第 9 列（bash ≥ 5.3）：巢狀在 `${X:-…}` 裡的 `${ cmd; }`／`${| cmd; }` 在目前的 shell 執行 `set +o pipefail`。
+# 逐字取自 R41 requirements lens 的 c2b 輸入 c1-nested-funsub-pf、c2-nested-valsub-pf。45dee04 的 `--strict` 放行。
+# R42 WP5 起詞法層先擋：`_param_end` 的巢狀 `${` 也查後面是不是空白、tab 或 `|`，兩步都是 PARSE（正面文法輪不到）。
+# 逐步斷言在預設模式的 `parse-r42-default-nested-funsub`（兩種模式共用同一個掃描器）。
+# LINT-ARGS: --strict
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: c1-nested-funsub-pf
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            : ${X:-${ set +o pipefail; }}
+            false | cat
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: c2-nested-valsub-pf
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            : "${X:-${| set +o pipefail; }}"
+            false | cat
+          } 2>&1 | python3 scripts/neutralise.py

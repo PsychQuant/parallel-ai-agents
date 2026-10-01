@@ -1,0 +1,17 @@
+# #33 R42 opsweep（fl_tokens 的 `r.group(0) in ("2>&1",">&2") and i+len(r.group(0)) < n ...`，drop `i+len < n` 存活）：
+# `2>&1` 出現在 run 文字結尾（i+len==n）時，原碼靠 `i+len < n` 短路、不看 `s[i+len]`；突變體拿掉它 → `s[n]` 越界 IndexError。
+# 用 `run: |-`（strip chomping）讓 run 文字不以換行結尾，最後一行以 `2>&1` 結尾；一條寫出來的管線觸發文法。原碼放行、突變體崩（CRASHED＝殺）。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 2to1 at end of triggered declared step
+        shell: bash
+        run: |-
+          # LOG-FILTER: none — 執行 PR 自己的建置、不含 PR 文字
+          echo a | cat
+          make --version 2>&1

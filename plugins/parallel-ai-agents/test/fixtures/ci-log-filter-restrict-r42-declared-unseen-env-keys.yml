@@ -1,0 +1,19 @@
+# #33 R42 opsweep（flat_step_rules 的 `startup = [k … if k in FL_STARTUP_KEYS or k == "?"]`，drop `k == "?"` 存活；手測找到）：
+# `env: ${{ fromJSON(…) }}`（值寫在 env: 同一行、不是 flow）看不到鍵名，`_env_names` 記成 `?`（fail-closed——鍵名可能是 BASH_ENV）。
+# 宣告了 `# LOG-FILTER:` 的 step 寫出管線時，這種 env 要 RULE。突變體只留 `k in FL_STARTUP_KEYS`，`?` 不算 → 放行。
+# 姊妹 fixture：restrict-r42-declared-startup-env（具名啟動鍵）。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-MSG: 看不到鍵名的運算式
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: declared step, env whose keys are hidden behind an expression, written pipe
+        shell: bash
+        env: ${{ fromJSON(needs.a.outputs.e) }}
+        run: |-
+          # LOG-FILTER: none — 執行 PR 自己的建置、不含 PR 文字
+          echo a | cat

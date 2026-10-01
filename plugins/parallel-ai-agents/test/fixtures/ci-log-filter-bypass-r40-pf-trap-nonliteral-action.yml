@@ -10,6 +10,8 @@ jobs:
     steps:
       - name: trap with non-literal action
         shell: bash
+        env:
+          ACT: 'set +o pipefail'
         run: |
           # LOG-FILTER: none — prints no PR text
           trap "$ACT" DEBUG

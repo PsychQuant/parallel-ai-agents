@@ -1,0 +1,326 @@
+# #33 verify R41 第 3、4、6、7 列、R42 放行條件 2：pipefail 模型之外的構造在執行時關掉 pipefail——跳脫或加引號的保留字、
+# 函式取名 `set`、`enable -n`、`alias`、DEBUG trap、`source`／`.`、`eval`、`mapfile -C`、`coproc`、以變數當命令名、lastpipe 的執行順序。
+# 放行條件 2 的驗收輸入，逐字複製、step 名稱是輸入檔名：logic p/t1–t6、l1–l4；regression b1 的 ctl-escaped-fi、ctl-quoted-fi，
+# b2/ctl-escaped-done2，b4/ctl-coproc-while；security wf/pf-*；requirements c2b 的 b1–b15（b10 除外；c1、c2 在
+# `bypass-r42-strict-nested-funsub`）；協調者 c3、c4。
+# 45dee04 的 `--strict` 擋下其中四個（c2b 的 b1-eval-off、b7-shopt-u-o、b8-command-eval、b13-set-via-var，靠 R40 的 pipefail
+# 模擬器），其餘全部放行。模擬器在 R42 刪除，這四個一起釘住。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-EACH-STEP: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: t1
+        shell: bash
+        run: |
+          # LOG-FILTER: none — prints no PR text
+          set -o pipefail
+          for c in true false; do
+            "$c" | cat
+            \done 2>/dev/null || :
+            set +o pipefail
+          done
+      - name: t2
+        shell: bash
+        run: |
+          # LOG-FILTER: none — prints no PR text
+          set +o pipefail
+          set() { :; }
+          set -o pipefail
+          false | cat
+      - name: t3
+        shell: bash
+        run: |
+          # LOG-FILTER: none — prints no PR text
+          set +o pipefail
+          enable -n set
+          set -o pipefail || :
+          false | cat
+      - name: t4
+        shell: bash
+        run: |
+          # LOG-FILTER: none — prints no PR text
+          shopt -s expand_aliases
+          alias po='set +o pipefail'
+          po
+          false | cat
+      - name: t5
+        shell: bash
+        run: |
+          # LOG-FILTER: none — prints no PR text
+          trap 'shopt -uo pipe""fail' DEBUG
+          false | cat
+      - name: t6
+        shell: bash
+        run: |
+          # LOG-FILTER: none — prints no PR text
+          echo 'set +o pipefail' > o.sh
+          . ./o.sh
+          false | cat
+      - name: l1
+        shell: bash
+        run: |
+          # LOG-FILTER: none — prints no PR text
+          for c in true false; do
+            true | set +o pipefail
+            "$c" | cat
+            shopt -s lastpipe
+          done
+      - name: l2
+        shell: bash
+        run: |
+          # LOG-FILTER: none — prints no PR text
+          trap 'shopt -s lastpipe' DEBUG
+          true | set +o pipefail
+          false | cat
+      - name: l3
+        shell: bash
+        run: |
+          # LOG-FILTER: none — prints no PR text
+          P=pipefail
+          trap 'shopt -uo $P' DEBUG
+          false | cat
+      - name: l4
+        shell: bash
+        run: |
+          # LOG-FILTER: none — prints no PR text
+          set +o pipefail
+          if false; then X=1 fi; set -o pipefail; fi
+          false | cat
+      - name: ctl-escaped-fi
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            set +o pipefail
+            if false; then \fi 2>/dev/null; set -o pipefail; fi
+            false | cat
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: ctl-quoted-fi
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            set +o pipefail
+            if false; then 'fi' 2>/dev/null; set -o pipefail; fi
+            false | cat
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: ctl-escaped-done2
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            for i in 1 2; do
+              test "$i" = 1 | cat
+              \done 2>/dev/null || :
+              set +o pipefail
+            done
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: ctl-coproc-while
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            set +o pipefail
+            if false; then
+              coproc while false; do :; done
+              set -o pipefail
+            fi
+            false | cat
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: pf-alias
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          # LOG-FILTER: none — prints no PR text
+          shopt -s expand_aliases
+          alias nopf='set +o pipefail'
+          nopf
+          false | cat
+      - name: pf-eval-var
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          # LOG-FILTER: none — prints no PR text
+          X='set +o pipefail'
+          eval "$X"
+          false | cat
+      - name: pf-mapfile
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          # LOG-FILTER: none — prints no PR text
+          mapfile -C 'set +o pipefail;:' -c 1 a <<< x
+          false | cat
+      - name: pf-opaque-eval
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          # LOG-FILTER: none — prints no PR text
+          E=eval
+          $E 'set +o pipefail'
+          false | cat
+      - name: pf-opaque-trap
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          # LOG-FILTER: none — prints no PR text
+          T=trap
+          $T 'set +o pipefail' DEBUG
+          false | cat
+      - name: pf-source
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          # LOG-FILTER: none — prints no PR text
+          echo 'set +o pipefail' > /tmp/pf.sh
+          . /tmp/pf.sh
+          false | cat
+      - name: b1-eval-off
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            eval 'set +o pipefail'
+            false | cat
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: b11-declare-f-trap
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            trap 'eval "$Y"' DEBUG; Y='set +o pipefail'
+            false | cat
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: b12-set-via-array
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            a=(set +o pipefail); "${a[@]}"
+            false | cat
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: b13-set-via-var
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            S=set; $S +o pipefail
+            false | cat
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: b14-read-e
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            IFS= read -r c <<< 'set +o pipefail'; $c
+            false | cat
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: b15-type-set
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            exec {fd}<<<'set +o pipefail'; . /dev/fd/$fd
+            false | cat
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: b2-eval-var
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            X='set +o pipefail'; eval "$X"
+            false | cat
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: b3-source-procsub
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            source <(echo 'set +o pipefail')
+            false | cat
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: b4-dot-herestr
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            . /dev/stdin <<< 'set +o pipefail'
+            false | cat
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: b5-dot-file
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            echo 'set +o pipefail' > /tmp/rq-pf.sh
+            . /tmp/rq-pf.sh
+            false | cat
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: b6-mapfile-C
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            mapfile -C 'set +o pipefail' -c 1 a <<< x
+            false | cat
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: b7-shopt-u-o
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            shopt -u -o pipefail
+            false | cat
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: b8-command-eval
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            command eval 'set +o pipefail'
+            false | cat
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: b9-builtin-source
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            builtin source <(echo 'set +o pipefail')
+            false | cat
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: c3-trap-shopt
+        shell: bash
+        env:
+          OPT: pipefail
+        run: |
+          # LOG-FILTER: none — this step only tests exit statuses
+          trap 'shopt -uo "$OPT"' DEBUG
+          false | true
+      - name: c4-quoted-fi
+        shell: bash {0}
+        run: |
+          # LOG-FILTER: none — this step only tests exit statuses
+          if false; then
+            'fi'
+            set -o pipefail
+          fi
+          false | true

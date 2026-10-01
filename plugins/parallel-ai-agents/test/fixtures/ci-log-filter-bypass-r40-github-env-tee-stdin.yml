@@ -1,7 +1,10 @@
 # #33 verify R39 第 9 列：寫進 `$GITHUB_ENV`／`$GITHUB_PATH` 的東西，之後**每一個 step** 都會讀進來——PR 文字用 runner 的多行語法
-# （`PYTHONIOENCODING<<EOF` ⏎ `x` ⏎ `##[error]…` ⏎ `EOF`）就能設定任意變數；`PYTHONIOENCODING` 的值原樣（含換行）印到每個過濾 step 右端
-# python3 的 stderr（bash 5.3 實跑，行首的 `##[error]` 是 workflow command）。這是 GitHub 安全文件警告的環境變數注入。
-# R40：靠管線過濾的 step，把**看不出是字面**的內容寫進這兩個檔就擋。
+# （`NAME<<EOF` ⏎ `值` ⏎ `EOF`）就能設定任意變數，例如 `BASH_ENV`：之後每一個 bash step 啟動時都會執行它指到的檔案（bash 對非互動
+# 腳本的文件行為）。這是 GitHub 安全文件警告的環境變數注入。
+# R41 第 18 列更正：前一版的例子是 `PYTHONIOENCODING`，說它的值原樣（含換行）印到過濾器 python3 的 stderr。Python 3.13 在第一個 `:`
+# 切開值、只印 `LookupError: unknown encoding: …`，`::` 開頭的行不會經這個變數出來；第一個冒號之後那一段走的錯誤路徑沒有人測過，
+# 未證實。神諭看的是 PR 文字有沒有進通道，不看它設了哪個變數。
+# R40：靠管線過濾的 step，把**看不出是字面**的內容寫進這兩個檔就擋；R42 起由 `--strict` 的正面文法擋（只收字面的 `echo`／`printf` 寫入）。
 # 本張：`… | tee -a "$GITHUB_ENV"`——tee 的參數都是字面，寫進去的內容來自 stdin（管線的後段）。
 # LINT-ARGS: --strict
 # EXPECT: rule-red

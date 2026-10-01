@@ -1,5 +1,7 @@
 # #33 verify R37 合併時協調者發現：同 `good-r37m-neutralise-glued-follower`，換成 `neutralise.py)`、`neutralise.py|`、反引號、`neutralise.py&`。bash 5.3 以標記值實測：四種都經過濾。**神諭量不到這四種**：它的 stub 只在頂層管線裡記得到「接在管線上」，子殼層、命令替換、背景、以及 neutralise 不在管線末端時只記得到「有被呼叫」，判「量不到」（不改 rc、逐項印出）——所以分開放，讓那四列的歸屬清楚。**R39 起剩三種**：`neutralise.py|` 那一格移到 `restrict-r39-segment-after-neutralise-cat`（預設模式的新規則擋 neutralise 之後的管線段），本檔只剩 `)`、反引號、`&` 三個 step（R39 verify 第 16 列）。
 # R39：`neutralise.py|`（後面還接管線的一段）那個 step 搬到 `restrict-r39-segment-after-neutralise-cat`——neutralise 之後的段現在一律擋。
+# R42：神諭的 pipefail 探針在每個子殼層第一次觸發時裝 EXIT 收尾，子殼層與命令替換裡最後一條管線也記得到「接在管線上」——
+# `)`、反引號兩步現在判一致；背景 `&` 那一步仍量不到（檔名沿用 R37 的）。
 # EXPECT: pass
 name: t
 on: pull_request

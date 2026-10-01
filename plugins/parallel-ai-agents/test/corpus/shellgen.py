@@ -6,6 +6,10 @@
 不一致 0，在 DA 與 regression 各自產生的語料上分別報出 10 與 72 條。判準已經與作者無關，投餵還沒有。
 這一支把投餵也拿掉：**不列舉已知的形狀，列舉構造的維度**，再取積。
 
+三個互不混寫的呼叫（各寫各的檔名前綴）：預設（A–E 組，`gen-a-*`…`gen-e-*`）、`--strict`（`gen-f-*`，下面的
+`group_strict`）、`--grammar`（R42，`gen-g-*`，`--strict` 正面文法的產生式取樣，見 `group_grammar`）。前兩種照維度取積，
+第三種照產生式取樣——它量的是「文法接受的都不外流」，不是 lint 與 bash 的詞法對帳。
+
 維度（封閉列舉；**改動這份清單是另一次 change**，不得在別處「順便」擴充）：
 
 1. heredoc 分隔字的引號擺法（12）：`EOF` `'EOF'` `"EOF"` `"EO"F` `E"OF"` `'EOF'x` `""EOF` `'E'OF`
@@ -28,13 +32,23 @@
 
 **已知類別由構造決定、寫進檔頭**（R37；R36 第 2 列要求神諭的類別閘門雙向，這裡讓它在產生語料上也量得到）：神諭的類別閘門是雙向的——被歸進已知類別 X 的 step
 數必須等於檔頭 `# KNOWN-CLASS: X` 的行數。這一支知道每個檔的每個維度，所以**由構造**判定哪些檔該落進哪一類並寫出宣告，
-不是事後照神諭的輸出補（那樣宣告只是神諭的影子，雙向閘門就量不到東西）。封閉列舉，**只有兩種**，不得依相似類推第三種：
+不是事後照神諭的輸出補（那樣宣告只是神諭的影子，雙向閘門就量不到東西）。封閉列舉，**只有下面這幾種**，不得依相似類推：
   S-2 —— A 組、方向 real、折疊 block（`>` 開頭）、內文確實被折成一行、終止字非空白：
          折疊後整段是 `cat <<X plain data X echo "$PR_TITLE" | neutralise`，`cat` 把 `$PR_TITLE` 當檔名、錯誤訊息
          走 stderr，而管線沒有 `2>&1`。「確實被折成一行」＝ auto-detect 縮排（`>`、`> # note`），或明寫縮排 `>2` 且內文
          不多縮（多縮的行 YAML 不折）；終止字是空字串或空白的三個分隔字，那一行在 YAML 裡是空行、會留下換行 ⇒ 不是一行。
   G   —— D 組 `d-paramexp-literal-brace-in`：bash 不為字面的 `{` 配對 `}`，`${PR_TITLE#a{b}` 在第一個 `}` 結束，
          剩下的 `c| neutralise }` 是真管線；第一行 `echo "$PR_TITLE"` 是**另一條命令**印的。
+  文法外（R42，只在 `--strict` 組）—— 構造本身不外流、pipefail 開著，但不在 `--strict` 的正面文法裡，保守擋下。四個維度、
+         各自的封閉列舉（常數見 `STRICT_SHELLS_PF_ON`、`GROUP_INNER_OUTSIDE_GRAMMAR`）：
+         維度 1 shell 值：乾淨的 `cat "$PR_TITLE" 2>&1 | …`（不是群組形式）× 會開 pipefail、又在神諭可比清單裡的樣板
+                （關鍵字 `bash` 三種拼法——runner 的樣板帶 `-o pipefail`——與明寫 `-o pipefail` 的四種）。不開 pipefail 的
+                樣板，神諭的 pipefail 探針看得到關閉、判一致；帶 `-x`／`-v`／`-l` 的判不可比。
+         維度 5 多段管線：gap=0（每一段都帶 `2>&1`）。缺 `2>&1` 的那幾格會外流。
+         維度 6 包管線：wrapped 的格，**除了** `brace` × `fd-redirect`——那一格在文法裡、lint 放行。
+         維度 8 群組內部：`if`、`for`、`case`、heredoc、`set -x`、`exec 3>&1`、子殼層裡關 pipefail——輸出都在群組裡進管線。
+  文法外-without-proc —— 維度 10 的 `proc-fd`：`/proc/$$/fd/1` 只在 Linux 外流；沒有 /proc 的平台量不到、神諭判這一類，
+         有 /proc 的平台宣告不計、必須判一致（見神諭的 `HAS_PROC`）。
   沒有「無法由構造決定」的檔：上面之外的構造，神諭歸進任何已知類別都是缺陷（lint 或神諭的），要讓它紅。
 
 「方向」指的是兩種構造，兩個都要有才擋得住兩個方向的錯：
@@ -50,6 +64,7 @@
 """
 import argparse
 import itertools
+import random
 import pathlib
 import re
 import sys
@@ -447,6 +462,16 @@ def _pipeline_line(count, gap):
     return " | ".join(segs) + " | " + NEUT
 
 
+# 文法外的構造判準（R42；見檔頭的已知類別段）。兩份都是封閉列舉。
+STRICT_SHELLS_PF_ON = ("bash", "bash-dq", "bash-sq", "bash-eo-pipefail", "bash-euo-pipefail", "bash-o-pipefail-e",
+                       "bash-noprofile-eo-pipefail")
+GROUP_INNER_OUTSIDE_GRAMMAR = ("if", "for", "case", "heredoc", "xtrace", "saved-fd", "subshell-pipefail-off")
+
+
+def _cls(cls):
+    return "# KNOWN-CLASS: %s\n" % cls if cls else ""
+
+
 def group_strict():
     """`--strict` 組：六個封閉列舉維度各自的構造（見上方檔頭）。每個檔頭都帶 `# LINT-ARGS: --strict`。
     回傳 (name, full_text) —— 與 A-E 組的 (name, body, hdr) 不同形狀，因為這裡不重用 `wrap()`。"""
@@ -455,7 +480,8 @@ def group_strict():
     # 維度 1：shell 值 —— 每個模板一檔（乾淨、帶 2>&1 的管線）；三個字面 bash 拼法額外配一個「缺 2>&1」的對照
     for sn, tmpl in SHELL_TEMPLATES:
         body = ['cat "$PR_TITLE" 2>&1 | ' + NEUT]
-        yield "f-shell-%s" % sn, LA + _strict_doc("shell value %s" % sn, body, step_shell=tmpl)
+        yield "f-shell-%s" % sn, _cls("文法外" if sn in STRICT_SHELLS_PF_ON else None) + LA + _strict_doc(
+            "shell value %s" % sn, body, step_shell=tmpl)
         if sn in ("bash", "bash-dq", "bash-sq"):
             leak_body = ['cat "$PR_TITLE" | ' + NEUT]
             yield ("f-shell-%s-missing-2to1" % sn,
@@ -491,7 +517,8 @@ def group_strict():
         for gap in range(0, count + 1):
             body = [_pipeline_line(count, gap)]
             yield ("f-pipeseg-%d-gap%d" % (count, gap),
-                   LA + _strict_doc("pipeline of %d segments, gap=%d" % (count, gap), body, step_shell="bash"))
+                   _cls("文法外" if gap == 0 else None)
+                   + LA + _strict_doc("pipeline of %d segments, gap=%d" % (count, gap), body, step_shell="bash"))
 
     # 維度 6：子殼層包管線 —— WRAP_STYLES × WRAP_CONTENTS ×｛有包／沒包｝。同上，固定 `shell: bash`：
     # 「有包」的情境本來就該讓 lint pass（豁免適用），不寫 shell 會被 pipefail 規則單獨攔下、驗不到豁免本身。
@@ -499,7 +526,8 @@ def group_strict():
         for cn, clines in WRAP_CONTENTS:
             wrapped = [wfmt % ("; ".join(clines)) + " 2>&1 | " + NEUT]
             yield ("f-wrap-%s-%s-wrapped" % (wn, cn),
-                   LA + _strict_doc("%s wrapped %s" % (wn, cn), wrapped, step_shell="bash"))
+                   _cls(None if (wn, cn) == ("brace", "fd-redirect") else "文法外")
+                   + LA + _strict_doc("%s wrapped %s" % (wn, cn), wrapped, step_shell="bash"))
             bare = list(clines[:-1]) + [clines[-1] + " 2>&1 | " + NEUT]
             yield ("f-wrap-%s-%s-bare" % (wn, cn),
                    LA + _strict_doc("%s bare %s" % (wn, cn), bare, step_shell="bash"))
@@ -517,15 +545,18 @@ def group_strict():
     # 維度 8：群組內部內容（R39）
     for gn, glines in GROUP_INNER:
         yield ("f-inner-%s" % gn,
-               LA + _strict_doc("group inner %s" % gn, ["{"] + list(glines) + ["} 2>&1 | " + NEUT],
+               _cls("文法外" if gn in GROUP_INNER_OUTSIDE_GRAMMAR else None) + LA + _strict_doc("group inner %s" % gn, ["{"] + list(glines) + ["} 2>&1 | " + NEUT],
                                 step_shell="bash"))
 
     # 維度 10：只靠某一條規則擋下的群組形式（R40，#33 verify R39 第 11 列、放行條件 7）——群組形式本身合規，唯一的違規是那一條
-    # 規則，而且**會外流**：那條規則被關掉時，神諭判繞過。封閉列舉，只有這三格。不列的：pipefail（量的是退出碼）、`GITHUB_ENV`
-    # （要跨 step）、env 規則——`SHELLOPTS: xtrace` 在群組形式下，群組裡的 trace 走管線、被過濾，群組外只剩 `set` 那一行（R40 第一版
-    # 放了這一格，神諭判誤擋才看到）；`BASH_ENV` 指的檔神諭帶不進去、`PYTHON*` 神諭的 python3 stub 不讀。env 規則在群組形式下是保守的。
+    # 規則，而且**會外流**：那條規則被關掉時，神諭判繞過。封閉列舉，只有這三格。不列的：pipefail 與 `GITHUB_ENV`——R40 寫它們
+    # 「量的是退出碼」「要跨 step」所以不列；R42 起神諭有 pipefail 探針與通道觀測，這兩類改由 `--grammar` 組量（文法接受的
+    # 每一格都不得有 pipefail 關閉或通道外流）。env 規則——`SHELLOPTS: xtrace` 在群組形式下，群組裡的 trace 走管線、被過濾，
+    # 群組外只剩 `set` 那一行（R40 第一版放了這一格，神諭判誤擋才看到）；`BASH_ENV` 指的檔神諭帶不進去、`PYTHON*` 神諭的 python3
+    # stub 不讀。env 規則在群組形式下是保守的。
     for rn, body, kw in RULE_ONLY_GROUPS:
-        yield ("f-only-%s" % rn, LA + _strict_doc("only rule %s" % rn, body, step_shell="bash", **kw))
+        yield ("f-only-%s" % rn, _cls("文法外-without-proc" if rn == "proc-fd" else None)
+               + LA + _strict_doc("only rule %s" % rn, body, step_shell="bash", **kw))
 
     # 維度 9：群組尾巴後（R39）
     for tn, tail, _safe in GROUP_TAILS:
@@ -534,18 +565,128 @@ def group_strict():
                                 step_shell="bash"))
 
 
+# ── `--grammar` 組（R42 WP9，#33 verify R41 → R42 設計 D10）──────────────────────────────────────────────────────────────
+# 上面兩組照**維度**取笛卡兒積；這一組照 `--strict` 正面文法的**產生式**取樣（lint 的 `flat_filtered`／`flat_declared` 檔頭）：
+#   L_F：靠管線過濾的 step——`set` 前綴＊、一個群組、`2>&1 | python3 …neutralise.py` 尾巴；
+#   L_D：宣告了 `# LOG-FILTER:`、寫了管線的 step——同一套命令，沒有群組與尾巴。
+# 每個放得進變數的位置都放 PR 文字（`$PR_TITLE`）。它是 soundness 的網：lint 必須對**每一格** rc=0（產生器沒有走出文法），
+# 神諭必須判一致——沒有外流、沒有跨 step 通道、每條管線都在 pipefail 之下。任何一格不成立，錯的是文法本身或它的斷詞。
+# 固定種子：CI 與本機產生同一份語料。
+GRAMMAR_SEED = 4242
+GRAMMAR_CELLS = (80, 20)            # (L_F, L_D)
+_GRAMMAR_SHELLS = (("bash", False), ("bash -e {0}", True))    # (樣板, 需要 `set -o pipefail` 前綴)
+
+
+def group_grammar(seed=GRAMMAR_SEED, counts=GRAMMAR_CELLS):
+    R = random.Random(seed)
+
+    def word():
+        return R.choice(["plain-x", "'sq $PR_TITLE ; | }'", '"$PR_TITLE"', '"${PR_TITLE:-d}"', "$PR_TITLE",
+                         '"dq $PR_TITLE $?"', "'{'", "a{b,c}", '"$RUNNER_TEMP"/f*', "-n"])
+
+    def redir(filtered):
+        opts = ["", "", "", " 2>&1", " >&2", " 2>/dev/null", " < /dev/null", ' >> "$RUNNER_TEMP/log.txt"']
+        return R.choice(opts + ([" > out.txt", " > /dev/stderr", " > /dev/stdout"] if filtered else [" > out.txt"]))
+
+    def simple(filtered):
+        k = R.randrange(9)
+        if k == 0:
+            return "echo " + " ".join(word() for _ in range(R.randrange(1, 4))) + redir(filtered)
+        if k == 1:
+            return "printf '%s\\n' " + word() + redir(filtered)
+        if k == 2:
+            return "cat" + redir(filtered)
+        if k == 3:
+            return "sed 's/^/s:/'" + redir(filtered)
+        if k == 4:
+            return R.choice(["true", "false || true", ": " + word(), "test -n " + word(), "[ -n " + word() + " ]"])
+        if k == 5:
+            return "printenv PR_TITLE" + redir(filtered)
+        if k == 6:
+            return R.choice(['echo "LIT=1" >> "$GITHUB_ENV"', "printf '%s\\n' 'P=2' >> \"${GITHUB_ENV}\"",
+                             'echo "$HOME/.local/bin" >> "$GITHUB_PATH"', 'echo "D=$RUNNER_TEMP/x" >> "$GITHUB_ENV"'])
+        if k == 7:
+            return "sort" + redir(filtered)
+        return "wc -l" + redir(filtered)
+
+    def reader(filtered):
+        # L_D 的管線後段只用會把輸入讀完的命令：不讀 stdin 的命令（printenv、`:`、echo…）讓前段有時收到 SIGPIPE，
+        # 退出碼與 stderr 隨排程改變，神諭認宣告的差分因此時紅時綠（R42 自查，平行跑時 6／100 格判量不到）。
+        # 重導向也不給 `< /dev/null`：stdin 改向之後讀取端不讀管線，同一個問題。
+        return R.choice(["cat", "sed 's/^/s:/'", "sort", "wc -l", "tee out2.txt"]) + R.choice(
+            ["", "", " 2>&1", " 2>/dev/null", ' >> "$RUNNER_TEMP/log.txt"', " > out.txt"])
+
+    def pipeline(filtered):
+        p = simple(filtered)
+        for _ in range(R.randrange(3)):
+            p += R.choice([" | ", " |& ", " |\n  "]) + (simple(filtered) if filtered else reader(filtered))
+        return p
+
+    def body(filtered):
+        lines, have_tmp = [], False
+        while not lines or all(l.startswith("#") for l in lines):
+            lines, have_tmp = [], False
+            for _ in range(R.randrange(1, 5)):
+                k = R.randrange(8)
+                if k == 0:
+                    lines.append("# a comment with $PR_TITLE | ; }")
+                elif k == 1 and not have_tmp:
+                    lines.append("tmp=$(mktemp -d)")
+                    lines.append(R.choice(['trap "rm -rf $tmp" EXIT', "trap 'rm -rf \"$tmp\"' EXIT",
+                                           "trap 'echo \"$PR_TITLE\"' EXIT" if filtered else "trap 'rm -rf \"$tmp\"' 0"]))
+                    have_tmp = True
+                elif k == 2:
+                    lines.append("X=" + word())
+                else:
+                    a = pipeline(filtered)
+                    for _ in range(R.randrange(2)):
+                        a += R.choice([" && ", " || ", " &&\n  "]) + pipeline(filtered)
+                    lines.append(a)
+        return lines
+
+    def prefix(needs_pf):
+        opts = [["set -o pipefail"], ["set -euo pipefail"], ["set -e", "set -o pipefail"]]
+        return R.choice(opts if needs_pf else opts + [[], ["set -u"]])
+
+    nf, nd = counts
+    for i in range(nf):
+        sh, needs_pf = R.choice(_GRAMMAR_SHELLS)
+        b = body(True)
+        if R.random() < 0.4:
+            grp = ["{ " + "; ".join(l for l in b if not l.startswith("#")) + "; }"
+                   + R.choice([" 2>&1 | " + NEUT, " |& " + NEUT, " 2>&1 |\n  " + NEUT])]
+        else:
+            grp = ["{"] + ["  " + l for l in b] + ["} 2>&1 | " + NEUT + R.choice(["", ";", "  # tail"])]
+        run = "\n".join(prefix(needs_pf) + grp).split("\n")
+        yield "g-f-%03d" % i, "# LINT-ARGS: --strict\n" + _strict_doc(
+            "grammar F %03d" % i, run, step_shell=sh, step_env={"PR_TITLE": "${{ github.event.pull_request.title }}"})
+    for i in range(nd):
+        sh, needs_pf = R.choice(_GRAMMAR_SHELLS)
+        b = body(False)
+        while not any("|" in l for l in b if not l.startswith("#")):
+            b.append(pipeline(False) + " | sort > out.txt")
+        run = ("\n".join(prefix(needs_pf) + ["# LOG-FILTER: none — generated grammar cell (PR text goes to files only)"]
+                         + b)).split("\n")
+        yield "g-d-%03d" % i, "# LINT-ARGS: --strict\n" + _strict_doc(
+            "grammar D %03d" % i, run, step_shell=sh, step_env={"PR_TITLE": "${{ github.event.pull_request.title }}"})
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     ap.add_argument("--out", metavar="DIR")
     ap.add_argument("--count", action="store_true", help="只印檔數，不寫檔")
+    ap.add_argument("--grammar", action="store_true",
+                    help="產生 `--grammar` 組（`--strict` 正面文法的產生式取樣，R42 WP9）——同樣不與其他組混寫同一次呼叫")
     ap.add_argument("--strict", action="store_true",
                      help="產生 `--strict` 組（shell 值／env 鍵／fd 轉向拼法／xtrace 拼法／多段管線／子殼層包管線）"
                           "，取代預設的 A-E 組——不與預設模式混寫同一次呼叫，這個分支不寫任何共用狀態")
     a = ap.parse_args()
     # **`--strict` 是完全獨立的分支**：預設模式（下面）的執行路徑不因為這個分支的存在而改變（R37 另外在 A、D 組加了 `# KNOWN-CLASS:` 檔頭，那是獨立的改動），
     # 不代表預設模式的輸出逐位元組不變：R37 在 A、D 組加了 `# KNOWN-CLASS:` 檔頭（61 檔多一行），內容行不變。
-    if a.strict:
-        cases = list(group_strict())
+    if a.strict or a.grammar:
+        if a.strict and a.grammar:
+            ap.error("--strict 與 --grammar 擇一")
+        cases = list(group_grammar() if a.grammar else group_strict())
         if a.count:
             print(len(cases)); return 0
         if not a.out:
@@ -559,8 +700,8 @@ def main():
                 invalid.append((name, str(e).splitlines()[0])); continue
             (out / ("gen-%s.yml" % name)).write_text(text, encoding="utf-8")
             written += 1
-        print("[--strict] %d 個構造 → 寫出 %d 檔（PyYAML 拒絕 %d 檔，逐一列出如下）"
-              % (len(cases), written, len(invalid)))
+        print("[%s] %d 個構造 → 寫出 %d 檔（PyYAML 拒絕 %d 檔，逐一列出如下）"
+              % ("--grammar" if a.grammar else "--strict", len(cases), written, len(invalid)))
         for name, why in invalid:
             print("  拒絕 %s | %s" % (name, why))
         return 0

@@ -15,16 +15,19 @@
 mutation」，CHANGELOG 寫「十個 mutation 逐一確認轉紅」。**那三句話會讓下一個維護者以為改動 `validate.py` 有測試網接著。**
 
 現在用 `scripts/mutation_check.py` 量：跑一次就知道哪些閘門沒有測試網。
-**最近一次完整量測（R40 最終，於 `git archive 8f2d21a` 副本上跑，`--jobs 8`）：464 個靶 → 461 殺 / 0 存活 / 3 預期存活 / 0 靶壞**，
-牆鐘 **75.9 分鐘 / 464 靶 = 每靶 9.8 s**（8 個 worker 各一份不含 `.git` 的副本；開跑時一分鐘平均負載 18.1，同機另有其他 session）。
-這一輪沿用 0 靶：lint 與 fixture 都改了，每個靶的 key 都換了，等於完整一輪。同一棵樹立刻重跑：464 靶全部沿用快取、203 秒（R40 起全部命中也跑前置檢查——R39 的 16 秒沒有這一步）。
-快取的 key 是「突變後被改寫檔的**原文**＋守備單位讀得到的輸入＋執行環境（platform、`/proc`、`/bin/sh`、PATH 上的
-`python3`、`ORACLE_LINT`）」，R40 起改 docstring 或註解也會讓它失效（`test_validate.py` 讀 `# READ-SITE` 註解）；不計入的只有
-`_NOT_READ` 點名的檔（CHANGELOG）與快取檔本身。發版前的量測用 `--no-cache`。
+**最近一次完整量測（R42 量測樹，於 `git archive fa9f932` 副本上跑，`--jobs 8`）：456 個靶 → 453 殺 / 0 存活 / 3 預期存活 / 0 靶壞**，
+**94.4 分鐘 / 456 靶 = 每靶 12.4 s**（工具的單調時鐘、不含機器睡眠；bash 量到的牆鐘是 115.3 分鐘，中間機器睡了約 21 分鐘；8 個 worker 各一份不含 `.git` 的副本；開跑時一分鐘平均負載 23.4）。
+這一輪沿用 0 靶（`--no-cache`）。最終程式碼 commit（`d31ae51`）與量測樹只差一張 fixture、selftest 的三組門檻、`oracle.py` 的類別總數與一條 `EXPECTED_SURVIVE`（CHANGELOG 的 R42 段列得出來），之後只有 CHANGELOG 與註解、docstring、本檔頭的文字提交。這些改動讓全部守備單位的快取 key 換掉（lint／oracle 系因 fixture 與被突變檔，validate／neutralise 因輸入是整個 repo），所以最終 commit 的快取由另一輪 `--no-cache` 全輪重建，不是沿用上面那一輪；那一輪的結果寫在 CHANGELOG 的 R42 段（本檔頭不再跟著改——改了會讓快取 key 再換一次）。
+**R42 的第一輪（`4faaea2`，`--no-cache`）不是零存活**：457 靶 → 452 殺 / **2 非預期存活** / 3 預期存活，78.9 分鐘。兩個都是 R42 改動讓先前的靶失去分辨力：
+`_set_prefix_line` 行尾 `;` 那一支是死碼（刪除、靶退役）；oracle 單一 payload 的 `|| :`（R42 起每組 payload 都判、取最嚴重，只改一組不改變任何判定，
+重新錨定成所有 payload 一起拿掉，並補 `oracle_selfcheck.py` 的 `payload-after-failing-command` 項目）。**所以最終量測不能用改動之前的樹。**
+R40 最終（`git archive 8f2d21a`）：464 個靶 → 461 殺 / 0 存活 / 3 預期存活 / 0 靶壞，75.9 分鐘 / 464 靶 = 每靶 9.8 s；
+當時同一棵樹立刻重跑：464 靶全部沿用快取、203 秒。耗時不是效能指標，只是這一輪真的跑了多久。
+快取的 key 是「守備單位名稱＋突變後被改寫檔的**原文**＋守備單位讀得到的輸入的雜湊＋執行環境指紋（跑本工具的 python 版本、每一支候選 bash 與 PATH 上 bash 的路徑與版本、PATH 上的 `python3`、PyYAML、platform、`/proc`、`/bin/sh` 的雜湊與自報身分、`ORACLE_LINT`）」，R40 起改 docstring 或註解也會讓它失效（`test_validate.py` 讀 `# READ-SITE` 註解）；不計入的只有 `.git`、`__pycache__`、`_NOT_READ` 點名的檔（CHANGELOG）與快取檔本身。發版前的量測用 `--no-cache`。
 R40 第一次量測（`7ced8fe`，`--no-cache`）：459 靶 → 456 殺 / 0 存活 / 3 預期存活，68.0 分鐘、每靶 8.9 s。
 R39 最終（`c99e4c5`）：435 靶 → 432 殺 / 0 存活 / 3 預期存活，60.6 分鐘、每靶 8.4 s；當時快取 key 還是剝掉 docstring 的 AST。
 R39 之前那一輪（`bf961d1`）：殺 431 / 存活 1 / 預期存活 3——存活的是神諭續行判定的 bash 那一支，我原本想列成等價，
-實際它只在同一個 run 區塊有兩條註解續行的管線時分岔（`known-r39-g-two-continued-pipelines`，見 CHANGELOG 的 R38 段）。
+實際已知會分岔的形狀是同一個 run 區塊有兩條（以上）以註解續行的管線，只有一條的形狀試過不分岔（`known-r39-g-two-continued-pipelines`，見 CHANGELOG 的 R38 段）。
 **R37 最終（`git archive d1014e6`，串行）**：394 個靶 → 391 殺 / 0 存活 / 3 預期存活 / 0 靶壞，327.7 分鐘 / 394 靶 = 每靶 49.9 s
 （醒著的時間；牆鐘另含約 4 小時 40 分的系統休眠——電量耗盡強制睡眠，工具以單調時鐘計時所以不算進去）。
 lint 靶跑的是 selftest、神諭靶跑的是 `test/oracle.py` 全集，都比純 python 套件重（反向單位跑的 `oracle_selfcheck.py` 反而很輕）——
@@ -2465,6 +2468,29 @@ class ValidateTest(unittest.TestCase):
         tv = M.tool_versions()
         for fact in ("proc=", "sh=", "python3="):
             self.assertIn(fact, tv, "執行環境的指紋要含 %s" % fact)
+
+    def test_mutation_cache_fingerprint_follows_the_oracles_bash_and_sh(self):
+        """R41 verify 第 16 列：指紋記的是 PATH 上的 bash，神諭卻優先用 `/opt/homebrew/bin/bash`（`pick_bash`）；`/bin/sh` 記的是
+        `realpath`，而 macOS 的 `/bin/sh` 是個轉接程式、realpath 恆為 `/bin/sh`——換了它實際執行的 shell，key 不變。"""
+        sys.path.insert(0, str(HERE)); import mutation_check as M
+        import ast
+        src = (PACK.parent / "parallel-ai-agents" / "test" / "oracle.py").read_text(encoding="utf-8")
+        fn = next(n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.FunctionDef) and n.name == "pick_bash")
+        loop = next(n for n in ast.walk(fn) if isinstance(n, ast.For))
+        cands = {e.value for e in loop.iter.elts if isinstance(e, ast.Constant)}
+        self.assertTrue(cands, "讀不到神諭 pick_bash 的候選路徑")
+        self.assertLessEqual(cands, set(M.BASH_CANDIDATES), "指紋要涵蓋神諭可能選用的每一支 bash：%s" % sorted(cands))
+        with tempfile.TemporaryDirectory() as td:
+            fake = pathlib.Path(td) / "bash"
+            keep = os.environ.get("PATH", "")
+            try:
+                os.environ["PATH"] = td + os.pathsep + keep
+                fake.write_text("#!/bin/sh\necho 'GNU bash, version 9.1-fake-A'\n"); fake.chmod(0o755); a = M.tool_versions()
+                fake.write_text("#!/bin/sh\necho 'GNU bash, version 9.2-fake-B'\n"); b = M.tool_versions()
+            finally:
+                os.environ["PATH"] = keep
+        self.assertNotEqual(a, b, "PATH 上的 bash 換了版本，key 必須不同")
+        self.assertIn("sh-runs=", M.tool_versions(), "`/bin/sh` 要記實際執行時自報的身分，不是 realpath")
 
     def test_run_sh_stops_when_either_oracle_step_fails(self):
         """R39 verify 第 6 列（我在 R39 自己引入的回歸）：`if …; then python3 test/oracle.py && python3 test/oracle_selfcheck.py`

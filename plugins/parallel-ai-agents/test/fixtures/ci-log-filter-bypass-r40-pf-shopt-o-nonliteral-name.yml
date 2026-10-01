@@ -11,6 +11,8 @@ jobs:
     steps:
       - name: shopt -uo with non-literal name
         shell: bash
+        env:
+          N: 'pipefail'
         run: |
           # LOG-FILTER: none — prints no PR text
           shopt -uo -- "$N"

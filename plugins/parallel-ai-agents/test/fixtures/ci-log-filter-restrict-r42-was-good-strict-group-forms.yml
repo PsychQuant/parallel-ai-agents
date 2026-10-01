@@ -1,0 +1,35 @@
+# #33 R42：這兩個 step 原本是 `good-strict-group-forms`（EXPECT: pass）的第 2、4 步。第 2 步是 #60 表格「經過濾」那幾列
+# （群組內的展開期與重導向錯誤：`${!PR_TITLE}`、`> "$PR_TITLE/y"`），第 4 步是群組裡的 heredoc、引號與逃脫的大括號、`${…}`、
+# 大括號展開、背景 `&` 後接 `}`。正面文法不收 `${!…}`、非字面的重導向目標、未加引號的 `\`、heredoc、單獨的 `&`，保守擋下：
+# 兩步的輸出都在群組裡、經 `2>&1` 併進 neutralise.py，是揭露的誤擋。它們在文法裡的部分留在 `good-strict-group-forms`。
+# step 逐字搬過來。
+# LINT-ARGS: --strict
+# R42：這一張的 2 步是**文法外**——不在 `--strict` 的正面文法裡、神諭實跑沒有外流（stdout／stderr／跨 step 通道都沒有）、
+# pipefail 探針沒看到關閉。保守擋下，由下面的宣告簽名（神諭的類別閘門是雙向的）。
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# EXPECT: rule-red
+# EXPECT-MSG: 不在 `--strict` 的正面文法裡
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: multi-line group with set prefix, default shell
+        run: |
+          set -euo pipefail
+          {
+            echo "${!PR_TITLE}" || true
+            echo x > "$PR_TITLE/y" || true
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: braces that are not reserved words
+        shell: bash
+        run: |
+          {
+            echo "{" '}' \} ${PR_TITLE} {a,b}
+            cat <<EOF
+          }
+          EOF
+            sleep 0 & } 2>&1 |
+            python3 ../pai-lenses/scripts/neutralise.py

@@ -16,7 +16,7 @@
 # 反引號被當垃圾吃掉，它包住的內容整段**沒有被辨識成子殼層**，直接攤平變成頂層的一般 token
 # （包含另一顆本來要收尾的反引號，同一個 bug 對它再犯一次，一樣被當垃圾吃掉）。
 #
-# 探針一樣挑 pipefail 狀態（見並排的 good-r37o-word_lex-backtick-stop-drop.yml 開頭說明：重導向
+# 探針一樣挑 pipefail 狀態（見並排的 restrict-r42-was-good-r37o-word_lex-backtick-stop-drop.yml 裡 R42 之前的檔頭：重導向
 # 可見度那條路殺不掉，因為 `_Sh.subs()` 不管巢多深都會走訪到）：把 `set -o pipefail` 放進一對
 # 「反引號…反引號」裡（真正 bash 語義上這是子殼層，裡面開 pipefail 不影響外層），原版正確辨識成
 # 子殼層（`ctx.sub=True`），`_pipefail_holds()` 不採信這個 `pf` 事件，外層 pipefail 仍是關的，

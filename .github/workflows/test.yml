@@ -23,14 +23,20 @@ jobs:
 
       # ── step log 的 PR 可控文字怎麼處理，由 test/lint-ci-log-filter.sh --strict 對**每一個** run step 機械檢查（#33 verify R15）：
       #    經 ../pai-lenses/scripts/neutralise.py（validate.py LineSanitiser 那一份實作），或 `# LOG-FILTER:` 明示不過濾與理由。
-      #    --strict 另外要求：靠管線過濾的 step 整個 run 區塊是**一個群組** `{ …; } 2>&1 | python3 …neutralise.py`
-      #    （前面只准 `set -e`／`-u`／`-E`／`-o pipefail|errexit|nounset|errtrace`）——群組外的命令、以及某一段 `2>&1` 生效前的展開期／重導向錯誤
-      #    都不經過濾（#59／#60）；有管線的 step 跑在 pipefail 之下（只有關鍵字 `bash`、樣板自帶 `-o pipefail`，或 run 裡
-      #    頂層的 `set -o pipefail`——群組形式就是寫在 `set` 前綴）；shell 只能是 bash（#33 verify R34 → R37）。
-      #    兩種模式都要求：靠管線過濾的 step 不得把輸出帶離管線（fd 複製到 2 或另存的 fd、寫到 /dev 或 /proc、開 xtrace／
-      #    verbose），env 也不得帶 SHELLOPTS／BASHOPTS／BASH_ENV／ENV／BASH_XTRACEFD，`PYTHON*` 的值不得是運算式或非字面；
-      #    run 裡不得直接寫非字面的 `${{ … }}`（字面常數與 GitHub 產生的編號／SHA 除外，改經 `env:`）；不得把非字面的內容寫進
-      #    `$GITHUB_ENV`／`$GITHUB_PATH`；neutralise.py 必須是管線的最後一段（R39、R40）。
+      #    --strict 對靠管線過濾的 step 只收一套**正面文法**（R42，#33 verify R41）：`set` 前綴（`-e`／`-u`／`-E`／
+      #    `-o pipefail|errexit|nounset|errtrace`）＋一個群組 `{ …; } 2>&1 | python3 <路徑>/neutralise.py`。群組裡只收外部命令、
+      #    八個惰性 builtin（echo、printf、test、[、true、false、:、exit）、`NAME=值`、`NAME=$(mktemp …)`、`trap <動作> EXIT`、
+      #    點名的重導向（`2>&1`、`>&2`、`>`、`>>`、`<`、`2>`、`2>>`；目標只收 /dev/null、/dev/stdout、/dev/stderr、不含 `..` 的
+      #    相對路徑、"$RUNNER_TEMP/…"），以及寫進 `$GITHUB_ENV`／`$GITHUB_PATH` 的唯一形狀：`echo`／`printf` 全字面參數
+      #    `>> "$GITHUB_ENV"`。其餘一律擋——保守誤擋，由 fixture 檔頭的 `KNOWN-CLASS: 文法外` 逐條簽名。有管線的 step 跑在
+      #    pipefail 之下（關鍵字 `bash`、樣板自帶 `-o pipefail`，或 `set` 前綴）；shell 只能是 bash（#33 verify R34 → R37）。
+      #    宣告了 `# LOG-FILTER:` 的 step：run 文字裡**寫出**管線或提到 `$GITHUB_ENV`／`$GITHUB_PATH` 時，也要落在同一套文法裡——
+      #    這是依拼法的觸發，執行時才組出來的管線（eval、別的程式）不在範圍內（lint 檔頭的已知限制）。
+      #    兩種模式都要求：靠管線過濾的 step 的重導向不得把輸出帶離管線（預設模式由 fd 流向規則判：fd 複製、寫到 /dev 或 /proc、
+      #    xtrace／verbose；--strict 由群組形式與上面的重導向目標清單保證——群組裡的 fd 1、fd 2 都是管線。命令參數給的路徑兩種模式
+      #    都不模擬，見 lint 的已知限制），env 也不得帶 SHELLOPTS／BASHOPTS／BASH_ENV／ENV／BASH_XTRACEFD，`PYTHON*` 的值不得是運算式或非字面；
+      #    run 裡不得直接寫非字面的 `${{ … }}`（字面常數與 GitHub 產生的編號／SHA 除外，改經 `env:`）；neutralise.py 必須是
+      #    管線的最後一段（R39、R40）。`$GITHUB_ENV`／`$GITHUB_PATH` 的寫入只由 --strict 的文法管（R42 起預設模式不查）。
       #    要印 `::error::` 的檢查另開一個 `# LOG-FILTER: none` 的 step（放進群組會被中和）。
       #    R14 把這件事寫成散文列舉，R15 四個 lens 各自找到列舉外的 step（shellcheck、lint-*、整個 macOS job）。
       #    過濾器擋的是 `::`/`##[` 偽造 annotation 與跨 step 的 `::add-mask::`；真正的邊界是 `on: pull_request`
@@ -95,6 +101,19 @@ jobs:
             python3 test/corpus/shellgen.py --out "$RUNNER_TEMP/gen"
             python3 test/corpus/shellgen.py --strict --out "$RUNNER_TEMP/gen"
             python3 test/oracle.py "$RUNNER_TEMP"/gen/*.yml
+          } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
+
+      # #33 R42 WP9：`--strict` 的正面文法是**允許清單**——它宣稱「文法接受的都不外流」。這一步從文法的產生式取樣
+      # （`shellgen.py --grammar`：100 格，固定種子，每個變數位置都放 PR 文字），要求 lint 對每一格 rc=0（產生器沒有走出文法）、
+      # 神諭對每一格判一致（沒有外流、沒有跨 step 通道、每條管線都在 pipefail 之下）。任何一格不成立，錯的是文法本身。
+      - name: oracle — against the generated grammar corpus (--strict accepts every cell, none leaks)
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            python3 test/corpus/shellgen.py --grammar --out "$RUNNER_TEMP/gg"
+            bash test/lint-ci-log-filter.sh --strict "$RUNNER_TEMP"/gg/*.yml
+            python3 test/oracle.py "$RUNNER_TEMP"/gg/*.yml
           } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
       # 形狀普查閘門（#33 verify R32 DA-9）：R31 的每個機制在 shapes.py 都是零列而 CHANGELOG 照寫 GREEN→RED 0。
       # 「分母裡沒有的形狀，量到的 0 不是證據」寫在 shapes.py 檔頭，作者 R29 遵守、R31 破壞——散文規則一輪
@@ -210,7 +229,7 @@ jobs:
         shell: bash
         run: |
           echo "bats shebang: $(head -1 "$(command -v bats)")"
-          echo "bash on PATH: $(command -v bash) → $(bash --version | head -1)"
+          echo "bash on PATH: $(command -v bash) → $(bash -c 'echo "$BASH_VERSION"')"
           major="$(bash -c 'echo "${BASH_VERSINFO[0]}"')"
           [ "$major" -ge 5 ] || { echo "::error::bats would run under bash $major — CJK-named cases become 'unknown test name' and never execute"; exit 1; }
 
@@ -237,6 +256,22 @@ jobs:
         run: |
           set -o pipefail
           { bash test/lint-contract-enumerations.sh --selftest && bash test/lint-contract-enumerations.sh; } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
+
+      # #33 R42 WP9：lint 的詞法模型對 bash 5.3 寫了一段（`${ cmd; }`、`compgen` 的兩份集合），而 ubuntu 的 runner 是 5.2——
+      # 那一段只有這個 job 量得到。selftest 在這裡再跑一次（`--check-compgen` 比的是這台的 bash），神諭跑 bash 5.3 才有意義的
+      # fixture 與文法語料（神諭自己挑 Homebrew 的 bash，版本不在 lint 檔頭 `ORACLE-BASH-SUPPORTED` 裡就具名退出）。
+      - name: lint-ci-log-filter selftest and oracle subset under bash 5.3
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            python3 -c 'import yaml' || python3 -m pip install --quiet --break-system-packages pyyaml
+            bash test/lint-ci-log-filter.sh --selftest
+            python3 test/oracle.py test/fixtures/ci-log-filter-parse-r40-bash53-*.yml test/fixtures/ci-log-filter-*r42-*nested*.yml
+            python3 test/corpus/shellgen.py --grammar --out "$RUNNER_TEMP/gg"
+            bash test/lint-ci-log-filter.sh --strict "$RUNNER_TEMP"/gg/*.yml
+            python3 test/oracle.py "$RUNNER_TEMP"/gg/*.yml
+          } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
 
       - name: Assert swift toolchain is usable (the real gate — a present shim is not enough)
         # LOG-FILTER: none — prints tool versions only

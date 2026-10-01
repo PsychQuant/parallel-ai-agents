@@ -1,0 +1,20 @@
+# #33 R42 opsweep（flat_step_rules 的 `startup = [k for k in env_names if k in FL_STARTUP_KEYS or k == "?"]`，drop 第二運算元 `k == "?"` 之外
+# 的 `k in FL_STARTUP_KEYS` 存活）：宣告了 `# LOG-FILTER:` 的 step 只要 run 文字寫出管線就要落進文法，而 bash 啟動時讀的 env 鍵
+# （BASH_ENV／SHELLOPTS…）可以在 run 之前關掉 pipefail——所以這種 step 的 env 帶啟動鍵要 RULE。突變體把 `k in FL_STARTUP_KEYS` 拿掉，
+# 只剩 `k == "?"`（運算式鍵），BASH_ENV 這種**具名**啟動鍵就放行了。我先前把這條寫成「`?` 幾乎不出現、等價」——方向測反了。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-MSG: bash 啟動時就讀它們
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: declared step with a named startup key and a written pipe
+        shell: bash
+        env:
+          BASH_ENV: /tmp/x
+        run: |-
+          # LOG-FILTER: none — 執行 PR 自己的建置、不含 PR 文字
+          echo a | cat

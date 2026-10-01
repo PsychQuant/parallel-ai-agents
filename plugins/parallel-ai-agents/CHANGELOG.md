@@ -618,6 +618,135 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
     （security S-4 / regression F3，改成 lint 認的形式）；mutation 耗時再上修為 30–50 分（logic 實測 29 s × 96 ≈ 47 分）。
   測試 118 → 124 條；靶清單 96 → 98 個（3 個 EXPECTED_SURVIVE；lint 形式的宣稱只留在最新一段）。
   量測（R16 後）：全輪 98 靶 93 殺／2 存活（emit 自己的中和層，補單元測試後單靶轉殺）→ 95／0／3（複合值）。
+- **verify R41（4 lens + DA + Codex 跨模型 leg，`gpt-6-astra`／medium）— 1 HIGH、14 MEDIUM blocking、7 LOW；六條 leg 全部判 FAIL。**
+  CI 在 `45dee04` 上是綠的。報告的中心發現是 DA 的結構判斷：R40 新寫或改動的六個函式（`ctl`、lastpipe、`trap_cmd`、`github_env_write`、
+  `_param_end`、字面運算式）上找到約 30 個作者沒點名的相鄰放行輸入——**用否定清單模擬 bash 不收斂**；而 test.yml 的 15 個靠管線過濾
+  的 step 全是 `{ 命令表; } 2>&1 | …neutralise.py`（命令表只有簡單命令與管線，沒有控制流程、trap、shopt、eval、source、`$GITHUB_ENV`、`${{`）。R42 換方向：`--strict` 對靠管線過濾的 step 改成**正面文法**（只收點名的形狀，其餘一律紅：文法外是 RULE，詞法層讀不了的是 PARSE），
+  R40 的 pipefail 模擬與 `$GITHUB_ENV` 形狀清單整段刪除；神諭加 pipefail 探針與跨 step 通道觀測，這兩類不再只靠 fixture。方向與放行條件
+  的六處偏離在寫程式之前記在 #33 的決策留言（(a)–(f)；(a)–(d) 寫明替代的驗收，(e)、(f) 只寫了處置與理由）。修正以 TDD 為主：WP1 的 20 張 fixture 中 17 張在 `45dee04` 上讓 selftest 失敗，1 張（`good-r42-testyml-shapes`）設計上就綠、是回歸釘，2 張（`bypass-r42-ghenv`、`bypass-r42-pf-outside-grammar`）整檔本來就紅、只有步驟層級是紅燈；WP4、WP5 與 opsweep 補的 fixture 也先看過紅；WP3 是刪除，WP6–WP8 以突變體與 `oracle_selfcheck.py` 驗證，WP9、WP11 是 CI 與文件，這幾包沒有先紅的紀錄。新 mutation 靶：40 個新靶與改錨點靶的子集跑過（見下方），最後一個（trap 動作的片段種類）由全輪確認：
+  - **正面文法（第 1–8 列，放行條件 1–4）**：自己的斷詞器逐字元吃掉 run 文字，每個字元都要屬於點名的詞元之一，**不讀** `shell_scan`
+    的挖空結果（第 15 列的缺陷在挖空層）；產生式寫在 lint 檔內（`run_F`／`run_D`／`PREFIX`／`TAIL`／`LIST`／命令／`WORD`／重導向）。
+    群組裡的命令名只收未加引號的字面；bash 的 builtin 與保留字只收 `echo`、`printf`、`test`、`[`、`true`、`false`、`:`、`exit` 八個——
+    builtin 與保留字的全集是 bash 5.3 的 `compgen -b`／`-k`，selftest 另外檢查 PATH 上的 bash 列出的名字都在裡面。於是 `shopt`、`eval`、
+    `source`／`.`、`alias`、`enable`、`mapfile`、`coproc`、函式定義、`if`／`for`／`while`／`case`、加引號或跳脫的保留字（第 4 列的
+    `'fi'`、`\done`）都在文法外，第 2–7 列的輸入全部 RULE。`trap` 只收 `trap <動作> EXIT`／`0`：單引號動作照同一套文法剖析、不准
+    `exit`，雙引號動作只准展開 `NAME=$(mktemp 字面…)` 登記過的變數（第 6 列；放行條件 11 的 `trap "rm -rf $tmp" EXIT` 因此放行）。
+    `$GITHUB_ENV`／`$GITHUB_PATH` 只收一種寫法：`echo`／`printf` 的參數全是字面（值裡准展開 `$HOME`、`$RUNNER_TEMP`、`$GITHUB_WORKSPACE`）、
+    `>> "$GITHUB_ENV"`；唯讀寫成 `< "$GITHUB_ENV"`。第 1 列的十三種寫法全部 RULE。宣告了 `# LOG-FILTER:` 的 step，run 文字裡有寫出來的
+    管線或提到這兩個通道，也要落在同一套產生式裡（`flat_trigger`——這是字元檢查，擋寫出來的管線，不擋執行時組出來的）。文法信任其值的
+    變數由各產生式的集合聯集而成（`FL_TRUSTED_VARS`），run 裡不得指派、`env:` 不得設定；模組載入時斷言產生式正規式裡寫出的變數名
+    都在集合裡。`${{ }}` 先代換再剖析：字面常數換成它的值，所以第 8 列收掉群組的字面字串現在 RULE（決策 (f)：宣告的 step 不擋非字面
+    運算式，另開 #81）。R37–R40 累積的 pipefail 模擬（`_pipefail_holds`）與群組規則，以及 R40 新寫的 `ctl`、`trap_cmd`、lastpipe、`github_env_write`，整段刪除；pipefail 只剩兩個
+    來源：`bash` 樣板與群組前的 `set` 前綴。**預設模式從此不檢查 `$GITHUB_ENV`／`$GITHUB_PATH` 寫入**（`github_env_write` 原本兩種模式
+    共用；強制預設模式時，`45dee04` 就有的 fixture 只有 3 張由擋變放行（`bypass-r40-github-env-redirect`／`-env-tee-stdin`／`-path-heredoc`），其餘輸出逐位元組不變；HEAD 上連 R42 新增的共 10 張由擋變放行（WP3 當時量到 7 張）；WP5 的預設模式 fail-closed 另使 4 張新 fixture 由放行變 PARSE）。移植時在原型上修掉三處（先在照原型寫的版本上看到紅）：兩個繞過——trap 動作與外層共用
+    mktemp 登記（PR 文字在離開時被當成程式碼、寫進 `$GITHUB_ENV`）、`printf -v` 經 `$GITHUB_ENV` 產生式指派信任變數——各一張 bypass fixture；另一處是誤擋：宣告的 step 裡的非字面運算式（由 `good-r40-ghexpr-declared-step` 守）。
+    放行條件 1 與 2 互相矛盾（決策 (a)）：以第 2 條為準，R41 DA 的 `shopt -s lastpipe` 之後頂層的 `set -o pipefail` 改為 `restrict-r42-shopt`，子殼層裡的 `set +o pipefail`（`good-r40-pf-subshell-off-*`）改為 `restrict-r42-subshell-scope`；「不過度擋」改由 test.yml 本身與 `good-r42-testyml-shapes`（R42 開始時 test.yml 的 15 個過濾 step 加 macOS bats 宣告 step 的逐字複本；WP9 新增的兩個過濾 step 只由 test.yml 本身守）守。
+  - **代價（第 10 列，放行條件 11）**：誤擋改用性質描述、不再列「九類」：在 `--strict` 下，靠管線過濾的 step 通過 `shell_scan` 之後，文法的補集一律 RULE（`shell_scan` 看不懂的先判 PARSE；宣告了 `# LOG-FILTER:` 的 step 只在觸發時才套用），fixture 裡每一個「靠管線過濾、被文法擋下、神諭實跑沒有外流」的 step 在檔頭簽
+    `KNOWN-CLASS: 文法外`（神諭的已知類別，見下）。R41 regression lens 的 26 個自然寫法，`45dee04` 的 `--strict` 放行 22 個、現在放行 9 個：
+    16 個新被擋（控制流程 9 個、mktemp 以外的命令替換 `$(cat VERSION)`、`time`、`shopt` 兩個、`trap … ERR`、動作裡有 `$(jobs -p)` 的
+    `trap … EXIT`、`grep … "$GITHUB_ENV"`），3 個新放行（`trap "rm -rf $tmp" EXIT`、`trap 'echo set up done' EXIT`、`$GITHUB_PATH`
+    值裡的 `$HOME`）。21 張 strict good fixture 不在文法裡：19 張成為 `restrict-r42-was-*`（15 張改名、4 個多 step 檔把文法外的 step
+    拆出），2 張併入 `restrict-r42-subshell-scope`。test.yml 為了新文法只改一行既有的 run 行（`45dee04` 的第 213 行、現為第 232 行；WP9 另加的 step 見「網」：`$(bash --version | head -1)` →
+    `$(bash -c 'echo "$BASH_VERSION"')`，決策 (e)）。控制流程的產生式〔FU-1〕。
+  - **預設模式（第 9、15 列）**：只加兩條 fail-closed，不再多模擬 bash。巢狀在 `${…}` 裡的 `${ cmd; }`／`${| cmd; }` 與最外層同一條
+    （`${` 後面接空白、tab、`|` 或行尾就不解析）；從掃描器沒能在同一行收掉的命令替換（跨行、heredoc、行尾註解、`$'…'`）回到雙引號之後，同一個字串再出現 `$(`／反引號就不解析。第 15 列的
+    `_word` `p += 1` 由 `bypass-r42-default-k3` 殺掉。strict 不再經 `_Sh` 之後只剩預設模式走得到三個靶：兩個各補一張預設模式的雙胞胎（`good-r42-default-set-arg-cond-word`、`bypass-r42-default-group-proc-pid-fd1`），第三個（`_lex` 的 `$(case …)` 追蹤）雙胞胎做不出來，改用形狀不同的 `good-r42-default-subshell-cmdsub-case`。**預設模式仍開著的兩處**：R41 第 21 列（`opaque_cmd`：`${X:-shopt} -so xtrace`）沒有修，追蹤在 #79；跨行命令替換之後、**另一個**雙引號字串裡的命令替換（`echo "$(`⏎`true`⏎`)" "$(echo … >&2)" 2>&1 | …`）仍不解析、預設模式 rc=0，bash 5.3 實測外流——`--strict` 擋下（命令替換在文法外），追蹤〔FU-3〕。
+  - **神諭（第 11–14、20 列，放行條件 5–8）**：
+    · **pipefail 探針**：PRELUDE 的 DEBUG trap 在每條多段管線記下開始時的 pipefail（同一筆記錄另寫入 `masked` 欄位，目前沒有任何判定讀它）；DEBUG trap 被換掉、或主 shell
+      沒跑到 EXIT，判「量不到」；`trap <動作> EXIT` 經 `trap` 函式與神諭的收尾組合（不組合的話，主 shell 裡的 `trap <動作> EXIT`（宣告的 step）會讀成量不到；靠管線過濾的群組裡的 trap 跑在子殼層、本來就讀得到）。
+    · **跨 step 通道**：`GITHUB_ENV`／`PATH`／`OUTPUT`／`STATE`／`STEP_SUMMARY` 指到暫存檔，跑完看有沒有 PR 文字（比 lint 嚴：預設模式與宣告的 step 裡，lint 接受 `$GITHUB_OUTPUT`、`$GITHUB_STEP_SUMMARY` 的寫入（`--strict` 靠管線過濾的 step 一律 RULE），神諭五個一起看）。strict 檔：RULE 且（pipefail 關或通道外流）⇒ 一致；放行
+      且其一 ⇒ 繞過。前一版「唯一的 RULE 是 pipefail ⇒ 整步不可比」收窄：唯一的 RULE 是 pipefail、而且沒有任何多段管線跑完、通道也沒帶 PR 文字，才判不可比；其餘照探針判。
+    · **已知類別「文法外」**：誤擋那一格、KNOWN_DISAGREE 之後才判；step 的每一條 RULE 都帶文法標記或是 pipefail、沒有外流、探針沒看到
+      pipefail 關閉。檔頭簽名、雙向計數閘門；平台變體「文法外-without-proc」只在沒有 `/proc` 的平台計數。
+    · **KNOWN_DISAGREE 記方向與內容雜湊**（第 14 列）：值改成 `{dir, hash, why}`，方向與 run 區塊的雜湊都要相符才算已知——登記成誤擋的
+      條目不再吞得掉同一格的繞過。69 條（含 `_WITHOUT_PROC` 4 條）逐條實測：保留 34、改由檔頭簽名 28（文法外 25、文法外-without-proc 3）、
+      過期刪除 7（R42 起判一致）；新增 8 條，現為 42 條。
+    · **payload 脈絡與取最嚴重**（第 12 列）：加註解、算術、heredoc 內文三種脈絡；每一組適用的 payload 都判（heredoc 那一組只在運算式落在 heredoc 內文時適用；語法壞掉又沒外流的不參與排序），lint 放行時取最嚴重的一份。
+    · **版本守衛**（第 13 列）：lint 檔頭 `# ORACLE-BASH-SUPPORTED: 5.2 5.3`，神諭的 bash 不在其中就具名退出；CI 的 macOS job 用 bash 5.3
+      跑 lint selftest、只有 5.3 才有意義的 fixture 與文法語料。`GH_SAFE_EXPRS` 與 lint 那一份比對，不同步就具名退出（第 17 列的「共用同一份」）。
+    · **第 20 列**：RULE 且逾時前已外流 ⇒ 一致。
+    · 決策 (b)、(c)：第 5、6 條的原文驗收在新文法下跑不出來（突變的程式碼已刪；heredoc 與 `$((` 不論運算式規則都被擋），改用「永遠放行」
+      的替身 lint 與 FLAT 的突變體——pipefail 判定關掉的 FLAT 突變體神諭 rc=1、6 列判「繞過（pipefail）」；三種脈絡在替身 lint 上 rc=1、
+      「字面代換也接受非字面」的突變體在 `ctx/comment` rc=1。`oracle_selfcheck.py` 10 → 25 項。
+  - **網（第 15 列，放行條件 9、10）**：文法語料 `shellgen.py --grammar` 從產生式取樣 100 格、每個放得進詞的位置以固定種子從 10 個詞裡抽（其中 4 個會展開 `$PR_TITLE`）：lint 100 格全收、
+    神諭 100 格一致——其中 80 個靠管線過濾的格在 bash 裡沒有觀察到 PR 文字外流，另 20 個是宣告不過濾的 step、神諭只看 pipefail 與跨 step 通道、不判輸出外流（這是抽樣，不是證明：文法接受、而斷詞與 bash 不一致的字串，只有被抽到才看得到；
+    CI 在 ubuntu 的 bash 5.2 與 macOS 的 5.3 各跑一次）。`oracle-r42-s2-flip`
+    是 requirements c10 的翻色 fixture 收成的 must-fail 探針。mutation 靶 464 → 456：錨在刪掉程式碼上的 38 個退役、8 個改錨點，新增 31 個（FLAT 每條產生式限制一個、各配一張會殺它的 fixture，15 個——最後一個是 trap 動作的片段種類，見下；神諭 15 個；S-2 1 個），之後全輪再退役 1 個（見下方「mutation 全輪」）。
+    opsweep `EXPECTED_SURVIVE` 48 → 44（決策 (d)：錨在刪掉程式碼上的四條移除；第 5 列 `'done' || :` 的同族輸入（跳脫的 `\done 2>/dev/null || :`）由 `restrict-r42-quoted-reserved-word` 釘住；字面的 `'done' || :` 沒有專屬 fixture，`--strict` 一樣 rc=1（命令名不是純字面）），
+    之後 44 → 56（見下方「opsweep」）。
+  - **文字（第 17–19 列）**：lint 檔頭改寫兩種模式（R42 起是兩套判準：`--strict` 的整條規則鏈是 `flat_step_rules`，預設模式不查
+    `$GITHUB_ENV` 寫入）；「比預設模式多四條」改成三條並對應程式裡 `STRICT` 的四處用法；已刪的群組規則段落改寫成 `run_F` 接手的說明，
+    「九類」代價清單改成性質；`--strict` 宣稱的性質（P1–P3）與照性質寫的已知限制（L1–L6：step 呼叫的程式、之前就在的狀態、沒有寫出
+    管線的宣告 step、工作目錄、YAML、pipefail 以外的退出碼）寫進正面文法一節——L1 包括命令參數給的路徑（`tee /proc/$PPID/fd/1`
+    照收）；規則層詞法一節的規則（fd 流向，`_analyse`）只有預設模式在跑，已知不涵蓋第 3 條（沒走到的分支裡的 `set -o pipefail`）隨模擬刪除；`GH_SAFE_EXPRS` 的
+    「共用同一份」改成「神諭另有一份、載入時比對」（lint 檔內與 `oracle.py` 兩處說明）；`runner_exprs` 沒收尾的運算式照常判。oracle.py docstring 補判定表的 strict 疊加、
+    兩個觀測、文法外、KD 格式與版本守衛；`mutation_check.py` 兩處把 key 寫成「剝掉註解的 AST」的說明改成原文，另一處指向 `_key_content` 的指標（該函式已不存在）改成 `source_for_key`；README 的前綴、檔數、項數；
+    三張 `bypass-r40-github-*` 檔頭的 `PYTHONIOENCODING` 例子換成 `BASH_ENV`，前一版的說法標成更正、冒號之後那段標未證實（第 18 列）；
+    `python3 -u` 的訊息（第 19 列）：`--strict` 已改（`FL_NEUT_NEAR_RE`，見正面文法一節），預設模式仍印「既沒有經 neutralise.py」，沒改。以上 lint 與 oracle.py 的改動都以「剝掉 docstring 的 AST 相同、bash 部分去掉註解
+    行後相同」確認只動了文字。第 16 列（快取）見量測；第 22 列（issue 狀態段）在推送後更新。
+  - **mutation 快取的環境指紋（第 16 列）**：前一版只記 PATH 上的 bash，神諭卻優先用 `/opt/homebrew/bin/bash`；`/bin/sh` 記的是 realpath，
+    而 macOS 的 `/bin/sh` 是轉接程式、realpath 恆為 `/bin/sh`。現在記神諭可能選用的每一支 bash（`BASH_CANDIDATES`，測試以 AST 讀 `pick_bash` 迴圈裡的字面路徑（`shutil.which("bash")` 那一項不讀，由 PATH 上的 bash 那條指紋與假 bash 測試覆蓋）、斷言它們是子集）與 `/bin/sh` 的內容雜湊，及 `/bin/sh -c` 實際執行時回報的 `BASH_VERSION`／`KSH_VERSION`／`ZSH_VERSION`（dash 等其他 shell 三欄全空、彼此分不出）。測試 152 → 153 條（`grep -c "    def test_" ../pai-lenses/scripts/test_validate.py`）。
+  - **opsweep 抓到的（`--since 45dee04`）**：第一次全輪掃描（程式碼在 trap 修法之前）：自 `45dee04` 起被改動的區域是 510 個突變體，**102 個非預期存活**（另有 9 個預期存活）——selftest 對它們一個也沒報紅；補巢狀 `${` 的行尾 fixture 與逐步斷言（`EXPECT-EACH-STEP`）之後重跑剩 100 個。`ef85adb` 上區域是 513 個，最終樹（`fa9f932`）是 519 個——多出來的是我刪死碼後進入範圍的 `_set_prefix_line`；最終結果見文末。逐個處置的經過與教訓：
+    · 我先用「產生語料 712 檔上原碼與突變體的 (rc, stderr) 逐檔比對」把 100 個分成「可區分」與「零區分」，把零區分的當成等價候選。
+      **這個分法是錯的**：零區分只說明語料沒有那個形狀。#29（`_fl_command` 拿掉 `w0 is not None`）被分在「零區分」，一行「只有重導向的
+      命令」（`> out.txt`）就讓突變體崩潰。先用語料與候選庫（`killer_finder`／`combo_finder`，暫存工具、不在 repo）批次找殺手，最後 70 個改成讀突變後的那一行、逐一手寫殺手輸入並實測。
+    · 殺掉的都補了測試（新 fixture、既有 fixture 加 `EXPECT-MSG`、或 selftest 的假 bash 檢查）——反例 fixture 在原碼上紅、突變體上翻綠，正向 fixture 在原碼上綠、突變體上翻紅或崩潰——不進 `EXPECTED_SURVIVE`。其中一個是**真缺陷**（不是 opsweep 報的、是處置時另外發現），其餘都是網的洞（原碼本來就擋、只是沒有測試釘住；下面第二個例子是我原本判成等價的）：
+      `trap $X EXIT`（未加引號的變數當動作）被文法收下、bash 卻在離開時把 `$X` 的值當程式碼執行——`_fl_command` 的 trap 分支只寫了 P 與 D 的
+      種類判斷、其餘落到「把 body 當文法剖析」，現在按種類拒絕（`bypass-r42-trap-unquoted-var-action`，mutation 靶 456 → 457 就是它）；
+      宣告 step 的 `env:` 值寫在同一行（`env: ${{ fromJSON(…) }}`）時鍵名看不到，`_env_names` 記成 `?`、fail-closed，但我原本判等價的那條
+      `k == "?"` 拿掉後突變體只留具名啟動鍵、放行——補 `restrict-r42-declared-unseen-env-keys`。
+    · 一個運算元是**多餘**的（`fl_tokens` 的 `;;` 偵測裡 `op == ";"`：迴圈依序 `&&`／`||`／`|&`／`|`／`;`，`s.startswith(";;", i)` 為真時只有 `;` 命中）——
+      與 R40 同做法，拿掉運算元而不是列進 `EXPECTED_SURVIVE`；712 檔新舊輸出（rc＋stderr）逐位元組相同。
+    · **最後一批 70 個我先用模板批量草擬了理由（草稿沒進 commit，開頭標「【有界：712 語料＋1804 組合候選零區分，非證明】」，內文卻論證同判），逐條驗證後 58 條是假的**：拿掉 `p[0] == "D"` 在 `'Value'` 這類字串上 `IndexError`；
+      `"${HOME:-x}"` 的預設值；兩行 `set` 前綴、pipefail 在第一行；`"${HOME}"` 的變數名；`printf` 無參數與 `printf '-v'`；群組內先放一條 neutralise
+      管線讓 R1 放行、而尾巴才錯；宣告 step 結尾的 `>`。共同缺陷：把「語料＋我手寫的輸入零區分」寫成「同值」，而每個缺口都是這 712 檔裡沒有的輸入形狀（診斷訊息那三個則是語料根本走不到的 bash 環境）。
+      改成逐一提殺手假設（兩輪共 101 個手寫輸入）：58 個殺掉——10 張新 fixture、selftest 加**假 bash**檢查（`--check-compgen` 的版本字串、空版本行、
+      rc≠0 時 stderr 的 `strip()`，真的 bash 只會走「一切正常」那條路）；只差訊息的突變體加 `EXPECT-MSG`（六張新的裡四張是單步 fixture、另兩張是多步）；12 個依構造等價，
+      列進 `EXPECTED_SURVIVE`（44 → 56），**每一條給出理由：11 條是結構論證、互斥那一條是有界窮舉；其中 5 條點名它依賴的上游不變式，其餘靠區域代數或下游不讀該欄位**（`_fl_word` 的 mktemp 條件、`_fl_lines` 的命令恆非空、`PIPED_RE` 命中的是孤立管線…）。
+      `FL_REDIR_BAD_RE` 與 `FL_REDIR_DUP_OK_RE` 互斥那一條用 `test/corpus/regexcheck.py` 窮舉：重導向字元加一個「其他字元」的字母表上長度 0 到 7
+      的 21,435,888 個字串沒有一個同時命中（`--lint` 指向人為改成重疊的副本時會列出同時命中，我用它做過負對照，腳本本身不含這個對照；字母表與長度以外沒有量）。
+    · 補簽：9 張既有 fixture（8 張 restrict、1 張 bypass）漏了 `# KNOWN-CLASS: 文法外`（21 條 step 簽名），fixture 神諭因此 rc=1；已簽，另有 5 張新 fixture 帶簽名（32 條），`FIXTURE_CLASS_TOTALS` 的文法外 39 → 92。
+    · 另補 `parse-r42-default-nested-param-open-at-eol`：`_param_end` 巢狀檢查的 `j + 2 >= n` 拿掉後，巢狀的 `${` 落在行尾時突變體丟 `IndexError`
+      （`echo ${X:-${` ⏎ `set -x; }}`，bash 5.3 是跨行的 `${ cmd; }`、會開 xtrace），與 R40 的最外層那條同形；parse-red 門檻 148 → 153（WP5 已到 152）。
+    selftest 門檻最終是 269 正向／455 規則紅／153 解析紅／66 張訊息斷言／12 張逐步斷言（這一段的 fixture 處理完時是 268／454／153／65／11）（`EXPECT-EACH-STEP`：多步 fixture 每一步各自要有自己的 RULE 行——
+      先前只判整張檔紅，某個守衛被拿掉、放行其中幾步時，只要還有一步被別的規則擋下就照樣綠）。**結果見文末量測**
+  - **mutation 全輪抓到的**（`4faaea2`，`git archive` 副本、`--no-cache --jobs 8`，78.9 分鐘）：457 靶 → 452 殺／**2 個非預期存活**／3 預期存活；兩個都是 R42 改動之後才出現的：
+    · 靶「`set` 前綴行尾的 `;` 不收」：`_set_prefix_line` 的 `toks[-1:] == [";"]` 是**死碼**——R42 起它唯一的呼叫者 `_fl_split_prefix` 的 `toks` 來自
+      `_fl_lines`，`;` 是分隔符、不是詞，永遠不會出現在裡面。刪除；新舊 lint 對 877 張 fixture 與 812 個產生語料（共 1689 檔）的 rc 與 stderr 逐位元組相同；
+      靶退役（457 → 456）；`good-r39-strict-set-prefix-semicolon` 仍釘住「`set -o pipefail;` 放行」。
+    · 靶「runner 運算式的 payload 依賴前一個命令成功」（只拿掉**一組** payload 的 `|| :`）：R42 起每一組 payload 都判、取最嚴重，同一脈絡裡有兩組會收掉群組的
+      payload（不加引號脈絡那組與註解脈絡那組），只改其中一組不改變任何判定。重新錨定成**所有** payload 一起拿掉；但 RULE-red 的 fixture 分辨不出（兩邊都判「一致」，
+      只差 `oracle=` 欄的 `piped`／`not-invoked`），能分辨的只有替身 lint 全放行時的探針：補 `oracle-probes/payload-after-failing-command.yml`（`false ${{ … }}`，
+      期待「把 PR 文字印到 stdout」那句來源分類），`oracle_selfcheck.py` 25 → 26 項，靶改由 `oracle-inverted` 守備，單靶實測殺掉。
+    這兩個是**同一類**：R42 前半的改動（WP2 起 FLAT 改寫換掉 `_set_prefix_line` 的呼叫端、WP8 讓每組 payload 都判）讓先前的靶失去分辨力，到全輪才看得到；刪死碼與重新錨定是對全輪結果的處置，不是原因。所以最終量測不能用改動之前的樹。
+  **我自己的錯**：WP5 把 `_lex` 的 `$(case …)` 追蹤列成預期存活候選，理由是「試了 22 種形狀找不到會翻色的輸入」——探針目錄留下 19 種（編號到 a22），多半是頂層或群組 `{ …; }`、沒有一個把 `$(case …)` 放進子殼層 `( … )`，而突變體多讀到的 `)` 在群組裡只是被略過的殘渣；翻色要子殼層 `( … )`（`good-r42-default-subshell-cmdsub-case`）。
+  「找不到反例」被我當成等價的證據。WP6 的 commit 訊息把 KNOWN_DISAGREE 的帳記成「25 條改由類別宣告簽名」，34＋25＋7 只有 66、不是 69，漏了 without-proc 的 3 條；上面是逐條重算的數字。
+  **同一個錯在這一輪反覆出現**：WP5 的 `$(case`、partition 的零區分、「殊途同歸」、測反方向的等價理由、最後一批 70 條的草稿，以及我暫存腳本
+  `gen_expected.py` 裡的 `KILLED` 名單（不在 repo）——其中一條記成「已由 fixture 殺」的其實沒殺（`_fl_command` 指派判定的種類判斷，重跑顯示
+  仍存活，補 `restrict-r42-flat-quoted-first-word` 才殺掉）。`test/opsweep.py` 的註解在 R36 就寫過「第二次踩」。這次寫進 `test/opsweep.py` 註解的規則：零區分只能寫「有界」，不能寫「等價」；「已殺要重跑對過」只寫在 `d725638` 的 commit 訊息裡（重跑用的 `rerun.py` 是暫存工具、不在 repo）。
+  **量測（本機 macOS、bash 5.3；CI 以 Linux 為準）**：量測樹 `fa9f932`（mutation 全輪、opsweep）與最終 commit `d31ae51`（其餘）。兩者的差異是封閉列舉、只有這些：
+  一張 fixture（`restrict-r42-flat-set-option-without-name`）、selftest 三組門檻（規則紅 454 → 455、訊息斷言 65 → 66、逐步斷言 11 → 12）、
+  `oracle.py` 的 `FIXTURE_CLASS_TOTALS`（文法外 92 → 95）、`opsweep.py` 的一條 `EXPECTED_SURVIVE`；lint 內嵌的 Python（opsweep 的突變對象，也是 mutation 456 靶裡 290 個 lint 靶的對象）從 `fa9f932` 到 `d31ae51` 逐位元相同（184,797 字元，已比對）；之後只改了 `_set_prefix_line` 的 docstring 一句話（AST 相同）。mutation 另有 oracle 系兩個單位共 51 靶（`oracle.py` 的 `FIXTURE_CLASS_TOTALS` 一行不同）、validate 114 靶、neutralise 1 靶，不在這句的範圍。
+  · selftest 269 正向／455 規則紅／153 解析紅／66 張訊息斷言／12 張逐步斷言（`EXPECT-EACH-STEP`）。
+  · fixture 神諭 1216 個 step：一致 871、不一致 148（全部已知：107 步屬類別宣告——G 8、S-2 3、文法外 95、文法外-without-proc 2，其中一步同時算 G 與 S-2——另 41 步是逐條簽名的 `KNOWN_DISAGREE`）、不可比 171、量不到 26。
+    產生語料：預設 624 個 step 一致 516／不一致 62（已知）／不可比 46／量不到 0；`--strict` 88 個 step 一致 58／不一致 22（已知）／不可比 8／量不到 0；
+    文法語料 100 個 step 一致 100／不一致 0。`oracle_selfcheck.py` 26 項全數照預期。`--verify-expected` 57 條（712 檔，其中 `--strict` 組 66 檔）全部逐位元組相同。
+  · **mutation 全輪**（`fa9f932`，`git archive` 副本、`--no-cache --jobs 8`，開跑負載 23.4）：456 靶 → **453 殺／0 存活／3 預期存活／0 靶壞**，94.4 分鐘、每靶 12.4 s（工具的單調時鐘、不含機器睡眠；bash 量到的牆鐘是 115.3 分鐘，中間機器睡了約 21 分鐘）。
+    先前一輪（`4faaea2`）是 457 靶、452 殺／2 非預期存活（見上），處置後才是這一輪。
+    · **mutation 在最終 commit（`120fbd4`）上重建**：`--no-cache --jobs 8`、worktree 上跑（快取 key 把整個 repo 當輸入，上面任何一處改動都讓它整批換掉，所以最終 commit 的快取只能是一輪全輪，不是沿用）：
+    456 靶 → **453 殺／0 存活／3 預期存活／0 靶壞**，84.9 分鐘、每靶 11.2 s（單調時鐘與牆鐘一致，5094 秒，這一輪機器沒有休眠）。結果寫回 `mutation-cache.json`。
+    驗證：在這個 commit 的 fresh `git archive` 加這份快取上跑 `--only 0,1`，沿用 2 靶、重跑 0 靶；再改 `test_validate.py` 一行，同一個靶沿用 0 靶、重跑 1 靶（快取確實會失效）。
+  · **opsweep `--since 45dee04`**（`fa9f932`，519 個突變體、`--jobs 4`，193.3 分鐘，單調時鐘、不含機器睡眠；牆鐘 215 分鐘）：殺 496（當掉 68、逾時 0、產生語料抓到而 selftest 沒抓到的 0）／存活 23（預期 21、**非預期 2**）。
+    兩個非預期都在 `_set_prefix_line`——我刪死碼（靶 399）時動到這個函式，它因此進入 `--since` 的範圍，既有的盲點才暴露：
+    `len(toks) <= k + 1` 拿掉後，`set -o`（與 `-e`、`-eu` 合寫）少選項名時突變體 `IndexError`，補 `restrict-r42-flat-set-option-without-name`（3 步逐步斷言、簽名 3 條），單靶重跑殺掉；
+    `toks[:1] != ["set"]` 拿掉後等價——唯一呼叫者 `_fl_split_prefix` 在呼叫前已 `break` 掉首詞不是 `set` 的行——列入 `EXPECTED_SURVIVE`（56 → 57；本輪自 WP10 的 44 起共 +13）。
+    最終樹非預期 0：突變的程式碼逐位元相同，新 fixture 只會多殺，兩個存活另以單靶重跑確認（一個殺掉、一個列預期）；沒有在最終 commit 上重跑整輪（193 分鐘）；最終 commit 上重跑的是 mutation 全輪與 `run.sh`（見下）。
+  · **`run.sh`**（最終 commit `120fbd4`，worktree＝git checkout，單獨跑——我的量測腳本串行、開跑一分鐘負載 23.1，同機其他 session 無法排除）：`✓ 全部通過`，rc=0、1187 秒；
+    bats 194 案例 0 not ok、0 skip（`grep -c '^ok'` 數出 255 是含 node 與 pack 檢查的雜行，不是 255 個 bats 案例）。
+    **先前在 `git archive` 副本裡跑過兩次**：放在 macOS 臨時目錄（`/var` 是指向 `/private/var` 的 symlink）底下的那次 6 個 detach bats 案例紅（`R7-D/R9`、`R9-A1`、`R10-L9-1`、`R10-FR1`、`R10-FR3`、`R11-HOOK`）：
+    `own_workers` 用 `pwd -P`（`/private/var/…`）組 `pgrep` 的比對字串，worker 命令列卻是邏輯路徑 `/var/…`，兩邊對不上——位置造成、不是 R42（R42 沒動 `bin/` 與 bats）；
+    放在沒有 symlink 的路徑底下的副本全過（255 ok、0 not ok，955 秒）。副本不是 git checkout，8 個 #48 的 bats 案例因此 skip、builtin-lenses 的 drift 檢查略過——所以最終的跑法
+    是 worktree 這一次。這個測試對「樹放在 symlink 底下」敏感，本 PR 不處理。
 - **verify R39（4 lens + DA + Codex 跨模型 leg，`gpt-6-astra`／medium）— 1 HIGH、11 MEDIUM blocking、6 LOW；六條 leg 全部判 FAIL。**
   CI 在 `6aced19` 上是綠的（R38 的平台那一半部分修好）。報告的中心發現：這一輪找到的每一個繞過，都落在神諭結構上
   看不到的地方——runner 運算式不代換、pipefail 不可比、每個 step 單獨跑所以看不到跨 step 的 `GITHUB_ENV`、逾時丟掉輸出、bash 版本；
@@ -655,7 +784,7 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
     拿掉並寫明。`f-inner-heredoc` 的 EOF 多縮排、什麼都沒量到——群組內部內容不再縮排。
   - **mutation 快取（第 4、17 列）**：key 丟掉註解，而 `test_validate.py` 讀 `# READ-SITE` 註解——改用原文；全部命中時也跑前置檢查；
     key 含 `/proc` 能力、`/bin/sh`、PATH 上的 `python3`、`ORACLE_LINT`；`--only` 命中時照印 RESULT；全部沿用時不印每靶耗時；
-    `load_cache` 只收 killed／survived。測試 148 → 152 條（`grep -c "    def test_" ../pai-lenses/scripts/test_validate.py`）。
+    `load_cache` 只收 killed／survived。測試 148 → 152 條（歷史數字；帶指令的現況宣稱只留在最新一段，R42 起是 153）。
   - **其他**：`run.sh` 的 `if …; then A && B`——A 失敗不觸發 errexit（第 6 列，我在 R39 自己引入）；opsweep 的 10% 上限改比區域內的
     預期存活（第 18 列）；test.yml 註解、fixture 檔頭、R38 段的分配數字（第 14、16 列）。
   - **最終量測抓到的**：opsweep 報 `_param_end` 的 `i + 2 >= len(line)` 拿掉後存活——`${` 落在行尾時 lint 丟 IndexError（traceback，

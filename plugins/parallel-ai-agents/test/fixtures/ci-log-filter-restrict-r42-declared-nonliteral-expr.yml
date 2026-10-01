@@ -1,0 +1,17 @@
+# #33 R42 WP10：殺 FLAT 靶「非字面的 runner 運算式照樣代換」。宣告不過濾、寫了管線（觸發文法）的 step 裡有非字面運算式：
+# 值看不到，文法無從判斷 bash 看到什麼（值可以帶 `|`、換行）——保守擋下。宣告的 step 本身不受運算式規則管（R4′ 不在 R42，
+# 決策紀錄 (f)），這一條只在觸發了文法時生效。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-MSG: 非字面的 runner 運算式
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: declared with a matrix expression and a pipe
+        shell: bash
+        run: |
+          # LOG-FILTER: none — prints the matrix OS
+          echo "${{ matrix.os }}" | cat

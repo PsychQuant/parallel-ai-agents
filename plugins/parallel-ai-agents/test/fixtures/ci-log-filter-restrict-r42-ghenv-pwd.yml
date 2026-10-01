@@ -1,0 +1,25 @@
+# #33 verify R41 第 10 列：`echo "BUILD_DIR=$PWD/build" >> "$GITHUB_ENV"`——`$PWD` 是 runner 的工作目錄，不是 PR 文字。
+# 正面文法寫進 `$GITHUB_ENV` 的值只准 `$HOME`／`$RUNNER_TEMP`／`$GITHUB_WORKSPACE`（`$PWD` 可以被 `cd` 改），保守擋下。
+# 逐字取自 R41 regression lens 的 c1/ghenv-dollar。
+# LINT-ARGS: --strict
+# R42：這一張的 1 步是**文法外**——不在 `--strict` 的正面文法裡、神諭實跑沒有外流（stdout／stderr／跨 step 通道都沒有）、
+# pipefail 探針沒看到關閉。保守擋下，由下面的宣告簽名（神諭的類別閘門是雙向的）。
+# KNOWN-CLASS: 文法外
+# EXPECT: rule-red
+# EXPECT-MSG: 不在 `--strict` 的正面文法裡
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: ghenv-dollar
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+          {
+            echo "BUILD_DIR=$PWD/build" >> "$GITHUB_ENV"
+            make | tee log
+          } 2>&1 | python3 scripts/neutralise.py

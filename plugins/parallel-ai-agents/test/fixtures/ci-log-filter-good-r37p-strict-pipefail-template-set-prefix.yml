@@ -3,6 +3,11 @@
 #   drop-operand|_bash_template|rest = toks[1:-1] if len(toks) > 1 and toks[-1] == "{0}" else toks[1:]|2
 #   drop-operand|_set_prefix_line|if len(toks) <= k + 1 or toks[k + 1] not in SET_OPT_NAMES:|1
 #
+# **R42**：`--strict` 改成正面文法，`_pipefail_holds` 與 `strict_group_violation` 都已刪除。step 1（`( set -o pipefail )` 子殼層）
+# 不在文法裡，搬到 `restrict-r42-was-good-r37p-strict-pipefail-template-set-prefix`；step 3 沒有寫出來的管線，`--strict` 不再對它套文法
+# （實測：把 `_set_prefix_line` 改成一進來就結束，這一步照樣放行）。剩下兩步還殺不殺得到上面列的突變體，R42 重整 mutation 靶時
+# 重新量；以下是 R37 當時的說明，step 編號照原本的三步。
+#
 # 三個 step 各自單獨命中一個突變體；原版三個都不擋（EXPECT: pass），突變後恰好各自
 # 拆掉一個 step 的判斷，讓整份 fixture 翻紅。
 #
@@ -52,12 +57,6 @@ jobs:
   j:
     runs-on: ubuntu-latest
     steps:
-      - name: pipefail subshell enable does not count, later top-level enable does
-        # LOG-FILTER: none — only inert `set` builtin invocations, nothing prints PR text
-        run: |
-          ( set -o pipefail )
-          set -o pipefail
-          true | true
       - name: bash template without trailing placeholder still recognises -o pipefail
         shell: "/bin/bash -o pipefail"
         # LOG-FILTER: none — only an inert command, nothing prints PR text

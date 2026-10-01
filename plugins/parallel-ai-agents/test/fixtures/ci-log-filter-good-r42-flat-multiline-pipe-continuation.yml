@@ -1,0 +1,19 @@
+# #33 R42 opsweep（`_fl_lines` 運算子後吃續行換行的迴圈 `i += 1`，±1→±2 存活）：`&&`／`||`／`|`／`|&` 之後的換行是續行（bash 同）。
+# 突變體 `i += 2` 在「運算子後恰好一個換行、再接命令」時多跳一個詞元，把下一個命令的第一個詞吃掉——管線後段變成沒有命令而誤擋。
+# 語料沒有「管線運算子後換行再接命令」的形狀，所以零區分。這是**合法**的多行管線，應放行（正向 fixture）。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: multiline pipeline inside the group
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            echo a |
+            cat
+          } 2>&1 | python3 scripts/neutralise.py

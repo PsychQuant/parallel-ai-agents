@@ -4,7 +4,9 @@
 # 群組規則是**預防性**的：這一次執行 `echo safe` 沒寫 stderr、沒有外流，而 bash 確實建了接 neutralise 的管線——
 # 神諭量的是一次執行，照它的判定表這是「不一致：誤擋」。這張探針釘住的是：那個判定**看得見**，不被 pipefail 的「不可比」吃掉。
 # 把排除改回「step 起始行上有 pipefail RULE 就整個不可比」，這一檔就不再失敗 ⇒ 神諭 rc=1。
-# ORACLE-MUST-FAIL: 不一致：誤擋
+# **R42 起不再是 must-fail 探針**：它守的那條排除（「唯一的 RULE 是 pipefail ⇒ 整步不可比」）在 R42 WP7 刪除——神諭的 pipefail
+# 探針實際量到這條管線在 pipefail 關閉下完成，lint 擋下是對的，判一致。「誰把整步跳過改回來」改由 `oracle_selfcheck.py`
+# 第 19 項守（假 lint `lint-strict-pipefail-only.sh` 對 pipefail 開著的 step 只判 pipefail RULE ⇒ 必須判誤擋）。
 # EXPECT: rule-red
 # LINT-ARGS: --strict
 name: t

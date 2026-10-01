@@ -1,0 +1,22 @@
+# #33 R42：這兩個 step 原本在 `good-r37b-strict-pipefail-forms`（EXPECT: pass）裡，是「頂層打開 pipefail」的負對照：頂層大括號裡的
+# `set -o pipefail` 與 `shopt -so pipefail`（寫不成群組，R37 改成宣告 `# LOG-FILTER:` 的 step）。正面文法在宣告的 step 裡不收群組，
+# 也不收 `shopt`，保守擋下：兩步都只印常數、管線之前 pipefail 已經打開，是揭露的誤擋。step 逐字搬過來。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-MSG: 不在 `--strict` 的正面文法裡
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: set inside a top-level brace group
+        run: |
+          # LOG-FILTER: none — prints a constant（寫不成群組：群組外只收 `set` 前綴）
+          { set -o pipefail; }
+          echo ok | cat
+      - name: shopt -so
+        run: |
+          # LOG-FILTER: none — prints a constant（寫不成群組：前綴只收 `set`）
+          shopt -so pipefail
+          echo ok | cat
