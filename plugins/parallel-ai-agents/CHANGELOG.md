@@ -647,10 +647,10 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
     `trap … EXIT`、`grep … "$GITHUB_ENV"`），3 個新放行（`trap "rm -rf $tmp" EXIT`、`trap 'echo set up done' EXIT`、`$GITHUB_PATH`
     值裡的 `$HOME`）。21 張 strict good fixture 不在文法裡：19 張成為 `restrict-r42-was-*`（15 張改名、4 個多 step 檔把文法外的 step
     拆出），2 張併入 `restrict-r42-subshell-scope`。test.yml 為了新文法只改一行既有的 run 行（`45dee04` 的第 213 行、現為第 232 行；WP9 另加的 step 見「網」：`$(bash --version | head -1)` →
-    `$(bash -c 'echo "$BASH_VERSION"')`，決策 (e)）。控制流程的產生式〔FU-1〕。
+    `$(bash -c 'echo "$BASH_VERSION"')`，決策 (e)）。控制流程的產生式追蹤在 #82；神諭的「執行名稱稽核」（直接觀測斷詞器與 bash 對同一字串的切法是否一致；R42 設計的 D11，未實作）追蹤在 #83。
   - **預設模式（第 9、15 列）**：只加兩條 fail-closed，不再多模擬 bash。巢狀在 `${…}` 裡的 `${ cmd; }`／`${| cmd; }` 與最外層同一條
     （`${` 後面接空白、tab、`|` 或行尾就不解析）；從掃描器沒能在同一行收掉的命令替換（跨行、heredoc、行尾註解、`$'…'`）回到雙引號之後，同一個字串再出現 `$(`／反引號就不解析。第 15 列的
-    `_word` `p += 1` 由 `bypass-r42-default-k3` 殺掉。strict 不再經 `_Sh` 之後只剩預設模式走得到三個靶：兩個各補一張預設模式的雙胞胎（`good-r42-default-set-arg-cond-word`、`bypass-r42-default-group-proc-pid-fd1`），第三個（`_lex` 的 `$(case …)` 追蹤）雙胞胎做不出來，改用形狀不同的 `good-r42-default-subshell-cmdsub-case`。**預設模式仍開著的兩處**：R41 第 21 列（`opaque_cmd`：`${X:-shopt} -so xtrace`）沒有修，追蹤在 #79；跨行命令替換之後、**另一個**雙引號字串裡的命令替換（`echo "$(`⏎`true`⏎`)" "$(echo … >&2)" 2>&1 | …`）仍不解析、預設模式 rc=0，bash 5.3 實測外流——`--strict` 擋下（命令替換在文法外），追蹤〔FU-3〕。
+    `_word` `p += 1` 由 `bypass-r42-default-k3` 殺掉。strict 不再經 `_Sh` 之後只剩預設模式走得到三個靶：兩個各補一張預設模式的雙胞胎（`good-r42-default-set-arg-cond-word`、`bypass-r42-default-group-proc-pid-fd1`），第三個（`_lex` 的 `$(case …)` 追蹤）雙胞胎做不出來，改用形狀不同的 `good-r42-default-subshell-cmdsub-case`。**預設模式仍開著的兩處**：R41 第 21 列（`opaque_cmd`：`${X:-shopt} -so xtrace`）沒有修，追蹤在 #79；跨行命令替換之後、**另一個**雙引號字串裡的命令替換（`echo "$(`⏎`true`⏎`)" "$(echo … >&2)" 2>&1 | …`）仍不解析、預設模式 rc=0，bash 5.3 實測外流——`--strict` 擋下（命令替換在文法外），追蹤在 #84。
   - **神諭（第 11–14、20 列，放行條件 5–8）**：
     · **pipefail 探針**：PRELUDE 的 DEBUG trap 在每條多段管線記下開始時的 pipefail（同一筆記錄另寫入 `masked` 欄位，目前沒有任何判定讀它）；DEBUG trap 被換掉、或主 shell
       沒跑到 EXIT，判「量不到」；`trap <動作> EXIT` 經 `trap` 函式與神諭的收尾組合（不組合的話，主 shell 裡的 `trap <動作> EXIT`（宣告的 step）會讀成量不到；靠管線過濾的群組裡的 trap 跑在子殼層、本來就讀得到）。
@@ -724,7 +724,7 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
   **同一個錯在這一輪反覆出現**：WP5 的 `$(case`、partition 的零區分、「殊途同歸」、測反方向的等價理由、最後一批 70 條的草稿，以及我暫存腳本
   `gen_expected.py` 裡的 `KILLED` 名單（不在 repo）——其中一條記成「已由 fixture 殺」的其實沒殺（`_fl_command` 指派判定的種類判斷，重跑顯示
   仍存活，補 `restrict-r42-flat-quoted-first-word` 才殺掉）。`test/opsweep.py` 的註解在 R36 就寫過「第二次踩」。這次寫進 `test/opsweep.py` 註解的規則：零區分只能寫「有界」，不能寫「等價」；「已殺要重跑對過」只寫在 `d725638` 的 commit 訊息裡（重跑用的 `rerun.py` 是暫存工具、不在 repo）。
-  **量測（本機 macOS、bash 5.3；CI 以 Linux 為準）**：量測樹 `fa9f932`（mutation 全輪、opsweep）與最終 commit `d31ae51`（其餘）。兩者的差異是封閉列舉、只有這些：
+  **量測（本機 macOS、bash 5.3；CI 以 Linux 為準）**：量測樹 `fa9f932`（mutation 全輪、opsweep）與最終 commit `d31ae51`（其餘）。本段與上文的 commit 雜湊（`4faaea2`、`fa9f932`、`d31ae51`、`120fbd4` 等）都是 squash 前的 WIP commit，保存在分支 `r42-fix`；PR 分支上 squash commit 的樹與 `r42-fix` 最後一個 commit 逐位元相同。兩者的差異是封閉列舉、只有這些：
   一張 fixture（`restrict-r42-flat-set-option-without-name`）、selftest 三組門檻（規則紅 454 → 455、訊息斷言 65 → 66、逐步斷言 11 → 12）、
   `oracle.py` 的 `FIXTURE_CLASS_TOTALS`（文法外 92 → 95）、`opsweep.py` 的一條 `EXPECTED_SURVIVE`；lint 內嵌的 Python（opsweep 的突變對象，也是 mutation 456 靶裡 290 個 lint 靶的對象）從 `fa9f932` 到 `d31ae51` 逐位元相同（184,797 字元，已比對）；之後只改了 `_set_prefix_line` 的 docstring 一句話（AST 相同）。mutation 另有 oracle 系兩個單位共 51 靶（`oracle.py` 的 `FIXTURE_CLASS_TOTALS` 一行不同）、validate 114 靶、neutralise 1 靶，不在這句的範圍。
   · selftest 269 正向／455 規則紅／153 解析紅／66 張訊息斷言／12 張逐步斷言（`EXPECT-EACH-STEP`）。
