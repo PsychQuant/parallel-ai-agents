@@ -1,0 +1,94 @@
+# #33 R44 宣稱查核（`claim-audit-r44.js`，h1-X1）抓到的文法缺口：`test`／`[` 的運算元是**未加引號的 glob 字元**（`*`、`?`、`[`）時，bash 在執行 `test` 之前先做檔名展開——
+# PR 的 checkout 裡的檔名成了 `test` 的運算元。工作目錄裡有檔名 `-v` 與 `PWD[$(命令)]` 時，`[ * ]` 展開成 `[ -v PWD[$(命令)] ]`，`-v` 的下標被算術求值、命令替換執行（bash 5.3 實測：
+# `[ * ]`、`test *`、`printf * x` 都執行；bash 3.2 不執行；`echo *` 與 `printf "%s\n" *` 的 glob 只影響輸出）。前一版 `_fl_test_ok` 只檢查形狀、不檢查運算元，docstring 卻寫「運算元是字面或加了引號的展開」。
+# 八個 step 各自要有自己的 RULE 行（EXPECT-EACH-STEP）；神諭在空的暫存 cwd 裡跑、看不到那兩個檔名，沒有觀察到外流，逐步簽 `KNOWN-CLASS: 文法外`。姊妹 fixture：`good-r44-test-glob-harmless-contexts`。
+# LINT-ARGS: --strict
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# EXPECT: rule-red
+# EXPECT-EACH-STEP: rule-red
+# EXPECT-MSG: 運算元裡有未加引號的 glob 字元
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: test operand is a bare star
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ * ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: test command with a bare star
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            test *
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: unary operator then a bare star
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ -n * ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: operand ends in a star
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ -n a* ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: operand is a question-mark glob
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ ?? ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: operand is a bracket glob
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ -n x[a-b] ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: binary operator then a bare star
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ a = * ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: test with a star-suffix glob
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            test -e *.txt
+          } 2>&1 | python3 scripts/neutralise.py

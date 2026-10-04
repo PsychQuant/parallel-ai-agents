@@ -1,0 +1,19 @@
+# #33 verify R43 第 9 列（網失效）：opsweep 在 `_lex` 的括號深度追蹤上有五個突變體（`depth += 1`／`depth -= 1` 各改成 ±2、`elif op == ")" and depth`
+# 拿掉第一個運算元或把 `==` 改成 `!=`、`if stop == ")" and … and not depth …` 拿掉 `not depth`），R42 讓 `--strict` 不再經過 `_Sh` 之後，原本殺它們的
+# strict fixture 只剩正面文法在判，預設模式沒有雙胞胎——`selftest` 照綠。這一張是預設模式的形狀：行程替換 `<( … )` 裡有一個帶 `;` 的子殼層
+# `(ls >&2; printf "%s" a)`，外面再包一層過濾的 `( … ) 2>&1 |`。原版把 `<( … )` 與裡面的子殼層讀成各自配對的括號，`>&2` 落在過濾的子殼層裡、放行；
+# 五個突變體都讓深度記錯、行程替換提早收尾，`>&2` 被當成在子殼層**之外**——判紅（誤擋）。這是「應放行」型：突變體翻成 RULE 才算殺掉。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: a subshell with a semicolon inside a process substitution
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          ( cat <( (ls >&2; printf "%s" a) ) ) 2>&1 | python3 ../pai-lenses/scripts/neutralise.py

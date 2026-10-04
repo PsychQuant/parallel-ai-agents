@@ -1,0 +1,38 @@
+# #33 verify R43 第 3 列（Codex）：`printf` 的選項守衛看**原始拼法**——雙引號內的反斜線換行 `printf "\⏎-v" tmp '%s' "$PR_TITLE"` 的原始首字元是
+# 反斜線，不是 `-`；bash 把反斜線換行移除，實際執行的是 `printf -v tmp '%s' "$PR_TITLE"`：變數被改寫，`mktemp` 的登記沒有失效，之後的
+# `trap "$tmp" EXIT` 在離開時把 PR 標題當程式碼執行。協調者端到端實跑（標記檔被寫入、pipefail 被關）。需要刻意構造（Codex 評 HIGH，降為 MEDIUM）。
+# 對照：`printf -v …`、`printf \-v`（bash 也當選項）、`printf "-v"` 直接寫都在 R43 就被擋；R44 起守衛判的是 bash 實際得到的值。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-EACH-STEP: rule-red
+# EXPECT-MSG: 不在 `--strict` 的正面文法裡
+# EXPECT-MSG: `printf` 的第一個參數（格式）必須是字面
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: printf with a continuation inside the quotes
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            tmp=$(mktemp)
+            printf "\
+          -v" tmp '%s' "$PR_TITLE"
+            trap "$tmp" EXIT
+            true
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: printf with the option split by an empty quote
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            tmp=$(mktemp)
+            printf ''-v tmp '%s' "$PR_TITLE"
+            trap "$tmp" EXIT
+            true
+          } 2>&1 | python3 scripts/neutralise.py

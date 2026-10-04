@@ -1,0 +1,25 @@
+# #33 verify R43 第 4 列（logic＋DA）：TAIL 的路徑正規式 `[A-Za-z0-9_./-]*neutralise\.py` 允許開頭是 `-`。`python3 -Xneutralise.py`／`-Wneutralise.py` 被
+# python3 當選項，改從 stdin 讀程式——群組輸出（含 PR 文字）被當 Python 執行，SyntaxError 把原文印到 python3 自己的 stderr，而那條 stderr
+# 在管線最右端、不經任何過濾（`-c…` 只會失敗、不外流，同一條規則擋下，不另列）。路徑第一個字元不得是 `-`。預設模式的 `PIPED_RE` 同形。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-EACH-STEP: rule-red
+# EXPECT-MSG: 過濾器不是恰好 `python3 <字面路徑>/neutralise.py`
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: python option -X
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          { echo "$PR_TITLE"; } 2>&1 | python3 -Xneutralise.py
+      - name: python option -W
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          { echo "$PR_TITLE"; } 2>&1 | python3 -Wneutralise.py

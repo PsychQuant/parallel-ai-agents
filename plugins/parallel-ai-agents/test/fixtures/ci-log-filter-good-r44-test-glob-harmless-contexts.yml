@@ -1,0 +1,91 @@
+# #33 R44 宣稱查核 h1-X1 的姊妹：`test`／`[` 的運算元新增「未加引號的 glob 字元不收」之後，**不該被擋**的寫法——加了引號的星號、整個加引號的展開、波浪號與大括號（兩者的展開結果不來自 PR 的檔名）、
+# 以及 `echo *`／`printf` 資料參數的 glob（只影響輸出，不是 `test` 的運算元）。每個運算元的「未加引號」與「含 glob 字元」兩個條件各自要有一個放行的對照。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: single-quoted star
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ -n 'a*' ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: double-quoted star
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ -n "a*" ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: quoted expansion against a quoted star
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ "$PR_TITLE" = "*" ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: tilde operand
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ -n ~ ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: brace operand
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ -n {a,b} ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: echo with a bare star only prints
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo *
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: printf data argument glob only prints
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            printf "%s\n" *
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: printf quoted format
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            printf '*' x
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: printf data argument glob
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            printf "%s" a* b
+          } 2>&1 | python3 scripts/neutralise.py

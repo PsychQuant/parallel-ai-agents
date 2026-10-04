@@ -1,0 +1,17 @@
+# R44（#33 verify R43 第 6 列，logic＋Codex）：神諭的 EXIT 組合在 errexit 下跳過使用者的 trap 動作——`__orc_ret "$__orc_x"` 回傳非零就中止整個動作串。
+# 幾乎每張 strict fixture 都是 `set -euo pipefail`，失敗路徑因此完全盲。這一個 step 的 trap 動作只在失敗路徑（`false | tee`）把 PR 文字寫進跨 step 通道；
+# 替身 lint 全放行時，神諭必須看得到（rc=1、「繞過（跨 step 通道）」）。拿掉組合裡的 `&& :`，這一項量不到（rc=0）。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: an exit trap that leaks only on the failing path
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+          { trap 'echo "title=$PR_TITLE" >> "$GITHUB_OUTPUT"' EXIT; false | tee log; } 2>&1 | python3 scripts/neutralise.py

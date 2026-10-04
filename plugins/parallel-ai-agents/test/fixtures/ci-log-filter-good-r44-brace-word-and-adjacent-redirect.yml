@@ -1,0 +1,20 @@
+# #33 verify R44 區域 opsweep 的存活者：`fl_tokens` 的具名 fd 判斷 `i < n and s[i] in "<>" and re.fullmatch(r"\{NAME\}", w["raw"])` 拿掉第二或第三個運算元。
+# 拿掉 `s[i] in "<>"`：字面的 `{NAME}` 詞（`echo {NAME} literal`，bash 不展開單一元素的大括號）被當成具名 fd 擋下；
+# 拿掉 `fullmatch`：任何**緊貼** `>` 的詞（`echo hi>out.txt`）都被當成具名 fd 擋下。兩個都是自然寫法，原版放行——「應放行」型，突變體翻成 RULE 才算殺掉。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: a literal brace word and a word glued to a redirect
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            echo {NAME} literal
+            echo hi>out.txt
+          } 2>&1 | python3 scripts/neutralise.py

@@ -1,0 +1,44 @@
+# #33 verify R43 第 1、2 列修好之後仍須放行的 `test`／`[` 形狀：運算元都加了引號、第一個運算元是字面的一元運算子（`-n`、`-z`、`-e`、`-f`、`-d`…）或中間是字面的二元運算子。
+# 負對照：`bypass-r44-unquoted-test`、`bypass-r44-arith-eval`。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: quoted unary tests
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            [ -n "$PR_TITLE" ] && echo "has title"
+            [ -z "$PR_TITLE" ] || echo not empty
+            test -f Makefile
+            test -d "$RUNNER_TEMP/x"
+            make test
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: binary tests with a literal operator
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          {
+            [ "$PR_TITLE" = WIP ] || make test
+            [ "$PR_TITLE" == "$PR_BODY" ]
+            [ "${PR_TITLE:-x}" = x ]
+            make test
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: numeric and one-operand tests
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            [ "$?" -eq 0 ]
+            [ "$PR_TITLE" ]
+            make test
+          } 2>&1 | python3 scripts/neutralise.py

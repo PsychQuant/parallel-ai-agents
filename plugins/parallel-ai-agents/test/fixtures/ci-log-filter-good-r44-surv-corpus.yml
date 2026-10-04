@@ -1,0 +1,201 @@
+# R44 區域 opsweep 第二輪存活者（通道形狀、特殊前綴指派、trap 動作管線）——放行的 21 個。任何一個運算元被拿掉而讓其中一個 step 變成 RULE，這張就從 pass 翻成 rule-red。
+# 由 `R44 區域 opsweep 第二輪存活者（通道形狀、特殊前綴指派、trap 動作管線）` 的候選語料（49 個 step，每個是靠管線過濾的群組形式、各放一個命令）依基準 lint 的逐 step 判定拆成兩張：放行的一張（`good-`，EXPECT: pass）、被擋的一張（`restrict-`，
+# EXPECT-EACH-STEP: rule-red）。目的：#33 verify R44 的區域 opsweep（`--since 11e2b8f`）在這個函式的每個運算元上都有存活者——每個運算元沒有各自會翻色的輸入；
+# 這份語料按**運算元的邊界**取樣（每個接受／拒絕的分岔各有輸入），不挑已知形狀。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: surv 000
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo K=v >> "${GITHUB_ENV}"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: surv 001
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo K=v >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: surv 002
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "K=v" >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: surv 003
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            printf "K=%s\n" v >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: surv 004
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo x >> "$GITHUB_OUTPUT"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: surv 005
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "n=1" >> "$GITHUB_OUTPUT"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: surv 006
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo x >> "$GITHUB_STATE"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: surv 007
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo x >> "$GITHUB_STEP_SUMMARY"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: surv 008
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo /opt/bin >> "$GITHUB_PATH"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: surv 009
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "$HOME/bin" >> "$GITHUB_PATH"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: surv 010
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: surv 011
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "$HOME/x" >> "$GITHUB_PATH"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: surv 012
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "/a$HOME/b" >> "$GITHUB_PATH"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: surv 013
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            BASHZZ=1
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: surv 014
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            LCZZ=1
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: surv 015
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            FOO=1
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: surv 016
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            trap 'echo a | cat' EXIT
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: surv 017
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            trap 'false | true' EXIT
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: surv 018
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            trap "make check | tee log" EXIT
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: surv 019
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            trap 'echo a |& cat' EXIT
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: surv 020
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            trap 'echo a' EXIT
+          } 2>&1 | python3 scripts/neutralise.py

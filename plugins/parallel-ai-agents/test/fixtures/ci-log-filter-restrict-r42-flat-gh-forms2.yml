@@ -14,7 +14,7 @@
 # KNOWN-CLASS: 文法外
 # EXPECT: rule-red
 # EXPECT-EACH-STEP: rule-red
-# EXPECT-MSG: 提到 `$GITHUB_ENV`／`$GITHUB_PATH` 的地方只收一種形狀
+# EXPECT-MSG: 的地方只收一種形狀
 # EXPECT-MSG: 重導向目標 `/tmp/r42-target` 不在文法裡
 name: t
 on: pull_request

@@ -1,0 +1,18 @@
+# #33 verify R43 第 19 列：`good-r39-strict-group-dev-stderr` 轉成 restrict 之後，`/dev/stdout`、`/dev/stderr` 兩個重導向目標沒有正向釘住——拿掉 `_fl_target_ok`
+# 裡這兩個字串，selftest 照綠。這一張只放這兩個目標。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: redirect to the standard streams by name
+        shell: bash
+        run: |
+          {
+            echo hi > /dev/stdout
+            echo oops > /dev/stderr
+            make test
+          } 2>&1 | python3 scripts/neutralise.py

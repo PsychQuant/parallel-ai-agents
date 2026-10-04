@@ -1,0 +1,76 @@
+# #33 verify R43 第 2 列（logic＋DA）：**加了引號也能讓 bash 對 PR 文字做算術求值**——`[ -v "$X" ]`／`test -v "$X"`（`-v` 對陣列下標求值）、
+# `[ "$A" "$B" ]`（第一個展開的值可以是 `-v`）、整數特殊變數的指派 `RANDOM=`／`SRANDOM=`／`OPTIND=`／`HISTCMD=`（`SECONDS=`、`LINENO=` 不會）。
+# bash 5.3 與 5.2.21 實跑確認；第 1 列修成「展開一律加引號」仍擋不住這一列。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-EACH-STEP: rule-red
+# EXPECT-MSG: 不在 `--strict` 的正面文法裡
+# KNOWN-CLASS: 文法外
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: test -v with a quoted operand
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            [ -v "$PR_TITLE" ] || echo unset
+            make test
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: test -v builtin spelling
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            test -v "$PR_TITLE" || echo unset
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: first operand is an expansion
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          {
+            [ "$PR_TITLE" "$PR_BODY" ] || echo x
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: assign RANDOM
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            RANDOM="$PR_TITLE"
+            make test
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: assign SRANDOM
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            SRANDOM="$PR_TITLE"
+            make test
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: assign OPTIND
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            OPTIND="$PR_TITLE"
+            make test
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: assign HISTCMD
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            HISTCMD="$PR_TITLE"
+            make test
+          } 2>&1 | python3 scripts/neutralise.py

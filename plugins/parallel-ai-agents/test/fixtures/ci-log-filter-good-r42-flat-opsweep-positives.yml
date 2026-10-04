@@ -21,7 +21,7 @@ jobs:
         shell: bash
         run: |
           {
-            echo Value >> "$GITHUB_ENV"
+            echo NAME=Value >> "$GITHUB_ENV"
           } 2>&1 | python3 scripts/neutralise.py
       - name: a single-quoted value in GITHUB_ENV
         shell: bash

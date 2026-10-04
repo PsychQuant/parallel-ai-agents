@@ -1,0 +1,16 @@
+# R44（#33 verify R43 第 5 列，logic＋DA）：宣告了 `# LOG-FILTER:` 的 step 裡，寫在 trap 動作字串裡的管線不算「寫出來的管線」，P2 不要求 pipefail；
+# 神諭的 pipefail 探針也從不記錄 EXIT 動作裡的管線（動作之後沒有下一個命令，DEBUG 不再觸發）。R44 起動作字串後面補一行 `:`，探針讀得到。
+# 替身 lint 全放行時，神諭必須判「繞過（pipefail…）」、rc=1（`shell: bash -e {0}`：沒有 pipefail，`false | true` 的失敗被遮蔽）。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: a declared step with a pipeline in a trap action
+        shell: bash -e {0}
+        run: |
+          # LOG-FILTER: none — x
+          trap 'false | true' EXIT
+          echo hi

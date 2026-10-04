@@ -1,0 +1,15 @@
+# #33 R44 全輪 opsweep 的存活者（`if kind[k] == "SCALAR" and owner[k] == r` 的第二個運算元）：同一個 step 裡有**兩個** block scalar 時，`if:` 的內文不屬於 `run:`——
+# 拿掉 `owner[k] == r`，`run:` 的內文會連 `if:` 的那幾行一起算，藏在 `if:` 裡的 `| python3 scripts/neutralise.py` 就讓沒過濾的 `run:` 被放行（bypass 形狀）。
+# EXPECT: rule-red
+# EXPECT-MSG: RULE: step 's' 的 run 區塊既沒有經 neutralise.py
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        run: |
+          echo unfiltered
+        if: |
+          echo x | python3 scripts/neutralise.py

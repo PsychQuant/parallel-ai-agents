@@ -1,0 +1,18 @@
+# #33 verify R43 第 9 列（網失效）：`parse_command` 裡 `self.i += 1`（第 3 個）的 ±1→±2 突變體在 `11e2b8f` 存活。命令替換裡先有一個行程替換
+# `<( x=1; cd d )`、換行之後才寫 `echo x > /dev/tty`：原版把換行後的命令讀成命令替換的第二個命令、判 `>/dev/tty` 紅；突變體在行程替換結尾
+# 多吃一格，把那一行當成沒有命令的殘餘、放行。神諭沒有控制終端（寫入失敗），這一步登記 KNOWN_DISAGREE，理由同 `bypass-r39-strict-group-dev-tty`。這是「應紅」型：突變體翻成 pass 才算殺掉。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: a tty write after a process substitution in a command substitution
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { $( cat <( x=1; cd d )
+            echo "$PR_TITLE" > /dev/tty ); } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py

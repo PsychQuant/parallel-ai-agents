@@ -12,35 +12,16 @@ R37 時有兩件事它驗不到——要驗它們，未突變的神諭在 fixtur
 「harness 結構上測不到」的預期存活；第 2 項（RULE 字面耦合檢查）是合併時才加的。「未突變＝綠」的前提對兩項都成立，
 把期待寫成失敗就滿足了它。
 
-R39（#33 verify R38 第 3、6、7 列）再加六項，量的是**神諭的歸類**本身。real lint 已經擋下那些形狀，神諭走不到
-歸類分支，所以每一項都用 `oracle-probes/lint-*.sh` 假 lint 模擬「lint 放行」（第 3–8 項，見 CHECKS 的說明欄）：
-  3. 多行群組裡的外流：差分語法壞掉時往上擴範圍，仍然判得出「管線自己印到 stdout」。
-  4. 已知類別 G 被與外流無關的原因擋下：原因檢查必須判繞過。
-  5. `>/dev/fd/2 2>&1 |` 宣告 S-2：機制差分不成立，必須判「不是 S-2」。
-  6. xtrace 外流宣告 S-2：必須判 xtrace。
-  7. 已觀察到外流、分類失敗、沒有類別宣告：必須判繞過（前一版判「量不到」、rc=0）。
-  8. 已知類別 S-2 被與外流無關的原因擋下：同第 4 項。
+批次與編號（編號＝下面 `CHECKS` 的順序；每一項的內容在它自己的說明欄，這裡不再複述一份會過期的描述——R43 第 21 列：
+前一版的 docstring 逐批列舉、數字加起來少一項，而且寫著「二十六項」「三十項」卻沒有一個地方真的數過）：
+  R37 1–2；R39 3–8；R40 9–10；R42 11–15；R42 WP7 16–19；R42 WP8 20–26；R44 27–31。
+共 31 項。守衛：`main()` 開頭比對這一行的總數與批次區間的終點是否等於 `len(CHECKS)`，不等就 rc=1——數字與清單不是兩份各自維護的東西。
 
-R40 再加兩項（逾時之前的外流、ORACLE-COMPARABLE），R42（#33 verify R41）加五項，量的是 KD 條目與啟動檢查：
-  11. KNOWN_DISAGREE 比對方向：登記成誤擋的條目不得吞掉同名 step 的繞過（R41 DA-5）。
-  12. KNOWN_DISAGREE 比對內容雜湊：step 內容改了一個字元，條目就不再擔保它。
-  13. 版本守衛：神諭用的 bash 不在 lint 檔頭 `# ORACLE-BASH-SUPPORTED:` 宣告的集合裡就具名退出。
-  14. `GH_SAFE_EXPRS` 同步：神諭與 lint 各有一份，兩份不同就具名退出。
-  15. 文法外類別的閘門：lint 多拒絕一種寫法（`echo`），神諭把那些 step 歸進文法外、檔頭卻沒有宣告 ⇒ rc=1。
-第 14、15 項在暫存目錄裡產生突變版的神諭／lint（`mut` 欄，錨點必須在原檔裡恰好出現一次——錨點過期時這一項判失敗，
-不會安靜地拿沒突變的檔案去跑）。
-
-R42 WP7 加四項：pipefail 探針看到關閉（lint 放行時判繞過）、探針被腳本換掉（判量不到、不是一致）、跨 step 通道，
-以及「唯一的 RULE 是 pipefail」不再整步跳過（接替退役的 must-fail 探針 `bypass-r37a-mustfail-strict-pipefail-hides-2to1`）。
-
-R42 WP8 加六項：payload 的三種脈絡（註解、heredoc、算術）、運算式規則關掉的突變、取最嚴重的單元測試、S-2 機制差分的突變。
-
-封閉列舉，只有這二十六項，不得依性質相似類推。
-
-用法：test/oracle_selfcheck.py      rc=0：二十六項都照預期（二十四項失敗、一項判量不到、一項單元測試通過）；rc=1：至少一項沒有。
+用法：test/oracle_selfcheck.py      rc=0：每一項都照預期；rc=1：至少一項沒有（或上面的數字與 `CHECKS` 不符）。
 """
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -75,14 +56,14 @@ CHECKS = [
     ("已觀察到外流而分類失敗、沒有類別宣告",
      {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
      [PROBES / "unmeasured-leak-no-class.yml"], 1, "分類失敗不抵銷"),
+    ("已知類別 S-2 被與外流無關的原因擋下",
+     {"ORACLE_LINT": str(PROBES / "lint-strict-blocks-set-E.sh")},
+     [PROBES / "s2-blocked-for-unrelated-reason.yml"], 1, "原因與外流無關"),
     ("逾時之前已經觀察到外流（R40，#33 verify R39 第 8 列）",
      {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
      [PROBES / "timeout-after-leak.yml"], 1, "逾時之前"),
     ("宣告 ORACLE-COMPARABLE 的檔有不可比的 step（R40，#33 verify R39 放行條件 12）",
      {}, [PROBES / "comparable-declared-but-sh.yml"], 1, "ORACLE-COMPARABLE"),
-    ("已知類別 S-2 被與外流無關的原因擋下",
-     {"ORACLE_LINT": str(PROBES / "lint-strict-blocks-set-E.sh")},
-     [PROBES / "s2-blocked-for-unrelated-reason.yml"], 1, "原因與外流無關"),
     # 以下五項（R42，#33 verify R41）：KD 的方向與雜湊、版本守衛、GH_SAFE 同步、文法外的閘門。
     ("KNOWN_DISAGREE 比對方向（R41 DA-5）",
      {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
@@ -127,6 +108,16 @@ CHECKS = [
     ("S-2 機制差分：多出 baseline 沒有的外流行（突變）", {}, [HERE / "fixtures" / "ci-log-filter-oracle-r42-s2-flip.yml"], 1,
      "must-fail 探針沒有以宣告的理由失敗",
      {"oracle": ("                and not (ml[1] - base_ml[1]))", "                )")}),
+    ("EXIT 失敗路徑：errexit 之下仍跑使用者的 trap 動作（R44）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "exit-trap-failure-path.yml"], 1, "跨 step 通道"),
+    ("逾時保留通道證據：先寫通道、再逾時（R44）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "timeout-keeps-channel.yml"], 1, "逾時之前跨 step 通道"),
+    ("注入探針：未加引號的 `[ -n $PR_TITLE ]` 讓 PR 文字被當程式碼執行（R44）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "injection-unquoted-test.yml"], 1, "注入：PR 文字被當程式碼執行"),
+    ("宣告 step 的 trap 動作裡的管線：pipefail 探針讀得到（R44）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "trap-pipeline-pipefail.yml"], 1, "繞過（pipefail"),
+    ("可比的 step 不足：`--min-comparable` 對一組全是「不可比」的檔 rc=1（R44，#33 verify R43 第 22 列）",
+     {}, ["--min-comparable", "1", HERE / "fixtures" / "ci-log-filter-parse-r40-bash53-funsub-space.yml"], 1, "可比的 step 只有 0 個"),
 ]
 
 
@@ -156,8 +147,23 @@ def run_check(extra, files, mut):
         return r.returncode, r.stdout + r.stderr
 
 
+def doc_count_mismatch():
+    """docstring 的「共 N 項」與最後一個批次區間的終點必須等於 `len(CHECKS)`。"""
+    m = re.search(r"共 (\d+) 項", __doc__)
+    r = re.findall(r"(\d+)–(\d+)", __doc__.split("批次與編號", 1)[-1].split("共 ")[0])
+    if not m or not r:
+        return "docstring 找不到「共 N 項」或批次區間"
+    if int(m.group(1)) != len(CHECKS) or int(r[-1][1]) != len(CHECKS):
+        return "docstring 寫共 %s 項、最後一個區間到 %s，CHECKS 有 %d 項" % (m.group(1), r[-1][1], len(CHECKS))
+    return None
+
+
 def main():
     bad = 0
+    why = doc_count_mismatch()
+    if why:
+        print("✗ %s" % why)
+        bad += 1
     for what, extra, files, want_rc, want_text, *mut in CHECKS:
         rc, out = run_check(extra, files, mut[0] if mut else None)
         if rc is None:

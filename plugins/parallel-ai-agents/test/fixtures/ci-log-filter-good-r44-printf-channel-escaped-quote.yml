@@ -1,0 +1,19 @@
+# #33 verify R44 區域 opsweep 的存活者：`_fl_value`（與它的雙胞胎 `_fl_parts`）對雙引號裡 `\"`、`\\`、`\$`、反引號的反斜線還原，`t[:1] == "\\"` 的 `==` 換成 `!=`
+# 之後，`\"` 不再還原成 `"`、格式裡留著反斜線——`printf` 寫通道時「格式裡不得有 `\`（除了結尾的 `\n`）」的守衛會誤擋。這一張寫 `$GITHUB_ENV` 的格式帶 `\"`：
+# 原版還原成 `"`、沒有殘留反斜線，放行；突變體留著反斜線、判 RULE。「應放行」型。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: printf to the env file with escaped quotes in the format
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            printf "k=\"%s\"\n" "$HOME" >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py

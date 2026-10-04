@@ -1,0 +1,17 @@
+# R44（#33 verify R43 第 1 列，DA）：PR_MARKER 是文字、不是程式碼，「PR 文字被當程式碼執行」神諭結構上看不到。注入探針把 PR 相關的環境變數設成會留下哨兵的 payload
+# （`INJECT_PAYLOADS`）再跑一次。這個 step 的 `[ -n $PR_TITLE ]` 在標題斷詞後含 `-v PWD[$(命令)]` 時，bash 對 `-v` 的運算元做算術求值、命令替換就執行了；
+# 替身 lint 全放行時，神諭必須判「繞過（注入…）」、rc=1。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: an unquoted operand of test
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { [ -n $PR_TITLE ] && echo "has title"; } 2>&1 | python3 scripts/neutralise.py

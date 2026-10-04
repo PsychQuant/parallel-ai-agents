@@ -1,0 +1,20 @@
+# #33 verify R44 區域 opsweep（`--since 11e2b8f`）的存活者：`fl_tokens` 的「重導向的目標是另一個重導向」訊息裡 `s[i:i + 3].strip()` 拿掉 `.strip()`。
+# 原來的 fixture（`restrict-r44-digit-target-redirect`）的目標 `2>/` 沒有空白，剝不剝都一樣；這一張的目標是 `2>` 後面接空白（`>> 2> out.txt`），
+# 三個字元的切片尾巴帶空白，訊息要印剝過的 `2>`。bash 對 `>> 2>` 判語法錯誤、群組裡什麼都不跑——神諭看到「沒有管線被呼叫」，判定與 lint 的 RULE 一致（所以不簽已知類別）。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-MSG: 另一個重導向 `2>`（bash
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: a redirect whose target is a spaced redirect
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            echo "$PR_TITLE" >> 2> out.txt
+          } 2>&1 | python3 scripts/neutralise.py

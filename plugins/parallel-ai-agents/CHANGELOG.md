@@ -618,6 +618,77 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
     （security S-4 / regression F3，改成 lint 認的形式）；mutation 耗時再上修為 30–50 分（logic 實測 29 s × 96 ≈ 47 分）。
   測試 118 → 124 條；靶清單 96 → 98 個（3 個 EXPECTED_SURVIVE；lint 形式的宣稱只留在最新一段）。
   量測（R16 後）：全輪 98 靶 93 殺／2 存活（emit 自己的中和層，補單元測試後單靶轉殺）→ 95／0／3（複合值）。
+- **verify R43（4 lens + DA + Codex 跨模型 leg，`gpt-6-astra`／medium）— 1 HIGH、11 MEDIUM blocking、11 LOW；五條 leg 判 FAIL（logic、security、regression、DA、Codex），requirements 判 PASS 但被 DA 駁回、協調者同意，聚合判 FAIL。**
+  CI 在 `11e2b8f` 上是綠的。報告的中心發現（DA）：缺陷從「字串的形狀」搬到了「允許清單元素的語意」——R42 的正面文法把形狀收窄了，但文法裡每一個原語本身是不是惰性，沒有人逐個核對。HIGH：
+  群組裡**未加引號**的 `[ -n $PR_TITLE ]`（同理 `[ $P ]`、`[ $T = WIP ]`、`test -z $B`）`--strict` 與預設模式都放行，bash 把標題斷詞後的 `-v PWD[$(命令)]` 交給 `test` 的 `-v`，對陣列下標做**算術求值**，
+  下標裡的命令替換就執行了（bash 5.2.21 與 5.3 實測，可寫 `$GITHUB_ENV`，run 文字裡沒有 `GITHUB_ENV` 這個詞）——推翻前一版 P1「在 step 的 shell 裡執行的只有 `FL_INERT` 的八個 builtin、`NAME=值` 指派、`trap <動作> EXIT`」背後「這些都是惰性」的前提。同一個機制還有：加了引號的 `[ -v "$X" ]`、
+  整數特殊變數的指派（`RANDOM=`／`SRANDOM=`／`OPTIND=`／`HISTCMD=`）、`printf` 的選項只看原始拼法（`printf "\<換行>-v"`）。放行條件的十三條在報告末段；縮小允許清單、不回到否定清單的方向在報告的「本輪的中心發現」段。**修法方向（DA 與協調者提出，使用者回覆「好，可以開始」同意開工）：縮小允許清單，不回到否定清單；P1、P2 的文字逐個原語改寫，並交給另一個讀者核對。**
+  - **文法（第 1–5、8、11、13–15 列）**：`--strict` 下，命令**參數**裡的參數展開（`$NAME`、`${…}`）一律要在雙引號裡（不是只擋 `[ -n $X ]` 那幾種寫法——是形狀無關的規則；指派右值不在此限，因為 bash 不對它斷詞、不 glob；預設模式不跑正面文法，`[ -n $X ]` 仍 rc=0）；
+    `test`／`[` 只收三種形狀（零個或一個運算元、`FL_TEST_UNARY` 的運算子加一個運算元、運算元加 `FL_TEST_BINARY` 的運算子加運算元），`-v`／`-R`／`-a`／`-o`／括號都不在裡面，運算元不得有未加引號的 glob 字元（宣稱查核抓到，見下）；
+    bash 特殊變數（`FL_SPECIAL_VARS` 與 `BASH_`／`COMP_`／`LC_`／`READLINE_` 開頭）不得指派；`printf` 的格式參數判 quote removal **之後**的值（`\<換行>-v` 還原成 `-v`）；`--strict` 下過濾器路徑不得以 `-` 開頭（`python3 -Xneutralise.py` 是選項、改讀 stdin 執行群組輸出；`PIPED_RE` 與 strict TAIL 各一道，預設模式只有 `PIPED_RE`，而它只在該行是唯一的過濾管線時擋得到）；
+    宣告 step 的 `trap` 動作字串裡的管線也要求 pipefail（前一版「觸發」與「要求」用了兩把尺）；`$GITHUB_ENV` 的鍵擋的是 step `env:` 那組啟動鍵與信任變數的超集（另擋 bash 特殊變數與 `GITHUB_`／`RUNNER_`／`BASH`／`PYTHON`／`NODE_`／`LD_`／`DYLD_`／`COMP_`／`LC_`／`READLINE_` 開頭），`$GITHUB_PATH` 的值要是絕對路徑、不展開 `$GITHUB_WORKSPACE`、不含 `..`；
+    五個 runner 通道（`ENV`／`PATH`／`OUTPUT`／`STATE`／`STEP_SUMMARY`）共用一個產生式：只收 echo／printf 的參數全是字面（雙引號裡只准 `$HOME`／`$RUNNER_TEMP`／`$GITHUB_WORKSPACE`）`>>` 寫進它本身，唯讀 `< "$GITHUB_…"` 也收（`tee -a "$GITHUB_OUTPUT"` 因此 RULE；R43 的字面 `>> "$GITHUB_OUTPUT"` 反而被擋，現在放行）；
+    重導向後面的數字詞緊接重導向（`>> 2>/dev/null`）、具名 fd `{NAME}>`、`NAME=$(mktemp …)` 當別的命令的參數都不收。
+  - **神諭（第 6、7、16、22 列與注入探針——探針回應的是第 1–3 列）**：EXIT 組合在 errexit 下**跑使用者的 trap 動作**（`__orc_ret … && :`，動作字串後補一行 `:` 讓 DEBUG 看得到最後一條管線）；逾時分支保留已寫進通道的 PR 文字；
+    新增**注入探針**——神諭給環境變數（`$PR_TITLE` 等）的值是純標記，所以結構上看不到「環境變數的值被 shell 再次求值」；現在把 `PR_TITLE`、`PR_BODY` 與 `env:` 裡值含 `${{ }}` 運算式的鍵換成會留下哨兵的 payload（`PWD[$(…)]`、`-v PWD[…]`、`-n -o -v PWD[…]`、一行純程式碼）再跑一次——
+    只在 `--strict` 的檔、run 文字沒有非字面 `${{ }}`、lint 放行而判定一致的 step 上（**放行而哨兵有東西 ⇒ 繞過**），或判為誤擋的 step 上（**擋下而哨兵有東西 ⇒ 改判一致**，不再歸文法外）。
+    第一版的條件寫成「判定不是一致」，於是 lint 放行而標記沒外流的那一格（判定本來就是一致）根本沒跑到探針——`oracle_selfcheck` 第 29 項用「永遠放行」的替身抓到、修好。python3 stub 現在照真 CPython 的行為：沒有腳本參數就把 stdin 當程式讀（`-Xneutralise.py` 的 SyntaxError 把第一行印到 stderr）。
+    「文法外」類別的訊息措辭由「沒有外流」改成「神諭沒有觀察到外流」，並註明這個類別不是安全證明（類別名稱仍是「文法外」）；`--min-comparable N`（第 22 列）讓一組檔的「可比 step」少於 N 個就 rc=1。
+    **神諭多了觀察能力之後，三處舊簽名變成過期（類別閘門是雙向的，這是設計）**：`bypass-r42-trap-unquoted-var-action` 與 `restrict-r42-was-good-strict-group-forms` 的第 1 步原本簽「文法外」，現在判一致；`bypass-r42-trap-action-registers-mktemp` 的 KNOWN_DISAGREE 移除。
+  - **網（第 9、10、22、23 列）**：`region_since` 展開類別方法（`_Sh.parse_command` 等各算一個單位；前一版只看頂層函式）；13 個失效突變體——12 個補了預設模式的 fixture 或雙胞胎（新形狀 3 張、雙胞胎 5 張，見檔頭）、1 個（`_logical_lines` 的 `.strip()`）逐一提殺手假設後列 `EXPECTED_SURVIVE`（消費者都不錨定字串開頭；差分模糊測試 160 個 step 0 區分）；
+    四條 R42 生產限制各補 rule-red fixture 與具名靶（trap 動作裡的 `exit`、`env:` 設定信任變數、`$GITHUB_ENV` 字面值裡的 glob、mktemp 重新指派）；R44 新增的規則中 11 條各配一靶（過濾器路徑 `-` 開頭的 strict TAIL 那一層列 `EXPECTED_SURVIVE`），通道寫入的 echo 選項／printf 格式／單行限制、`$GITHUB_PATH` 路徑、mktemp 當參數、重導向目標是重導向這六條只有 fixture、沒有 mutation 靶，由區域 opsweep 涵蓋；
+    mutation 靶 456 → 472；mutation 快取的輸入排除 `.pytest_cache`（第 23 列：用 pytest 跑過 `test_validate.py` 後，`validate`／`neutralise` 兩組共一百多個靶的快取不再整批失效）；macOS 神諭子集加 `*r44-*` 並要求至少一個可比 step。
+  - **區域 opsweep 的存活者（R43 第 9 列的延續；R44 新寫的程式碼本身要有網）**：`opsweep.py --since 11e2b8f` 第一輪跑在精簡之前的樹上（253 個突變體，跑到 252 個時停掉——樹已經改了，不再有意義；49 個非預期存活，另有 7 個預期存活）；
+    其中 20 個隨精簡消失（抽成 `_fl_t_text`：`_fl_value`／`_fl_parts` 共用、各只剩一個判準，`_fl_command` 的雙引號 trap 動作還有第三份、帶「首字元」運算元，列在 `EXPECTED_SURVIVE`；`_fl_env_key_denied` 列了五個運算元而沒有任何鍵只被三個冗餘的命中——縮成兩個、
+    其餘由載入時的 `_fl_env_key_cover_problems` 斷言涵蓋；`_fl_chan_line_ok` 對 V 片段先判種類的運算元，V 片段的文字是變數名、不含換行、`=`、`/`，不必判）、17 個被 `84e7512` 已提交的 fixture 殺掉（14 個由 `chan-lines`／`test-shapes` 兩組語料的四張 fixture，3 個由手寫的 brace-word、redirect-spaced）、12 個要新殺手：
+    **新增 `*-r44-surv-corpus` 兩張**（放行 21、被擋 28：通道的多重導向、`>` 截斷、目標名含通道字樣、參數含通道字樣、特殊前綴指派、trap 動作裡的管線）與兩張手寫 fixture
+    （`good-r44-declared-trap-no-pipe`：宣告 step 要先被觸發——run 文字有 `|` 字元（連續兩個 `||` 除外）或提到 `$GITHUB_ENV`／`$GITHUB_PATH`——才會走到 trap 動作的檢查，所以這張用引號裡的 `|` 觸發、同時沒有任何寫出來的管線；`good-r44-gh-path-literal-workspace-text`：放行方向——
+    `"/opt/${HOME}GITHUB_WORKSPACE"` 的字面片段文字剛好等於 `GITHUB_WORKSPACE`，拿掉 `k == "V"` 的運算元會被誤擋）。**第二輪（精簡後的樹 `c02484f`，227 個突變體，`--jobs 6`，67.9 分）**：殺 218（當掉 36、逾時 0、
+    產生語料抓到而 selftest 沒抓到的 0）、存活 9（含預期的口徑）＝預期 8＋非預期 1；非預期那一個補上面第二張 fixture 後，以 opsweep 的 `run_mutant` 單獨重判為 KILLED（一個不在樹裡的 `rerun_surv.py`；不是全輪重跑——fixture 只增不減，已殺的突變體不會復活）。
+    預期存活新增 1 條：`okp` 的 `first[1] in ("HOME", "RUNNER_TEMP")`——依三條上游不變式（字面片段相鄰已合併、V 片段的名字只會是 `FL_GHVALUE_VARS` 的三個、`GITHUB_WORKSPACE` 在下一個條件被同一則訊息擋掉）等價，理由寫在 `opsweep.py`。
+    **批次工具的盲點（自己的）**：`batchkill`（逐 step 比對候選語料的判定）把「突變體當掉」看成「沒有判定」＝放行，所以「當掉型」的殺手它回報「沒有區分者」，而真正的 `selftest` 會抓到（`_fl_body` 的 `"piped" in ctx` 在群組 ctx 沒有 `piped` 鍵時 `KeyError`）；
+    因此每個殺手都用 opsweep 自己的 `run_mutant` 重判，不用批次工具的結論。
+  - **全輪 opsweep 的 54 個長期存活者（放行條件 9 的「做一次不帶 `--since` 的全輪」做了，而且抓到東西）**：量測提速之後全輪只要 70–80 分鐘，於是在 `8d26e3d` 上做了（1374 個，69.4 分）：殺 1264、存活 110＝預期 56＋**非預期 54**，另有 1 條 `EXPECTED_SURVIVE` 被殺。
+    **54 個非預期存活在 `11e2b8f` 上也全部存活**——不是 R44 引入的，是從來沒被看過的長期缺口：`_word`（預設模式的詞法器）1 個、模組層級的 YAML 結構分類器 53 個；`--since` 區域掃描看不到它們（R44 沒改那些行），這正是 R43 第 9 列預告的盲區，只是這次是「從來沒有網」而不是「網失效了」。用完整 selftest（不提早結束）重判一樣存活，所以不是量測提速造成的。
+    處置：(1) 45 個用**差分模糊測試**殺掉——`yamlfuzz.py`／`yamlfuzz2.py` 產生幾千個 YAML 結構變體（tab 縮排、文件標記、空白行與註解、清單項與 key 的各種寫法、flow／anchor／tag、單雙引號裡的反斜線、奇怪的行界字元、`steps:` 之後的同層 key、尾端空白行、`run:` 後接空白值…），`ydiff.py` 逐檔比對基準與突變版 lint 的輸出，`mkfix_yaml.py` 對每個突變體挑「可斷言」的最小殺手（類別翻轉，或基準有一則訊息突變版沒有並用 `# EXPECT-MSG:` 釘住）、貪婪集合覆蓋、每一張都過神諭，收成 **`ci-log-filter-{good,restrict}-r44-yamlstruct-*.yml` 19 張**（這些工具**不在樹裡**；進樹的是 fixture 與靶）；
+    (2) 手寫 4 張：`good-r44-require-run-steps-pass`（帶 `--require-run-steps` 的放行檔）、`vacuous-r44-no-run-steps`（`# EXPECT: vacuity`，沒有 run step ⇒ VACUOUS）、`restrict-r44-stray-line-boundary-char`（U+0085 的 repr）、`bypass-r44-two-block-scalars-filter-in-other-key`（**同一個 step 有兩個 block scalar 時，把 `| python3 scripts/neutralise.py` 藏在 `if:` 的內文裡**——拿掉 `owner[k] == r`，`run:` 會連 `if:` 的那幾行一起算而被放行；這本身是個 bypass 形狀，現在 RULE）；
+    (3) selftest 新增**多檔 rc 聚合檢查**（第一個檔紅、最後一個檔綠，rc 要是 1；CI 正是一次餵全部 workflow，而 `rc_all = rc_all or rc or …` 退化成「只看最後一個檔」時沒有任何單檔 fixture 會紅）；
+    (4) 剩下 8 個各有結構論證、列進 `EXPECTED_SURVIVE`，能驗的都驗了：`odd = next((ch for … len(ch.splitlines()) > 1 …))` 的第一個運算元對單一字元恆為假（窮舉全部 Unicode 碼位，`splitlines()` 長度最大是 1）；`seen` 只有初始化、`+= 1`、`== 0` 三處；`owner[]` 只在設 `SCALAR` 的兩處一起賦值；`_word` 的單引號內容在 `C` 視圖裡恆為空白（另有 5000 個引號形狀的差分模糊測試 0 個區分）等等。**這 8 個靠論證加有界的模糊測試，不是靠任何一張 fixture 會紅；輸入集合是我挑的，這與 fixture 同一個弱點**。
+    **被推翻的一條舊論證**：`EXPECTED_SURVIVE` 裡的 `_cmdsub_end_case` 的 `at_word = prev in SHELL_WORD_BREAK or prev == "\n"` 原本寫「依構造等價」，這一輪的全輪裡它被殺了（舊樹上也被殺）——那條等價論證是錯的，條目已移除。`--verify-expected` 在產生語料上沒抓到它，是因為語料沒有那個形狀（又一次「零區分≠等價」）。
+    **這一段自己犯的錯**：(a) `ydiff.py` 用 `hash(k) % 1000` 當突變版腳本的檔名，53 個突變體之間會碰撞、後來的沿用先前那個的腳本，部分「殺手清單」因此是別的突變體的——`mkfix_yaml.py` 逐個重新比對所以挑出來的 fixture 可信，但「0 個殺手」的名單被污染過，改成流水號後重跑；(b) `mkfix_yaml.py` 以檔名當 key，兩批候選目錄都有 `cNNNNN.yml`，寫出來的 fixture 與評估的不是同一個檔，改成完整路徑；(c) `# EXPECT-MSG:` 的內容不可含「`# LOG-FILTER`」字樣（寫進註解行會被 lint 讀成真的宣告），而我為此截斷訊息時 `.rstrip(" \`")` 把結尾的反引號也削掉，剛好是一個突變體與基準唯一的差別（基準 ``&a x` ``、突變版 ``&a x ` ``），只有最後在 opsweep 重判才看到那個突變體還活著。
+  - **R44 的宣稱查核**（對本條、lint 檔頭、README、`test_validate.py` 檔頭、PR body、#60／#82 草稿共 22 段；422 個 agent、每段一位抽取者、一位對抗驗證者、有爭議的再由兩位獨立挑戰；pin sonnet）：55 條確認、115 條有爭議、19 條推翻，逐條判過。**一個真缺陷、兩個工具缺陷、其餘是措辭與數字**：
+    (1) **真缺陷**：`test`／`[` 的運算元是未加引號的 glob 字元（`*`、`?`、`[`）時，bash 在執行 `test` 之前先做檔名展開——PR 的 checkout 裡的檔名成了運算元；工作目錄有檔名 `-v` 與 `PWD[$(命令)]` 時，`[ * ]` 展開成 `[ -v PWD[$(命令)] ]`，下標被算術求值（bash 5.3 實測：`[ * ]`、`test *`、`printf * x` 都執行；bash 3.2 不執行；
+    `printf "%s\n" *` 與 `echo *` 安全）。前一版 `_fl_test_ok` 只檢查形狀、不檢查運算元，docstring 卻寫「運算元是字面或加了引號的展開」；上一段的獨立審閱者也沒抓到——**它是 R43 同一類缺陷（惰性是原語加運算元的性質）的又一個實例**。`_fl_test_ok` 現在拒絕未加引號的 `*`、`?`、`[`（`printf` 的首參本來就由 `_fl_lit` 擋）；
+    補 `restrict-r44-test-glob-operand`（8 個 step，逐步簽 `文法外`）與 `good-r44-test-glob-harmless-contexts`（9 個放行的對照）、一個具名 mutation 靶；
+    (2) **工具缺陷**：`opsweep.py` 的「`EXPECTED_SURVIVE` ≤ 區域 10%」上限直接拿含 `|L行號` 的突變體 id 去比、恆為 0，從來沒有生效（README 與檔頭一直宣稱它擋著）——改用 `base_id`；`--verify-expected` 只讀檔案第一行的 `# LINT-ARGS:`，`shellgen.py --strict` 的檔先有 `# KNOWN-CLASS:` 檔頭，22 個 `--strict` 檔因此以預設模式跑、等價論證在那些檔上沒有被 `--strict` 檢查——改成與 `oracle.py` 同一個讀法（整個檔、`re.M`）；
+    (3) **文字**：「所以五個通道都寫不出第二行」是假的（echo 選項與 printf 跳脫擋掉的是靠展開寫出第二行；單行檢查只在 `$GITHUB_ENV`／`$GITHUB_PATH`，其餘三個通道可以用引號裡的字面換行寫出多行）、lint 檔頭 L1 的 `tee /proc/$PPID/fd/1` 其實是 RULE（要加雙引號才收）、`-R` 在 bash 5.2.21／5.3.15 實測不求值（沿用 R43 報告的保守擋法）、「六條 leg 全部判 FAIL」、`$GITHUB_ENV` 的鍵「照 `env:` 的同一個標準」其實是超集、
+    #60 代價表的「25 個自然寫法」實為 24 個（13 擋、11 放行；重測確認）、`$GITHUB_PATH` 與 P3「宣告的 step 不在此列」的範圍、README 的 `分隔字引號擺法 12`（程式碼是 16）與 `codex-call-detach` 的「全部走同一條路徑」（有 5 個不走）、`shellgen.py` 檔頭的「17 格」（11e2b8f 版產生器在 R44 最終 lint 下是 22 格）等；全部改了。
+  - **量測提速（本輪新增；沒有改任何判定）**：一輪量測要跑幾百個突變體、每個都把 919 張 fixture 的 selftest 從頭跑到尾（約 70 秒），機器又常在負載 35–200 之間，R44 一輪量測因此要 4 小時以上。三處改動：
+    (1) `lint-ci-log-filter.sh --selftest` 每張 fixture 的檢查彼此獨立，改成平行跑（預設 min(核心數, 8) 個、`LINT_SELFTEST_JOBS=1` 就是原來的串行；每張的訊息與計數寫進暫存檔、依序號彙整，訊息順序與串行相同）——負載 120–170 下串行 323 秒、4 個平行 50 秒、8 個平行 32 秒，閒時整套 15 秒；
+    (2) 突變測試只問「有沒有任何一張 fixture 變紅」：`LINT_SELFTEST_FAILFAST=1` 讓第一張失敗就停（沒有失敗時照樣全跑，結論相同）；
+    (3) `LINT_SELFTEST_FIRST=<檔>`（只改順序）：`opsweep.py` 每殺一個突變體就記下殺它的 fixture，次數多的先跑，清單存在 repo 外的 `~/.cache/idd-verify/opsweep-killers.txt` 跨輪沿用，`mutation_check.py` 的 lint 守備單位用同一份。
+    **驗證**：39 個樣本突變體以「完整 selftest」與「提早結束＋排序」各判一次，殺／存活與分項標籤逐個相同（31 殺、7 當掉、1 存活）；12 個突變體在同一時段交替計時：完整 725 秒、只提早結束 512 秒、提早結束加排序 398 秒（55%）。**誠實：突變掃描只快約 2 倍，不是 10 倍**——殺手不在清單裡的突變體仍要跑 40–60 秒；`OPSWEEP_FULL_SELFTEST=1` 可退回完整 selftest 重做這個對照。
+    更大的槓桿沒做：用覆蓋率挑 fixture、或把靶搬到中研院統計所的 Linux 叢集（要先裝 bash 5.x 與 PyYAML）。
+  - **文字（第 12、17–21 列）**：lint 檔頭 P1 逐原語改寫成九類封閉列舉（除第 1 類沒有隱藏效果、第 7 類做什麼不在檢查範圍外，每類寫隱藏效果與文法條件）、P2 補第二個來源（trap 動作裡的管線）、P3 補「宣告 step 一旦觸發，文法不收非字面運算式」；L6 補 errexit 的 `&&` 清單豁免（單獨 `false | tee log && echo ok` 是 rc=1，後面再接命令才被蓋掉——第一次寫反了，實測更正）；
+    #60 代價表按 R44 重測（24 個自然寫法 13 擋 11 放行）並**更正第 2 節**：`{ echo "${!PR_TITLE}"; } 2>&1 | …` 被寫成「經過濾」，但 `${!X}` 的下標算術照樣執行命令替換——群組擋得住輸出（錯誤訊息與 stdout）、擋不住副作用；
+    `oracle_selfcheck` 的 docstring 數量與批次編號改成機械守衛（`main()` 開頭比對「共 N 項」與 `len(CHECKS)`）；shellgen 維度 10 的標題統一、`regexcheck.py` 檔頭、偏離 (b)(c) 的文字、PR body 的「逐條」。
+  - **P1／P2 文字交給另一個讀者核對**（放行條件 12；規格散文的自我矛盾靠另一個讀者，不靠作者重讀）：獨立的 opus 審閱者把九類逐條對到程式碼、實測約 115 個輸入——**沒有 HIGH**；五處措辭問題已改：「展開一律在雙引號裡」是假的全稱（指派右值被接受，改成「命令參數裡的參數展開」）、
+    「每個命令的 fd 1、fd 2 都在 neutralise.py 的管線上」與後半句「shell 自己開的重導向只落在第 8 類點名的目標」有張力（重導向到檔案）、第 8 類漏列被接受的唯讀 `< "$GITHUB_ENV"`、「非 ASCII 字元、任何控制字元（引號裡也一樣）」的括號被讀成連非 ASCII 也包含，對引號內的非 ASCII 不成立（收下，危險的 Unicode 行界字元由 `splitlines()` 閘擋成 PARSE）、
+    第 9 類的「單行、鍵、PATH 絕對路徑」只對 `$GITHUB_ENV` 與 `$GITHUB_PATH` 成立。審閱者同時確認為真的：九類與程式碼對原語的處理一一對應、命令替換（除了登記的 `NAME=$(mktemp …)` 整個指派）／`[[`／`((`／算術／背景／here-string／process substitution／函式／`eval`／`time`／`builtin` 全部 RULE、
+    `[ "$X" -eq 1 ]` 的算術比較在 `test` builtin 下**不**執行下標命令替換（所以第 3 類點名的是 `-v`；`-R` 沿用 R43 報告的保守擋法，bash 5.2.21／5.3.15 實測它不求值）、宣告 step 的 `trap 'false | true' EXIT` 在無 pipefail 的樣板下 RULE。**這位審閱者漏了上面宣稱查核抓到的 glob 運算元缺口**——「交給另一個讀者」少了一個讀者的下限不是 100%，這也是為什麼宣稱查核與審閱各自留著。
+  - **本輪中途自己發現的缺陷**：(1) 注入探針（R43 第 1–3 列要求）的放行方向第一版沒跑到；(2) 文法語料的產生器自己走出了文法（未加引號的 `$PR_TITLE`）——產生器改成只放加了引號的形式，並依 R43 第 18 列補失敗路徑（獨立的 `false`、`exit`、會失敗的 `test`）；
+    (3) L6 補 errexit 豁免（R43 第 21 列）時第一版寫反；(4) 上面的批次工具盲點。
+  **量測（本機 macOS、bash 5.3，沒有 `/proc`；CI 的 lint／神諭／mutation 以 Linux（ubuntu）為準，macOS job 只跑 codex-call 的 bats；量測樹 `1d2196c`——本段與上文的 commit 雜湊都是 squash 前的 WIP，推送後以 PR 分支為準；量測途中發現的問題都在上面逐項寫明）**：
+  selftest 286 正向／495 規則紅／160 解析紅／101 張訊息斷言／27 張逐步斷言（compgen：bash 5.3.15 的 83 個 builtin／保留字都在 `FL_BUILTINS ∪ FL_KEYWORDS` 裡）；`oracle_selfcheck` 31 項全過；
+  fixture 神諭 1614 個 step：一致 1045、不一致 356（全部已知：類別 G 8、S-2 3——其中一個 step 兩類都算——、文法外 301、文法外-without-proc 2，其餘 43 條走 `KNOWN_DISAGREE`）、不可比 187、量不到 26；
+  產生語料預設組 624 個 step：一致 516、不一致 62（全部已知；G 1、S-2 60、`KNOWN_DISAGREE` 1：`gen-d-yaml-tag-bang`）、不可比 46、量不到 0；`--strict` 組 88 個：一致 58、不一致 22（全部已知；文法外 21、文法外-without-proc 1）、不可比 8、量不到 0；
+  文法語料 100 格：lint 100／100 放行、神諭 100／100 一致；`opsweep.py --verify-expected` 對 712 檔產生語料（`--strict` 組 88 檔，修了 `LINT-ARGS` 的讀法之後真的以 `--strict` 跑）驗證 66 條 `EXPECTED_SURVIVE` 全 ✓；`test.yml` 的 `--strict --require-run-steps` rc=0；`test_validate.py` 153 條 OK；mutation 靶清單 472 個全部恰好命中一次。
+  **全輪 opsweep**（不帶 `--since`，`--jobs 9`，最終樹上整輪）：1374 個突變體——殺 1310（當掉 121、逾時 1、只被產生語料抓到 0）、存活 64（預期 64、**非預期 0**）、語法壞掉 0；78.6 分（開跑時負載 12，中途升到 50–60）。上面區域掃描的 230 個是它的子集；區域那兩輪的結果當歷史留著。
+  **mutation 全輪**（`git archive 1d2196c` 副本、`--no-cache --jobs 8`，沿用 0 靶）：472 靶 → 468 殺／0 存活／4 預期存活／0 靶壞；58.4 分（每靶 7.4 s；牆鐘，這一輪中途機器沒有睡眠），開跑時一分鐘平均負載 91（閘門在負載 186 時等了約一分鐘才放行——別的程式在建置）。
+  提速前的上一輪（`44f3f3b`）是 471 靶 → 467 殺／0 存活／4 預期存活，工具時鐘 107.2 分、牆鐘 155.6 分——差的約 48 分鐘是機器睡眠（17:09 起離開電源、闔蓋與維護睡眠；睡眠不會把靶誤記成殺掉：驗證指令 rc≠0 才算殺，逾時用單調時鐘、判「量不到」、不改退出碼）；提速後、全輪 opsweep 之前在 `2a0a379` 上也量過一輪：472 靶 → 468／0／4／0，55.3 分。
+  **量測提速對判定的影響**：mutation 的 lint 守備單位用提早結束＋殺手排序，其餘三個守備單位（validate、neutralise、oracle 系）沒有改；468 殺這個數字在提速前後的樹上一致。
+  **快取**：這一輪重建的 `mutation-cache.json`（472 靶）隨本次一併提交；對推送的樹不帶 `--no-cache` 重跑 `mutation_check.py`，472 靶全數沿用、重跑 0 靶（文字改動——CHANGELOG、檔頭註解以外的檔——不在任何守備單位的輸入裡；發版前仍要加 `--no-cache`）。
+  **run.sh**（真實路徑，最終樹，負載 23）：全部通過——shellcheck、py_compile、各 lint、神諭、形狀普查、`assert-tap-complete` 自測，以及 bats 194 個案例全 ok（包含上一輪唯一紅的 `codex-call-detach.bats` #85，R10-FR1）。**這個結果不是一次過來的，照實寫**：(1) 第一次（`44f3f3b`）193 ok／1 not ok，紅的是 #85；R44 的 diff 不碰 `bin/codex-call` 也不碰那支 bats，單獨重跑綠，當時機器負載 110–200、有別的 session 在建置，判為環境造成，之後在低負載下整套重跑確認；(2) 量測提速（平行 selftest）之後第一次跑 `run.sh` 在 shellcheck 階段 rc=1——`lint-ci-log-filter.sh` 的子殼層改計數觸發 SC2030／SC2031（info，`run.sh` 與 CI 用預設嚴重度）；那是我只用 `-S warning` 檢查造成的，子殼層改計數、經檔案回傳本來就是設計，加了一行有說明的 `# shellcheck disable=SC2030,SC2031` 後過。
 - **verify R41（4 lens + DA + Codex 跨模型 leg，`gpt-6-astra`／medium）— 1 HIGH、14 MEDIUM blocking、7 LOW；六條 leg 全部判 FAIL。**
   CI 在 `45dee04` 上是綠的。報告的中心發現是 DA 的結構判斷：R40 新寫或改動的六個函式（`ctl`、lastpipe、`trap_cmd`、`github_env_write`、
   `_param_end`、字面運算式）上找到約 30 個作者沒點名的相鄰放行輸入——**用否定清單模擬 bash 不收斂**；而 test.yml 的 15 個靠管線過濾
@@ -666,8 +737,11 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
       跑 lint selftest、只有 5.3 才有意義的 fixture 與文法語料。`GH_SAFE_EXPRS` 與 lint 那一份比對，不同步就具名退出（第 17 列的「共用同一份」）。
     · **第 20 列**：RULE 且逾時前已外流 ⇒ 一致。
     · 決策 (b)、(c)：第 5、6 條的原文驗收在新文法下跑不出來（突變的程式碼已刪；heredoc 與 `$((` 不論運算式規則都被擋），改用「永遠放行」
-      的替身 lint 與 FLAT 的突變體——pipefail 判定關掉的 FLAT 突變體神諭 rc=1、6 列判「繞過（pipefail）」；三種脈絡在替身 lint 上 rc=1、
-      「字面代換也接受非字面」的突變體在 `ctx/comment` rc=1。`oracle_selfcheck.py` 10 → 25 項。
+      的替身 lint 與 FLAT 的突變體；三種脈絡在替身 lint 上 rc=1、「字面代換也接受非字面」的突變體在 `ctx/comment` rc=1。`oracle_selfcheck.py` 10 → 25 項。
+      > **R44 更正（#33 verify R43 第 20 列）**：這一段原本寫「pipefail 判定關掉的 FLAT 突變體神諭 rc=1、6 列判『繞過（pipefail）』」——**描述的不是實際量到的實驗**。
+      > 實測：(b) 那個突變體在 `bypass-r40-pf-*`（15 張）上神諭 **rc=0**（文法已經把這 15 張全擋下，神諭看到的是「擋下、沒有外流」）；它判繞過的是 `bypass-r37b-strict-pipefail-template-*`
+      > 上的 5 列（rc=1）；而「永遠放行」的替身 lint 在 `bypass-r40-pf-*` 上 rc=1（那才是這 15 張在神諭那一側的負對照）。(c) 的前提「原文驗收跑不出來」也不成立：
+      > 條件 6 的原文驗收跑得出來、而且通過；替代驗收站得住，但描述的是另一個實驗。
   - **網（第 15 列，放行條件 9、10）**：文法語料 `shellgen.py --grammar` 從產生式取樣 100 格、每個放得進詞的位置以固定種子從 10 個詞裡抽（其中 4 個會展開 `$PR_TITLE`）：lint 100 格全收、
     神諭 100 格一致——其中 80 個靠管線過濾的格在 bash 裡沒有觀察到 PR 文字外流，另 20 個是宣告不過濾的 step、神諭只看 pipefail 與跨 step 通道、不判輸出外流（這是抽樣，不是證明：文法接受、而斷詞與 bash 不一致的字串，只有被抽到才看得到；
     CI 在 ubuntu 的 bash 5.2 與 macOS 的 5.3 各跑一次）。`oracle-r42-s2-flip`

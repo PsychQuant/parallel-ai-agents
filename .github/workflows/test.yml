@@ -25,7 +25,7 @@ jobs:
       #    經 ../pai-lenses/scripts/neutralise.py（validate.py LineSanitiser 那一份實作），或 `# LOG-FILTER:` 明示不過濾與理由。
       #    --strict 對靠管線過濾的 step 只收一套**正面文法**（R42，#33 verify R41）：`set` 前綴（`-e`／`-u`／`-E`／
       #    `-o pipefail|errexit|nounset|errtrace`）＋一個群組 `{ …; } 2>&1 | python3 <路徑>/neutralise.py`。群組裡只收外部命令、
-      #    八個惰性 builtin（echo、printf、test、[、true、false、:、exit）、`NAME=值`、`NAME=$(mktemp …)`、`trap <動作> EXIT`、
+      #    echo／printf／test／[／true／false／:／exit（它們的隱藏效果與文法為它們設的條件逐個寫在 lint 檔頭的 P1）、`NAME=值`、`NAME=$(mktemp …)`、`trap <動作> EXIT`、
       #    點名的重導向（`2>&1`、`>&2`、`>`、`>>`、`<`、`2>`、`2>>`；目標只收 /dev/null、/dev/stdout、/dev/stderr、不含 `..` 的
       #    相對路徑、"$RUNNER_TEMP/…"），以及寫進 `$GITHUB_ENV`／`$GITHUB_PATH` 的唯一形狀：`echo`／`printf` 全字面參數
       #    `>> "$GITHUB_ENV"`。其餘一律擋——保守誤擋，由 fixture 檔頭的 `KNOWN-CLASS: 文法外` 逐條簽名。有管線的 step 跑在
@@ -260,6 +260,10 @@ jobs:
       # #33 R42 WP9：lint 的詞法模型對 bash 5.3 寫了一段（`${ cmd; }`、`compgen` 的兩份集合），而 ubuntu 的 runner 是 5.2——
       # 那一段只有這個 job 量得到。selftest 在這裡再跑一次（`--check-compgen` 比的是這台的 bash），神諭跑 bash 5.3 才有意義的
       # fixture 與文法語料（神諭自己挑 Homebrew 的 bash，版本不在 lint 檔頭 `ORACLE-BASH-SUPPORTED` 裡就具名退出）。
+      # **fixture 那一半要分清楚量到什麼**（#33 verify R43 第 22 列）：`parse-r40-bash53-*` 與 `*nested*` 的 11 個 step 全是 `lint=PARSE`
+      # 的「不可比」——只是一條絆線（哪天 lint 放行它們，它們變成可比、與宣告不符而紅），**不量神諭本身**；前一版這一步 rc=0 看起來像
+      # 「bash 5.3 上量過了」，其實量到 0 個。真正在這台量到東西的是 `*r44-*`（注入探針與算術求值，行為隨 bash 版本）與文法語料，
+      # 所以神諭加 `--min-comparable 1`：可比的 step 少於 1 個就 rc=1，這一組不會再整組變成不可比卻仍然綠。
       - name: lint-ci-log-filter selftest and oracle subset under bash 5.3
         shell: bash
         run: |
@@ -267,7 +271,7 @@ jobs:
           {
             python3 -c 'import yaml' || python3 -m pip install --quiet --break-system-packages pyyaml
             bash test/lint-ci-log-filter.sh --selftest
-            python3 test/oracle.py test/fixtures/ci-log-filter-parse-r40-bash53-*.yml test/fixtures/ci-log-filter-*r42-*nested*.yml
+            python3 test/oracle.py --min-comparable 1 test/fixtures/ci-log-filter-parse-r40-bash53-*.yml test/fixtures/ci-log-filter-*r42-*nested*.yml test/fixtures/ci-log-filter-*r44-*.yml
             python3 test/corpus/shellgen.py --grammar --out "$RUNNER_TEMP/gg"
             bash test/lint-ci-log-filter.sh --strict "$RUNNER_TEMP"/gg/*.yml
             python3 test/oracle.py "$RUNNER_TEMP"/gg/*.yml

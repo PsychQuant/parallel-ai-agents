@@ -15,15 +15,18 @@
 mutation」，CHANGELOG 寫「十個 mutation 逐一確認轉紅」。**那三句話會讓下一個維護者以為改動 `validate.py` 有測試網接著。**
 
 現在用 `scripts/mutation_check.py` 量：跑一次就知道哪些閘門沒有測試網。
-**最近一次完整量測（R42 量測樹，於 `git archive fa9f932` 副本上跑，`--jobs 8`）：456 個靶 → 453 殺 / 0 存活 / 3 預期存活 / 0 靶壞**，
-**94.4 分鐘 / 456 靶 = 每靶 12.4 s**（工具的單調時鐘、不含機器睡眠；bash 量到的牆鐘是 115.3 分鐘，中間機器睡了約 21 分鐘；8 個 worker 各一份不含 `.git` 的副本；開跑時一分鐘平均負載 23.4）。
-這一輪沿用 0 靶（`--no-cache`）。最終程式碼 commit（`d31ae51`）與量測樹只差一張 fixture、selftest 的三組門檻、`oracle.py` 的類別總數與一條 `EXPECTED_SURVIVE`（CHANGELOG 的 R42 段列得出來），之後只有 CHANGELOG 與註解、docstring、本檔頭的文字提交。這些改動讓全部守備單位的快取 key 換掉（lint／oracle 系因 fixture 與被突變檔，validate／neutralise 因輸入是整個 repo），所以最終 commit 的快取由另一輪 `--no-cache` 全輪重建，不是沿用上面那一輪；那一輪的結果寫在 CHANGELOG 的 R42 段（本檔頭不再跟著改——改了會讓快取 key 再換一次）。
+**最近一次完整量測（R44，於 `git archive` 副本上跑，`--no-cache --jobs 8`）：472 個靶 → 468 殺 / 0 存活 / 4 預期存活 / 0 靶壞**（耗時、負載與量測樹的 commit 寫在 CHANGELOG 的 R43 段，不抄在這裡：
+本檔屬於 `validate`／`neutralise` 兩組的輸入（整個 repo 除 CHANGELOG 與快取檔本身），檔頭每改一個字，那兩組共一百多個靶的快取就整批失效，所以會隨每次量測變動的數字只放 CHANGELOG）。
+這一輪沿用 0 靶。**量測提速（R44）**：突變測試用 `LINT_SELFTEST_FAILFAST`／`LINT_SELFTEST_JOBS`／`LINT_SELFTEST_FIRST` 讓 `lint` 守備單位的 selftest 平行、第一張失敗就停、殺手 fixture 先跑——只改順序與耗時、不改判定（39 個樣本與完整 selftest 殺／存活逐個相同，CHANGELOG 有計時）；
+睡眠不會讓一個靶被誤記成殺掉：驗證指令 rc≠0 才算殺，神諭的逾時用單調時鐘（睡眠不計入）、判「量不到」、不改退出碼。
+**R42 最終（`git archive fa9f932`，`--jobs 8`）**：456 靶 → 453 殺 / 0 存活 / 3 預期存活 / 0 靶壞，94.4 分鐘 / 456 靶 = 每靶 12.4 s（牆鐘 115.3 分鐘，睡了約 21 分鐘；開跑時負載 23.4）。最終程式碼 commit（`d31ae51`）與量測樹只差一張 fixture、selftest 的三組門檻、`oracle.py` 的類別總數與一條 `EXPECTED_SURVIVE`，
+那一輪之後的文字提交讓全部守備單位的快取 key 換掉，R42 的最終快取因此是另一輪 `--no-cache` 全輪重建的；R44 改成「全輪量測 → 文字 → 只補跑輸入含整個 repo 的兩組」，不再為文字改動重跑 lint／oracle 系。
 **R42 的第一輪（`4faaea2`，`--no-cache`）不是零存活**：457 靶 → 452 殺 / **2 非預期存活** / 3 預期存活，78.9 分鐘。兩個都是 R42 改動讓先前的靶失去分辨力：
 `_set_prefix_line` 行尾 `;` 那一支是死碼（刪除、靶退役）；oracle 單一 payload 的 `|| :`（R42 起每組 payload 都判、取最嚴重，只改一組不改變任何判定，
 重新錨定成所有 payload 一起拿掉，並補 `oracle_selfcheck.py` 的 `payload-after-failing-command` 項目）。**所以最終量測不能用改動之前的樹。**
 R40 最終（`git archive 8f2d21a`）：464 個靶 → 461 殺 / 0 存活 / 3 預期存活 / 0 靶壞，75.9 分鐘 / 464 靶 = 每靶 9.8 s；
 當時同一棵樹立刻重跑：464 靶全部沿用快取、203 秒。耗時不是效能指標，只是這一輪真的跑了多久。
-快取的 key 是「守備單位名稱＋突變後被改寫檔的**原文**＋守備單位讀得到的輸入的雜湊＋執行環境指紋（跑本工具的 python 版本、每一支候選 bash 與 PATH 上 bash 的路徑與版本、PATH 上的 `python3`、PyYAML、platform、`/proc`、`/bin/sh` 的雜湊與自報身分、`ORACLE_LINT`）」，R40 起改 docstring 或註解也會讓它失效（`test_validate.py` 讀 `# READ-SITE` 註解）；不計入的只有 `.git`、`__pycache__`、`_NOT_READ` 點名的檔（CHANGELOG）與快取檔本身。發版前的量測用 `--no-cache`。
+快取的 key 是「守備單位名稱＋突變後被改寫檔的**原文**＋守備單位讀得到的輸入的雜湊＋執行環境指紋（跑本工具的 python 版本、每一支候選 bash 與 PATH 上 bash 的路徑與版本、PATH 上的 `python3`、PyYAML、platform、`/proc`、`/bin/sh` 的雜湊與自報身分、`ORACLE_LINT`）」，R40 起改 docstring 或註解也會讓它失效（`test_validate.py` 讀 `# READ-SITE` 註解）；不計入的只有 `.git`、`__pycache__`、`.pytest_cache`、`_NOT_READ` 點名的檔（CHANGELOG）與快取檔本身。發版前的量測用 `--no-cache`。
 R40 第一次量測（`7ced8fe`，`--no-cache`）：459 靶 → 456 殺 / 0 存活 / 3 預期存活，68.0 分鐘、每靶 8.9 s。
 R39 最終（`c99e4c5`）：435 靶 → 432 殺 / 0 存活 / 3 預期存活，60.6 分鐘、每靶 8.4 s；當時快取 key 還是剝掉 docstring 的 AST。
 R39 之前那一輪（`bf961d1`）：殺 431 / 存活 1 / 預期存活 3——存活的是神諭續行判定的 bash 那一支，我原本想列成等價，
@@ -2323,6 +2326,18 @@ class ValidateTest(unittest.TestCase):
             self.assertEqual(e0, M.inputs_digest(spec2), "排除的檔名改了，digest 不變")
             (td / "t.py").write_text("t2\n")
             self.assertNotEqual(e0, M.inputs_digest(spec2), "其他檔改了，digest 照樣變")
+            # `.pytest_cache`（R44，#33 verify R43 第 23 列）：用 pytest 跑過之後它出現在整個 repo 的輸入裡，沒有任何驗證指令讀它，
+            # 不該讓 `validate`／`neutralise` 兩組一百多個靶的快取全部失效。放在子目錄裡也一樣（relative_to 的 parts 判斷）。
+            f0 = M.inputs_digest(spec2)
+            (td / ".pytest_cache" / "v").mkdir(parents=True)
+            (td / ".pytest_cache" / "v" / "lastfailed").write_text("{}\n")
+            (td / "sub" / ".pytest_cache").mkdir(parents=True)
+            (td / "sub" / ".pytest_cache" / "README.md").write_text("x\n")
+            self.assertEqual(f0, M.inputs_digest(spec2), "`.pytest_cache` 底下多了檔，digest 不變")
+            (td / ".pytest_cache" / "v" / "lastfailed").write_text("{\"a\": true}\n")
+            self.assertEqual(f0, M.inputs_digest(spec2), "`.pytest_cache` 底下的檔改了，digest 不變")
+            (td / "sub" / "real.py").write_text("r\n")
+            self.assertNotEqual(f0, M.inputs_digest(spec2), "名字像、但不在 `.pytest_cache` 底下的檔，digest 照樣變")
         # 真的排除清單每一條都要指到存在的檔：路徑寫錯或檔案搬家，排除就安靜地變成什麼都沒排除
         for rel in M._NOT_READ:
             self.assertTrue((M.REPO_ROOT / rel).is_file(), rel)

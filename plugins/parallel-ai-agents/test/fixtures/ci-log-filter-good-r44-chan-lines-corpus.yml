@@ -1,0 +1,519 @@
+# runner 通道字面寫入的逐運算元語料（_fl_chan_line_ok、_fl_env_key_denied、_fl_merge）——放行的 56 個。任何一個運算元被拿掉而讓其中一個 step 變成 RULE，這張就從 pass 翻成 rule-red。
+# 由 `runner 通道字面寫入的逐運算元語料（_fl_chan_line_ok、_fl_env_key_denied、_fl_merge）` 的候選語料（168 個 step，每個是靠管線過濾的群組形式、各放一個命令）依基準 lint 的逐 step 判定拆成兩張：放行的一張（`good-`，EXPECT: pass）、被擋的一張（`restrict-`，
+# EXPECT-EACH-STEP: rule-red）。目的：#33 verify R44 的區域 opsweep（`--since 11e2b8f`）在這個函式的每個運算元上都有存活者——每個運算元沒有各自會翻色的輸入；
+# 這份語料按**運算元的邊界**取樣（每個接受／拒絕的分岔各有輸入），不挑已知形狀。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: chan-lines 000
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "K=v" >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 001
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "K=$HOME" >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 002
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "K=$RUNNER_TEMP/x" >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 003
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "K=a b" >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 004
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "A_B1=2" >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 005
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "_X=1" >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 006
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "FOO=1" >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 007
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "k=v" >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 008
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo K=v >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 009
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "K=v" "L=w" >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 010
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo 'K=v' >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 011
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            printf '%s\n' "K=v" >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 012
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            printf 'K=v\n' >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 013
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            printf 'K=%s\n' v >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 014
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            printf 'K=%s' "$HOME" >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 015
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            printf 'K=%s%s\n' a b >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 016
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            printf 'K=\n' >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 017
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            printf '%s' "K=v" >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 018
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            printf '%s\n' 'K=v' >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 019
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "/opt/bin" >> "$GITHUB_PATH"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 020
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "$HOME/bin" >> "$GITHUB_PATH"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 021
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 022
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "${HOME}/x" >> "$GITHUB_PATH"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 023
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "$HOME/a/$RUNNER_TEMP" >> "$GITHUB_PATH"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 024
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "/" >> "$GITHUB_PATH"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 025
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "$HOME/" >> "$GITHUB_PATH"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 026
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "/x$HOME" >> "$GITHUB_PATH"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 027
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "/x/$RUNNER_TEMP/y" >> "$GITHUB_PATH"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 028
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "/a/./b" >> "$GITHUB_PATH"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 029
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "/a//b" >> "$GITHUB_PATH"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 030
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "/a/.../b" >> "$GITHUB_PATH"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 031
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "/a b" >> "$GITHUB_PATH"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 032
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo /opt/bin >> "$GITHUB_PATH"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 033
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            printf '%s\n' "/opt/bin" >> "$GITHUB_PATH"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 034
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            printf '/opt/%s\n' bin >> "$GITHUB_PATH"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 035
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "k=v" >> "$GITHUB_OUTPUT"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 036
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            printf '%s\n' "k=v" >> "$GITHUB_OUTPUT"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 037
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "a
+            b" >> "$GITHUB_OUTPUT"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 038
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "=bad" >> "$GITHUB_OUTPUT"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 039
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "BASH_ENV=x" >> "$GITHUB_OUTPUT"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 040
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "/rel" >> "$GITHUB_OUTPUT"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 041
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "$HOME" >> "$GITHUB_OUTPUT"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 042
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "k=v" >> "$GITHUB_STATE"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 043
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            printf '%s\n' "k=v" >> "$GITHUB_STATE"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 044
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "a
+            b" >> "$GITHUB_STATE"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 045
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "=bad" >> "$GITHUB_STATE"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 046
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "BASH_ENV=x" >> "$GITHUB_STATE"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 047
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "/rel" >> "$GITHUB_STATE"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 048
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "$HOME" >> "$GITHUB_STATE"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 049
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "k=v" >> "$GITHUB_STEP_SUMMARY"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 050
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            printf '%s\n' "k=v" >> "$GITHUB_STEP_SUMMARY"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 051
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "a
+            b" >> "$GITHUB_STEP_SUMMARY"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 052
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "=bad" >> "$GITHUB_STEP_SUMMARY"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 053
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "BASH_ENV=x" >> "$GITHUB_STEP_SUMMARY"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 054
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "/rel" >> "$GITHUB_STEP_SUMMARY"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: chan-lines 055
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "$HOME" >> "$GITHUB_STEP_SUMMARY"
+          } 2>&1 | python3 scripts/neutralise.py

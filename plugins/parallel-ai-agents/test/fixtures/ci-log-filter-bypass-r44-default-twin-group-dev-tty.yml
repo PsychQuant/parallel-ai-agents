@@ -1,0 +1,21 @@
+# R38 第 5 列（五條 leg）：群組豁免的論證是「群組裡 fd 1、fd 2 都是管線」，只涵蓋寫到 fd 1／2 的目標。群組跑在子殼層，但 `$$` 仍是
+# 外層 shell 的 PID——在 Linux 上 `/proc/$$/fd/1` 就是外層原本的 stdout（step log）。前一版把群組內的所有 fd 命中一起豁免。
+# `/dev/tty` 是控制終端，不是管線。
+# **R44 預設模式雙胞胎**（#33 verify R43 第 9 列）：上面是 `bypass-r39-strict-group-dev-tty` 的說明，那張在 `--strict` 下跑；R42 起 `--strict` 的判定由正面文法擔任、不再經過
+# 預設模式的 `_analyse`／`_Sh`，所以拿掉 `--strict` 的這一份才是殺下面這個突變體的網：`_group_safe_target` 拿掉 `".." not in tl.split("/")` 之外的運算元（第 1 個）：預設模式放行群組裡寫 `/dev/tty`。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: group writes to dev-tty
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            echo "$PR_TITLE" > /dev/tty
+            echo "$PR_TITLE"
+          } 2>&1 | python3 scripts/neutralise.py

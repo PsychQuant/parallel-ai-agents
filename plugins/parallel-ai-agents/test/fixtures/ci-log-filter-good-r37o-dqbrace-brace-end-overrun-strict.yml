@@ -26,4 +26,4 @@ jobs:
       - name: probe
         shell: bash
         run: |
-          { echo ${A}; } 2>&1 | python3 scripts/neutralise.py
+          { echo "${A}"; } 2>&1 | python3 scripts/neutralise.py

@@ -1,0 +1,30 @@
+# #33 verify R43 第 14 列（security，LOW）：具名 fd 重導向 `{RUNNER_TEMP}>` 會把 runner 可信變數指派成 fd 號碼（`FL_PLAIN_RE` 允許 `{}`，R43 只擋了
+# `{GITHUB_ENV}`）。值是小整數，沒有外流，但 `"$RUNNER_TEMP/…"` 的目標與 `$GITHUB_ENV` 值裡的 `$HOME` 不再是文法假設的意思。
+# R44 起緊接重導向運算子的 `{NAME}` 一律拒絕。這是**文法外**——保守擋下、神諭實跑沒有外流。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-EACH-STEP: rule-red
+# EXPECT-MSG: 不在 `--strict` 的正面文法裡
+# EXPECT-MSG: 具名 fd
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: a named fd redirect over a trusted variable
+        shell: bash
+        run: |
+          {
+            true {RUNNER_TEMP}>/dev/null
+            echo "$RUNNER_TEMP"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a named fd redirect over HOME
+        shell: bash
+        run: |
+          {
+            true {HOME}>/dev/null
+            echo hi
+          } 2>&1 | python3 scripts/neutralise.py

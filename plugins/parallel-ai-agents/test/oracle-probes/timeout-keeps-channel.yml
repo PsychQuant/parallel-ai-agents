@@ -1,0 +1,16 @@
+# R44（#33 verify R43 第 7 列，Codex）：逾時分支寫死 `chan: []`——已經寫進通道的 PR 文字被丟掉，真繞過變成 rc=0 的「量不到」。這個 step 先寫通道、再 `/bin/sleep`
+# （神諭把 PATH 上的 `sleep` 換成空操作，所以要用絕對路徑才會真的逾時）；替身 lint 全放行時，神諭必須判「繞過（逾時之前跨 step 通道已經帶了 PR 文字）」、rc=1。
+# 沒有標記的逾時照舊判量不到（`timeout-after-leak` 是對照）。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: channel write before the timeout
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          { echo "$PR_TITLE" >> "$GITHUB_ENV"; /bin/sleep 60; } 2>&1 | python3 scripts/neutralise.py

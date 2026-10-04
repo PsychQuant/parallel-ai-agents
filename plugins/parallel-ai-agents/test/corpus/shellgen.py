@@ -9,10 +9,14 @@
 三個互不混寫的呼叫（各寫各的檔名前綴）：預設（A–E 組，`gen-a-*`…`gen-e-*`）、`--strict`（`gen-f-*`，下面的
 `group_strict`）、`--grammar`（R42，`gen-g-*`，`--strict` 正面文法的產生式取樣，見 `group_grammar`）。前兩種照維度取積，
 第三種照產生式取樣——它量的是「文法接受的都不外流」，不是 lint 與 bash 的詞法對帳。
+R44（#33 verify R43 第 18 列）：產生式補了**失敗路徑**（獨立的 `false`、`exit 0`／`exit 1`、會失敗的 `test`／`[`——運算元一律在雙引號裡，因為群組裡未加引號的展開
+R44 起不在文法裡；前一版的 `word()` 有一個未加引號的 `$PR_TITLE`，lint 因此擋下 100 格裡的一批（R44 最終的 lint 對 11e2b8f 版產生器的 100 格實測：22 格），是「產生器走出了文法」，這一組存在就是要抓這個）。
+**這一組只放文法接受的**：`test -v`、特殊變數指派、選項形狀的過濾器路徑、`printf -v` 這些在文法外，不可能「全收」——它們由 `bypass-r44-*` fixture
+與神諭的注入探針守；PR 標記不是程式碼這一維，由神諭對每個 `--strict` step 自動換成 payload 再跑一次（`INJECT_PAYLOADS`），不在產生器裡。
 
 維度（封閉列舉；**改動這份清單是另一次 change**，不得在別處「順便」擴充）：
 
-1. heredoc 分隔字的引號擺法（12）：`EOF` `'EOF'` `"EOF"` `"EO"F` `E"OF"` `'EOF'x` `""EOF` `'E'OF`
+1. heredoc 分隔字的引號擺法（16；下面列的是最初的 12 個，R33 又加了 `''`、`""`、``EOF`x` ``、`EOF$(x)` 四個，見 `DELIMS`）：`EOF` `'EOF'` `"EOF"` `"EO"F` `E"OF"` `'EOF'x` `""EOF` `'E'OF`
    `\\EOF` `E\\OF` `'E\\OF'` `' '`
    —— bash 對整個**詞**做 quote removal，所以這十二種的終止字只有四個相異值（EOF、EOFx、E\\OF、空白）；任何一種被讀錯，
    heredoc 不是提早終止（資料變 code）就是永不終止（吞掉後面的真管線）。
@@ -358,7 +362,7 @@ TAG_BANG_DOC = (HEAD + '      - name: tag-bang\n        run: !!str "echo hi | '
 #   xtrace 規則本身——requirements 把 fd 複製偵測改成 `return None`，這一組的神諭結果逐字不變。**更正**（#33 verify R39 第 11 列）：
 #   前一版這裡寫「鑑別力由預設模式的 A–E 組與 fixture 量」——A–E 組裡 `>&2`／`/dev/stderr`／`/dev/fd/2`／`3>&1` 出現 0 檔，那一半
 #   不成立；R39 verify 另外量到 env、`${{ }}`、fd 三條規則分別關掉時，`--strict` 組的 RULE 行逐字不變。維度 10（R40）補上
-#   「只靠某一條規則擋下的群組形式」。維度 7–9 補的是群組規則**本身**沒量到的東西：
+#   「只靠一條規則決定放不放行的群組形式」。維度 7–9 補的是群組規則**本身**沒量到的東西：
 #   7. 群組外的行（OUTSIDE_LINES × OUTSIDE_POSITIONS）：群組前、`set` 前綴與群組之間、群組之後各放一行——`set` 前綴（該放行）、
 #      會外流的命令、以及**程式碼半邊整行挖空**的行（`${PR_TITLE}`、`\e\c\h\o …`、`$'\x65cho' …`、`${X:-eval} $'…'`，R38 第 2 列：
 #      詞元檢查與只收非空白碼行的字面檢查都看不到它們）。`set` 前綴只放在群組之前（群組之後的 `set` 不是前綴，照規則擋、不外流）。
@@ -366,7 +370,7 @@ TAG_BANG_DOC = (HEAD + '      - name: tag-bang\n        run: !!str "echo hi | '
 #      `f-inner-heredoc` 什麼都沒量到（R39 verify 第 11 列）：群組裡的 `if`／`for`／`case`／heredoc／`>&2`／`set -x`／`exec 3>&1`／`trap`／子殼層裡關 pipefail／
 #      未加引號的 `${{ github.run_id }}`（R40 起只有 `GH_SAFE_EXPRS` 的 GitHub 產生純量與字面常數放行，其他運算式照規則擋）——全部安全、`--strict` 都該放行（R38 第 11 列：前一版沒有這個維度，群組規則的誤擋面沒被量到）。
 #   9. 群組尾巴後（GROUP_TAILS）：尾巴後的 `;`（該放行）、尾巴後接命令（該擋）。
-#  10. 只靠某一條規則擋下的群組形式（RULE_ONLY_GROUPS，R40）：見下方 `RULE_ONLY_GROUPS` 與產生迴圈的說明。
+#  10. 只靠一條規則決定放不放行的群組形式（RULE_ONLY_GROUPS，R40）：見下方 `RULE_ONLY_GROUPS` 與產生迴圈的說明。
 SHELL_TEMPLATES = [
     ("bash", "bash"), ("bash-dq", '"bash"'), ("bash-sq", "'bash'"),
     ("bash-brace", "bash {0}"), ("bash-e", "bash -e {0}"), ("bash-l", "bash -l {0}"),
@@ -410,7 +414,9 @@ RULE_ONLY_GROUPS = [
     ("gh-expr", ["{", "echo ${{ github.event.pull_request.title }}", "} 2>&1 | " + "python3 scripts/neutralise.py"], {}),
     # fd 規則：寫到外層 shell 的 fd（Linux 外流；macOS 沒有 /proc，列在 KNOWN_DISAGREE_WITHOUT_PROC）
     ("proc-fd", ["{", 'echo "$PR_TITLE" > /proc/$$/fd/1', "} 2>&1 | " + "python3 scripts/neutralise.py"], {}),
-    # 群組計數的運算式遮罩：字面常數裡的 `}` 不是群組的大括號——遮罩失效時群組規則誤擋（不外流；突變時神諭判誤擋）
+    # 字面常數裡的 `}`（R44 更正，#33 verify R43 第 21 列）：這一格**不外流、lint 放行**——字面常數在剖析之前代換（`echo a} "$PR_TITLE"`，
+    # `a}` 是普通的詞），`}` 不是群組的收尾。R37–R41 它量的是群組規則的大括號計數遮罩（遮罩失效時誤擋）；那條規則 R42 已刪，現在它釘的是
+    # 「字面常數先代換、再剖析」的順序：代換漏掉這一步（把 `${{ 'a}' }}` 留在文字裡），文法會把 `}` 當成群組收尾而誤擋。
     ("literal-expr-brace", ["{", "echo ${{ 'a}' }} \"$PR_TITLE\"", "} 2>&1 | " + "python3 scripts/neutralise.py"], {}),
 ]
 WRAP_CONTENTS = [
@@ -548,9 +554,13 @@ def group_strict():
                _cls("文法外" if gn in GROUP_INNER_OUTSIDE_GRAMMAR else None) + LA + _strict_doc("group inner %s" % gn, ["{"] + list(glines) + ["} 2>&1 | " + NEUT],
                                 step_shell="bash"))
 
-    # 維度 10：只靠某一條規則擋下的群組形式（R40，#33 verify R39 第 11 列、放行條件 7）——群組形式本身合規，唯一的違規是那一條
-    # 規則，而且**會外流**：那條規則被關掉時，神諭判繞過。封閉列舉，只有這三格。不列的：pipefail 與 `GITHUB_ENV`——R40 寫它們
-    # 「量的是退出碼」「要跨 step」所以不列；R42 起神諭有 pipefail 探針與通道觀測，這兩類改由 `--grammar` 組量（文法接受的
+    # 維度 10：群組形式、只靠**一條**規則決定放不放行的三格（R40，#33 verify R39 第 11 列、放行條件 7；R44 照現況重寫——前一版寫「三格都會外流」
+    # 並引用 R42 已刪的群組規則，第三格其實根本不外流）。封閉列舉，只有這三格，各自的現況：
+    #   gh-expr：`${{ github.event.pull_request.title }}` 直接寫在 run 裡——P3 RULE；神諭把運算式代換成 payload，兩個平台都外流（那條規則被關掉時判繞過）。
+    #   proc-fd：寫到 `/proc/$$/fd/1`——不在正面文法裡（重導向目標只收點名的幾種），RULE；只在 Linux 外流（macOS 沒有 /proc，
+    #            神諭判 `文法外-without-proc`，見 `HAS_PROC`）。
+    #   literal-expr-brace：**不外流、lint 放行**（上面那一格的註解）——量的是代換順序，不是一條擋下的規則。
+    # 不列的：pipefail 與 `GITHUB_ENV`——R40 寫它們「量的是退出碼」「要跨 step」所以不列；R42 起神諭有 pipefail 探針與通道觀測，這兩類改由 `--grammar` 組量（文法接受的
     # 每一格都不得有 pipefail 關閉或通道外流）。env 規則——`SHELLOPTS: xtrace` 在群組形式下，群組裡的 trace 走管線、被過濾，
     # 群組外只剩 `set` 那一行（R40 第一版放了這一格，神諭判誤擋才看到）；`BASH_ENV` 指的檔神諭帶不進去、`PYTHON*` 神諭的 python3
     # stub 不讀。env 規則在群組形式下是保守的。
@@ -580,9 +590,14 @@ _GRAMMAR_SHELLS = (("bash", False), ("bash -e {0}", True))    # (樣板, 需要 
 def group_grammar(seed=GRAMMAR_SEED, counts=GRAMMAR_CELLS):
     R = random.Random(seed)
 
-    def word():
-        return R.choice(["plain-x", "'sq $PR_TITLE ; | }'", '"$PR_TITLE"', '"${PR_TITLE:-d}"', "$PR_TITLE",
-                         '"dq $PR_TITLE $?"', "'{'", "a{b,c}", '"$RUNNER_TEMP"/f*', "-n"])
+    def word(glob=True):
+        # R44（#33 verify R43 第 1 列）：群組裡的展開一律要加雙引號——前一版這裡有一個未加引號的 `$PR_TITLE`，lint 在 R44 起把它擋下
+        # （`[ -n $PR_TITLE ]` 的 `-v` 下標算術求值），生成器因此「走出了文法」；現在位置裡只放加了引號的形式。
+        # R44 宣稱查核（h1-X1）：`test`／`[` 的運算元不得有未加引號的 glob 字元（檔名會變成 `-v` 與它的下標），所以 `glob=False` 的位置
+        # （`test`／`[` 的運算元）去掉 `"$RUNNER_TEMP"/f*`；`echo`／`printf` 的資料參數的 glob 只影響輸出，照放。
+        # 這是同一個教訓第二次：產生器只能放文法接受的形式，文法收窄時產生器要跟著檢查。
+        return R.choice(["plain-x", "'sq $PR_TITLE ; | }'", '"$PR_TITLE"', '"${PR_TITLE:-d}"', '"x${PR_TITLE}y"',
+                         '"dq $PR_TITLE $?"', "'{'", "a{b,c}", "-n"] + (['"$RUNNER_TEMP"/f*'] if glob else []))
 
     def redir(filtered):
         opts = ["", "", "", " 2>&1", " >&2", " 2>/dev/null", " < /dev/null", ' >> "$RUNNER_TEMP/log.txt"']
@@ -599,7 +614,10 @@ def group_grammar(seed=GRAMMAR_SEED, counts=GRAMMAR_CELLS):
         if k == 3:
             return "sed 's/^/s:/'" + redir(filtered)
         if k == 4:
-            return R.choice(["true", "false || true", ": " + word(), "test -n " + word(), "[ -n " + word() + " ]"])
+            # R44（#33 verify R43 第 18 列）：前一版的 `false` 只以 `false || true` 出現，失敗路徑從沒被走到；現在有獨立的 `false`、`exit`、
+            # 會失敗的 `test`／`[`（運算元加了引號）。失敗之後 `set -e`／`&&` 的控制流程才有機會讓後面的管線不跑——正是 R43 第 5、6 列那一類。
+            return R.choice(["true", "false || true", ": " + word(), "test -n " + word(glob=False), "[ -n " + word(glob=False) + " ]",
+                             "false", "exit 0", "exit 1", 'test -z "$PR_TITLE"', '[ "$PR_TITLE" = WIP ]', '[ -n "$PR_TITLE" ]'])
         if k == 5:
             return "printenv PR_TITLE" + redir(filtered)
         if k == 6:

@@ -39,6 +39,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# shellcheck disable=SC2030,SC2031  # 每張 fixture 在自己的子殼層裡改計數、經 `<序號>.cnt` 檔回傳、由父殼層彙整——子殼層裡的修改本來就不回到父殼層，這正是設計（見下方「提速」註解）
 if [ "${1:-}" = "--selftest" ]; then
   # R22 裁決 3／5：selftest 現在驗**四件**（第四件是 R42 加的），不只「有沒有紅」。
   #   (1) 每個 fixture 自己用 `# EXPECT:` 宣告它該是 pass／rule-red／parse-red，實測必須相符。
@@ -77,12 +78,22 @@ if [ "${1:-}" = "--selftest" ]; then
     esac
   done
   rm -rf "${fakebin}"
-  for f in test/fixtures/ci-log-filter-*.yml; do
+  # R44（全輪 opsweep）：多檔時 rc 是各檔的聚合。第一個檔紅、最後一個檔綠，rc 仍要是 1——前一版只有單檔的 fixture，
+  # `rc_all = rc_all or rc or …` 若退化成「只看最後一個檔」（`rc_all = rc`）沒有任何東西會紅，而 CI 正是一次餵全部 workflow。
+  if bash test/lint-ci-log-filter.sh test/fixtures/ci-log-filter-bad.yml test/fixtures/ci-log-filter-good-r44-require-run-steps-pass.yml >/dev/null 2>&1; then
+    echo "lint-ci-log-filter selftest FAILED: 多檔（第一個紅、最後一個綠）rc 是 0——退出碼沒有聚合各檔" >&2
+    fail=1
+  fi
+  # 提速（R44 宣稱查核之後；量測一輪要跑幾百個突變體、每個都跑一次 selftest，串行 919 張 fixture 約 70 秒）：
+  # 每張 fixture 的檢查彼此獨立（各自起一個 lint 行程、只讀自己的檔），所以平行跑——每張在自己的子殼層裡跑、訊息寫進 `<序號>.err`、計數寫進 `<序號>.cnt`，
+  # 全部結束後**依序號**彙整（訊息順序與串行時相同、計數相加）。判定不變：`LINT_SELFTEST_JOBS=1` 就是原來的串行。
+  # `LINT_SELFTEST_FAILFAST=1`（只給突變測試用）：第一張失敗就停——突變體只要有一張 fixture 變紅就算殺掉，不必把其餘跑完；沒有任何失敗時照樣全跑，結論相同。
+  selftest_body() {
     want=$(sed -n 's/^# EXPECT: //p' "$f" | head -1)
     if [ -z "${want}" ]; then
       echo "lint-ci-log-filter selftest FAILED: ${f} 沒有 EXPECT 宣告（pass / rule-red / parse-red）" >&2
       fail=1
-      continue
+      return 0
     fi
     # `A && B || C` 是 SC2015，而且 R15 就是這樣讓 CI 紅的——一律用 if/then。
     # `# LINT-ARGS:` 讓 fixture 指定模式（R35：`--strict` 是 CI 對真 workflow 用的模式，規則比預設多兩條）
@@ -103,7 +114,7 @@ if [ "${1:-}" = "--selftest" ]; then
     fi
     if [ "${got}" != "${want}" ]; then
       echo "lint-ci-log-filter selftest FAILED: ${f} 宣告 ${want}，實測 ${got}" >&2
-      printf '%s\n' "$out" | head -2 >&2; fail=1; continue
+      printf '%s\n' "$out" | head -2 >&2; fail=1; return 0
     fi
     # R37：`# EXPECT-MSG:`（可多行）斷言**訊息內容**——每一行都必須以子字串出現在輸出裡。
     # 為什麼：類別對了不代表訊息對。`--verify-expected` 比對整段 stderr，推翻了「只改訊息文字 ⇒ 等價」
@@ -115,7 +126,7 @@ if [ "${1:-}" = "--selftest" ]; then
     done < <(sed -n 's/^# EXPECT-MSG: //p' "$f")
     if [ -n "${msg_bad}" ]; then
       echo "lint-ci-log-filter selftest FAILED: ${f} 的輸出沒有 EXPECT-MSG「${msg_bad}」" >&2
-      printf '%s\n' "$out" | head -2 >&2; fail=1; continue
+      printf '%s\n' "$out" | head -2 >&2; fail=1; return 0
     fi
     if grep -q '^# EXPECT-MSG: ' "$f"; then n_msg=$((n_msg+1)); fi
     # R42（opsweep `--since 45dee04`）：多 step 的 fixture 只判「整張紅」時，某個守衛被拿掉、放行了其中幾步，只要還有一步被別的
@@ -129,7 +140,7 @@ if [ "${1:-}" = "--selftest" ]; then
       done < <(grep -n '^ *- name:' "$f")
       if [ -n "${msg_bad}" ]; then
         echo "lint-ci-log-filter selftest FAILED: ${f} 宣告 EXPECT-EACH-STEP，${msg_bad}的 step 沒有自己的 RULE 行" >&2
-        fail=1; continue
+        fail=1; return 0
       fi
     fi
     case "${want}" in
@@ -137,28 +148,77 @@ if [ "${1:-}" = "--selftest" ]; then
       rule-red)  n_rule=$((n_rule+1)) ;;
       parse-red) n_parse=$((n_parse+1)) ;;
     esac
+  }
+  ncpu=$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
+  [ "${ncpu}" -gt 8 ] && ncpu=8
+  jobs_max=${LINT_SELFTEST_JOBS:-${ncpu}}
+  case "${jobs_max}" in ''|*[!0-9]*|0) jobs_max=1 ;; esac
+  resd=$(mktemp -d)
+  trap 'rm -rf "${resd}"' EXIT
+  # 早先的 `--check-compgen` 檢查已經失敗：提早結束模式不必再跑 fixture
+  if [ "${fail}" -ne 0 ] && [ -n "${LINT_SELFTEST_FAILFAST:-}" ]; then exit 1; fi
+  # `LINT_SELFTEST_FIRST=<檔>`（只給突變測試用的**順序提示**）：檔裡一行一個 fixture 路徑，那些先跑、其餘照字母序接在後面；不存在的路徑略過。
+  # 只改順序、不改任何一張的判定與計數——搭配 `LINT_SELFTEST_FAILFAST` 時，把常殺掉突變體的 fixture 排前面，失敗很快就出現（opsweep 每殺一個突變體就更新這份清單）。
+  printf '%s\n' test/fixtures/ci-log-filter-*.yml > "${resd}/all"
+  if [ -n "${LINT_SELFTEST_FIRST:-}" ] && [ -f "${LINT_SELFTEST_FIRST}" ]; then
+    awk 'NR==FNR { ex[$0] = 1; next } FILENAME == ARGV[2] { if (($0 in ex) && !s[$0]++) print; next } !s[$0]++' \
+      "${resd}/all" "${LINT_SELFTEST_FIRST}" "${resd}/all" > "${resd}/order"
+  else
+    cp "${resd}/all" "${resd}/order"
+  fi
+  seq_n=0
+  while IFS= read -r f <&3; do
+    seq_n=$((seq_n + 1))
+    while [ "$(jobs -rp | wc -l | tr -d ' ')" -ge "${jobs_max}" ]; do sleep 0.02; done
+    if [ -n "${LINT_SELFTEST_FAILFAST:-}" ] && grep -qs '^1 ' "${resd}"/*.cnt 2>/dev/null; then break; fi
+    (
+      fail=0; n_pass=0; n_rule=0; n_parse=0; n_msg=0; n_each=0
+      selftest_body
+      printf '%s %s %s %s %s %s\n' "${fail}" "${n_pass}" "${n_rule}" "${n_parse}" "${n_msg}" "${n_each}" > "${resd}/${seq_n}.cnt"
+    ) 2> "${resd}/${seq_n}.err" &
+    echo "$f" > "${resd}/${seq_n}.name"
+  done 3< "${resd}/order"
+  if [ -n "${LINT_SELFTEST_FAILFAST:-}" ]; then
+    # 提早結束：有失敗就不等其餘（殺掉還在跑的）；沒有失敗就等全部結束、照常彙整
+    while [ -n "$(jobs -rp)" ]; do
+      if grep -qs '^1 ' "${resd}"/*.cnt 2>/dev/null; then jobs -rp | xargs kill 2>/dev/null || true; break; fi
+      sleep 0.02
+    done
+  fi
+  wait 2>/dev/null || true
+  for ((k = 1; k <= seq_n; k++)); do
+    [ -f "${resd}/${k}.name" ] || continue
+    if [ -s "${resd}/${k}.err" ]; then cat "${resd}/${k}.err" >&2; fi
+    if [ -f "${resd}/${k}.cnt" ]; then
+      read -r c_fail c_pass c_rule c_parse c_msg c_each < "${resd}/${k}.cnt"
+      [ "${c_fail}" -ne 0 ] && fail=1
+      n_pass=$((n_pass + c_pass)); n_rule=$((n_rule + c_rule)); n_parse=$((n_parse + c_parse)); n_msg=$((n_msg + c_msg)); n_each=$((n_each + c_each))
+    elif [ -z "${LINT_SELFTEST_FAILFAST:-}" ]; then
+      echo "lint-ci-log-filter selftest FAILED: $(cat "${resd}/${k}.name") 的檢查行程沒有回報結果" >&2; fail=1
+    fi
   done
+  if [ -n "${LINT_SELFTEST_FAILFAST:-}" ] && [ "${fail}" -ne 0 ]; then exit 1; fi
   # R24 regression F9：門檻寫成 `>=` 而實際值更高時，那個差額**沒有網**——刪掉一個 fixture 仍然綠。
   # 三個門檻一律改成**等於實測值**：要加 fixture 就同步改這裡，讓「少了一個」立刻紅。
-  if [ "${n_pass}" -ne 269 ]; then
-    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 269（改動 fixture 請同步改這個數字）" >&2
+  if [ "${n_pass}" -ne 286 ]; then
+    echo "lint-ci-log-filter selftest FAILED: 正向 fixture 是 ${n_pass} 個，預期恰好 286（改動 fixture 請同步改這個數字）" >&2
     fail=1
   fi
-  if [ "${n_rule}" -ne 455 ]; then
-    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 455" >&2
+  if [ "${n_rule}" -ne 495 ]; then
+    echo "lint-ci-log-filter selftest FAILED: rule-red 是 ${n_rule} 個，預期恰好 495" >&2
     fail=1
   fi
   if [ "${fail}" -ne 0 ]; then exit 1; fi
-  if [ "${n_parse}" -ne 153 ]; then
-    echo "lint-ci-log-filter selftest FAILED: parse-red 是 ${n_parse} 個，預期恰好 153（先前這一類完全沒有下限）" >&2
+  if [ "${n_parse}" -ne 160 ]; then
+    echo "lint-ci-log-filter selftest FAILED: parse-red 是 ${n_parse} 個，預期恰好 160（先前這一類完全沒有下限）" >&2
     exit 1
   fi
-  if [ "${n_msg}" -ne 66 ]; then
-    echo "lint-ci-log-filter selftest FAILED: 帶 EXPECT-MSG 的 fixture 是 ${n_msg} 張，預期恰好 66" >&2
+  if [ "${n_msg}" -ne 101 ]; then
+    echo "lint-ci-log-filter selftest FAILED: 帶 EXPECT-MSG 的 fixture 是 ${n_msg} 張，預期恰好 101" >&2
     exit 1
   fi
-  if [ "${n_each}" -ne 12 ]; then
-    echo "lint-ci-log-filter selftest FAILED: 帶 EXPECT-EACH-STEP 的 fixture 是 ${n_each} 張，預期恰好 12" >&2
+  if [ "${n_each}" -ne 27 ]; then
+    echo "lint-ci-log-filter selftest FAILED: 帶 EXPECT-EACH-STEP 的 fixture 是 ${n_each} 張，預期恰好 27" >&2
     exit 1
   fi
   echo "lint-ci-log-filter selftest ok: ${n_pass} 正向通過、${n_rule} 條規則紅、${n_parse} 條解析紅、${n_msg} 張訊息斷言（來源逐一比對相符）、${n_each} 張逐步斷言；${cg}"
@@ -249,7 +309,7 @@ BLOCK_SCALAR_RE = re.compile(r"^[|>](?:([1-9])[+-]?|[+-]([1-9])?)?\s*(#.*)?$")
 # 兩端現在都用 bash 的 metacharacter 當詞界；`(` 不算詞尾（`neutralise.py(` 是語法錯誤，`bypass-r37m-neutralise-glued-paren`），
 # 一般字元也不算（`neutralise.pyc` 是另一個檔）。後者沒有 fixture：神諭的環境裡那個檔不存在、python3 對 stdout 什麼都不印（stderr 仍會印出 can't open file 的錯誤），
 # 神諭會把 lint 的 RULE 判成誤擋——這一格神諭在原理上量不了。`(` 那張已經殺得到「拿掉詞尾判定」的突變。
-PIPED_RE = re.compile(r"[^|\s;&(]\s*\|(?!\|)&?\s*python3\s+[^\s;&|()<>`]*neutralise\.py(?=[\s;&|)<>`]|$)")
+PIPED_RE = re.compile(r"[^|\s;&(]\s*\|(?!\|)&?\s*python3\s+(?!-)[^\s;&|()<>`]*neutralise\.py(?=[\s;&|)<>`]|$)")
 LOGFILTER_RE = re.compile(r"^\s*#\s*LOG-FILTER:\s*(in-process|none — .+)")
 # **fd 流向、`--strict` 的 `2>&1`、pipefail、shell 樣板**這四條規則不在這裡用正規式寫——它們讀的是 run 區塊的**結構**
 # （詞、重導向、管線的每一段、群組、`case`），見 `shell_scan()` 之後的「規則層的詞法」一節（#33 verify R36 第 3、4、8、9、22 列）。
@@ -2581,33 +2641,74 @@ def _logical_lines(code_lines):
 #   WORD    ::= 未加引號字面（FL_PLAIN_RE）、單引號、雙引號（`$` 只准 FL_VAR_RE）、FL_VAR_RE 的參數，接成一個詞
 #   重導向  ::= '2>&1' | '>&2' | ( '>' | '>>' | '<' | '2>' | '2>>' ) 目標；run_F 的目標只收 `/dev/null`、`/dev/stdout`、
 #               `/dev/stderr`、不含 `..` 的相對路徑、`"$RUNNER_TEMP/…"`
-# 其餘一律拒絕：未加引號的 `\`、反引號、`(`、`)`、單獨的 `&`、`!`、非 ASCII 字元、任何控制字元（引號裡也一樣）、`;;`、heredoc、
+# 其餘一律拒絕：未加引號的 `\`、反引號、`(`、`)`、單獨的 `&`、`!`、未加引號的非 ASCII 字元、任何控制字元（引號裡也一樣）、`;;`、heredoc、
 # here-string、process substitution、`>&N`／`<&N`、`&>`、`>|`、`<>`、mktemp 以外的 `$(`、`$((`、`${` 的其他寫法。
+# **引號裡的非 ASCII 字元收下**（惰性資料；R44 獨立讀者核對時指出前一版的括號把它也算進「引號裡也一樣」）——危險的 Unicode 行界字元（U+2028／2029／0085…）由
+# 檔案層的 `splitlines()` 閘在更前面擋成 PARSE。
 # 允許清單漏掉一種相鄰寫法只會多一個誤擋，不會多一個繞過。文法接受的輸入裡，繞過會藏在兩處：斷詞與 bash 不一致，以及產生式
 # 本身的語意（R42 移植時就在後者修掉兩個：trap 動作的 mktemp 登記、`printf -v` 經 GITHUB_ENV 產生式指派信任變數——見
 # `_fl_command`）。
 #
-# **`--strict` 宣稱的性質（只有這三條）**：
-#   P1（靠管線過濾的 step）：run 文字是 run_F 的字串。所以每個命令都在那一個 fd 1、fd 2 都進 neutralise.py 的群組裡跑；
-#      在 step 的 shell 裡執行的只有 FL_INERT 的八個 builtin、`NAME=值` 指派、`trap <動作> EXIT`（動作本身也在文法裡）；
-#      shell 自己開的重導向只落在點名的目標；run 文字提到 `$GITHUB_ENV`／`$GITHUB_PATH` 只有字面寫入與唯讀兩種形狀。
-#   P2（有寫出來的管線的 step）：run 文字裡寫出來的每一條管線都跑在 pipefail 之下。「寫出來的管線」＝文字裡有一個不屬於 `||`
-#      的 `|`（`||` 前一個字元不是 `\`）。宣告了 `# LOG-FILTER:` 的 step 也適用（`flat_trigger`）。
+# **`--strict` 宣稱的性質（只有這三條）。**
+#   **這一段在 R44 逐個原語重寫**（#33 verify R43）。R43 的 HIGH 出在前一版的 P1：它寫「在 step 的 shell 裡執行的只有 FL_INERT 的八個
+#   builtin……」，把「惰性」當成**名字**的性質。實際上「惰性」是**原語加上它的運算元**的性質：`[`／`test` 的 `-v` 與 `RANDOM`／`SRANDOM`／`OPTIND`／`HISTCMD` 的指派會對值做
+#   算術求值（`PWD[$(命令)]` 就執行了命令替換），`printf -v` 會指派變數，`trap` 的動作是離開時才執行的程式碼。名字沒變、運算元一換，
+#   「惰性」就不成立——所以下面逐個原語列出它的隱藏效果與文法為它設的條件，條件本身是文法的一部分，不是慣例。
+#   P1（靠管線過濾的 step）：run 文字是 run_F 的字串。除了 `set` 前綴、群組本身、命令之間的分隔符（`;`、換行、`&&`、`||`、`|`、`|&`）與管線右邊的
+#      `python3 <路徑>/neutralise.py`，bash 自己執行的東西都在群組裡（管線左邊的子殼層），而且命令只有下面九類
+#      （**封閉列舉，只有這九類，不得依性質相似類推第十類**；除了第 1 類沒有隱藏效果、第 7 類不檢查它做什麼之外，每一類先寫隱藏效果、再寫文法要求的條件）：
+#      1. `echo`、`:`、`true`、`false`（沒有隱藏效果；參數是字面，或雙引號裡的參數展開——見下面的展開規則）。
+#      2. `printf`（`-v NAME` 會指派變數；第一個參數必須是字面（不含未加引號的 glob 字元）、且 quote removal 之後不以 `-` 開頭——判的是 bash 實際得到的值，
+#         `printf "\<換行>-v"` 的原始首字元是反斜線、實際是 `-v`）。
+#      3. `test`／`[`（`-v` 的運算元被當成陣列下標做算術求值；`-R` 在 bash 5.2.21／5.3.15 實測不求值，沿用 R43 報告的保守擋法一併不收；未加引號的 glob 字元會在 `test`
+#         執行之前被檔名展開，PR 的 checkout 裡的檔名（`-v`、`PWD[$(命令)]`）就成了 `-v` 與它的下標——bash 5.3 實測 `[ * ]` 執行了命令。只收三種形狀：沒有運算元或一個運算元、
+#         FL_TEST_UNARY 的一個運算子加一個運算元、運算元加 FL_TEST_BINARY 的一個運算子加運算元；運算元是不含未加引號 glob 字元（`*`、`?`、`[`）的字面，或整個加了雙引號的展開。
+#         `-a`／`-o`、括號、`-v`、兩個展開並列都不在形狀裡）。
+#      4. `exit`（蓋掉 step 的退出碼；群組裡的 `exit`（任何狀態值）是維護者明寫的選擇，見 L6；trap 動作裡不收）。
+#      5. `NAME=值`（bash 特殊變數——FL_SPECIAL_VARS 與 `BASH_`／`COMP_`／`LC_`／`READLINE_` 開頭——不收：`RANDOM`／`SRANDOM`／`OPTIND`／`HISTCMD` 的指派會對值做算術求值，
+#         其餘會改變 bash 的行為（寧可多擋）；文法信任的變數 FL_TRUSTED_VARS 被改寫會讓其他產生式的假設落空，不收；`NAME=$(mktemp …)` 只能是整個指派，
+#         且指派在目前的 shell 執行（前面是換行或 `;`、不在 `&&`／`||` 右邊、後面不接管線）、之後沒再被重新指派，才算登記為 mktemp 變數）。
+#      6. `trap <動作> EXIT|0`（動作是離開時才執行的程式碼，雙引號的動作在設 trap 時就展開：動作本身必須在文法裡，雙引號動作裡的變數
+#         必須是登記過的 mktemp 變數，動作裡不收 `exit`）。
+#      7. 外部命令（命令名是純字面、不是 FL_BUILTINS 或 FL_KEYWORDS 的成員；它做什麼不在檢查範圍內，見 L1；檢查的只有 fd 與參數的形狀）。
+#      8. 重導向（開檔、截斷、複製 fd、具名 fd `{NAME}>` 把 fd 號碼指派給變數：目標只收點名的幾種——不以 `.` 開頭、不含 `..` 的相對路徑、`/dev/null`、`/dev/stdout`、
+#         `/dev/stderr`、`"$RUNNER_TEMP/…"`；具名 fd 不收；runner 的五個通道檔只准以 `< "$GITHUB_…"`（可不加引號、可寫 `${…}`）唯讀開檔——唯讀開檔本身不寫入、不執行，
+#         檔案內容成為該命令的 stdin，命令拿去做什麼見 L1）。
+#      9. 對 runner 通道（`$GITHUB_ENV`、`$GITHUB_PATH`、`$GITHUB_OUTPUT`、`$GITHUB_STATE`、`$GITHUB_STEP_SUMMARY`）的字面寫入（`$GITHUB_ENV`／`$GITHUB_PATH` 影響
+#         之後每個 step，`$GITHUB_OUTPUT`／`$GITHUB_STATE` 影響 step 輸出與 post 步驟，`$GITHUB_STEP_SUMMARY` 只影響摘要頁：只收 echo／printf 的參數是字面
+#         （雙引號裡只准 `$HOME`／`$RUNNER_TEMP`／`$GITHUB_WORKSPACE`）、`>>` 寫進它本身；通道當成別的命令的參數、複製、別名一律拒絕。寫進去的每一行照
+#         `_fl_chan_line_ok` 檢查：echo 的第一個參數是 `-n`／`-e`／`-E` 的選項、printf 格式裡除了結尾 `\n` 的 `\` 與除了 `%s` 的 `%` 先擋，所以跳脫序列寫不出第二行；
+#         **單行、`$GITHUB_ENV` 的鍵是字面 `NAME=` 且不在 `_fl_env_key_denied`、`$GITHUB_PATH` 的值是絕對路徑（或 `$HOME`／`$RUNNER_TEMP` 開頭）且不含
+#         `$GITHUB_WORKSPACE` 與 `..`，這幾項只對 `$GITHUB_ENV` 與 `$GITHUB_PATH` 成立**——其餘三個的保證是：參數是字面（或那三個變數）、沒有 echo 選項與 printf 跳脫，沒有單行檢查）。
+#      命令自己沒有重導向時，它的 fd 2 與（管線最後一個命令的）fd 1 都在 neutralise.py 的管線上，非最後一個命令的 fd 1 進內層管線；自己開的重導向只落在
+#      第 8 類點名的目標加上第 9 類的 `>> "$GITHUB_…"`（寫進檔案的東西不進 job log）。
+#      展開規則：命令**參數**裡的參數展開（`$NAME`、`${…}`、`$?`）一律在雙引號裡；不在此限的是指派右值（bash 不對它斷詞、不 glob）。未加引號的 glob 字元（`*`、`?`、`[`）：
+#      在 `echo` 與 `printf` 的資料參數裡只影響輸出（照收，bash 5.3 實測 `printf "%s\n" *`、`echo *` 不執行任何東西），在外部命令的參數裡由那個程式處理（L1），
+#      在 `test`／`[` 的運算元與 `printf` 的格式裡不收（第 2、3 類）；未加引號的大括號與波浪號展開的結果不來自 PR 的檔名，照收。
+#   P2（有寫出來的管線的 step）：run 文字裡寫出來的每一條管線都跑在 pipefail 之下。「寫出來的管線」有兩個來源：(a) 斷詞之後的頂層運算子
+#      `|` 與 `|&`（`||` 不算）；(b) 宣告了 `# LOG-FILTER:` 的 step 裡，`trap` 動作字串裡的管線（R44：前一版只認 (a)——`flat_trigger` 看
+#      文字裡的 `|`、`flat_declared` 的 `piped` 只看運算子詞元，「觸發」與「要求」用了兩把尺，`trap 'false | true' EXIT` 因此不要求 pipefail）。
+#      靠管線過濾的 step 恆為有管線。pipefail 的來源只有兩個：shell 是關鍵字 `bash`（或樣板自帶 `-o pipefail`）、run 開頭的 `set` 前綴。
 #   P3（靠管線過濾的 step）：run 文字裡的 `${{ … }}` 只有字面常數與 GH_SAFE_EXPRS 的八個欄位；字面常數在剖析**之前**代換，
-#      與 runner 同序。宣告的 step 不在此列（#33 的 R42 決策 (f)，#81）。
-# **已知不涵蓋（照性質寫，不是拼法清單；#33 verify R41 → R42）**：
+#      與 runner 同序。宣告的 step 只要沒有觸發（沒有寫出來的管線、沒提到 `$GITHUB_ENV`／`$GITHUB_PATH`）就不在此列：非字面的 `${{ … }}` 放行（#33 的 R42 決策 (f)，#81）；
+#      一旦觸發，文法不收非字面運算式，照樣 RULE。
+# **已知不涵蓋（照性質寫，不是拼法清單；#33 verify R41 → R42；L6 的 errexit 一句是 R43 第 21 列 → R44）**：
 #   L1 step 呼叫的程式：腳本、直譯器與它們的 `-c`／`-e` 字串（`bash -c "…$X…"`、`python3 -c '…os.environ["GITHUB_"+"ENV"]…'`），
-#      以及這些程式按名字打開的檔案——命令參數給的路徑不是 shell 的重導向，`tee /proc/$PPID/fd/1`、`dd of=/dev/tty`、
-#      `tee "$RUNNER_TEMP"/_runner_file_commands/*` 都照收。本 lint 檢查的是 run 文字與 shell 自己開的重導向；PR 的程式碼在
-#      每個 job 裡本來就有同樣的能力。
-#   L2 step 之前就在的狀態：前一個 step 寫進 `$GITHUB_ENV`／`$GITHUB_PATH` 的值、export 的函式、文法信任的 runner 變數
-#      （FL_TRUSTED_VARS）。lint 假設它們是 runner 給的值；文法禁止 run 文字與任何一層 `env:` 覆寫它們。
-#   L3 沒有寫出來的管線、宣告了 `# LOG-FILTER:` 的 step：不進文法。執行時才組出來的管線（`eval "$X"`、`source`、alias）看不到；
+#      以及這些程式按名字打開的檔案——命令參數給的路徑不是 shell 的重導向，`dd of=/dev/tty`、`tee /proc/"$PPID"/fd/1`（要加雙引號；未加引號的
+#      `$PPID` 是 RULE）、`tee "$RUNNER_TEMP"/_runner_file_commands/*` 都照收（命令參數裡出現 `$GITHUB_ENV` 等五個通道變數的例外：P1 第 9 類擋下）。
+#      本 lint 檢查的是 run 文字（含 `${{ }}` 與 trap 動作字串）、`env:`／`shell:` 與 shell 自己開的重導向；PR 的程式碼在每個 job 裡本來就有同樣的能力。
+#   L2 step 之前就在的狀態：lint 看不到的路徑寫進 `$GITHUB_ENV`／`$GITHUB_PATH` 的值（程式內部的寫入、L3 的間接寫法；字面寫入在 `--strict` 下照 P1 第 9 類檢查）、
+#      export 的函式、文法信任的變數（FL_TRUSTED_VARS，含五個通道變數）。lint 假設它們是 runner 給的值；文法禁止靠管線過濾的 step（與觸發了的宣告 step）的
+#      run 文字與任何一層 `env:` 覆寫它們。
+#   L3 宣告了 `# LOG-FILTER:`、而且既沒有寫出來的管線、也沒提到 `$GITHUB_ENV`／`$GITHUB_PATH` 的 step：不進文法。執行時才組出來的管線（`eval "$X"`、`source`、alias）看不到；
 #      宣告的 step 裡 `$GITHUB_ENV` 的檢查只看**字面的名字**，是抓無心之失的，不是封閉（`n=GITHUB_; … "${!n}"` 看不到）。
 #   L4 工作目錄：相對路徑的重導向目標照字面判，不對 `working-directory:` 求值，也不追 PR 提交的 symlink。
-#   L5 YAML：本 lint 的白名單解析器與 PyYAML 對帳，兩者都不是 GitHub 的解析器（差異的實測見 oracle.py 檔頭的「盲區」段）。
-#   L6 pipefail 以外的退出碼：`|| true`、群組裡的 `exit 0` 是維護者明寫的選擇，不在宣稱內。（trap 動作裡的 `exit` 不收：
-#      EXIT trap 的 `exit N` 會蓋掉整個 step 的退出碼。）
+#   L5 YAML：本 lint 的白名單解析器只有 block scalar 的縮排與折行（`corpus/foldcheck.py`）和神諭抽 step 的部分與 PyYAML 對帳，兩者都不是 GitHub 的解析器（差異的實測見 oracle.py 檔頭的「盲區」段）。
+#   L6 pipefail 以外的退出碼：`|| true`、群組裡的 `exit N` 是維護者明寫的選擇，不在宣稱內。（trap 動作裡的 `exit` 不收：
+#      EXIT trap 的 `exit N` 會蓋掉整個 step 的退出碼。）另一個不在宣稱內：errexit（`bash -e {0}`、`set -e`）對 `&&`／`||` 清單裡**不是最後一個**的命令
+#      不生效——`false | tee log && echo ok` 在 pipefail 之下管線與清單的退出碼都是 1，但 errexit 不因此結束；後面還有命令（`; echo after`）
+#      時，step 的 rc 由後面的命令決定（bash 5.2.21 與 5.3.15 實測：這一行單獨是 rc=1，後面接 `echo after` 是 rc=0；R43 第 21 列）。
+#      P2 保證的是「管線跑在 pipefail 之下」，不是「管線的失敗一定讓 step 失敗」。
 # 另外 FL_STARTUP_KEYS 仍是否定清單（bash 啟動時讀的 env 鍵；權威是 bash 的 INVOCATION 一節，神諭的 pipefail 探針在執行時看它的效果）。
 FL_GRAMMAR_TAG = "不在 `--strict` 的正面文法裡"     # 每一則文法 RULE 都帶這句；restrict fixture 的 EXPECT-MSG 以它斷言擋下的原因
 # bash 5.3 的 `compgen -b` 與 `compgen -k`：這兩份是 bash 自己的輸出，不是拼法清單。命令名落在裡面而不在 FL_INERT 就拒絕。
@@ -2633,10 +2734,30 @@ FL_SIGNALS = frozenset(("EXIT", "0"))
 FL_TARGET_VARS = frozenset(("RUNNER_TEMP",))                              # 重導向目標 `"$RUNNER_TEMP/…"`（FL_TEMP_TARGET_RE）
 FL_GHVALUE_VARS = frozenset(("HOME", "RUNNER_TEMP", "GITHUB_WORKSPACE"))  # 寫進 `$GITHUB_ENV`／`$GITHUB_PATH` 的值裡准展開的變數
 FL_MKTEMP_VARS = frozenset(("TMPDIR",))                                   # `NAME=$(mktemp …)`：mktemp 在這個目錄下建檔
-FL_CHANNEL_VARS = frozenset(("GITHUB_ENV", "GITHUB_PATH"))                # 跨 step 通道本身（FL_GH_RE、FL_GH_TARGET_RE）
+FL_CHANNEL_VARS = frozenset(("GITHUB_ENV", "GITHUB_PATH", "GITHUB_OUTPUT", "GITHUB_STATE", "GITHUB_STEP_SUMMARY"))   # 跨 step 通道本身
 FL_TRUSTED_VARS = FL_TARGET_VARS | FL_GHVALUE_VARS | FL_MKTEMP_VARS | FL_CHANNEL_VARS
-FL_GH_RE = re.compile(r"GITHUB_ENV|GITHUB_PATH")
-FL_GH_TARGET_RE = re.compile(r'"?\$(?:\{GITHUB_ENV\}|\{GITHUB_PATH\}|GITHUB_ENV|GITHUB_PATH)"?')
+FL_GH_RE = re.compile(r"GITHUB_ENV|GITHUB_PATH")             # 宣告 step 的觸發與 `env:` 規則只看這兩個（它們決定之後每個 step 的環境）
+# R44（#33 verify R43 第 11 列）：文法裡五個通道共用一個產生式——只收 echo／printf 全字面參數 `>>` 寫進它本身。R43 只有 ENV 與 PATH，
+# `tee -a "$GITHUB_OUTPUT"` 因此 rc=0，而神諭判繞過；字面的 `>> "$GITHUB_OUTPUT"` 反而被當成目標不在允許集合裡擋下。
+FL_CHAN_RE = re.compile(r"GITHUB_ENV|GITHUB_PATH|GITHUB_OUTPUT|GITHUB_STATE|GITHUB_STEP_SUMMARY")
+FL_GH_TARGET_RE = re.compile(r'"?\$(?:\{GITHUB_ENV\}|\{GITHUB_PATH\}|\{GITHUB_OUTPUT\}|\{GITHUB_STATE\}|\{GITHUB_STEP_SUMMARY\}'
+                             r'|GITHUB_ENV|GITHUB_PATH|GITHUB_OUTPUT|GITHUB_STATE|GITHUB_STEP_SUMMARY)"?')
+# R44（第 2 列）：bash 的特殊變數——指派它們會有 bash 自己的副作用（`RANDOM=`／`SRANDOM=`／`OPTIND=`／`HISTCMD=` 對值做算術求值；
+# 其餘會改 bash 的行為或環境）。取 bash 手冊 Shell Variables 一節的全集：寧可多擋，不要漏一個會求值的。
+FL_SPECIAL_VARS = frozenset(("BASH BASHOPTS BASHPID BASH_ALIASES BASH_ARGC BASH_ARGV BASH_ARGV0 BASH_CMDS BASH_COMMAND BASH_COMPAT "
+                             "BASH_ENV BASH_EXECUTION_STRING BASH_LINENO BASH_LOADABLES_PATH BASH_REMATCH BASH_SOURCE BASH_SUBSHELL "
+                             "BASH_VERSINFO BASH_VERSION BASH_XTRACEFD CDPATH CHILD_MAX COLUMNS COMPREPLY COPROC DIRSTACK EMACS ENV "
+                             "EPOCHREALTIME EPOCHSECONDS EUID EXECIGNORE FCEDIT FIGNORE FUNCNAME FUNCNEST GLOBIGNORE GROUPS HISTCMD "
+                             "HISTCONTROL HISTFILE HISTFILESIZE HISTIGNORE HISTSIZE HISTTIMEFORMAT HOME HOSTFILE HOSTNAME HOSTTYPE "
+                             "IFS IGNOREEOF INPUTRC INSIDE_EMACS LANG LINENO LINES MACHTYPE MAIL MAILCHECK MAILPATH MAPFILE OLDPWD "
+                             "OPTARG OPTERR OPTIND OSTYPE PATH PIPESTATUS POSIXLY_CORRECT PPID PROMPT_COMMAND PROMPT_DIRTRIM PS0 PS1 "
+                             "PS2 PS3 PS4 PWD RANDOM REPLY SECONDS SHELL SHELLOPTS SHLVL SRANDOM TIMEFORMAT TMOUT TMPDIR UID "
+                             "histchars").split())
+FL_SPECIAL_PREFIXES = ("BASH_", "COMP_", "LC_", "READLINE_")
+# R44（第 8 列）：寫進 `$GITHUB_ENV` 的鍵不得是這些——bash 或 python3 在群組存在之前就讀它們（FL_STARTUP_KEYS 與 `env:` 規則同一個標準）、
+# 文法信任的 runner 變數、bash 的特殊變數、動態連結器與直譯器的載入路徑。前綴一併擋：`GITHUB_*`／`RUNNER_*` 是 runner 自己的，
+# `PYTHON*`／`NODE_*`／`LD_*`／`DYLD_*` 改直譯器與載入器。
+FL_ENV_DENY_PREFIXES = ("GITHUB_", "RUNNER_", "BASH", "PYTHON", "NODE_", "LD_", "DYLD_", "COMP_", "LC_", "READLINE_")
 FL_TEMP_TARGET_RE = re.compile(r'"(?:\$RUNNER_TEMP|\$\{RUNNER_TEMP(?::-/tmp)?\})/([A-Za-z0-9_.+-]+(?:/[A-Za-z0-9_.+-]+)*)"')
 FL_REL_TARGET_RE = re.compile(r"[A-Za-z0-9_+-][A-Za-z0-9_.+-]*(?:/[A-Za-z0-9_.+-]+)*")
 # bash 啟動時讀、可以在 run 之前關掉 pipefail 的 env 鍵（R3 的清單去掉只影響 xtrace 輸出位置的 BASH_XTRACEFD）。這一份仍是否定清單，
@@ -2653,7 +2774,8 @@ def _fl_trusted_var_problems():
     模組載入時就檢查、不成立就不跑（selftest 對每張 fixture 各執行一次本 lint，所以這也是 selftest 的一條斷言）。"""
     probs = []
     for label, rx, own in (("FL_TEMP_TARGET_RE", FL_TEMP_TARGET_RE, FL_TARGET_VARS),
-                           ("FL_GH_TARGET_RE", FL_GH_TARGET_RE, FL_CHANNEL_VARS), ("FL_GH_RE", FL_GH_RE, FL_CHANNEL_VARS)):
+                           ("FL_GH_TARGET_RE", FL_GH_TARGET_RE, FL_CHANNEL_VARS), ("FL_GH_RE", FL_GH_RE, FL_CHANNEL_VARS),
+                           ("FL_CHAN_RE", FL_CHAN_RE, FL_CHANNEL_VARS)):
         probs += ["%s 寫了 `%s`，它不在該產生式的集合裡" % (label, nm) for nm in _FL_NAME_TOKEN_RE.findall(rx.pattern) if nm not in own]
     for label, own in (("FL_TARGET_VARS", FL_TARGET_VARS), ("FL_GHVALUE_VARS", FL_GHVALUE_VARS),
                        ("FL_MKTEMP_VARS", FL_MKTEMP_VARS), ("FL_CHANNEL_VARS", FL_CHANNEL_VARS)):
@@ -2812,6 +2934,9 @@ def fl_tokens(s):
                     i += 1
                 if i >= n or s[i] in "\n;&|<>()#":
                     raise FlatReject("重導向 `%s` 沒有目標" % op)
+                if FL_REDIR_AT_RE.match(s, i):
+                    # R44（第 13 列）：bash 的詞法器先把 `2>` 讀成 IO_NUMBER 加運算子；把 `2` 當成目標的斷詞器與它的切法不一致
+                    raise FlatReject("重導向 `%s` 的目標是另一個重導向 `%s`（bash 判語法錯誤）" % (op, s[i:i + 3].strip()))
                 w, i = _fl_word(s, i)
                 toks.append(("R", op, w))
                 continue
@@ -2819,6 +2944,9 @@ def fl_tokens(s):
                 raise FlatReject({"(": "`(`（子殼層、函式、陣列）", ")": "`)`", "&": "`&`（背景執行、`&>`）", "`": "反引號",
                                   "\\": "未加引號的反斜線（逃脫、續行）", "!": "`!`"}[c] + " 不在文法裡")
             w, i = _fl_word(s, i)
+            if i < n and s[i] in "<>" and re.fullmatch(r"\{[A-Za-z_][A-Za-z0-9_]*\}", w["raw"]):
+                # R44（第 14 列）：`{NAME}>` 是具名 fd 重導向，bash 把 fd 號碼指派給 NAME——包括 `RUNNER_TEMP`、`HOME` 這些文法信任的變數
+                raise FlatReject("具名 fd 重導向 `%s%s`（bash 會把 fd 號碼指派給變數）" % (w["raw"], s[i]))
             toks.append(("W", w))
     return toks
 
@@ -2867,6 +2995,156 @@ def _fl_lit(w, allow_vars=()):
     return True
 
 
+def _fl_t_text(t):
+    """雙引號裡一個 `T` 片段 bash 實際得到的字元：反斜線後面接雙引號、反斜線、`$`、反引號時還原成後面那個字元，反斜線加換行是續行（空字串），其他原樣。
+    `T` 片段只有兩種形狀——單一字元，或以反斜線開頭的兩字元對——所以 `t[1:] in (…)` 單獨就判得出「這是一個要還原的對」（R44 區域 opsweep：前一版在 `_fl_value`
+    與 `_fl_parts` 各寫一份、各多一個「首字元是反斜線」的運算元，兩份共五個存活突變體）。"""
+    return t[1:] if t[1:] in ('"', "\\", "$", "`") else ("" if t == "\\\n" else t)
+
+
+def _fl_value(w):
+    """完全字面的詞（沒有 V／M 片段）經 quote removal 之後 bash 實際得到的字串。R44（第 3 列）：`printf` 的選項守衛前一版看原始拼法
+    （`raw` 的首字元），雙引號內的反斜線換行讓 `printf "\\⏎-v"` 的首字元是反斜線，bash 卻把它還原成 `printf -v`。"""
+    out = []
+    for p in w["pieces"]:
+        if p[0] in ("P", "S"):
+            out.append(p[1])
+        elif p[0] == "D":
+            for q in p[1]:
+                t = q[1]
+                if q[0] == "T":
+                    out.append(_fl_t_text(t))
+        else:
+            raise FlatReject("內部錯誤：`_fl_value` 只能用在完全字面的詞")
+    return "".join(out)
+
+
+def _fl_merge(parts):
+    """相鄰的字面片段合成一個（雙引號裡的字面是逐字元的 T 片段）。"""
+    out = []
+    for k, t in parts:
+        if k == "L" and out and out[-1][0] == "L":
+            out[-1] = ("L", out[-1][1] + t)
+        else:
+            out.append((k, t))
+    return out
+
+
+def _fl_parts(w):
+    """詞 → [("L", 字面文字) | ("V", 變數名)…]（quote removal 之後，相鄰字面已合併）。`_fl_value` 的有變數版。"""
+    out = []
+    for p in w["pieces"]:
+        if p[0] in ("P", "S"):
+            out.append(("L", p[1]))
+        elif p[0] == "D":
+            for q in p[1]:
+                if q[0] == "V":
+                    out.append(("V", q[1]))
+                else:
+                    t = q[1]
+                    out.append(("L", _fl_t_text(t)))
+        else:
+            raise FlatReject("內部錯誤：`_fl_parts` 不收 %s 片段" % p[0])
+    return _fl_merge(out)
+
+
+FL_TEST_UNARY = frozenset("-n -z -e -f -d -s -r -w -x -L -h".split())
+FL_TEST_BINARY = frozenset("= == -eq -ne -lt -le -gt -ge".split())
+
+
+def _fl_test_ok(p0, args):
+    """`test`／`[` 只收三種形狀（R44，#33 verify R43 第 1、2 列）：沒有運算元或一個運算元；字面的一元運算子（FL_TEST_UNARY）加一個運算元；
+    運算元、字面的二元運算子（FL_TEST_BINARY）、運算元。運算元要是不含未加引號 glob 字元的字面，或整個加了引號的展開（未加引號的展開由 `_fl_command` 先擋）。
+    `-v`（對陣列下標做算術求值；`-R` 一併擋）、`-a`／`-o`、括號、`[ "$A" "$B" ]`（第一個展開的值可以是 `-v`）都不在形狀裡——不是列舉拼法，是只收這三種。
+    **未加引號的 glob 字元（`*`、`?`、`[`）也不收**（R44 宣稱查核抓到的缺口）：bash 在執行 `test` 之前先做檔名展開，PR 的 checkout 裡的檔名成了 `test` 的運算元——
+    工作目錄裡有檔名 `-v` 與 `PWD[$(命令)]` 時，`[ * ]` 展開成 `[ -v PWD[$(命令)] ]`，下標被算術求值（bash 5.3 實測；bash 3.2 不執行）。`echo *` 與 `printf "%s\n" *`
+    的 glob 只影響輸出、不收這條限制。"""
+    a = list(args)
+    if p0 == "[":
+        if not a or _fl_plain(a[-1]) != "]":
+            raise FlatReject("`[` 的最後一個詞必須是字面的 `]`")
+        a = a[:-1]
+    n = len(a)
+    ok = (n <= 1
+          or (n == 2 and _fl_plain(a[0]) in FL_TEST_UNARY)
+          or (n == 3 and _fl_plain(a[1]) in FL_TEST_BINARY))
+    if not ok:
+        raise FlatReject("`%s` 只收三種形狀：一個運算元、字面的一元運算子（%s）加一個運算元、運算元加字面的二元運算子（%s）加運算元——"
+                         "`-v`、`-a`／`-o`、括號與第一個運算元是展開的兩個運算元都不收（bash 會對 `-v` 的運算元做算術求值）"
+                         % (p0, " ".join(sorted(FL_TEST_UNARY)), " ".join(sorted(FL_TEST_BINARY))))
+    if any(p[0] == "P" and re.search(r"[*?\[]", p[1]) for w in a for p in w["pieces"]):
+        raise FlatReject("`%s` 的運算元裡有未加引號的 glob 字元（`*`、`?`、`[`）：bash 在執行 `%s` 之前先做檔名展開，PR 的 checkout 裡的檔名（`-v`、`PWD[$(命令)]`）"
+                         "會變成 `-v` 與它的陣列下標而被算術求值（bash 5.3 實測）——運算元要加引號" % (p0, p0))
+
+
+def _fl_env_key_denied(key):
+    """`$GITHUB_ENV` 的鍵能不能寫：bash 特殊變數，或 `FL_ENV_DENY_PREFIXES` 開頭。R44 區域 opsweep：前一版另外列了 `FL_STARTUP_KEYS`、`FL_TRUSTED_VARS`、`FL_SPECIAL_PREFIXES`
+    三個運算元，**沒有任何一個鍵只被它們命中**（三個運算元各有存活突變體）——它們被這兩條涵蓋，載入時由 `_fl_env_key_cover_problems` 斷言，哪天加了只有它們命中的鍵
+    就具名退出，不是靜默地多一個冗余運算元。"""
+    return key in FL_SPECIAL_VARS or key.startswith(FL_ENV_DENY_PREFIXES)
+
+
+def _fl_env_key_cover_problems():
+    probs = ["`%s`（FL_STARTUP_KEYS／FL_TRUSTED_VARS）不被 `_fl_env_key_denied` 擋" % k
+             for k in sorted(set(FL_STARTUP_KEYS) | set(FL_TRUSTED_VARS)) if not _fl_env_key_denied(k)]
+    probs += ["FL_SPECIAL_PREFIXES 的 `%s` 沒有被 FL_ENV_DENY_PREFIXES 涵蓋" % p for p in FL_SPECIAL_PREFIXES if not p.startswith(FL_ENV_DENY_PREFIXES)]
+    return probs
+
+
+if _fl_env_key_cover_problems():
+    sys.exit("lint-ci-log-filter: " + "；".join(_fl_env_key_cover_problems()))
+
+
+def _fl_chan_line_ok(p0, args, chan):
+    """runner 通道的字面寫入，每一行寫進去的內容（R44，#33 verify R43 第 8 列）。`GITHUB_ENV`：單行、鍵是字面的 `NAME=`、鍵不在
+    `_fl_env_key_denied`——與 step `env:` 擋 BASH_ENV／SHELLOPTS 同一個標準；`GITHUB_PATH`：單行、絕對路徑（或 `$HOME`／`$RUNNER_TEMP` 開頭）、
+    不碰 `$GITHUB_WORKSPACE`。echo 的選項、printf 格式裡的 `\\`（除了結尾的 `\\n`）與 `%`（除了 `%s`）、printf 參數個數多於 `%s` 都拒絕
+    （寫出第二行就能夾帶第二個鍵）。其餘三個通道沒有額外限制（值都是字面）。"""
+    if p0 == "echo":
+        if args and re.fullmatch(r"-[neE]+", _fl_value(args[0]) if _fl_lit(args[0]) else ""):
+            raise FlatReject("`echo` 的選項（`-n`／`-e`／`-E`）在通道寫入裡不收：`-e` 會把跳脫序列展開成第二行")
+        parts = []
+        for k, a in enumerate(args):
+            if k:
+                parts.append(("L", " "))
+            parts += _fl_parts(a)
+    else:
+        fmt = _fl_value(args[0])
+        if fmt.endswith("\\n"):
+            fmt = fmt[:-2]
+        if "\\" in fmt or re.search(r"%(?!s)", fmt):
+            raise FlatReject("`printf` 的格式在通道寫入裡只收 `%s`，結尾可以接一個 `\\n`——其他跳脫與轉換都能寫出第二行")
+        pieces = fmt.split("%s")
+        if len(args) - 1 != len(pieces) - 1:
+            raise FlatReject("`printf` 的參數個數必須等於格式裡 `%s` 的個數——多出來的參數會讓格式重複、寫出第二行")
+        parts = []
+        for k, lit in enumerate(pieces):
+            parts.append(("L", lit))
+            if k < len(pieces) - 1:
+                parts += _fl_parts(args[1 + k])
+    parts = _fl_merge(parts)
+    if chan not in ("GITHUB_ENV", "GITHUB_PATH"):
+        return
+    if any("\n" in t for _k, t in parts):                 # V 片段的 t 是變數名，不含換行
+        raise FlatReject("寫進 `$%s` 的內容只能有一行" % chan)
+    if chan == "GITHUB_ENV":
+        m = re.match(r"([A-Za-z_][A-Za-z0-9_]*)=", parts[0][1]) if parts else None      # V 片段的 t 是變數名、不含 `=`，配不上
+        if not m:
+            raise FlatReject("寫進 `$GITHUB_ENV` 的每一行必須以字面的 `NAME=` 開頭（鍵不能來自展開，`NAME<<EOF` 的多行形式不收）")
+        if _fl_env_key_denied(m.group(1)):
+            raise FlatReject("`$GITHUB_ENV` 的鍵 `%s`：bash 或 python3 在群組存在之前就讀它（%s、runner 變數、bash 特殊變數、`BASH*`／`PYTHON*`／"
+                             "`LD_*`…）——與 step `env:` 擋同一組鍵" % (m.group(1), "、".join(FL_STARTUP_KEYS)))
+        return
+    first = parts[0] if parts else ("L", "")
+    nxt = parts[1] if len(parts) > 1 else ("L", "")
+    # 只看片段的文字、不先判種類：V 片段的 t 是變數名，不會以 `/` 開頭；`_fl_merge` 之後相鄰的字面已合併，所以 `first` 是字面時 `nxt` 不可能也是字面
+    # （R44 區域 opsweep：原本的 `first[0] == "L"`、`first[0] == "V"`、`nxt[0] == "L"` 三個種類運算元各有一個存活突變體，沒有任何輸入能區分）
+    okp = first[1].startswith("/") or (first[1] in ("HOME", "RUNNER_TEMP") and nxt[1].startswith("/"))
+    if not okp or any(k == "V" and t == "GITHUB_WORKSPACE" for k, t in parts) or any(".." in t.split("/") for _k, t in parts):
+        raise FlatReject("寫進 `$GITHUB_PATH` 的路徑必須是絕對路徑（或 `$HOME`／`$RUNNER_TEMP` 開頭）、不碰 `$GITHUB_WORKSPACE`、不含 `..`——"
+                         "PR 的目錄放到查找路徑前面，後面每個 step 的 `python3` 就是 PR 的")
+
+
 def _fl_target_ok(w):
     raw = w["raw"]
     if raw in ("/dev/null", "/dev/stdout", "/dev/stderr"):
@@ -2887,9 +3165,12 @@ def _fl_command(words, redirs, ctx, pos=("NL", "NL")):
         if len(words) > 1 or redirs:
             raise FlatReject("指派後面還有東西（`X=1 cmd` 這類前綴指派、陣列）不在文法裡：`%s`" % w0["raw"][:40])
         name = FL_ASSIGN_RE.match(w0["pieces"][0][1]).group(1)
-        if FL_GH_RE.search(w0["raw"]) or name in FL_TRUSTED_VARS:
-            raise FlatReject("指派 `%s`：`$GITHUB_ENV`／`$GITHUB_PATH` 與文法信任的 runner 變數（%s）在 run 裡不得指派或當成值"
+        if FL_CHAN_RE.search(w0["raw"]) or name in FL_TRUSTED_VARS:
+            raise FlatReject("指派 `%s`：runner 通道（`$GITHUB_ENV`…）與文法信任的 runner 變數（%s）在 run 裡不得指派或當成值"
                              % (w0["raw"][:40], "、".join(sorted(FL_TRUSTED_VARS - FL_CHANNEL_VARS))))
+        if name in FL_SPECIAL_VARS or name.startswith(FL_SPECIAL_PREFIXES):
+            raise FlatReject("指派 bash 的特殊變數 `%s`：`RANDOM`／`SRANDOM`／`OPTIND`／`HISTCMD` 會對值做算術求值（`PWD[$(命令)]` 就執行了），"
+                             "其餘會改 bash 自己的行為或環境" % name)
         ctx["mktemp"].discard(name)
         if any(p[0] == "M" for p in w0["pieces"]):
             if len(w0["pieces"]) != 2 or w0["pieces"][0][1] != name + "=":
@@ -2903,32 +3184,52 @@ def _fl_command(words, redirs, ctx, pos=("NL", "NL")):
     if p0 is None or not FL_NAME_RE.fullmatch(p0):
         raise FlatReject("命令名不是純字面：`%s`" % w0["raw"][:40])
     args = words[1:]
+    # R44（第 15 列）：`$(mktemp …)` 只在「命令的第一個詞就是整個 `NAME=$(mktemp …)` 指派」時收（上面的指派分支）；當別的命令的參數
+    # （`echo X=$(mktemp -d)`）文法接受的集合就比檔頭寫的產生式大。
+    for w in args:
+        if any(p[0] == "M" for p in w["pieces"]):
+            raise FlatReject("`$(mktemp …)` 只能是命令的第一個詞（`NAME=$(mktemp …)` 整個指派），當參數不收：`%s`" % w["raw"][:40])
+    # R44（第 1 列）：群組裡的展開一律要加雙引號。未加引號的 `$NAME` 先斷詞、再 glob，bash 的 `test`／`[` 會把斷詞的結果當運算子與運算元
+    # （標題含 `-v` 與 `PWD[$(命令)]` 時對下標做算術求值，命令替換就執行了）。這是形狀無關的規則——不是只擋 `[ -n $X ]` 那三種寫法。
+    for w in ([] if p0 == "trap" else args):         # `trap $X EXIT` 由 trap 自己的分支說明（動作是未加引號的參數）
+        for p in w["pieces"]:
+            if p[0] == "V":
+                raise FlatReject("群組裡的展開一律要加雙引號：未加引號的 `$%s`（斷詞與 glob 之後，`test`／`[` 會把它當運算子與運算元）" % p[1])
     # `printf -v NAME` 會指派變數：格式參數必須是字面、不以 `-` 開頭。這一條在 GITHUB_ENV 的產生式**之前**檢查——原型放在它之後，
     # `printf -v RUNNER_TEMP … >> "$GITHUB_ENV"` 的參數全是字面，於是繞過了信任變數不得指派的規則（`bypass-r42-flat-ghwrite-printf-v`）。
-    if p0 == "printf" and (not args or not _fl_lit(args[0]) or args[0]["raw"].lstrip("'\"").startswith("-")):
-        raise FlatReject("`printf` 的第一個參數（格式）必須是字面、不以 `-` 開頭（`printf -v NAME` 會指派變數）")
-    # GITHUB_ENV／GITHUB_PATH：唯一允許的寫入形狀是 echo／printf 全字面參數 `>>` 寫進它本身
-    gh_targets = [r for r in redirs if r[2] is not None and FL_GH_RE.search(r[2]["raw"])]
+    # R44（第 3 列）：判 bash 實際得到的值（quote removal 之後），不判原始拼法——`printf "\\⏎-v"` 的原始首字元是反斜線。
+    if p0 == "printf" and (not args or not _fl_lit(args[0]) or _fl_value(args[0]).startswith("-")):
+        raise FlatReject("`printf` 的第一個參數（格式）必須是字面、不以 `-` 開頭（`printf -v NAME` 會指派變數；判的是 bash 實際得到的值，"
+                         "雙引號內的反斜線換行也算）")
+    if p0 in ("test", "["):
+        _fl_test_ok(p0, args)
+    # runner 的跨 step 通道（`$GITHUB_ENV`／`PATH`／`OUTPUT`／`STATE`／`STEP_SUMMARY`，R44 起五個共用）：唯一允許的寫入形狀是 echo／printf
+    # 全字面參數 `>>` 寫進它本身，寫進去的每一行照 `_fl_chan_line_ok` 檢查（鍵名、PATH 的值）；當命令的引數（`tee -a "$GITHUB_OUTPUT"`）、
+    # 複製、別名一律拒絕。
+    gh_targets = [r for r in redirs if r[2] is not None and FL_CHAN_RE.search(r[2]["raw"])]
     if gh_targets and all(r[1] == "<" and FL_GH_TARGET_RE.fullmatch(r[2]["raw"]) for r in gh_targets) \
-            and not any(FL_GH_RE.search(w["raw"]) for w in words):
+            and not any(FL_CHAN_RE.search(w["raw"]) for w in words):
         gh_targets = []                          # 唯讀：shell 以唯讀開檔接到 fd 0（`grep -q X < "$GITHUB_ENV"`）
-        redirs = [r for r in redirs if not (r[2] is not None and FL_GH_RE.search(r[2]["raw"]))]
+        redirs = [r for r in redirs if not (r[2] is not None and FL_CHAN_RE.search(r[2]["raw"]))]
+    chan_names = "、".join("`$%s`" % v for v in sorted(FL_CHANNEL_VARS))
     if gh_targets:
         if not (p0 in ("echo", "printf") and len(redirs) == 1 and redirs[0][1] == ">>"
                 and FL_GH_TARGET_RE.fullmatch(redirs[0][2]["raw"])
-                and all(_fl_lit(a, FL_GHVALUE_VARS) and not FL_GH_RE.search(a["raw"]) for a in args)):
-            raise FlatReject("提到 `$GITHUB_ENV`／`$GITHUB_PATH` 的地方只收一種形狀：`echo`／`printf` 的參數全是字面"
-                             "（雙引號裡只准 %s），`>> \"$GITHUB_ENV\"`" % "、".join("`$%s`" % v for v in sorted(FL_GHVALUE_VARS)))
+                and all(_fl_lit(a, FL_GHVALUE_VARS) and not FL_CHAN_RE.search(a["raw"]) for a in args)):
+            raise FlatReject("提到跨 step 通道（%s）的地方只收一種形狀：`echo`／`printf` 的參數全是字面"
+                             "（雙引號裡只准 %s），`>> \"$GITHUB_ENV\"`" % (chan_names, "、".join("`$%s`" % v for v in sorted(FL_GHVALUE_VARS))))
+        _fl_chan_line_ok(p0, args, FL_CHAN_RE.search(redirs[0][2]["raw"]).group(0))
         return
     for w in words:
-        if FL_GH_RE.search(w["raw"]):
-            raise FlatReject("提到 `$GITHUB_ENV`／`$GITHUB_PATH` 的地方只收一種形狀：`echo`／`printf` 的參數全是字面，"
-                             "`>> \"$GITHUB_ENV\"`；唯讀寫成 `< \"$GITHUB_ENV\"`（當參數傳給程式、複製、別名都不收）")
+        if FL_CHAN_RE.search(w["raw"]):
+            raise FlatReject("提到跨 step 通道（%s）的地方只收一種形狀：`echo`／`printf` 的參數全是字面，`>> \"$GITHUB_ENV\"`；"
+                             "唯讀寫成 `< \"$GITHUB_ENV\"`（當參數傳給程式如 `tee -a`、複製、別名都不收）" % chan_names)
     for r in redirs:
-        if r[2] is not None and FL_GH_RE.search(r[2]["raw"]):
-            raise FlatReject("提到 `$GITHUB_ENV`／`$GITHUB_PATH`")
+        if r[2] is not None and FL_CHAN_RE.search(r[2]["raw"]):
+            raise FlatReject("提到跨 step 通道（%s）" % chan_names)
         if ctx["filtered"] and r[2] is not None and not _fl_target_ok(r[2]):
-            raise FlatReject("重導向目標 `%s` 不在文法裡（群組裡只收 `/dev/null`、相對路徑、`\"$RUNNER_TEMP/…\"`）" % r[2]["raw"][:40])
+            raise FlatReject("重導向目標 `%s` 不在文法裡（群組裡只收 `/dev/null`、`/dev/stdout`、`/dev/stderr`、不含 `..` 的相對路徑、"
+                             "`\"$RUNNER_TEMP/…\"`；runner 通道只收 `echo`／`printf` 全字面參數 `>>` 寫進它本身）" % r[2]["raw"][:40])
     if p0 == "trap":
         if redirs or len(args) != 2 or _fl_plain(args[1]) not in FL_SIGNALS:
             raise FlatReject("`trap` 只收 `trap <動作> EXIT`（或 `0`）；DEBUG／ERR／RETURN、其他訊號、選項都不收")
@@ -2971,7 +3272,10 @@ def _fl_command(words, redirs, ctx, pos=("NL", "NL")):
 
 
 def _fl_body(text, ctx):
-    cmds = _fl_lines(fl_tokens(text))
+    toks = fl_tokens(text)
+    if "piped" in ctx and any(t in (("OP", "|"), ("OP", "|&")) for t in toks):
+        ctx["piped"][0] = True            # R44（第 5 列）：trap 動作裡寫出來的管線也算「寫出來的管線」——「觸發」（`flat_trigger`，看文字裡的 `|`，只會多觸發）涵蓋「要求」（運算子詞元加這一行），不再漏掉真管線
+    cmds = _fl_lines(toks)
     for n_, (sep, items) in enumerate(cmds):
         words = [t[1] for t in items if t[0] == "W"]
         redirs = [t for t in items if t[0] == "R"]
@@ -3044,7 +3348,7 @@ def flat_filtered(text):
         ok = True
     if ok:
         ok = (py[0] == "W" and _fl_plain(py[1]) == "python3" and path[0] == "W" and _fl_plain(path[1]) is not None
-              and re.fullmatch(r"[A-Za-z0-9_./-]*neutralise\.py", _fl_plain(path[1])) is not None)
+              and re.fullmatch(r"(?!-)[A-Za-z0-9_./-]*neutralise\.py", _fl_plain(path[1])) is not None)   # R44：`-Xneutralise.py` 是選項
     # 換行只准出現在 `|`／`|&` 之後（_fl_lines 的續行規則）；`}` 與 `2>&1` 之間、python3 與路徑之間不得換行
     nl_pos = [i for i, t in enumerate(tail) if t[0] == "NL"]
     if ok and nl_pos:
@@ -3060,7 +3364,7 @@ def flat_declared(text):
     toks = fl_tokens(text)
     cmds = _fl_lines(toks)
     k, pf = _fl_split_prefix(cmds)
-    ctx = {"mktemp": set(), "filtered": False}
+    ctx = {"mktemp": set(), "filtered": False, "piped": [False]}
     piped = any(t == ("OP", "|") or t == ("OP", "|&") for t in toks)
     for n_ in range(k, len(cmds)):
         sep, items = cmds[n_]
@@ -3068,7 +3372,7 @@ def flat_declared(text):
         if words and _fl_plain(words[0]) in ("{", "}"):
             raise FlatReject("群組 `{ …; }` 在宣告不過濾的 step 裡不在文法裡")
         _fl_command(words, [t for t in items if t[0] == "R"], ctx, (sep, cmds[n_ + 1][0] if n_ + 1 < len(cmds) else "NL"))
-    return piped, pf
+    return piped or ctx["piped"][0], pf
 
 
 def flat_trigger(text):
@@ -3144,7 +3448,8 @@ def flat_step_rules(where, name, ok, declared, logical, env_names, env_hit, text
     trusted = sorted(set(env_names) & FL_TRUSTED_VARS)
     if trusted and triggered:
         print(where + "[--strict] step '%s' 的 env（workflow／job／step）設了 %s——文法信任這些變數是 runner 給的值"
-              "（`$GITHUB_ENV` 寫入的值、重導向目標、mktemp 的目錄），不得由 workflow 覆寫" % (name, "、".join("`%s`" % k for k in trusted)),
+              "（`$GITHUB_ENV` 寫入的值、重導向目標、mktemp 的目錄），不得由 workflow 覆寫（這個 step %s）"
+              % (name, "、".join("`%s`" % k for k in trusted), FL_GRAMMAR_TAG),
               file=sys.stderr)
         return 1
     if not triggered:

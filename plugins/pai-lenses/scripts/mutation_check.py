@@ -78,7 +78,11 @@ ORACLE = PAI / "test" / "oracle.py"
 # 省略時是 `validate`（既有 114 個靶一個字都不用動）。
 SUITES = {
     "validate":   (VALIDATE,   lambda: [sys.executable, str(TESTS)],          PACK),
-    "lint":       (LINT,       lambda: ["bash", str(LINT), "--selftest"],     PAI),
+    # R44 提速：突變測試只問「有沒有任何一張 fixture 變紅」，所以 selftest 用提早結束（`LINT_SELFTEST_FAILFAST`）＋每個 worker 內部 2 個平行
+    # （`LINT_SELFTEST_JOBS`）；判定不變（有失敗＝殺、全過＝存活），輸出只含到第一個失敗為止。
+    "lint":       (LINT,       lambda: ["env", "LINT_SELFTEST_FAILFAST=1", "LINT_SELFTEST_JOBS=2",
+                                    "LINT_SELFTEST_FIRST=" + str(pathlib.Path.home() / ".cache" / "idd-verify" / "opsweep-killers.txt"),
+                                    "bash", str(LINT), "--selftest"],     PAI),
     "neutralise": (NEUTRALISE, lambda: [sys.executable, str(TESTS)],          PACK),
     # R37（#33 verify R36 條件 7）：神諭（`test/oracle.py`）進入突變範圍。**不帶參數**執行——只有
     # 不帶參數，`test/oracle.py` 才會掃 `test/fixtures/ci-log-filter-*.yml` 全集並額外檢查
@@ -98,7 +102,7 @@ SUITES = {
 #   · `lint`：selftest 只讀 fixture。
 #   · `oracle`／`oracle-inverted`：神諭讀 fixture、反向探針與假 lint，並執行 lint 本身（lint 以原文計入，見 `source_for_key`）。
 #   · `validate`／`neutralise`：`test_validate.py` 讀的範圍很廣（整個 `plugins/`、`.github/workflows/test.yml`、skills、bin
-#     …），逐一列舉必然漏——所以這兩組的輸入是**整個 repo**（不含 `.git`、`__pycache__` 與快取檔本身）。代價是任何改動
+#     …），逐一列舉必然漏——所以這兩組的輸入是**整個 repo**（不含 `.git`、`__pycache__`、`.pytest_cache` 與快取檔本身）。代價是任何改動
 #     都讓它們重跑；那是對的方向：漏列一個輸入，快取就會安靜地給出舊答案。
 REPO_ROOT = PACK.parent.parent
 CACHE = PACK / "scripts" / "mutation-cache.json"
@@ -133,7 +137,10 @@ def inputs_digest(spec, exclude=frozenset()):
         skip = skip[0] if skip else ()
         for pat in pats:
             for f in root.glob(pat):
+                # `.pytest_cache`（R44，#33 verify R43 第 23 列）：用 pytest 跑過 `test_validate.py` 之後它出現在整個 repo 的輸入裡，
+                # `validate`／`neutralise` 兩組共一百多個靶的快取因此全部失效——效能方向、不是錯誤答案，但沒有任何驗證指令讀它。
                 if f.is_file() and ".git" not in f.relative_to(root).parts and "__pycache__" not in f.parts \
+                        and ".pytest_cache" not in f.relative_to(root).parts \
                         and f.resolve() not in exclude and str(f.relative_to(root)) not in skip:
                     files.add((root, f))
     for root, f in sorted(files, key=lambda x: str(x[1])):
@@ -1147,9 +1154,12 @@ MUTATIONS += [
     ('`CASE_KW_RE` 拿掉詞界（合併 r37c H12 → good-r37t8-cmdsub-word-starting-with-case）',
      'CASE_KW_RE = re.compile(r"(case|esac)(?=[\\s;&|()<>]|$)")',
      'CASE_KW_RE = re.compile(r"(case|esac)")', "lint"),
-    ('`PIPED_RE` 的路徑部分退回 `\\S*`（R37 合併 → bypass-r37m-neutralise-path-spans-*）',
-     'python3\\s+[^\\s;&|()<>`]*neutralise',
-     'python3\\s+\\S*neutralise', "lint"),
+    ('`PIPED_RE` 的路徑部分退回 `\\S*`（R37 合併 → bypass-r37m-neutralise-path-spans-*；R44 錨點更新：路徑不得以 `-` 開頭）',
+     'python3\\s+(?!-)[^\\s;&|()<>`]*neutralise',
+     'python3\\s+(?!-)\\S*neutralise', "lint"),
+    ('`PIPED_RE` 的路徑可以以 `-` 開頭（R44，#33 verify R43 第 4 列：`python3 -Xneutralise.py` 是選項、python3 改讀 stdin）',
+     'python3\\s+(?!-)[^\\s;&|()<>`]*neutralise',
+     'python3\\s+[^\\s;&|()<>`]*neutralise', "lint"),
     ('`PIPED_RE` 的結尾退回只認空白（R37 合併 → good-r37m-neutralise-glued-follower）',
      'neutralise\\.py(?=[\\s;&|)<>`]|$)")',
      'neutralise\\.py(\\s|$)")', "lint"),
@@ -1435,12 +1445,58 @@ MUTATIONS += [
     ('FLAT：trap 動作的片段種類不檢查（R42 opsweep → bypass-r42-trap-unquoted-var-action）',
      '        if kind not in ("P", "S", "D"):',
      '        if False:', 'lint'),
-    ('FLAT：信任變數可以指派（R42 → bypass-r42-flat-restrictions）',
-     '        if FL_GH_RE.search(w0["raw"]) or name in FL_TRUSTED_VARS:',
-     '        if FL_GH_RE.search(w0["raw"]):', 'lint'),
-    ('FLAT：`printf -v` 的格式參數不檢查（R42 → bypass-r42-flat-ghwrite-printf-v）',
-     '    if p0 == "printf" and (not args or not _fl_lit(args[0]) or args[0]["raw"].lstrip("\'\\"").startswith("-")):',
+    ('FLAT：信任變數可以指派（R42 → bypass-r42-flat-restrictions；R44 錨點更新）',
+     '        if FL_CHAN_RE.search(w0["raw"]) or name in FL_TRUSTED_VARS:',
+     '        if FL_CHAN_RE.search(w0["raw"]):', 'lint'),
+    ('FLAT：`printf -v` 的格式參數不檢查（R42 → bypass-r42-flat-ghwrite-printf-v；R44 錨點更新）',
+     '    if p0 == "printf" and (not args or not _fl_lit(args[0]) or _fl_value(args[0]).startswith("-")):',
      '    if False:', 'lint'),
+    ('FLAT：`printf` 的選項只看原始拼法、不看 quote removal 之後的值（R44，#33 verify R43 第 3 列 → bypass-r44-printf-continuation）',
+     '    if p0 == "printf" and (not args or not _fl_lit(args[0]) or _fl_value(args[0]).startswith("-")):',
+     '    if p0 == "printf" and (not args or not _fl_lit(args[0]) or args[0]["raw"].lstrip("\'\\"").startswith("-")):', 'lint'),
+    # ── R44（#33 verify R43 第 10 列：R42 的四條生產限制沒有網；第 1–15 列新增的規則各配一個靶）──────────────────────────────
+    ('FLAT：trap 動作裡的 `exit` 不擋（R42 限制 a → restrict-r44-trap-action-exit）',
+     '    if p0 == "exit" and ctx.get("trap"):',
+     '    if False:', 'lint'),
+    ('FLAT：step `env:` 設定文法信任的 runner 變數不擋（R42 限制 b → restrict-r44-env-sets-a-trusted-variable）',
+     '    trusted = sorted(set(env_names) & FL_TRUSTED_VARS)',
+     '    trusted = []', 'lint'),
+    ('FLAT：GITHUB_ENV 字面值裡的 glob／大括號／波浪號放行（R42 限制 c → restrict-r44-ghenv-value-glob）',
+     '        if p[0] == "P" and re.search(r"[*?\\[\\]{}~]", p[1]):',
+     '        if False:', 'lint'),
+    ('FLAT：mktemp 變數被重新指派後不註銷登記（R42 限制 d → restrict-r44-mktemp-reassigned）',
+     '        ctx["mktemp"].discard(name)\n',
+     '        pass\n', 'lint'),
+    ('FLAT：群組裡未加引號的展開放行（R44 第 1 列 → bypass-r44-unquoted-test）',
+     '            if p[0] == "V":\n                raise FlatReject("群組裡的展開一律要加雙引號',
+     '            if False:\n                raise FlatReject("群組裡的展開一律要加雙引號', 'lint'),
+    ('FLAT：`test`／`[` 的形狀不檢查（R44 第 1、2 列 → bypass-r44-unquoted-test）',
+     '    if not ok:\n        raise FlatReject("`%s` 只收三種形狀',
+     '    if False:\n        raise FlatReject("`%s` 只收三種形狀', 'lint'),
+    ('FLAT：`test`／`[` 的運算元可以是未加引號的 glob（R44 宣稱查核 h1-X1 → restrict-r44-test-glob-operand）',
+     '    if any(p[0] == "P" and re.search(r"[*?\\[]", p[1]) for w in a for p in w["pieces"]):\n        raise FlatReject("`%s` 的運算元裡有未加引號的 glob 字元',
+     '    if False:\n        raise FlatReject("`%s` 的運算元裡有未加引號的 glob 字元', 'lint'),
+    ('FLAT：bash 特殊變數可以指派（R44 第 2 列 → bypass-r44-arith-eval）',
+     '        if name in FL_SPECIAL_VARS or name.startswith(FL_SPECIAL_PREFIXES):',
+     '        if False:', 'lint'),
+    ('FLAT：GITHUB_ENV 的鍵不檢查（R44 第 8 列 → bypass-r44-ghenv-keys）',
+     '        if _fl_env_key_denied(m.group(1)):',
+     '        if False:', 'lint'),
+    ('FLAT：runner 通道可以當命令的參數（`tee -a "$GITHUB_OUTPUT"`，R44 第 11 列 → bypass-r44-channel-argument）',
+     '    for w in words:\n        if FL_CHAN_RE.search(w["raw"]):',
+     '    for w in []:\n        if FL_CHAN_RE.search(w["raw"]):', 'lint'),
+    ('FLAT：具名 fd 重導向 `{NAME}>` 放行（R44 第 14 列 → restrict-r44-named-fd）',
+     '            if i < n and s[i] in "<>" and re.fullmatch(r"\\{[A-Za-z_][A-Za-z0-9_]*\\}", w["raw"]):',
+     '            if False:', 'lint'),
+    ('FLAT：過濾器路徑可以以 `-` 開頭（R44 第 4 列 → bypass-r44-python-option-path）',
+     '              and re.fullmatch(r"(?!-)[A-Za-z0-9_./-]*neutralise\\.py", _fl_plain(path[1])) is not None)',
+     '              and re.fullmatch(r"[A-Za-z0-9_./-]*neutralise\\.py", _fl_plain(path[1])) is not None)', 'lint'),
+    ('FLAT：重導向目標只收 `/dev/null`、不收 `/dev/stdout`／`/dev/stderr`（R44 第 19 列：`good-r39-strict-group-dev-stderr` 轉 restrict 之後沒有正向釘住 → good-r44-dev-stdout-stderr-targets）',
+     '    if raw in ("/dev/null", "/dev/stdout", "/dev/stderr"):',
+     '    if raw in ("/dev/null",):', 'lint'),
+    ('FLAT：宣告 step 只看頂層運算子、不看 trap 動作裡的管線（R44 第 5 列 → bypass-r44-declared-trap-pipe）',
+     '    return piped or ctx["piped"][0], pf',
+     '    return piped, pf', 'lint'),
     ('FLAT：觸發條件的 `\\||` 守衛拿掉（R42）',
      '        if text.startswith("||", i) and (i == 0 or text[i - 1] != "\\\\"):',
      '        if text.startswith("||", i):', 'lint'),
@@ -1509,6 +1565,11 @@ EXPECTED_SURVIVE = {
     # R12 修法後 LineSanitiser 對**每一段**獨立判 `lstrip().startswith("::")`、不再靠行首旗標——
     # 換回 splitlines() 只會多切幾段、多消毒幾次，方向安全。靶保留是為了釘住「不得再引入旗標」的設計意圖。
     "輸出邊界的行定義（runner 的，不是 splitlines）",
+    # R44（#33 verify R43 第 4 列）：strict TAIL 的 `(?!-)` 是**第二層**。`flat_step_rules` 先跑 R1——`PIPED_RE` 自己也有 `(?!-)`——所有以 `-` 開頭的未加引號路徑
+    # （`python3 -Xneutralise.py`、`-Wneutralise.py`、`-cneutralise.py`）在 R1 就被擋下、根本到不了文法的 TAIL；加了引號的形式（`""-X…`、`''-X…`）由別條規則
+    # （路徑必須是單一未加引號字面）擋下，拿掉 TAIL 的 `(?!-)` 判定相同。**關掉它，哪一行輸出會變：沒有**（R44 實測五種寫法，基準與突變版逐字相同）。
+    # 保留這一層是為了 R1 哪天改動時文法不單獨放行選項形狀的路徑；PIPED_RE 那一層另有靶（上面「路徑可以以 `-` 開頭」）。
+    "FLAT：過濾器路徑可以以 `-` 開頭（R44 第 4 列 → bypass-r44-python-option-path）",
     # R14 requirements F3：R13 把「pack_name 讀取的 containment」放進這裡，理由是「讀取結果不輸出」——假的：
     # check_bumped 的「找不到名為 X 的 pack」會 print(pack_name)，守衛拿掉時 repo 外 symlink 的 name 就進 log。
     # DA-5 預言的後門一輪之後就實現了。現在它有測試網（test_pack_name_containment_keeps_outside_name_out_of_log），
