@@ -1474,11 +1474,21 @@ func parseArgs() -> Args {
                            deletes the run. For a run whose lock was removed/replaced/FIFO'd (§9).
 
             If no PROMPT and no --prompt-file is given, reads prompt from stdin.
+            Unknown options are refused; a PROMPT that starts with '-' goes after --.
 
             Auth: reads ~/.codex/auth.json (auto-refreshes if expired).
             """)
             exit(0)
+        case "--":
+            // End of options: whatever follows is the PROMPT, even if it starts with '-'.
+            for rest in args {
+                if a.prompt == nil { a.prompt = rest } else { die("unexpected positional argument: \(rest)") }
+            }
+            args.removeAll()
         default:
+            // #80: an unrecognised flag used to become the PROMPT. With a stdin prompt that meant the
+            // flag string silently replaced the whole input and the call still exited 0.
+            if head.hasPrefix("-") { die("unknown option: \(head) (a PROMPT that starts with '-' goes after --)") }
             if a.prompt == nil { a.prompt = head }
             else { die("unexpected positional argument: \(head)") }
         }
@@ -1547,6 +1557,10 @@ if let id = a.forceReapId { doForceReap(id: id) }
 // the way they always did. Only --detach may defer the output requirement.
 if !a.detach { guard a.output != nil else { die("--output is required") } }
 
+// #80: one prompt source. --prompt-file used to win silently over a PROMPT argument.
+if a.prompt != nil && a.promptFile != nil {
+    die("give the prompt once: both a PROMPT argument and --prompt-file were given")
+}
 let prompt: String
 if let pf = a.promptFile {
     do { prompt = try String(contentsOfFile: pf, encoding: .utf8) }

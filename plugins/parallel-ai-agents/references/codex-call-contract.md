@@ -11,7 +11,7 @@
 
 ```
 codex-call --output FILE [--model M] [--effort E] [--service-tier T] [--max-time S]
-           [--instructions TEXT] [--image FILE]... [--prompt-file FILE | PROMPT]
+           [--instructions TEXT] [--image FILE]... [--prompt-file FILE | PROMPT | -- PROMPT]
 ```
 
 - 阻塞直到回應完成或 `--max-time` 到期。stdout 無輸出；stderr 有 `[codex-call] …` 診斷。
@@ -27,6 +27,10 @@ codex-call --output FILE [--model M] [--effort E] [--service-tier T] [--max-time
 - **不帶 `--image` 時請求結構不變**：仍是一則 user message、裡面恰好一個 `input_text`。「不變」指 JSON
   結構，不是位元組——request body 是 Swift `Dictionary` 經 `JSONSerialization` 序列化，key 順序本來就
   每次執行不同（實測同一份 body 連跑五次得到五種順序），所以位元組在 #87 之前就不是固定的。
+- **參數解析（v2.24.0+，#80）**：不認得的旗標（任何以 `-` 開頭、不在旗標表裡的字串）→ exit `1`
+  `unknown option: <flag>`，在讀 prompt、讀 auth、建立任何 run 之前。以 `-` 開頭的 PROMPT 放在 `--` 之後。
+  PROMPT 引數與 `--prompt-file` 同時給 → exit `1`（以前 `--prompt-file` 默默勝出）。修之前不認得的旗標
+  會變成 PROMPT：搭配 stdin 時旗標字串**取代**整份 stdin prompt、rc=0，模型沒看到 caller 送的內容。
 - **下游偵測方式**：`codex-call --help` 的輸出含 `--image FILE` 即支援。舊版會把不認得的旗標當成 PROMPT
   吞掉且 rc=0（#80），所以不能「傳了再看有沒有報錯」。
 

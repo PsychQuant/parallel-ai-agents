@@ -24,6 +24,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 測試：`test/codex-call-image.bats`，21 個 case（`grep -c "^@test" test/codex-call-image.bats`）。
     對修改前的 `codex-call` 跑同一份檔，21 個全部失敗。
 
+### Fixed
+
+- **`codex-call` 不再把不認得的旗標當成 PROMPT（#80）**：以 `-` 開頭、不在旗標表裡的字串一律
+  exit 1 `unknown option: <flag>`，在讀 prompt、讀 auth、建立 run 之前。修之前最危險的情形是
+  「不認得的旗標＋stdin prompt」：旗標字串取代整份 stdin、rc=0，模型沒看到 caller 送的內容，
+  在 verify ensemble 裡讀起來像一次乾淨的通過。另外：PROMPT 引數與 `--prompt-file` 同時給也改為報錯
+  （以前 `--prompt-file` 默默勝出）；新增 `--` 結束旗標解析。
+  - **相容性**：以 `-` 開頭的字串以前能當位置參數 PROMPT，現在要放在 `--` 之後。契約 §8 把 exit code
+    列為 STABLE，嚴格說這是行為變更；判定為修 bug、不做 major bump 的理由：會受影響的只有「把 `-` 開頭的
+    字串當位置參數傳入」的呼叫，而 pai、codex-pro、issue-driven-dev 的已知呼叫者全都用 `--prompt-file` 或
+    stdin，掃過沒有任何一個傳了 codex-call 不認得的旗標。
+  - 測試：`test/codex-call-args.bats`，10 個 case（`grep -c "^@test" test/codex-call-args.bats`）；
+    issue 表格的三列各一則。修之前跑同一份檔，7 個失敗、3 個通過（那 3 個是「既有寫法不能被弄壞」的護欄）。
+
 ## [2.23.0] - 2026-09-10
 
 ### Changed
