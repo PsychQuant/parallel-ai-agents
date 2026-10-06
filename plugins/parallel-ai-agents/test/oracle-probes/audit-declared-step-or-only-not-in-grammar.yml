@@ -1,0 +1,18 @@
+# R46 宣稱查核（A1 第 6、7 列）：`in_grammar` 與 lint 的 `flat_trigger` 要用同一把尺——`flat_trigger` 先剔除前面不是反斜線的 `||`（「或」不是管線）再找 `|`，
+# 所以宣告了 `# LOG-FILTER:`、run 裡只有 `||`（沒有管線、沒提到 GITHUB_ENV／GITHUB_PATH）的 step 不觸發、不進 `--strict` 的正面文法（lint 檔頭 L3）。
+# 前一版 `in_grammar` 只看 `|` 字元，把它當成在文法內：這個 step 裡的 `[ -v PR_TITLE ]`（argv 在三種形狀之外）被 primitive 稽核報成「繞過」。
+# 替身 lint 全放行時神諭必須判一致、rc=0（同 `audit-declared-step-not-in-grammar`，差別只在 run 裡有 `||`）。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          # LOG-FILTER: none — the log is not produced by this step
+          [ -v PR_TITLE ] || echo unset

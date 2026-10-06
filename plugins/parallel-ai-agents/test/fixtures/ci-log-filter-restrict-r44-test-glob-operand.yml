@@ -3,10 +3,7 @@
 # `[ * ]`、`test *`、`printf * x` 都執行；bash 3.2 不執行；`echo *` 與 `printf "%s\n" *` 的 glob 只影響輸出）。前一版 `_fl_test_ok` 只檢查形狀、不檢查運算元，docstring 卻寫「運算元是字面或加了引號的展開」。
 # 八個 step 各自要有自己的 RULE 行（EXPECT-EACH-STEP）；神諭在空的暫存 cwd 裡跑、看不到那兩個檔名，沒有觀察到外流，逐步簽 `KNOWN-CLASS: 文法外`。姊妹 fixture：`good-r44-test-glob-harmless-contexts`。
 # LINT-ARGS: --strict
-# KNOWN-CLASS: 文法外
-# KNOWN-CLASS: 文法外
-# KNOWN-CLASS: 文法外
-# KNOWN-CLASS: 文法外
+# **R46（#33 verify R45）**：神諭新增 primitive 稽核（PRELUDE 把 `[`／`test`／`printf` 換成記錄實際 argv 的函式、逐命令比對信任變數）之後，這個檔原本簽名的 8 個 step 有 4 個改判「一致」（builtin 真的收到文法之外的 argv／格式，或信任變數被改寫——神諭直接看到了）；仍簽名的 4 個是稽核看不到的（沒有外流、沒有違規 argv）。簽名數照實測對齊。
 # KNOWN-CLASS: 文法外
 # KNOWN-CLASS: 文法外
 # KNOWN-CLASS: 文法外

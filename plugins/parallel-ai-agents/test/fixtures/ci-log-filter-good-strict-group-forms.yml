@@ -1,9 +1,10 @@
 # #59／#60 群組規則的誤擋守衛：合規的群組寫法都要放行——單行、多行、`|&`、`set` 前綴（合寫與分行）、行尾 `|` 續行、
-# 群組裡的引號大括號／`${…}`／大括號展開。
+# 群組裡的引號大括號／`${…}`／沒有逗號的 `{a}`（R46：`{a,b}` 是會展開的大括號，echo 的參數也不收，原步驟搬到 `restrict-r46-was-good-strict-group-forms-brace-expansion`）。
 # **R42**：原本的第 2、4 步各有一部分不在 `--strict` 的正面文法裡，整步搬到 `restrict-r42-was-good-strict-group-forms`：
 # 第 2 步的 `${!PR_TITLE}` 與 `> "$PR_TITLE/y"`（#60 表格「經過濾」那幾列：群組內的展開期與重導向錯誤），第 4 步的逃脫大括號 `\}`、
 # heredoc 與背景 `&`。這裡的第 2、4 步換成它們在文法裡的部分（合寫的 `set` 前綴＋多行群組；引號大括號、`${PR_TITLE}`、
 # `{a,b}`、行尾 `|` 續行），讓這幾種合規寫法仍有 good fixture 守著。
+# **R46（R45 regression 第 4 列）**：R44 把第 4 步的 `${PR_TITLE}` 改成 `"${PR_TITLE}"` 才仍然通過；原寫法留在 `restrict-r46-was-good-strict-group-forms-unquoted-expansion`。
 # LINT-ARGS: --strict
 # EXPECT: pass
 name: t
@@ -34,6 +35,6 @@ jobs:
         shell: bash
         run: |
           {
-            echo "{" '}' "${PR_TITLE}" {a,b}
+            echo "{" '}' "${PR_TITLE}" {a}
           } 2>&1 |
             python3 ../pai-lenses/scripts/neutralise.py

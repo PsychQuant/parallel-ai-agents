@@ -14,8 +14,8 @@ R37 時有兩件事它驗不到——要驗它們，未突變的神諭在 fixtur
 
 批次與編號（編號＝下面 `CHECKS` 的順序；每一項的內容在它自己的說明欄，這裡不再複述一份會過期的描述——R43 第 21 列：
 前一版的 docstring 逐批列舉、數字加起來少一項，而且寫著「二十六項」「三十項」卻沒有一個地方真的數過）：
-  R37 1–2；R39 3–8；R40 9–10；R42 11–15；R42 WP7 16–19；R42 WP8 20–26；R44 27–31。
-共 31 項。守衛：`main()` 開頭比對這一行的總數與批次區間的終點是否等於 `len(CHECKS)`，不等就 rc=1——數字與清單不是兩份各自維護的東西。
+  R37 1–2；R39 3–8；R40 9–10；R42 11–15；R42 WP7 16–19；R42 WP8 20–26；R44 27–31；R46 32–38。
+共 38 項。守衛：`main()` 開頭比對這一行的總數與批次區間的終點是否等於 `len(CHECKS)`，不等就 rc=1——數字與清單不是兩份各自維護的東西。
 
 用法：test/oracle_selfcheck.py      rc=0：每一項都照預期；rc=1：至少一項沒有（或上面的數字與 `CHECKS` 不符）。
 """
@@ -118,6 +118,21 @@ CHECKS = [
      [PROBES / "trap-pipeline-pipefail.yml"], 1, "繞過（pipefail"),
     ("可比的 step 不足：`--min-comparable` 對一組全是「不可比」的檔 rc=1（R44，#33 verify R43 第 22 列）",
      {}, ["--min-comparable", "1", HERE / "fixtures" / "ci-log-filter-parse-r40-bash53-funsub-space.yml"], 1, "可比的 step 只有 0 個"),
+    # R46（#33 verify R45）：primitive 稽核——神諭看 `[`／`test`／`printf` 實際收到什麼、信任變數有沒有被改寫；以下三項沒有任何 PR 文字出現在 log 裡，所以只有稽核看得到。
+    ("primitive 稽核：`test {-v,\"$X\"}` 的實際 argv 在文法的三種形狀之外（R46）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "audit-brace-test.yml"], 1, "primitive 稽核"),
+    ("primitive 稽核：`printf '%n'` 的格式在封閉的轉換列舉之外（R46）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "audit-printf-n.yml"], 1, "primitive 稽核"),
+    ("primitive 稽核：管線子殼層裡信任變數被具名 fd 改寫（R46）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "audit-named-fd-trusted.yml"], 1, "信任變數"),
+    ("注入探針：注入完成之後才逾時的 step（R46）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "injection-after-timeout.yml"], 1, "注入：PR 文字被當程式碼執行"),
+    ("稽核與探針的範圍：宣告而沒有觸發的 step 不進文法、不報繞過（R46）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "audit-declared-step-not-in-grammar.yml"], 0, "一致 1"),
+    ("稽核與探針的範圍：只含 `||` 的宣告 step 同樣不進文法（與 lint 的 `flat_trigger` 同一套規則；R46 宣稱查核）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "audit-declared-step-or-only-not-in-grammar.yml"], 0, "一致 1"),
+    ("稽核的負對照：日常的 `test`／`[`／`printf` 不誤報（R46）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "audit-benign-test-and-printf.yml"], 0, "一致 1"),
 ]
 
 

@@ -5,7 +5,7 @@
 # LINT-ARGS: --strict
 # R42：這一張的 1 步是**文法外**——不在 `--strict` 的正面文法裡、神諭實跑沒有外流（stdout／stderr／跨 step 通道都沒有）、
 # pipefail 探針沒看到關閉。保守擋下，由下面的宣告簽名（神諭的類別閘門是雙向的）。
-# KNOWN-CLASS: 文法外
+# **R46（#33 verify R45）**：神諭新增 primitive 稽核（PRELUDE 把 `[`／`test`／`printf` 換成記錄實際 argv 的函式、逐命令比對信任變數）之後，這個檔原本簽名的 1 個 step 有 1 個改判「一致」（builtin 真的收到文法之外的 argv／格式，或信任變數被改寫——神諭直接看到了）；仍簽名的 0 個是稽核看不到的（沒有外流、沒有違規 argv）。簽名數照實測對齊。
 # EXPECT: rule-red
 name: t
 on: pull_request

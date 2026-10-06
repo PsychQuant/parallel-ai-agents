@@ -1,0 +1,73 @@
+# #33 R45 verify（security 第 3、4 列）：`$GITHUB_ENV` 的鍵與特殊變數的補漏。`GIT_SSH_COMMAND`／`GIT_EXTERNAL_DIFF`／`GIT_ASKPASS`（git 會執行的命令）、glibc 的 `LOCPATH`／`GCONV_PATH`／`NLSPATH`
+# （動態載入的 locale、字元集模組路徑）寫進 `$GITHUB_ENV` 會影響之後每個 step；`GLOBSORT=`（bash 5.3 新增）與 `auto_resume=` 是 bash 手冊 Shell Variables 一節有、前一版清單漏掉的特殊變數。
+# 六個 step 各自要有自己的 RULE 行；神諭沒有觀察到外流，逐步簽名。
+# LINT-ARGS: --strict
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# EXPECT: rule-red
+# EXPECT-EACH-STEP: rule-red
+# EXPECT-MSG: 不在 `--strict` 的正面文法裡
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: env file key GIT_SSH_COMMAND
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "GIT_SSH_COMMAND=true" >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: env file key GIT_EXTERNAL_DIFF
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "GIT_EXTERNAL_DIFF=true" >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: env file key LOCPATH
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "LOCPATH=x" >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: env file key GCONV_PATH
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "GCONV_PATH=x" >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: assign GLOBSORT
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            GLOBSORT=name
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: assign auto_resume
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            auto_resume=exact
+          } 2>&1 | python3 scripts/neutralise.py

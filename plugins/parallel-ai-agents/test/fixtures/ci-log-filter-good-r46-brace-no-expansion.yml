@@ -1,5 +1,5 @@
-# #33 R44 宣稱查核 h1-X1 的姊妹：`test`／`[` 的運算元新增「未加引號的 glob 字元不收」之後，**不該被擋**的寫法——加了引號的星號、整個加引號的展開、波浪號（展開結果不來自 PR 的檔名；R46：大括號展開會改變 `test` 的參數個數與位置，那一步搬到 `restrict-r46-was-good-r44-test-glob-harmless-contexts-brace-operand`）、
-# 以及 `echo *`／`printf` 資料參數的 glob（只影響輸出，不是 `test` 的運算元）。每個運算元的「未加引號」與「含 glob 字元」兩個條件各自要有一個放行的對照。
+# #33 R45 verify：大括號展開的條件是「未加引號的 `{`…`}` 之間有未加引號的逗號或 `..`」。沒有它們，bash 不展開，詞是純字面——文法照收（`echo {NAME}` 本來就放行）；
+# 逗號在引號裡也不算；**外部命令**的參數不受這條規則影響（L1：它們本來就不在檢查範圍，`mkdir -p out/{bin,lib}` 是常見寫法）。這張是 `restrict-r46-brace-test-operand` 的負對照：規則只擋會展開的詞，不是所有帶大括號的詞。
 # LINT-ARGS: --strict
 # EXPECT: pass
 name: t
@@ -8,75 +8,67 @@ jobs:
   j:
     runs-on: ubuntu-latest
     steps:
-      - name: single-quoted star
+      - name: a single-element brace word is literal
         shell: bash
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           set -o pipefail
           {
-            [ -n 'a*' ]
+            echo {NAME} literal
           } 2>&1 | python3 scripts/neutralise.py
-      - name: double-quoted star
+      - name: braces inside a word without a comma
         shell: bash
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           set -o pipefail
           {
-            [ -n "a*" ]
+            echo a{b}c
           } 2>&1 | python3 scripts/neutralise.py
-      - name: quoted expansion against a quoted star
+      - name: a quoted brace expression
         shell: bash
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           set -o pipefail
           {
-            [ "$PR_TITLE" = "*" ]
+            echo "{a,b}" '{c,d}'
           } 2>&1 | python3 scripts/neutralise.py
-      - name: tilde operand
+      - name: a quoted comma inside braces
         shell: bash
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           set -o pipefail
           {
-            [ -n ~ ]
+            echo {a",b"}
           } 2>&1 | python3 scripts/neutralise.py
-      - name: echo with a bare star only prints
+      - name: a test operand with a quoted brace expression
         shell: bash
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           set -o pipefail
           {
-            echo *
+            [ -n "{a,b}" ]
           } 2>&1 | python3 scripts/neutralise.py
-      - name: printf data argument glob only prints
+      - name: an external command with a brace expansion is outside the check
         shell: bash
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           set -o pipefail
           {
-            printf "%s\n" *
+            mkdir -p out/{bin,lib}
+            cp README.md out/README{,.bak}
           } 2>&1 | python3 scripts/neutralise.py
-      - name: printf quoted format
+      - name: a comma or a double dot without any brace is just text
         shell: bash
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           set -o pipefail
           {
-            printf '*' x
-          } 2>&1 | python3 scripts/neutralise.py
-      - name: printf data argument glob
-        shell: bash
-        env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
-        run: |
-          set -o pipefail
-          {
-            printf "%s" a* b
+            echo a,b 1..3 x,y..z
           } 2>&1 | python3 scripts/neutralise.py

@@ -15,6 +15,8 @@
 # bash 5.3 實測：`echo ${A} 2>&1 | cat`（`A` 未設）安全地印出一個空行，`bash -n` parse rc=0。
 # **R37 移植 #61 群組規則後**：上面說的 `bad_segs`（逐段 `2>&1`）規則已拿掉，管線改寫成群組形式——這張原本的殺法失效，
 # 三個突變體是否仍被別的 fixture 殺掉，以移植後重跑的 opsweep 為準。
+# **R44／R46**：R44 起命令參數裡的展開要在雙引號裡，run 內文從 `echo ${A}` 改成 `echo "${A}"` 才仍然通過（上面「bash 5.3 實測」說的是**未加引號**的 `${A}`）；原寫法留在
+# `restrict-r46-was-good-r37o-dqbrace-brace-end-overrun-strict`（R45 regression 第 4 列：R44 改寫時沒留被擋的版本、也沒寫進 CHANGELOG）。
 # LINT-ARGS: --strict
 # EXPECT: pass
 name: t

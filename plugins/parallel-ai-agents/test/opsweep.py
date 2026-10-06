@@ -49,8 +49,6 @@ LINT = HERE / "lint-ci-log-filter.sh"
 EXPECTED_SURVIVE = {   # id → 理由（依構造等價）。每一條都要能回答「為什麼關掉它沒有任何輸出會變」
     # `len(v) >= 2` 只擋單一字元的 `'`／`"`：那是沒收尾的引號，不是合法 YAML（PyYAML ScannerError、GitHub
     # 「workflow file issue」），runner 不會跑。拿掉守衛只改變 lint 對無效輸入的訊息，不改變任何合法輸入的判定。
-    "drop-operand|yaml_decode_scalar|if len(v) >= 2 and v[0] == v[-1] == \"'\":|1": "單字元 `'` 是沒收尾的引號、非合法 YAML；守衛只防越界",
-    "drop-operand|yaml_decode_scalar|if len(v) >= 2 and v[0] == v[-1] == '\"':|1": "單字元 `\"` 同上",
     # R30 MB-11／Codex 第 4 條：這一條的「依構造等價」**是假的**——引號 heredoc 的分隔字可以是空白
     # （`cat <<' '`），於是「剝不剝純空白行」會改變 heredoc 有沒有終止。R31 採納突變體的答案：
     # `dedent_block` 現在對**每一行**剝（YAML 就是這樣），這一條從 EXPECTED_SURVIVE 移除，
@@ -119,7 +117,7 @@ EXPECTED_SURVIVE = {   # id → 理由（依構造等價）。每一條都要能
     "drop-operand|_bash_template|rest = toks[1:-1] if len(toks) > 1 and toks[-1] == \"{0}\" else toks[1:]|1": "到這一行時 toks[0] 必然是 bash 路徑之一；只有一個 token 時它不可能等於 `{0}`，`len(toks) > 1` 是冗餘",
     "drop-operand|_case_head|return w_end > j and k > w_end and line.startswith(\"in\", k) and line[k + 2:k + 3] in (\"\", \" \", \"\\t\", \";\")|1": "`w_end == j`（詞為空）時第二個 while 一步也不會前進，`k > w_end` 必然為假，兩式同為假",
     "drop-operand|_case_head|return w_end > j and k > w_end and line.startswith(\"in\", k) and line[k + 2:k + 3] in (\"\", \" \", \"\\t\", \";\")|2": "`k > w_end` 為假時 line[w_end] 是分隔字元或行尾，`startswith(\"in\", k)` 必然為假；只有跳過空白才可能讓 `in` 成立",
-    "drop-operand|_cmdsub_end_case|at_word = prev in SHELL_WORD_BREAK or prev == \"\\n\"|2": "同第 0 條：`prev == \"\\n\"` 這一支在任何呼叫端都到不了",
+    "drop-operand|_cmdsub_end_case|at_word = prev in SHELL_WORD_BREAK or prev == \"\\n\"|2": "R44 把這條說成「同第 0 條」（`==↔!=|1`）——**那個前提是錯的**：`|1` 被殺是因為單行輸入（`a#b`：`prev` 從來不是 `\\n`，`!=` 讓 `at_word` 恆真），與 `\\n` 到不到得了無關（R45 requirements 第 7 列）。這一條只在 `c == \"\\n\"` 那一支被走到（命令替換**本體**含換行）時才與原碼不同；那一支在整套 selftest、三組產生語料與 600 個多行構造（差分模糊測試，預設與 `--strict` 各一輪）裡執行 **0 次**（插樁計數）；呼叫端傳進來的文字有含換行的（selftest 裡 10 次），換行都在替換收尾**之後**。有界證據，不是證明；拿掉 `prev == \"\\n\"` 只在換行之後的 `#`／關鍵字判斷有差",
     "drop-operand|_cmdsub_end_case|if cases and cases[-1][0] == depth and cases[-1][1] == \"cmd\" and line.startswith((\";;\", \";&\"), k):|3": "`cases[-1][1]` 只有 pat／cmd 兩值，這一句把它設成 pat；已是 pat 時再設一次是冪等賦值",
     "drop-operand|_cmdsub_end_case|if not (cases and cases[-1][0] == depth and cases[-1][1] == \"pat\"):|2": "迴圈不變式「狀態是 pat ⇒ `cases[-1][0] == depth`」由其餘未突變的四處寫入維持，拿掉深度比較不改變任何分支",
     "drop-operand|_dq_parts|if c == \"\\\\\" and i + 1 < n and body[i + 1] in '$`\"\\\\\\n':|2": "`body` 由 shell_scan 追蹤過引號狀態的 code 切出，結尾前的反斜線必為偶數個，最後一個字元不可能是落單的 `\\`",
@@ -147,7 +145,7 @@ EXPECTED_SURVIVE = {   # id → 理由（依構造等價）。每一條都要能
     "drop-operand|shell_scan|if dq_ret and ((ch == \"`\" and not bt) if dq_ret[-1] == 0 else (ch == \")\" and csub + cpar < dq_ret[-1])):|4": "同上一條（另一個運算元）",
     "drop-operand|shell_scan|if dq_ret and ((ch == \"`\" and not bt) if dq_ret[-1] == 0 else (ch == \")\" and csub + cpar < dq_ret[-1])):|5": "csub、cpar 只在 ch == \")\" 時遞減，而本條件每個字元都檢查、一滿足就 pop；第一次降到門檻以下的字元必然是 `)`",
     "drop-operand|simple|if name == \"eval\" and args and all(a[\"lit\"] is not None for a in args):|2": "裸 `eval`（args 為空）時突變體進分支、遞迴剖析空字串並 return，原版落到後面也找不到任何可命中的分支，判定相同",
-    "±1→±2|_cmdsub_end_case|code.append(\";\"); k += 1; prev = \"\\n\"; continue|1": "同第 0 條：`\\n` 那一支在任何呼叫端都到不了，`k += 1` 改成 2 無從觀察",
+    "±1→±2|_cmdsub_end_case|code.append(\";\"); k += 1; prev = \"\\n\"; continue|1": "R44 把這條說成「同第 0 條」（`==↔!=|1`）——**那個前提是錯的**：`|1` 被殺是因為單行輸入（`a#b`：`prev` 從來不是 `\\n`，`!=` 讓 `at_word` 恆真），與 `\\n` 到不到得了無關（R45 requirements 第 7 列）。這一條只在 `c == \"\\n\"` 那一支被走到（命令替換**本體**含換行）時才與原碼不同；那一支在整套 selftest、三組產生語料與 600 個多行構造（差分模糊測試，預設與 `--strict` 各一輪）裡執行 **0 次**（插樁計數）；呼叫端傳進來的文字有含換行的（selftest 裡 10 次），換行都在替換收尾**之後**。有界證據，不是證明；`k += 2` 只在換行之後那個字元有差",
     "±1→±2|parse_case|self.i += 1|6": "到這一行時 tok() 已確定是非 None、非 esac 的詞元，前面的模式掃描必然前進，`self.i == i0` 的安全網不可達",
     # R42（`--since` 掃描新增的 `_fl_*`／`flat_*`／`fl_tokens`）：70 個存活突變體**逐一提殺手假設**再判（`test/opsweep.py` 之外的手寫候選，兩輪共約百個輸入），
     # 58 個殺掉——補 10 張 fixture（`*-r42-flat-gh-forms2`、`-command-edges4`、`-tails2`…）、selftest 的假 bash 檢查（`--check-compgen` 的版本字串與
@@ -182,9 +180,10 @@ EXPECTED_SURVIVE = {   # id → 理由（依構造等價）。每一條都要能
     # 它們被「V 片段的文字是變數名、不會以 `/` 開頭」與「`_fl_merge` 之後相鄰字面已合併」兩條不變式涵蓋，精簡掉（行為不變）；精簡後第三個運算元仍是依構造等價，列在這裡。
     "drop-operand|_fl_chan_line_ok|okp = first[1].startswith(\"/\") or (first[1] in (\"HOME\", \"RUNNER_TEMP\") and nxt[1].startswith(\"/\"))|3": "拿掉 `first[1] in (\"HOME\", \"RUNNER_TEMP\")` 之後，第二個選項變成「`nxt[1]` 以 `/` 開頭」。依三條上游不變式，它只在 `first` 是 V 片段時為真：(1) `nxt[1]` 以 `/` 開頭只可能是字面片段，而 `_fl_merge` 之後相鄰的字面已合併，所以 `nxt` 是字面時 `first` 不可能是字面；(2) V 片段的名字只會是 `FL_GHVALUE_VARS` 的三個（呼叫端 `_fl_command` 先用 `_fl_lit(a, FL_GHVALUE_VARS)` 擋掉其他變數）；(3) 三個之中 `GITHUB_WORKSPACE` 在下一個條件被同一個 `FlatReject`（同一則訊息）擋掉。所以每個輸入的 (rc, stderr) 都與原碼相同；差分模糊測試找不到區分者（`--verify-expected` 的語料也一樣）。依賴 (2) 與 (3) 兩處上游守衛：哪天 `FL_GHVALUE_VARS` 加了第四個變數，這一條的等價就不成立，要重判",
     # R44 全輪 opsweep（不帶 `--since`，最終樹上 1374 個）找到 54 個非預期存活——**54 個在 11e2b8f 上也存活**（長期缺口，區域掃描看不到：`<module>` 的 YAML 結構分類器
-    # 與 `_word` 都不在 R44 改動的區域）。45 個用差分模糊測試（`yamlfuzz`／`yamlfuzz2`：大量 YAML 結構變體、基準與突變版 lint 輸出不同的最小輸入）找到殺手、收成
-    # `*-r44-yamlstruct-*` 等 fixture；`rc_all` 與 `if seen == 0 and not bad` 靠新的 selftest 多檔檢查與 `--require-run-steps`／VACUOUS 兩張 fixture；`owner[k] == r`
-    # 的第二個運算元靠 `bypass-r44-two-block-scalars-filter-in-other-key`。剩下這 8 個每一個都有結構論證：
+    # 與 `_word` 都不在 R44 改動的區域）。41 個用差分模糊測試（`yamlfuzz`／`yamlfuzz2`：大量 YAML 結構變體、基準與突變版 lint 輸出不同的最小輸入）找到殺手、收成
+    # `*-r44-yamlstruct-*` 等 fixture；另 4 個只有手寫 fixture 殺得掉（`odd` 的第二個運算元靠 `restrict-r44-stray-line-boundary-char`、`owner[k] == r` 的第二個運算元靠
+    # `bypass-r44-two-block-scalars-filter-in-other-key`、`if seen == 0 and not bad` 的兩個靠 `good-r44-require-run-steps-pass`〔`==↔!=` 那個另有 `vacuous-r44-no-run-steps`〕）；`rc_all` 由 `vacuous-r44-no-run-steps` 與
+    # selftest 的多檔 rc 檢查都殺得掉（R46 宣稱查核更正分組；分組是逐 fixture 單獨跑突變版 lint 模擬 selftest 判準得出的）。剩下這 8 個每一個都有結構論證：
     "drop-operand|_word|if c == '\"' and C[p + 1:e].strip():|1": "`C` 是把引號內容挖成空白的程式碼視圖（`hollow`：`c == \" \" and s not in …`），單引號的內容在 `C` 裡**恆為空白**，所以 `C[p + 1:e].strip()` 對 `'` 恆為空——拿掉 `c == '\"'` 之後，單引號走到的仍是原本的 else 分支；唯一會讓 `C[p + 1:e]` 非空的是掃描器把雙引號內的命令替換當 code 保留的那一種（`dq_ret`，R37），那只發生在 `\"` 上。有界證據：5000 個引號形狀（未結尾、`\\'`、`$'…'`、cmdsub 內的 `'`、註解與 heredoc 裡的 `'` …，`test/corpus` 之外的 `shellfuzz`）0 個區分",
     "drop-operand|<module>|odd = next((ch for ch in ln if len(ch.splitlines()) > 1 or ch in \"\\r\\v\\f\\x1c\\x1d\\x1e\\x85\\u2028\\u2029\"), \"?\")|1": "`ch` 是**單一字元**，`str.splitlines()` 對單一字元最多回傳一個元素（窮舉全部 Unicode 碼位，最大長度 1），所以 `len(ch.splitlines()) > 1` 恆為假；拿掉它之後只剩 `ch in \"…\"`，結果相同。第二個運算元（`ch in \"…\"`）由 `restrict-r44-stray-line-boundary-char` 殺掉",
     "drop-operand|<module>|rest = (m.group(2) or \"\")|2": "`m.group(2)` 只有在裸 `-`（沒有後面的 `(?:\\s(.*))?`）時是 `None`；`rest` 之後只被當真值用（`... + rest if rest else ln`），`None` 與 `\"\"` 都是假，所以拿掉 `or \"\"` 不改變任何輸出",
@@ -654,7 +653,9 @@ def main():
     survived = [i for i, st in results.items() if st == "SURVIVED"]
     unexpected = [i for i in survived if base_id(i) not in EXPECTED_SURVIVE]
     expected = [i for i in survived if base_id(i) in EXPECTED_SURVIVE]
-    killed_expected = [i for i in EXPECTED_SURVIVE if any(base_id(k) == i and v == "KILLED" for k, v in results.items())]
+    # R46（#33 verify R45 regression 第 2 列）：前一版只數 `KILLED`——`CRASHED`、`TIMEOUT`、`KILLED-BY-CORPUS`、`BROKEN` 的預期存活突變體都不被報成「等價性不成立」。R44 的全輪 log 就列了兩條
+    # `yaml_decode_scalar` 的 `CRASHED`（`shell:` 無值時 `IndexError`），最終報告卻寫「預期 64」而 EXPECTED_SURVIVE 有 66 條，沒有人對帳。任何不是 SURVIVED 的狀態都推翻等價論證。
+    killed_expected = [i for i in EXPECTED_SURVIVE if any(base_id(k) == i and v != "SURVIVED" for k, v in results.items())]
     broken = [i for i, st in results.items() if st == "BROKEN"]
     print("\n耗時 %.1f 分 / %d 突變體（--jobs %d）= 每個 %.1f s 牆鐘" % (elapsed / 60, len(ms), args.jobs, elapsed / max(1, len(ms))))
     crashed = [i for i, st in results.items() if st == "CRASHED"]
@@ -682,6 +683,16 @@ def main():
     # 全集清單被判超過）；R39 改成全集分母，上限從 36 變 108、等於永遠滿足。同一個集合要跟同一個分母比——比的是區域裡落在
     # EXPECTED_SURVIVE 的突變體數。
     # `base_id`（去掉 `|L行號` 尾巴）才對得上 EXPECTED_SURVIVE 的 key；R44 宣稱查核（README 列）抓到前一版直接拿 `mid` 比、恆為 0，這個上限從來沒有生效
+    # R46：**全輪**（不帶 `--since`）要對帳——每一條 EXPECTED_SURVIVE 都必須對到一個突變體、而且那個突變體真的存活。區域掃描只看落在區域裡的那幾條。
+    if not args.since:
+        absent = [i for i in EXPECTED_SURVIVE if not any(base_id(k) == i for k in results)]
+        if absent:
+            rc = 1
+            print("\n✗ EXPECTED_SURVIVE 有 %d 條對不到任何突變體（程式改了、條目過期——移除或更新）：" % len(absent))
+            for i in absent: print("  -", i)
+        if len(expected) != len(EXPECTED_SURVIVE):
+            rc = 1
+            print("\n✗ 全輪的預期存活突變體是 %d 個，EXPECTED_SURVIVE 有 %d 條——對不上（上面列的是被殺或對不到的條目）" % (len(expected), len(EXPECTED_SURVIVE)))
     in_region = sum(1 for mid in results if base_id(mid) in EXPECTED_SURVIVE)
     cap = len(results) // 10
     if in_region > cap:

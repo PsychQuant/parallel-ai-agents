@@ -51,6 +51,8 @@ R44 起不在文法裡；前一版的 `word()` 有一個未加引號的 `$PR_TIT
          維度 5 多段管線：gap=0（每一段都帶 `2>&1`）。缺 `2>&1` 的那幾格會外流。
          維度 6 包管線：wrapped 的格，**除了** `brace` × `fd-redirect`——那一格在文法裡、lint 放行。
          維度 8 群組內部：`if`、`for`、`case`、heredoc、`set -x`、`exec 3>&1`、子殼層裡關 pipefail——輸出都在群組裡進管線。
+         維度 11（R46）bash 展開／剖析階段 × 原語位置（`STAGE_CELLS`，27 格）：大括號展開 × `test`／`[`／`printf`／`echo`／`exit`／外部命令、具名 fd 與陣列參照 × 重導向方向、`printf` 的轉換規格。
+                擋下的格由神諭的注入哨兵、primitive 稽核或信任變數比對**直接看到**（判一致）；七格（`STAGE_UNOBSERVED`）沒有任何觀察、簽 `文法外`。
   文法外-without-proc —— 維度 10 的 `proc-fd`：`/proc/$$/fd/1` 只在 Linux 外流；沒有 /proc 的平台量不到、神諭判這一類，
          有 /proc 的平台宣告不計、必須判一致（見神諭的 `HAS_PROC`）。
   沒有「無法由構造決定」的檔：上面之外的構造，神諭歸進任何已知類別都是缺陷（lint 或神諭的），要讓它紅。
@@ -322,7 +324,7 @@ TAG_BANG_DOC = (HEAD + '      - name: tag-bang\n        run: !!str "echo hi | '
 # `shell:`、`defaults:`、`env:` 維度，624 檔全是預設模式。這一組補上這四個維度，每個檔頭帶 `# LINT-ARGS: --strict`
 # 讓 `oracle.py` 用 strict 模式對帳（機制見 oracle.py R35 段：`# LINT-ARGS:` 已經是既有機制，這裡只是餵它）。
 #
-# 十個封閉列舉的維度（**只有這十個，不得在別處「順便」擴充**——改動這份清單是另一次 change；R39 加了 7–9，R40 加了 10）：
+# 十一個封閉列舉的維度（**只有這十一個，不得在別處「順便」擴充**——改動這份清單是另一次 change；R39 加了 7–9，R40 加了 10，R46 加了 11）：
 #   1. shell 值（SHELL_TEMPLATES，18）：`--strict` 接受 `bash`／`/bin/bash`／`/usr/bin/bash` 加白名單選項的整個樣板家族（不含 xtrace/verbose 以外的選項一律拒）；樣板（`bash -e {0}`…）與非 bash
 #      shell（`sh`／`pwsh`／`python {0}`）本來就不接受。R36 第 4 列點名的是 pipefail 規則的 `is_bash` 旗標漏掉 `bash {0}`／`bash -e {0}`／`bash -l {0}`／`bash -el {0}`／`bash --noprofile --norc -e {0}` 五種**仍是 bash** 的樣板，不是非 bash shell 或另一條規則的字面清單問題。
 #   2. env 鍵（ENV_KEYS）：**只有 `SHELLOPTS`**，值只有 `xtrace`（`verbose` 被 `ENV_VALUES` 排除，理由見下），三層（workflow／job／step）各一檔，共 3 檔。
@@ -419,6 +421,43 @@ RULE_ONLY_GROUPS = [
     # 「字面常數先代換、再剖析」的順序：代換漏掉這一步（把 `${{ 'a}' }}` 留在文字裡），文法會把 `}` 當成群組收尾而誤擋。
     ("literal-expr-brace", ["{", "echo ${{ 'a}' }} \"$PR_TITLE\"", "} 2>&1 | " + "python3 scripts/neutralise.py"], {}),
 ]
+# 維度 11（R46，#33 verify R45 第 1、2 列 + DA 的 C5）：**bash 展開／剖析階段 × 文法收的原語位置**。R44 的文法語料把大括號詞只放在 echo／printf 的資料參數，產生器跟著作者
+# 在 P1 裡「大括號是惰性」的判斷走，所以 `test {-v,"$X"}` 這一格從來沒被取樣——這個維度明寫階段與位置的積，不看作者認為安全與否。封閉列舉，每格一個 lint 結論：
+# `blocked`＝`--strict` 擋下（神諭靠注入探針／primitive 稽核判一致，兩者都看不到時判誤擋、簽 `文法外`）、`pass`＝放行（神諭判一致）。
+STAGE_CELLS = [
+    # 大括號展開（S1）× 位置。會展開 = 未加引號的 `{` 與逗號或 `..` 同在一個詞裡。
+    ("brace-test-operand", ['[ {-v,"$PR_TITLE"} ]'], "blocked"),
+    ("brace-test-command", ['test {-v,"$PR_TITLE"}'], "blocked"),
+    ("brace-test-later-operand", ['[ -n x ] && [ {x,-a,-v,"$PR_TITLE"} ]'], "blocked"),
+    ("brace-test-range", ["[ -n {a..c} ]"], "blocked"),
+    ("brace-printf-option", ["printf {-v,x} y"], "blocked"),
+    ("brace-printf-data", ['printf "%s\\n" {a,b}'], "blocked"),
+    ("brace-echo-data", ["echo {a,b}"], "blocked"),
+    ("brace-echo-option", ['echo {-e,"$PR_TITLE"}'], "blocked"),
+    ("brace-exit", ["exit {0,1}"], "blocked"),
+    ("brace-external-data", ["mkdir -p out/{bin,lib}"], "pass"),
+    ("brace-external-quoted-expansion", ['ls {a,"$PR_TITLE"}'], "pass"),
+    ("brace-quoted", ['echo "{a,b}" \'{c,d}\''], "pass"),
+    ("brace-no-comma", ["echo {a} a{b}c"], "pass"),
+    ("brace-quoted-comma", ['echo {a",b"}'], "pass"),
+    # 具名 fd 與陣列參照（S0 詞法特例）× 重導向方向
+    ("namedfd-plain", ["echo hi {fd}>/dev/null"], "blocked"),
+    ("namedfd-array-pr", ['echo hi {a["$PR_TITLE"]}>/dev/null'], "blocked"),
+    ("namedfd-array-trusted", ["echo hi {RUNNER_TEMP[0]}>/dev/null", "echo done"], "blocked"),
+    ("namedfd-array-literal", ["echo hi {a[1]}>/dev/null"], "blocked"),
+    ("namedfd-input", ["echo hi {a}</dev/null"], "blocked"),
+    ("namedfd-quoted", ['echo "{a}">/dev/null'], "pass"),
+    ("namedfd-spaced", ["echo hi {a} >/dev/null"], "pass"),
+    ("namedfd-prefixed", ["echo hi{c}>/dev/null"], "pass"),
+    # printf 的轉換規格（S7）
+    ("printf-n", ["printf '%n' HOME"], "blocked"),
+    ("printf-n-width", ["printf '%5n' HOME"], "blocked"),
+    ("printf-b", ['printf "%b" "$PR_TITLE"'], "blocked"),
+    ("printf-time", ["printf '%(%s)T' -1"], "blocked"),
+    ("printf-closed", ['printf "%s %d %-5s|%5.1f\\n" "$PR_TITLE" 1 a 2.5'], "pass"),
+]
+# 擋下、而神諭沒有觀察到外流也沒有違規 argv 的七格——檔頭簽 `文法外`（不是安全證明）；其餘擋下的格神諭直接看到了（注入哨兵、primitive 稽核、信任變數）。
+STAGE_UNOBSERVED = frozenset(("brace-echo-data", "brace-echo-option", "brace-exit", "brace-printf-data", "namedfd-array-literal", "namedfd-input", "namedfd-plain"))
 WRAP_CONTENTS = [
     ("fd-redirect", ['printf \'%s\\n\' "$PR_TITLE" >&2']),
     ("xtrace", ["set -x", 'printf \'%s\\n\' "$PR_TITLE"']),
@@ -568,6 +607,11 @@ def group_strict():
         yield ("f-only-%s" % rn, _cls("文法外-without-proc" if rn == "proc-fd" else None)
                + LA + _strict_doc("only rule %s" % rn, body, step_shell="bash", **kw))
 
+    # 維度 11（R46）：展開階段 × 原語位置（STAGE_CELLS 的註解）。
+    for sn, lines, _want in STAGE_CELLS:
+        yield ("f-stage-%s" % sn, _cls("文法外" if sn in STAGE_UNOBSERVED else None)
+               + LA + _strict_doc("stage %s" % sn, ["{"] + lines + ["} 2>&1 | " + NEUT], step_shell="bash"))
+
     # 維度 9：群組尾巴後（R39）
     for tn, tail, _safe in GROUP_TAILS:
         yield ("f-tail-%s" % tn,
@@ -596,8 +640,10 @@ def group_grammar(seed=GRAMMAR_SEED, counts=GRAMMAR_CELLS):
         # R44 宣稱查核（h1-X1）：`test`／`[` 的運算元不得有未加引號的 glob 字元（檔名會變成 `-v` 與它的下標），所以 `glob=False` 的位置
         # （`test`／`[` 的運算元）去掉 `"$RUNNER_TEMP"/f*`；`echo`／`printf` 的資料參數的 glob 只影響輸出，照放。
         # 這是同一個教訓第二次：產生器只能放文法接受的形式，文法收窄時產生器要跟著檢查。
+        # R46（#33 verify R45 第 1 列）：第三次——`a{b,c}`（會展開的大括號詞）在 echo／printf／test 的參數位置都不再收（大括號展開會改變 argv 的個數與位置），
+        # 這裡換成不展開的 `a{b}c`；會展開的大括號詞改由 `--strict` 組的維度 11（`STAGE_CELLS`）逐位置明寫，不靠這個隨機池碰到。
         return R.choice(["plain-x", "'sq $PR_TITLE ; | }'", '"$PR_TITLE"', '"${PR_TITLE:-d}"', '"x${PR_TITLE}y"',
-                         '"dq $PR_TITLE $?"', "'{'", "a{b,c}", "-n"] + (['"$RUNNER_TEMP"/f*'] if glob else []))
+                         '"dq $PR_TITLE $?"', "'{'", "a{b}c", "-n"] + (['"$RUNNER_TEMP"/f*'] if glob else []))
 
     def redir(filtered):
         opts = ["", "", "", " 2>&1", " >&2", " 2>/dev/null", " < /dev/null", ' >> "$RUNNER_TEMP/log.txt"']
@@ -650,8 +696,11 @@ def group_grammar(seed=GRAMMAR_SEED, counts=GRAMMAR_CELLS):
                     lines.append("# a comment with $PR_TITLE | ; }")
                 elif k == 1 and not have_tmp:
                     lines.append("tmp=$(mktemp -d)")
+                    # R46（#33 verify R45 requirements 第 10 列，R43 第 18 列的殘餘）：trap 動作裡的管線——前一版的 trap 產生式都沒有管線，P2 的 (b) 來源（宣告 step 的 trap 動作字串裡的管線也要
+                    # pipefail）因此從來沒被文法語料取樣過；每個 step 開頭都有 `set -o pipefail`，所以這兩個產生式的管線都在 pipefail 之下，神諭的 pipefail 探針讀得到。
                     lines.append(R.choice(['trap "rm -rf $tmp" EXIT', "trap 'rm -rf \"$tmp\"' EXIT",
-                                           "trap 'echo \"$PR_TITLE\"' EXIT" if filtered else "trap 'rm -rf \"$tmp\"' 0"]))
+                                           "trap 'echo \"$PR_TITLE\"' EXIT" if filtered else "trap 'rm -rf \"$tmp\"' 0",
+                                           "trap 'echo \"$PR_TITLE\" | cat' EXIT" if filtered else "trap 'echo done | cat' 0"]))
                     have_tmp = True
                 elif k == 2:
                     lines.append("X=" + word())

@@ -27,8 +27,8 @@ jobs:
       #    `-o pipefail|errexit|nounset|errtrace`）＋一個群組 `{ …; } 2>&1 | python3 <路徑>/neutralise.py`。群組裡只收外部命令、
       #    echo／printf／test／[／true／false／:／exit（它們的隱藏效果與文法為它們設的條件逐個寫在 lint 檔頭的 P1）、`NAME=值`、`NAME=$(mktemp …)`、`trap <動作> EXIT`、
       #    點名的重導向（`2>&1`、`>&2`、`>`、`>>`、`<`、`2>`、`2>>`；目標只收 /dev/null、/dev/stdout、/dev/stderr、不含 `..` 的
-      #    相對路徑、"$RUNNER_TEMP/…"），以及寫進 `$GITHUB_ENV`／`$GITHUB_PATH` 的唯一形狀：`echo`／`printf` 全字面參數
-      #    `>> "$GITHUB_ENV"`。其餘一律擋——保守誤擋，由 fixture 檔頭的 `KNOWN-CLASS: 文法外` 逐條簽名。有管線的 step 跑在
+      #    相對路徑、"$RUNNER_TEMP/…"），以及寫進五個 runner 通道（`$GITHUB_ENV`／`PATH`／`OUTPUT`／`STATE`／`STEP_SUMMARY`）的唯一形狀：`echo`／`printf` 全字面參數
+      #    `>> "$GITHUB_…"`（R44 起五個共用一個產生式；`tee -a "$GITHUB_OUTPUT"` 這類把通道當成別的命令的參數一律擋）。其餘一律擋——保守誤擋，由 fixture 檔頭的 `KNOWN-CLASS: 文法外` 逐條簽名。有管線的 step 跑在
       #    pipefail 之下（關鍵字 `bash`、樣板自帶 `-o pipefail`，或 `set` 前綴）；shell 只能是 bash（#33 verify R34 → R37）。
       #    宣告了 `# LOG-FILTER:` 的 step：run 文字裡**寫出**管線或提到 `$GITHUB_ENV`／`$GITHUB_PATH` 時，也要落在同一套文法裡——
       #    這是依拼法的觸發，執行時才組出來的管線（eval、別的程式）不在範圍內（lint 檔頭的已知限制）。
@@ -36,7 +36,7 @@ jobs:
       #    xtrace／verbose；--strict 由群組形式與上面的重導向目標清單保證——群組裡的 fd 1、fd 2 都是管線。命令參數給的路徑兩種模式
       #    都不模擬，見 lint 的已知限制），env 也不得帶 SHELLOPTS／BASHOPTS／BASH_ENV／ENV／BASH_XTRACEFD，`PYTHON*` 的值不得是運算式或非字面；
       #    run 裡不得直接寫非字面的 `${{ … }}`（字面常數與 GitHub 產生的編號／SHA 除外，改經 `env:`）；neutralise.py 必須是
-      #    管線的最後一段（R39、R40）。`$GITHUB_ENV`／`$GITHUB_PATH` 的寫入只由 --strict 的文法管（R42 起預設模式不查）。
+      #    管線的最後一段（R39、R40）。五個 runner 通道的寫入只由 --strict 的文法管（R42 起預設模式不查）。
       #    要印 `::error::` 的檢查另開一個 `# LOG-FILTER: none` 的 step（放進群組會被中和）。
       #    R14 把這件事寫成散文列舉，R15 四個 lens 各自找到列舉外的 step（shellcheck、lint-*、整個 macOS job）。
       #    過濾器擋的是 `::`/`##[` 偽造 annotation 與跨 step 的 `::add-mask::`；真正的邊界是 `on: pull_request`
@@ -338,7 +338,7 @@ jobs:
       # 那種缺陷用讀的抓不到。每條測試對應一個真實發生過的缺陷。
       # 這套測試自己的鑑別力**用 scripts/mutation_check.py 量**，不靠宣稱（#33 verify R8：
       # 初版的 20 個閘門 mutation 有 18 個存活，而當時三處文件都寫著「都做過 mutation」）。
-      # mutation_check.py 手動跑、不進 CI（一輪 = 靶數 × 全套測試，一輪 = 靶數 × 全套測試（本機最近一輪：112 靶 / 64.2 分 / 每靶 34.4 s，由 mutation_check.py 收尾自己印））——
+      # mutation_check.py 手動跑、不進 CI（一輪 = 靶數 × 全套測試；實測數字看 CHANGELOG 最新的 verify 條目與 mutation_check.py 收尾自己印的）——
       # 這裡刻意不寫靶數，寫了就會過期，而過期的數字正是本 PR 一路在修的東西。
       # #33 verify R9 M20：py_compile 的寫死清單只涵蓋主 plugin 的兩支，本 pack 新增的
       # 三支 Python 只有 validate.py / test_validate.py 因為被執行而間接驗過語法，
@@ -360,7 +360,7 @@ jobs:
           set -o pipefail
           { python3 scripts/test_validate.py; } 2>&1 | python3 scripts/neutralise.py
 
-      # 完整的 mutation 量測太慢（一輪 = 靶數 × 全套測試（本機最近一輪：112 靶 / 64.2 分 / 每靶 34.4 s，由 mutation_check.py 收尾自己印）），不進 CI。但**靶清單相對
+      # 完整的 mutation 量測太慢（一輪 = 靶數 × 全套測試，實測數字看 CHANGELOG），不進 CI。但**靶清單相對
       # validate.py 的漂移**便宜就能擋：改動被 mutate 的那幾行、或搬走一道閘門，靶就對不上。
       # 先前這只有在有人手動跑整輪時才會發現，而「忘了跑」是預設（#33 verify R9 M11/M24）。
       - name: mutation 靶清單沒有漂移（秒級；完整量測仍是手動）

@@ -139,8 +139,9 @@ def inputs_digest(spec, exclude=frozenset()):
             for f in root.glob(pat):
                 # `.pytest_cache`（R44，#33 verify R43 第 23 列）：用 pytest 跑過 `test_validate.py` 之後它出現在整個 repo 的輸入裡，
                 # `validate`／`neutralise` 兩組共一百多個靶的快取因此全部失效——效能方向、不是錯誤答案，但沒有任何驗證指令讀它。
-                if f.is_file() and ".git" not in f.relative_to(root).parts and "__pycache__" not in f.parts \
-                        and ".pytest_cache" not in f.relative_to(root).parts \
+                # R46（#33 verify R45 security 第 5 列）：三個目錄名一律看**相對於 root** 的部分——前一版 `__pycache__` 看 `f.parts`（絕對路徑），checkout 放在任何叫 `__pycache__` 的目錄底下時
+                # 每一個輸入都被排除、digest 恆為空雜湊的 sha256，快取 key 因此不再隨輸入而變。
+                if f.is_file() and not {".git", "__pycache__", ".pytest_cache"} & set(f.relative_to(root).parts) \
                         and f.resolve() not in exclude and str(f.relative_to(root)) not in skip:
                     files.add((root, f))
     for root, f in sorted(files, key=lambda x: str(x[1])):
@@ -1468,8 +1469,8 @@ MUTATIONS += [
      '        ctx["mktemp"].discard(name)\n',
      '        pass\n', 'lint'),
     ('FLAT：群組裡未加引號的展開放行（R44 第 1 列 → bypass-r44-unquoted-test）',
-     '            if p[0] == "V":\n                raise FlatReject("群組裡的展開一律要加雙引號',
-     '            if False:\n                raise FlatReject("群組裡的展開一律要加雙引號', 'lint'),
+     '            if p[0] == "V":\n                # R46（#33 verify R45 regression 第 3 列）：宣告',
+     '            if False:\n                # R46（#33 verify R45 regression 第 3 列）：宣告', 'lint'),
     ('FLAT：`test`／`[` 的形狀不檢查（R44 第 1、2 列 → bypass-r44-unquoted-test）',
      '    if not ok:\n        raise FlatReject("`%s` 只收三種形狀',
      '    if False:\n        raise FlatReject("`%s` 只收三種形狀', 'lint'),
@@ -1485,8 +1486,8 @@ MUTATIONS += [
     ('FLAT：runner 通道可以當命令的參數（`tee -a "$GITHUB_OUTPUT"`，R44 第 11 列 → bypass-r44-channel-argument）',
      '    for w in words:\n        if FL_CHAN_RE.search(w["raw"]):',
      '    for w in []:\n        if FL_CHAN_RE.search(w["raw"]):', 'lint'),
-    ('FLAT：具名 fd 重導向 `{NAME}>` 放行（R44 第 14 列 → restrict-r44-named-fd）',
-     '            if i < n and s[i] in "<>" and re.fullmatch(r"\\{[A-Za-z_][A-Za-z0-9_]*\\}", w["raw"]):',
+    ('FLAT：具名 fd 重導向 `{NAME}>` 放行（R44 第 14 列 → restrict-r44-named-fd；R46：條件改成「以 `{` 開頭、以 `}` 結尾」）',
+     '            if i < n and s[i] in "<>" and w["raw"].startswith("{") and w["raw"].endswith("}"):',
      '            if False:', 'lint'),
     ('FLAT：過濾器路徑可以以 `-` 開頭（R44 第 4 列 → bypass-r44-python-option-path）',
      '              and re.fullmatch(r"(?!-)[A-Za-z0-9_./-]*neutralise\\.py", _fl_plain(path[1])) is not None)',
@@ -1557,6 +1558,40 @@ MUTATIONS += [
     ('oracle: S-2 機制差分不禁止多出新的外流行（R42，R41 requirements → must-fail 探針 oracle-r42-s2-flip）',
      '                and not (ml[1] - base_ml[1]))',
      '                )', 'oracle'),
+    # ── R46（#33 verify R45）──────────────────────────────────────────────────────────────────────────────────────────────────────
+    ('FLAT：具名 fd 只比對 `{NAME}`、不擋陣列參照 `{NAME[下標]}>`（R46 第 2 列 → restrict-r46-namedfd-array）',
+     '            if i < n and s[i] in "<>" and w["raw"].startswith("{") and w["raw"].endswith("}"):',
+     '            if i < n and s[i] in "<>" and re.fullmatch(r"\\{[A-Za-z_][A-Za-z0-9_]*\\}", w["raw"]):', 'lint'),
+    ('FLAT：會展開的大括號詞不被偵測（R46 第 1 列 → restrict-r46-brace-test-operand）',
+     '    return "{" in unq and ("," in unq or ".." in unq)', '    return False', 'lint'),
+    ('FLAT：任何帶 `{` 的詞都算大括號展開（沒有逗號的 `{NAME}` 也擋；R46 → good-r46-brace-no-expansion）',
+     '    return "{" in unq and ("," in unq or ".." in unq)', '    return "{" in unq', 'lint'),
+    ('FLAT：大括號展開只認逗號、不認 `..` 範圍（R46 → restrict-r46-brace-test-operand 的範圍步驟）',
+     '    return "{" in unq and ("," in unq or ".." in unq)', '    return "{" in unq and ("," in unq)', 'lint'),
+    ('FLAT：大括號規則也套到外部命令的參數（R46 → good-r46-brace-no-expansion 的外部命令步驟）',
+     '    if p0 in FL_INERT or p0 == "trap":\n        for w in args:\n            if _fl_brace_expands(w):',
+     '    if True:\n        for w in args:\n            if _fl_brace_expands(w):', 'lint'),
+    ('FLAT：printf 的格式不查封閉的轉換列舉（R46 第 3 列 → restrict-r46-printf-conversion-n）',
+     '    if p0 == "printf" and args and not FL_PRINTF_FMT_RE.fullmatch(_fl_value(args[0])):',
+     '    if False:', 'lint'),
+    ('FLAT：printf 的轉換列舉含 `n`（R46 → restrict-r46-printf-conversion-n）',
+     'FL_PRINTF_CONVERSIONS = "sdiuoxXeEfFgGcq"', 'FL_PRINTF_CONVERSIONS = "sdiuoxXeEfFgGcqn"', 'lint'),
+    ('oracle: primitive 稽核不查 `test`／`[` 的實際形狀（R46 → oracle_selfcheck「primitive 稽核：test {-v,…}」）',
+     '            if not (n <= 1 or (n == 2 and a[0] in AUD_TEST_UNARY) or (n == 3 and a[1] in AUD_TEST_BINARY)):',
+     '            if False:', 'oracle-inverted'),
+    ('oracle: primitive 稽核不查 printf 的格式（R46 → oracle_selfcheck「primitive 稽核：printf %n」）',
+     '            if fmt.startswith("-") or not AUD_PRINTF_FMT_RE.fullmatch(fmt):',
+     '            if False:', 'oracle-inverted'),
+    ('oracle: 信任變數的改寫不記錄（R46 → oracle_selfcheck「信任變數被具名 fd 改寫」）',
+     '    if [[ ${!__n-<unset>} != "${__orc_tv0[$__n]}" ]]; then __orc_aud trusted "$__n"; __orc_tv0[$__n]=${!__n-<unset>}; fi',
+     '    if false; then __orc_aud trusted "$__n"; fi', 'oracle-inverted'),
+    ('oracle: 宣告而沒有觸發的 step 也進文法（R46 → oracle_selfcheck「稽核與探針的範圍」）',
+     '    return not (MARKER_RE.search(run) and "|" not in _without_or_lists(run) and not _GH_TRIGGER_RE.search(run))', '    return True', 'oracle-inverted'),
+    ('oracle: 只含 `||` 的宣告 step 當成有管線（R46 宣稱查核 → oracle_selfcheck「只含 `||` 的宣告 step」）',
+     '    return not (MARKER_RE.search(run) and "|" not in _without_or_lists(run) and not _GH_TRIGGER_RE.search(run))',
+     '    return not (MARKER_RE.search(run) and "|" not in run and not _GH_TRIGGER_RE.search(run))', 'oracle-inverted'),
+    ('oracle: 逾時的 step 不跑注入探針（R46 → oracle_selfcheck「注入完成之後才逾時」）',
+     '            timed = o == "timeout" and unm', '            timed = False', 'oracle-inverted'),
 ]
 
 EXPECTED_SURVIVE = {
@@ -1614,7 +1649,7 @@ def precheck_suites(suites):
     for name, (_f, cmd, cwd) in suites.items():
         key = (tuple(cmd()), str(cwd))
         if key not in seen:
-            r = subprocess.run(list(key[0]), cwd=cwd, capture_output=True, text=True)
+            r = subprocess.run(list(key[0]), cwd=cwd, capture_output=True, text=True, stdin=subprocess.DEVNULL)
             seen[key] = (r.returncode, r.stdout[-2000:] + r.stderr[-2000:])
         rc, tail = seen[key]
         if rc != 0:
@@ -1793,7 +1828,7 @@ def run_serial(sel, emit):
                 else:
                     target.write_text(mutated, encoding="utf-8")
                     try:
-                        rc = subprocess.run(cmd(), cwd=cwd, capture_output=True, text=True).returncode
+                        rc = subprocess.run(cmd(), cwd=cwd, capture_output=True, text=True, stdin=subprocess.DEVNULL).returncode
                     finally:
                         target.write_text(original, encoding="utf-8")
                     results[i] = ("survived" if rc == 0 else "killed", "")

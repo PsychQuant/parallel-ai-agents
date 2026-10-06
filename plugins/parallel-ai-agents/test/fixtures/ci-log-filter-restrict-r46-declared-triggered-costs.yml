@@ -1,0 +1,76 @@
+# #33 R46（R45 regression 第 3 列）：**宣告 `# LOG-FILTER:` 而被觸發**（run 文字有 `|` 或提到 `$GITHUB_ENV`／`$GITHUB_PATH`）的 step 也要落在正面文法裡，R44 新增的規則（未加引號的展開、特殊變數指派、
+# 五個通道的唯一形狀、`NODE_`／`GIT_` 等前綴）在這一類 step 同樣生效——#60 的代價表只量了「群組內」的 24 個寫法，沒有列這一類。下面七個是日常的 CI 寫法（`tee build-$RUNNER_OS.log`、
+# `echo "ver=$VERSION" >> "$GITHUB_OUTPUT"` 旁邊有管線、`cat report.md >> "$GITHUB_STEP_SUMMARY"`、`PATH="$HOME/.local/bin:$PATH"`、`pytest -k $X | tee`、`ENV=staging`、`NODE_ENV`），
+# 在 11e2b8f 都放行、現在擋。**都沒有 bash 層的隱藏效果**（`ENV` 只在互動**且** POSIX 模式的 shell 啟動時讀——bash 5.3.15 用 pty 實測：`--posix -i` 讀、單獨 `-i` 或單獨 `--posix` 都不讀，runner 的 `bash -e {0}` 兩者皆非；`NODE_ENV` 不是 `NODE_OPTIONS`）——是「寧可多擋」的代價，不是缺陷。
+# 神諭對這七步判「一致」（宣告了 `# LOG-FILTER: none`、沒有接 neutralise.py 的管線——lint 擋下、runner 也沒有過濾），所以不簽 `KNOWN-CLASS`。七個 step 各自要有自己的 RULE 行。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-EACH-STEP: rule-red
+# EXPECT-MSG: run 區塊裡的展開一律要加雙引號
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: tee to a file named with an unquoted runner variable
+        shell: bash
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          # LOG-FILTER: none — the output of this step is build output, not PR text
+          set -o pipefail
+          make build 2>&1 | tee build-$RUNNER_OS.log
+      - name: output variable written from an expansion next to a pipe
+        shell: bash
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          # LOG-FILTER: none — the output of this step is build output, not PR text
+          set -o pipefail
+          make test | tee test.log
+          echo "ver=$VERSION" >> "$GITHUB_OUTPUT"
+      - name: job summary written by cat next to a pipe
+        shell: bash
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          # LOG-FILTER: none — the output of this step is build output, not PR text
+          set -o pipefail
+          make report | tee report.md
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: PATH assigned next to a pipe
+        shell: bash
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          # LOG-FILTER: none — the output of this step is build output, not PR text
+          set -o pipefail
+          PATH="$HOME/.local/bin:$PATH"
+          make check | tee check.log
+      - name: pytest keyword from an unquoted variable
+        shell: bash
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          # LOG-FILTER: none — the output of this step is build output, not PR text
+          set -o pipefail
+          pytest -k $VERSION | tee pytest.log
+      - name: a variable named ENV assigned next to a pipe
+        shell: bash
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          # LOG-FILTER: none — the output of this step is build output, not PR text
+          set -o pipefail
+          ENV=staging
+          make deploy | tee deploy.log
+      - name: NODE_ENV written to the env file next to a pipe
+        shell: bash
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          # LOG-FILTER: none — the output of this step is build output, not PR text
+          set -o pipefail
+          echo "NODE_ENV=production" >> "$GITHUB_ENV"
+          make bundle | tee bundle.log

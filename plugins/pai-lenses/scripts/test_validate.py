@@ -15,12 +15,12 @@
 mutation」，CHANGELOG 寫「十個 mutation 逐一確認轉紅」。**那三句話會讓下一個維護者以為改動 `validate.py` 有測試網接著。**
 
 現在用 `scripts/mutation_check.py` 量：跑一次就知道哪些閘門沒有測試網。
-**最近一次完整量測（R44，於 `git archive` 副本上跑，`--no-cache --jobs 8`）：472 個靶 → 468 殺 / 0 存活 / 4 預期存活 / 0 靶壞**（耗時、負載與量測樹的 commit 寫在 CHANGELOG 的 R43 段，不抄在這裡：
-本檔屬於 `validate`／`neutralise` 兩組的輸入（整個 repo 除 CHANGELOG 與快取檔本身），檔頭每改一個字，那兩組共一百多個靶的快取就整批失效，所以會隨每次量測變動的數字只放 CHANGELOG）。
+**最近一次完整量測（R46，於 `git archive` 副本上跑，`--no-cache --jobs 8`）：485 個靶 → 481 殺 / 0 存活 / 4 預期存活 / 0 靶壞**（耗時、負載與量測樹的 commit 寫在 CHANGELOG 的「verify R45」段，不抄在這裡：
+本檔屬於 `validate`／`neutralise` 兩組的輸入（整個 repo 除 CHANGELOG、快取檔本身、`.git`、`__pycache__`、`.pytest_cache`），檔頭每改一個字，那兩組共一百多個靶的快取就整批失效，所以會隨每次量測變動的數字只放 CHANGELOG）。
 這一輪沿用 0 靶。**量測提速（R44）**：突變測試用 `LINT_SELFTEST_FAILFAST`／`LINT_SELFTEST_JOBS`／`LINT_SELFTEST_FIRST` 讓 `lint` 守備單位的 selftest 平行、第一張失敗就停、殺手 fixture 先跑——只改順序與耗時、不改判定（39 個樣本與完整 selftest 殺／存活逐個相同，CHANGELOG 有計時）；
-睡眠不會讓一個靶被誤記成殺掉：驗證指令 rc≠0 才算殺，神諭的逾時用單調時鐘（睡眠不計入）、判「量不到」、不改退出碼。
+睡眠不會讓一個靶被誤記成殺掉：驗證指令 rc≠0 才算殺，神諭的逾時用單調時鐘（睡眠不計入）、逾時前沒有任何證據就判「量不到」、不改退出碼（逾時前已觀察到外流或通道帶 PR 文字的，另依證據判；lint 放行時 rc=1）。
 **R42 最終（`git archive fa9f932`，`--jobs 8`）**：456 靶 → 453 殺 / 0 存活 / 3 預期存活 / 0 靶壞，94.4 分鐘 / 456 靶 = 每靶 12.4 s（牆鐘 115.3 分鐘，睡了約 21 分鐘；開跑時負載 23.4）。最終程式碼 commit（`d31ae51`）與量測樹只差一張 fixture、selftest 的三組門檻、`oracle.py` 的類別總數與一條 `EXPECTED_SURVIVE`，
-那一輪之後的文字提交讓全部守備單位的快取 key 換掉，R42 的最終快取因此是另一輪 `--no-cache` 全輪重建的；R44 改成「全輪量測 → 文字 → 只補跑輸入含整個 repo 的兩組」，不再為文字改動重跑 lint／oracle 系。
+那一輪之後的文字提交讓全部守備單位的快取 key 換掉，R42 的最終快取因此是另一輪 `--no-cache` 全輪重建的；R44 起的做法是全輪量測之後只改 CHANGELOG（它不在任何守備單位的輸入裡，快取全數沿用）；落在 lint 檔頭、`oracle.py`、README 或本檔的文字改動會讓快取 key 換掉、要重跑對應的組（R46 因宣稱查核更正了這些檔的文字而整輪重跑）。
 **R42 的第一輪（`4faaea2`，`--no-cache`）不是零存活**：457 靶 → 452 殺 / **2 非預期存活** / 3 預期存活，78.9 分鐘。兩個都是 R42 改動讓先前的靶失去分辨力：
 `_set_prefix_line` 行尾 `;` 那一支是死碼（刪除、靶退役）；oracle 單一 payload 的 `|| :`（R42 起每組 payload 都判、取最嚴重，只改一組不改變任何判定，
 重新錨定成所有 payload 一起拿掉，並補 `oracle_selfcheck.py` 的 `payload-after-failing-command` 項目）。**所以最終量測不能用改動之前的樹。**

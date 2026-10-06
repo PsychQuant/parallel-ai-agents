@@ -1,0 +1,21 @@
+# #33 R46 區域 opsweep 的存活者（`if p0 in FL_INERT or p0 == "trap":` 的第二個運算元）：拿掉 `p0 == "trap"`，`trap` 的參數就不查大括號展開。`trap : {EXIT,0}` 在 bash 裡是 `trap : EXIT 0`（兩個訊號）——
+# 大括號詞出現在 `trap` 的訊號位置。原版以大括號訊息擋下；突變體走到 `trap` 自己的分支、訊息不同（`trap` 只收 `EXIT`／`0`）。EXPECT-MSG 釘住大括號訊息。
+# LINT-ARGS: --strict
+# KNOWN-CLASS: 文法外
+# EXPECT: rule-red
+# EXPECT-MSG: `{EXIT,0}`（`trap` 的參數）
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: trap with a brace expression in the signal position
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            trap : {EXIT,0}
+          } 2>&1 | python3 scripts/neutralise.py

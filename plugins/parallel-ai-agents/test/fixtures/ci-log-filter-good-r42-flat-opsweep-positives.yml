@@ -3,6 +3,7 @@
 # （`p[1]` 是字串，突變體對它逐字元取 `q[1]` 崩潰）；`${HOME}` 雙引號變數名要讀 `${NAME}` 那一組；
 # `grep … < "$GITHUB_ENV" 2>&1`（重導向清單裡有沒有目標的 `2>&1`）；兩行 `set` 前綴、pipefail 在第一行；
 # 雙引號 trap 動作裡的 `\"` 要去掉反斜線再剖析；`trap "rm ${T}"` 讀 `${NAME}` 形式的已登記變數。
+# **R46（R45 regression 第 4 列）**：R44 把 `echo Value >> "$GITHUB_ENV"` 改成 `echo NAME=Value >> …` 才仍然通過（`$GITHUB_ENV` 的寫入要有字面鍵）；原寫法留在 `restrict-r46-was-good-r42-flat-opsweep-positives-env-key`。
 # LINT-ARGS: --strict
 # EXPECT: pass
 name: t

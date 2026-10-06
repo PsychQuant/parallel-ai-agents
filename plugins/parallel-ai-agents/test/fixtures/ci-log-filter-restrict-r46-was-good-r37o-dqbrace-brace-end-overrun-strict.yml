@@ -1,0 +1,17 @@
+# #33 R46（R45 regression 第 4 列）：這個寫法原本是 `good-r37o-dqbrace-brace-end-overrun-strict` 的 run 內文（`{ echo ${A}; } 2>&1 | …`，放行）。R44 的「命令參數裡的展開一律要在雙引號裡」
+# 把它變成 RULE；R44 當時把原 fixture 改成 `echo "${A}"` 讓它仍然通過、沒有留下被擋的版本，CHANGELOG 也沒寫。這一張把原寫法留成 restrict：未加引號的 `${A}`（`A` 未設）在 bash 裡
+# 印出空行、不外流，神諭沒有觀察到外流，簽 `文法外`。
+# LINT-ARGS: --strict
+# KNOWN-CLASS: 文法外
+# EXPECT: rule-red
+# EXPECT-MSG: 群組裡的展開一律要加雙引號
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe
+        shell: bash
+        run: |
+          { echo ${A}; } 2>&1 | python3 scripts/neutralise.py

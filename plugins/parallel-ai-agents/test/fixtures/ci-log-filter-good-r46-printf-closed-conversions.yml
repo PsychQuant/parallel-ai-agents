@@ -1,0 +1,65 @@
+# #33 R45 verify：`printf` 的格式只收封閉的轉換列舉——`%s %d %i %u %o %x %X %e %E %f %F %g %G %c %q`（可帶旗標 `-+ #0`、寬度、精度）與 `%%`，其他文字照收（含 `\n` 一類的跳脫）。
+# 這張是 `restrict-r46-printf-conversion-n` 的負對照：日常寫法都還在。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: the usual formats
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            printf '%s\n' "$PR_TITLE"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: numeric conversions
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            printf '%d %i %u %o %x %X\n' 1 2 3 4 5 6
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: flags width and precision
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            printf '%-10s|%5.2f|%c\n' a 1.5 z
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: percent signs
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            printf '100%%\n'; printf '%%n\n'
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: shell-quoted value
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            printf '%q\n' "$PR_TITLE"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: percent signs in the arguments of other commands
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            date +%Y-%m-%d
+            echo 100%
+          } 2>&1 | python3 scripts/neutralise.py

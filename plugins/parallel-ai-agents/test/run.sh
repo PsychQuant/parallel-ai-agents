@@ -26,6 +26,9 @@ bash test/lint-contract-enumerations.sh
 
 echo "── lint-ci-log-filter (every CI run step must say how its log is filtered — #33 verify R15) ──"
 bash test/lint-ci-log-filter.sh --selftest
+# R46（#33 verify R45 logic 第 2 列）：提早結束模式不讀 stdin。nullglob 下 `"${resd}"/*.cnt` 在還沒有結果檔時展開成空、`grep` 改讀 stdin——stdin 有一行 `1 …` 時第一圈就 break、一張 fixture 都沒跑
+# （rc=1，「正向 fixture 是 0 個」）；stdin 是開著的管線時整個卡住。mutation_check 的 lint 守備單位就是用這個模式跑、而且繼承呼叫端的 stdin。
+printf '1 x\n' | LINT_SELFTEST_FAILFAST=1 bash test/lint-ci-log-filter.sh --selftest
 # R16 logic L-2：非 monorepo 佈局沒有 .github/ —— 明說略過，不是 traceback。
 if [ -f ../../.github/workflows/test.yml ]; then bash test/lint-ci-log-filter.sh --strict; else echo "（非 monorepo 佈局，略過 workflow 檢查）"; fi
 
