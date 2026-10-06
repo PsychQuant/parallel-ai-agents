@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.24.0] - 2026-10-07
+
 ### Added
 
 - **`codex-call --image FILE`（#87，可重複，同步模式）**：圖片以 `input_image` data URL 接在
