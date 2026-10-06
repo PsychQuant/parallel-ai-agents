@@ -26,6 +26,7 @@ ensemble-* 的程式表面看似都是「LLM 驅動的編排」，不可測。�
 | `pai-eval-grade.test.mjs` | `../bin/pai-eval-grade`（eval 評分器：detect 容差聚合 / fix 修稿驗證 —— eval 裡唯一確定性、可單元測的部分）|
 | `codex-call-error-extract.bats` | `../bin/codex-call` 的 SSE error 訊息提取（`--selftest-error-extract`）—— **macOS-only**（codex-call 是 `#!/usr/bin/swift` script），在非 macOS 環境自我 skip |
 | `codex-profile.bats` | repo root `.codex-pro/profile.yaml`（#48 專案層 codex-pro profile pin）—— 用 `references/codex-governance.md` 同組正規式鎖住解析後字面、重複 key、git 追蹤；fixture 三層優先序（不依賴 codex-pro cache）；形狀驗證拒絕注入。與 governance 文件是連動點（codex-pro#18 / #19）|
+| `codex-call-image.bats` | `../bin/codex-call` 的圖片輸入（`--image`；#87）—— **macOS-only**（另需 `sips` 產生測試圖）。每一則都帶 `--_selftest-payload` 或在送出前就被拒絕：HOME 不隔離憑證，沒帶鉤子又通過驗證的呼叫會真的發 HTTPS |
 | `codex-call-detach.bats` | `../bin/codex-call` 的背景模式（`--detach`／`--poll`／`--abort`／`--force-reap`；#37）—— **macOS-only**、95 case；全部走同一條 detach／lock／claim／poll 路徑，只用 `--_selftest-*` 旗標把 HTTP 換成 sleep＋寫檔（任何沒帶 selftest 旗標的 detach 都會真的發 HTTPS）。**不可與另一組 bats 在同一 checkout 並行**（`own_workers` 斷言是 checkout 級） |
 | `lint-bats.sh` | 護欄：bats 檔內不得有裸 `!` 斷言（errexit 不觸發，斷言變 no-op；round 6 RC11）。`--selftest` 對 `fixtures/lint-bats-bad.bats` 必須拒絕 |
 | `lint-changelog-counts.sh` | 護欄：CHANGELOG 每個「N 個 case（`grep -c "^@test" <file>`）」宣稱，N 必須等於那條命令此刻的輸出（RC13 第五度復發後機械化，#37 round 10）。`--selftest` 對 `fixtures/changelog-count-bad.md` 拒絕 |

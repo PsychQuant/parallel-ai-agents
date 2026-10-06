@@ -18,6 +18,8 @@ import Foundation
 #if canImport(Darwin)
 import Darwin
 import Security   // SecRandomCopyBytes — CSPRNG run ids for --detach (#37)
+import ImageIO    // --image: decode, measure and downscale images (#87)
+import CoreGraphics
 #endif
 
 // MARK: - Configuration
@@ -366,22 +368,73 @@ final class StreamCollector: NSObject, URLSessionDataDelegate {
     }
 }
 
-func streamCodex(prompt: String, outputFile: String, model: String, effort: String,
-                 serviceTier: String, maxTime: Int, instructions: String) throws {
-    var auth = try loadAuthRaw()
-    try refreshIfNeeded(&auth)
-    guard let tokens = auth["tokens"] as? [String: Any],
-          let access = tokens["access_token"] as? String
-    else { throw NSError(domain: "codex-call", code: 7,
-                          userInfo: [NSLocalizedDescriptionKey: "post-refresh: tokens missing"]) }
-    let accountId = (tokens["account_id"] as? String) ?? ""
+// MARK: - Image inputs (#87)
 
+// The backend takes images as `input_image` content items carrying a base64 data URL. Every check
+// here fails the whole call before auth is read: a missing, oversized or undecodable image must never
+// turn into a text-only request that "succeeds" without the picture.
+let IMAGE_MAX_BYTES = 20 * 1024 * 1024   // original file size limit
+let IMAGE_MAX_EDGE = 2048                // longer side above this is downscaled before sending
+
+// MIME type from the file header (magic bytes); the extension is not trusted.
+func imageMime(_ head: [UInt8]) -> String? {
+    if head.starts(with: [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) { return "image/png" }
+    if head.starts(with: [0xFF, 0xD8, 0xFF]) { return "image/jpeg" }
+    if head.starts(with: Array("GIF87a".utf8)) || head.starts(with: Array("GIF89a".utf8)) { return "image/gif" }
+    if head.count >= 12, head[0..<4].elementsEqual("RIFF".utf8), head[8..<12].elementsEqual("WEBP".utf8) {
+        return "image/webp"
+    }
+    return nil
+}
+
+func loadImageInput(_ path: String) -> [String: Any] {
+    let fm = FileManager.default
+    var isDir: ObjCBool = false
+    guard fm.fileExists(atPath: path, isDirectory: &isDir), !isDir.boolValue, fm.isReadableFile(atPath: path),
+          let size = (try? fm.attributesOfItem(atPath: path))?[.size] as? NSNumber
+    else { die("--image \(path): cannot read image (missing, unreadable, or a directory)") }
+    if size.intValue > IMAGE_MAX_BYTES {
+        die("--image \(path): \(size.intValue) bytes exceeds the 20 MB limit (\(IMAGE_MAX_BYTES) bytes)")
+    }
+    guard let data = fm.contents(atPath: path) else { die("--image \(path): cannot read image") }
+    guard let mime = imageMime(Array(data.prefix(12))) else {
+        die("--image \(path): not a PNG, JPEG, WebP or GIF file (judged by the file header, not the extension)")
+    }
+    guard let src = CGImageSourceCreateWithData(data as CFData, nil),
+          let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any],
+          let w = (props[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue,
+          let h = (props[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue, w > 0, h > 0
+    else { die("--image \(path): cannot decode image") }
+    if max(w, h) <= IMAGE_MAX_EDGE {
+        return ["type": "input_image", "image_url": "data:\(mime);base64,\(data.base64EncodedString())"]
+    }
+    // Downscale in memory (no temp file to clean up). JPEG stays JPEG; everything else becomes PNG,
+    // since ImageIO cannot be relied on to write WebP. The EXIF orientation is applied while scaling.
+    let opts: [CFString: Any] = [kCGImageSourceCreateThumbnailFromImageAlways: true,
+                                 kCGImageSourceCreateThumbnailWithTransform: true,
+                                 kCGImageSourceThumbnailMaxPixelSize: IMAGE_MAX_EDGE]
+    let outMime = mime == "image/jpeg" ? "image/jpeg" : "image/png"
+    let out = NSMutableData()
+    guard let thumb = CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary),
+          let dst = CGImageDestinationCreateWithData(out as CFMutableData,
+                                                     (outMime == "image/jpeg" ? "public.jpeg" : "public.png") as CFString, 1, nil)
+    else { die("--image \(path): cannot downscale \(w)x\(h) image") }
+    let quality: [CFString: Any] = outMime == "image/jpeg" ? [kCGImageDestinationLossyCompressionQuality: 0.9] : [:]
+    CGImageDestinationAddImage(dst, thumb, quality as CFDictionary)
+    guard CGImageDestinationFinalize(dst) else { die("--image \(path): cannot encode the downscaled image") }
+    log("--image \(path): downscaled \(w)x\(h) → \(thumb.width)x\(thumb.height)")
+    return ["type": "input_image", "image_url": "data:\(outMime);base64,\((out as Data).base64EncodedString())"]
+}
+
+// The request body. With no images the user message is exactly one input_text item, as before #87.
+func buildRequestBody(prompt: String, model: String, effort: String, serviceTier: String,
+                      instructions: String, images: [[String: Any]]) -> [String: Any] {
     var body: [String: Any] = [
         "model": model,
         "store": false,
         "stream": true,
         "instructions": instructions,
-        "input": [["role": "user", "content": [["type": "input_text", "text": prompt]]]],
+        "input": [["role": "user", "content": [["type": "input_text", "text": prompt]] + images]],
         "text": ["verbosity": "medium"],
         "include": ["reasoning.encrypted_content"],
         "tool_choice": "auto",
@@ -400,6 +453,22 @@ func streamCodex(prompt: String, outputFile: String, model: String, effort: Stri
         }
     }()
     if !wireTier.isEmpty { body["service_tier"] = wireTier }
+    return body
+}
+
+func streamCodex(prompt: String, outputFile: String, model: String, effort: String,
+                 serviceTier: String, maxTime: Int, instructions: String,
+                 images: [[String: Any]] = []) throws {
+    var auth = try loadAuthRaw()
+    try refreshIfNeeded(&auth)
+    guard let tokens = auth["tokens"] as? [String: Any],
+          let access = tokens["access_token"] as? String
+    else { throw NSError(domain: "codex-call", code: 7,
+                          userInfo: [NSLocalizedDescriptionKey: "post-refresh: tokens missing"]) }
+    let accountId = (tokens["account_id"] as? String) ?? ""
+
+    let body = buildRequestBody(prompt: prompt, model: model, effort: effort, serviceTier: serviceTier,
+                                instructions: instructions, images: images)
 
     var req = URLRequest(url: CODEX_URL, timeoutInterval: TimeInterval(maxTime))
     req.httpMethod = "POST"
@@ -1327,6 +1396,8 @@ struct Args {
     var instructions: String = "You are a careful, rigorous reviewer. Respond in the user's language."
     var promptFile: String?
     var prompt: String?
+    var images: [String] = []             // --image FILE, repeatable (#87); synchronous mode only
+    var selftestPayload = false           // hidden test hook (#87): print the request body, send nothing
     var selftestErrorExtract: String?   // hidden test hook (#25); see --selftest-error-extract
     var selftestClassify: (String, Int)?  // hidden test hook (R4-L1): --_selftest-classify DOMAIN CODE
     var selftestPrelockSleep: Int?        // hidden test hook (Codex R4 #3): worker sleeps BEFORE locking
@@ -1352,6 +1423,10 @@ func parseArgs() -> Args {
         case "--max-time": let s = next(); a.maxTimeRaw = s; a.maxTime = Int(s) ?? a.maxTime
         case "--instructions": a.instructions = next()
         case "--prompt-file": a.promptFile = next()
+        case "--image": a.images.append(next())
+        // Hidden test hook (#87): prints the request body that would be sent (sorted-key JSON) and
+        // exits 0 — no auth read, no HTTP. Same reason as --selftest-error-extract below.
+        case "--_selftest-payload": a.selftestPayload = true
         // Hidden test hook (#25) — deliberately absent from --help. Feeds one SSE
         // event payload through extractErrorMessage and prints the result; sends no
         // HTTP. Exists because CODEX_URL is a hardcoded constant with no injection
@@ -1378,8 +1453,13 @@ func parseArgs() -> Args {
             Usage:
               codex-call --output FILE [--model gpt-5.6-sol] [--effort xhigh]
                          [--service-tier ""] [--max-time 600]
-                         [--instructions TEXT]
+                         [--instructions TEXT] [--image FILE]...
                          [--prompt-file FILE | PROMPT]
+
+            --image FILE   attach an image (repeatable; synchronous mode only). PNG, JPEG, WebP
+                           or GIF judged by the file header; over 20 MB is refused; a longer
+                           side over 2048 px is downscaled to 2048. Any bad image fails the
+                           whole call before anything is sent.
 
             Background mode (#37 — contract: references/codex-call-contract.md):
               codex-call --detach [--output FILE] [same flags] [--prompt-file FILE | PROMPT]
@@ -1428,6 +1508,12 @@ if let raw = a.selftestErrorExtract {
 // `--detach --poll ID` quietly poll — contract §2 promises synchronous argument validation.
 let modes = [a.detach, a.workerId != nil, a.pollId != nil, a.abortId != nil, a.forceReapId != nil].filter { $0 }.count
 if modes > 1 { die("choose exactly one of --detach / --poll / --abort / --force-reap") }
+// #87: the background worker rebuilds its request from meta.json + prompt.txt, which carry no images —
+// accepting --image here would send the prompt without the pictures and report success.
+if !a.images.isEmpty && modes > 0 {
+    die("--image is only supported in synchronous mode (not with --detach / --poll / --abort / --force-reap)")
+}
+if a.selftestPayload && modes > 0 { die("--_selftest-payload is only supported in synchronous mode") }
 if a.selftestSleep != nil && !a.detach { die("--_selftest-sleep requires --detach") }
 // R3-L9: the test-only grace override must not be reachable from a production detach.
 if a.selftestGrace != nil && a.selftestSleep == nil { die("--_selftest-grace requires --_selftest-sleep") }
@@ -1479,9 +1565,23 @@ if a.detach { doDetach(a, prompt: prompt) }   // validated synchronously above; 
 
 let output = a.output!   // guaranteed above for the synchronous path
 
+// #87: every image is validated (and downscaled if needed) before auth is read or anything is sent.
+let imageInputs = a.images.map(loadImageInput)
+
+if a.selftestPayload {
+    let body = buildRequestBody(prompt: prompt, model: a.model, effort: a.effort, serviceTier: a.serviceTier,
+                                instructions: a.instructions, images: imageInputs)
+    guard let json = try? JSONSerialization.data(withJSONObject: body, options: [.sortedKeys]) else {
+        die("--_selftest-payload: cannot serialize the request body")
+    }
+    FileHandle.standardOutput.write(json + Data("\n".utf8))
+    exit(0)
+}
+
 do {
     try streamCodex(prompt: prompt, outputFile: output, model: a.model, effort: a.effort,
-                    serviceTier: a.serviceTier, maxTime: a.maxTime, instructions: a.instructions)
+                    serviceTier: a.serviceTier, maxTime: a.maxTime, instructions: a.instructions,
+                    images: imageInputs)
 } catch {
     die(error.localizedDescription)
 }

@@ -11,6 +11,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`codex-call --image FILE`（#87，可重複，同步模式）**：圖片以 `input_image` data URL 接在
+  `input_text` 之後送出。送出前驗證、任一張不合格就整通失敗且不讀 auth：不存在／不可讀／目錄、
+  原檔超過 20 MB、檔頭不是 PNG／JPEG／WebP／GIF、解不開；長邊超過 2048 px 在記憶體內縮到 2048。
+  與背景模式並用會被拒絕（worker 的 `meta.json` 不帶圖）。下游用 `codex-call --help` 是否含
+  `--image FILE` 判斷支援與否。契約 §1、§7 已更新。
+  - 隱藏旗標 `--_selftest-payload`：印出將要送出的 request body、不發 HTTP，供 bats 檢查 payload。
+  - issue 原本要求「不附圖時 payload 逐位元相同」，做不到也不必做：body 的 key 順序本來就每次執行
+    不同（`Dictionary` 經 `JSONSerialization`，實測連跑五次五種順序）。測試改比 JSON 結構。
+  - 測試：`test/codex-call-image.bats`，21 個 case（`grep -c "^@test" test/codex-call-image.bats`）。
+    對修改前的 `codex-call` 跑同一份檔，21 個全部失敗。
+
 ## [2.23.0] - 2026-09-10
 
 ### Changed
