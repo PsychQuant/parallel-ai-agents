@@ -1,7 +1,12 @@
 # #33 verify R41 requirements（S-2 機制差分）：**must-fail 探針**。管線只從 stderr 外流（`ls "$PR_TITLE"`、缺 `2>&1`），看起來是 S-2；
-# 但補上 `2>&1` 之後 fd 1 與 fd 2 指向同一處，背景的子殼層因此多印一行 baseline 沒有的外流（`ls "$PR_TITLE-2"`）——機制差分
+# 但補上 `2>&1` 之後 fd 1 與 fd 2 指向同一處，管線之後的 `ls "$f"` 因此多印一行 baseline 沒有的外流（`ls "$PR_TITLE-2"`）——機制差分
 # 禁止多出新的外流行，所以不是 S-2、是繞過。拿掉那個條件（`s2_mechanism` 的 `ml[1] - base_ml[1]`），它就被收成 S-2、這張探針不再
-# 以宣告的理由失敗 ⇒ 神諭 rc=1。R40 的神諭 docstring 寫「本機做不出會翻色的 fixture」，這張就是（macOS 實跑）。逐字取自 R41 的 c10/s2-flip。
+# 以宣告的理由失敗 ⇒ 神諭 rc=1。R40 的神諭 docstring 寫「本機做不出會翻色的 fixture」，這張就是（macOS 實跑）。逐字取自 R41 的 c10/s2-flip，
+# **只有排序那一行改了**（R48 CI 紅燈，#33）：R41 的版本把讀旗標放在背景子殼層裡、前面墊一個 `sleep 1` 當「晚於寫旗標」的保證，
+# 而神諭的 `sleep` 是空操作（`oracle.py` 的 stub，R34 DA n6：讓等待不耗時、逾時不吃掉真繞過）——所以那一行只是一場賽跑，不是排序。
+# 同一棵樹在 Linux 容器（Ubuntu 24.04、bash 5.2.21）單檔跑三十次：R46 的樹輸 4 次、R48 的樹輸 14 次（R48 讓每個命令多一次稽核，主群組變慢、
+# 背景先讀到空旗標，補上 `2>&1` 的那份就沒有新增外流行，被收成 S-2）；R46 的 CI 綠只是這場賽跑剛好贏了。現在讀旗標移到管線**結束之後**的
+# 主殼層：管線結束時旗標一定已經寫完（或根本不會寫），沒有任何排序可以輸，也就沒有 `sleep` 要靠。
 # ORACLE-MUST-FAIL: 不是 S-2
 # EXPECT: pass
 name: t
@@ -12,6 +17,5 @@ jobs:
     steps:
       - name: s2 flip
         run: |
-          ( sleep 1; f=$(cat flag 2>/dev/null); if [ -n "$f" ]; then ls "$f"; fi ) &
           { ls "$PR_TITLE" || :; if [ /dev/fd/1 -ef /dev/fd/2 ]; then echo "$PR_TITLE-2" > flag; fi; } | python3 scripts/neutralise.py
-          wait
+          f=$(cat flag 2>/dev/null); if [ -n "$f" ]; then ls "$f" || :; fi

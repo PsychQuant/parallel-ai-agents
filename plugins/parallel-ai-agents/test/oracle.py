@@ -114,7 +114,10 @@ PR 文字固定是 `ORACLE-PR-TITLE-MARKER`：算術展開（`$(( PR_TITLE ))` �
     兩者都判繞過（rc=1），方向是吵、不是藏，但原因可能寫錯（`known-r39-g-two-continued-pipelines` 的檔頭有細節）。
   · **S-2 的機制差分禁止多出 baseline 沒有的外流行**（stdout 與 stderr 都禁）。R40 這裡寫「本機做不出會翻色的 fixture」——
     不對：R41 requirements 用背景子殼層看 `/dev/fd/1 -ef /dev/fd/2` 在 macOS 做出來了，R42 收成 must-fail 探針
-    `oracle-r42-s2-flip`（拿掉這個條件，它就被收成 S-2、探針不再以宣告的理由失敗）。
+    `oracle-r42-s2-flip`（拿掉這個條件，它就被收成 S-2、探針不再以宣告的理由失敗）。**R48 更正**：那個版本的「背景子殼層
+    讀旗標、前面墊 `sleep 1`」在神諭裡是一場賽跑——神諭的 `sleep` 是空操作 stub（下方 `sleep 是空操作`），所以沒有排序可言；
+    Linux 容器單檔跑三十次，R46 的樹輸 4 次、R48 的樹輸 14 次，R48 合併後的第一次 CI 因此紅。現在讀旗標在管線**結束之後**的
+    主殼層，見該 fixture 檔頭。
   · **runner 運算式的代換是一組封閉的 payload**（`RUNNER_PAYLOADS`）：R42 起多了註解、算術、heredoc 內文三種脈絡（#33 verify
     R41 DA-4），每一組都跑、lint 放行時取最嚴重的一份（`select_most_severe`）。仍不在表上的脈絡（`$'…'`、case 模式…）神諭不保證
     逃得出去，判的是「沒看到外流」；每一組代換之後語法都壞掉時判量不到。bash 樣板照旗標跑（`bash_template_prefix`），封閉清單以外的樣板（`-x`、`-v`、`-l`…）仍不可比。
