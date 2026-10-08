@@ -11,7 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [2.24.0] - 2026-09-10
+## [2.25.0] - 2026-10-08
+
+> 版本改記：本 PR 原本記 2.24.0（當時 2.23.0 被 #47 佔用）；#88 先合併進 main 並用掉 2.24.0（`codex-call --image`），所以這一段改記 2.25.0，plugin.json／marketplace.json／description 前綴同步，下方的 `[2.24.0] - 2026-10-07` 是 main 上的原文。
 
 `pai-lenses` 從獨立 repo 併回本 repo 成為第二個 plugin，並把三層 lens 疊加的文件與 CI 閘門補齊。
 
@@ -632,6 +634,7 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
   **量測（本機 macOS、bash 5.3，沒有 `/proc`；量測樹 `2653e96`——本輪的 WIP commit 與 `2653e96` 都是 squash 前、不在遠端；全輪 opsweep 沿用 `2992737` 的結果：其後 lint 嵌入的 Python 與它 AST 逐字相同〔`oracle.py` 不在 opsweep 的範圍〕）**：
   selftest 290／508／160／114／33（正向／規則紅／解析紅／訊息斷言／逐步斷言）；`oracle_selfcheck` 45 項全過；fixture 神諭 1665 個 step：一致 1133、不一致 319（全部已知：G 8、S-2 3、文法外 264、文法外-without-proc 2）、不可比 187、量不到 26；產生語料預設組 624：一致 516／不一致 62（全部已知）／不可比 46／量不到 0；`--strict` 組 115：78／29（全部已知）／8／0；`--verify-expected` 驗證 64 條；`test_validate.py` 153 條 OK；mutation 靶清單 494 個全部恰好命中一次。
   **mutation 全輪**（`git archive 2653e96` 副本、`--no-cache --jobs 8`，沿用 0 靶）：494 靶 → 490 殺／0 存活／4 預期存活／0 靶壞；68.6 分（每靶 8.3 s；牆鐘；開跑時負載 21.95）。**run.sh**（真實路徑，最終樹，負載 24.38）：全部通過，bats 194 個案例全 ok。 **快取沒有在推送前重驗 494／494 沿用**：量測鏈跑完之後機器重開機，`mutation_check.py` 的環境指紋（`tool_versions()`）變了——R46 那棵驗證過 485／485 沿用的樹與快取，重開機後同樣只命中 0／6 個抽樣靶，所以是環境變了、不是這一輪的快取壞；指紋哪一項變了沒有釘出來（PATH 上 python3 的解析、直譯器版本的組合都試過，沒有一組命中）。能驗證的部分：`validate`／`neutralise`／`lint`／`oracle` 四個守備單位的輸入 digest 在 `2653e96` 的乾淨 archive、HEAD 的 archive、鏈當時的樹三處逐字相同（只差 CHANGELOG 與快取檔本身，兩者不在輸入裡）。提交進樹的快取是量測鏈當時（重開機前）寫的，在別的環境不會被沿用——這是設計（快取檔進了版控會被帶到別台機器）。
+  **合併 main（`5cea4d4` 推送之後才發生）**：main 前進（PR #88 合併：`codex-call --image`、不認得的旗標報錯、plugin 2.24.0），PR 與 main 衝突，`pull_request` 的 CI 因此沒有為 `5cea4d4` 觸發。處置是把 origin/main 以 merge commit 併進 PR 分支（普通 push，不 rebase、不 force）；衝突四處：`marketplace.json`／`plugin.json`（版本與 description 前綴改記 **2.25.0**，補上 main 的 v2.24.0 一段）、`CHANGELOG.md`（本 PR 的大段改標 `[2.25.0]`，main 的 `[2.24.0] - 2026-10-07` 原樣保留）、`test/README.md`（保留本 PR 的 detach 列與 main 新增的 image／args 兩列）。合併帶進來的只有 main 上的 `bin/codex-call`、`references/codex-call-contract.md`、兩個 bats、版本檔與文字——**沒有碰 lint、神諭、opsweep 的程式或 fixture**（合併相對於 `5cea4d4` 的 diff 只有這八個檔，可自行 `git diff --stat` 核對）。**合併後的樹重跑了**：`lint-ci-log-filter.sh --selftest`（290／508／160／114／33 不變）、不帶檔案的 `--strict`（對合併後的 workflows）、`validate.py`（marketplace 版本一致：parallel-ai-agents 2.25.0、pai-lenses 0.2.0）、`lint-changelog-counts.sh`、`test_validate.py`（153 個測試 OK）、`run.sh`（全部通過；bats 225 個案例全 ok，比合併前的 194 多的是 main 新增的 codex-call 測試）。**沒有重跑的**：fixture 神諭、opsweep 全輪、mutation 全輪——lint／神諭／opsweep 的程式與 fixture 合併沒動，上面量測的結果是 `2653e96` 的，沿用不重量。mutation 快取的輸入 digest：`lint`／`oracle`／`oracle-inverted` 三個守備單位的輸入（fixture、反向探針、`oracle_selfcheck.py`、lint 本體）合併沒動，digest 不變；`validate`／`neutralise` 兩個守備單位的輸入是整個 repo，digest 因合併而換，它們的快取在合併後的樹上不會被沿用，**也沒有在合併後的樹上重量**。加上上一段說的環境指紋問題，這份快取在別的環境與合併後的樹上都不應被當成已驗證的 494／494。
 - **verify R45（4 lens + DA + Codex 跨模型 leg，`gpt-6-astra`／medium，靜態推演）— 2 HIGH、5 MEDIUM blocking、22 LOW；requirements、logic、regression、DA、Codex 判 FAIL，security 判「PASS（有限）」被 DA 推翻，聚合判 FAIL。**
   CI 在 `2835ead` 上是綠的。報告的中心發現（DA）：**逐原語問「運算元給定時它做什麼」沒問「bash 在原語看到運算元之前怎麼重塑運算元向量」**——R44 的文法收窄與全輪 opsweep 都沒有看到那一層；神諭的注入探針其實看得到（`2835ead` 的神諭對 `test {-v,"$PR_TITLE"}` 與 `echo hi {a["$PR_TITLE"]}>/dev/null` 都判「不一致：繞過（注入…）」），缺的是文法語料從沒餵它們這兩個輸入——R45 報告說「盲區不在神諭」指的就是這個；探針真正看不到的是 `printf '%n'` 改寫信任變數（要靠 primitive 稽核）。四個 lens 各自都沒找到兩個 HIGH；是 DA 與 Codex 找到的，我在凍結樹上逐個實跑重現。HIGH：(1) **大括號展開**（`test {-v,"$PR_TITLE"}` 是 `test -v "$PR_TITLE"`——`-v` 的運算元被算術求值，標題 `PWD[$(命令)]` 的命令替換執行；`--strict` 與預設都 rc=0，DA 端到端寫進 `$GITHUB_ENV`）；lint 檔頭 R44 寫的「未加引號的大括號與波浪號展開的結果不來自 PR 的檔名，照收」只看了結果的來源、沒看展開對 argv **個數與位置**的影響。(2) **具名 fd 的陣列參照**（`echo hi {a["$PR_TITLE"]}>/dev/null` 的下標被算術求值；`{RUNNER_TEMP[0]}>` 把 `RUNNER_TEMP` 改成 10）；R44 只比對 `\{NAME\}`，P1 第 8 類「具名 fd 不收」是全稱宣稱。放行條件十條在報告末段；**修法方向（DA）：不要再補拼法，把 lint 的詞模型與 bash 實際 argv／被改寫的變數做機械對帳。**
   - **文法（第 1、2、3 列）**：文法收的 builtin（`echo printf test [ true false : exit` 與 `trap`）的參數不收會展開的大括號詞——未加引號的字面（P 片段）合起來同時有 `{` 與（`,` 或 `..`）；引號裡的逗號、沒有逗號的 `{NAME}`、**外部命令的參數**不受影響（L1，`mkdir -p out/{bin,lib}` 是常見寫法）。具名 fd：詞以 `{` 開頭、以 `}` 結尾又緊接 `<`／`>` 一律擋，不比對內容。`printf` 的格式改成封閉的轉換列舉（`FL_PRINTF_FMT_RE`：`%%`、旗標＋寬度＋精度＋`sdiuoxXeEfFgGcq` 之一，加不含 `%` 與反斜線的文字、或反斜線接 `abefnrtv\'"?0-7xuU` 之一；精度是 `.` 加至少一位數字）——`%n`（`%5n`、`%ln`）把已輸出的字元數指派給參數所命名的變數（`printf '%n' HOME` 之後 `HOME=0`，bash 5.3 與 3.2 實測；`printf '%n' 'a[$(cmd)]'` 被 bash 以 not a valid identifier 拒絕，**沒有命令執行路徑**，所以 Codex 判 HIGH、我判 MEDIUM）。**我先前說「`printf {-v,x} y` 目前放行」是錯的**——printf 的第一個參數守衛早就擋它（`{-v,x}` 不以 `-` 開頭但 `_fl_lit` 判它不是純字面）；那張 fixture 是回歸、不是紅燈。`exit "$X"` 的狀態值（DA 第 10 列；test.yml 自己就寫 `exit "$rc"`）改成在檔頭明講限制：值的來源不受檢查，只遮蔽退出碼、不外流、不執行。
@@ -1724,6 +1727,35 @@ R12 的 12 列全部確認修好（三個 lens 各自用探針／fixture 重現�
   靶清單 98 → 100 個（3 個 EXPECTED_SURVIVE；lint 形式的宣稱只留在最新一段）。
   量測（R17 後）：單一副本完整一輪 100 靶 → 97 殺 / 0 存活 / 0 靶壞（另 3 個 `EXPECTED_SURVIVE`），
   實測 46.3 分鐘 = 每靶 27.8 s（由 `mutation_check.py` 自己印）；細節與前一輪的兩個真缺口見 `scripts/test_validate.py` 檔頭。
+
+## [2.24.0] - 2026-10-07
+
+### Added
+
+- **`codex-call --image FILE`（#87，可重複，同步模式）**：圖片以 `input_image` data URL 接在
+  `input_text` 之後送出。送出前驗證、任一張不合格就整通失敗且不讀 auth：不存在／不可讀／目錄、
+  原檔超過 20 MB、檔頭不是 PNG／JPEG／WebP／GIF、解不開；長邊超過 2048 px 在記憶體內縮到 2048。
+  與背景模式並用會被拒絕（worker 的 `meta.json` 不帶圖）。下游用 `codex-call --help` 是否含
+  `--image FILE` 判斷支援與否。契約 §1、§7 已更新。
+  - 隱藏旗標 `--_selftest-payload`：印出將要送出的 request body、不發 HTTP，供 bats 檢查 payload。
+  - issue 原本要求「不附圖時 payload 逐位元相同」，做不到也不必做：body 的 key 順序本來就每次執行
+    不同（`Dictionary` 經 `JSONSerialization`，實測連跑五次五種順序）。測試改比 JSON 結構。
+  - 測試：`test/codex-call-image.bats`，21 個 case（`grep -c "^@test" test/codex-call-image.bats`）。
+    對修改前的 `codex-call` 跑同一份檔，21 個全部失敗。
+
+### Fixed
+
+- **`codex-call` 不再把不認得的旗標當成 PROMPT（#80）**：以 `-` 開頭、不在旗標表裡的字串一律
+  exit 1 `unknown option: <flag>`，在讀 prompt、讀 auth、建立 run 之前。修之前最危險的情形是
+  「不認得的旗標＋stdin prompt」：旗標字串取代整份 stdin、rc=0，模型沒看到 caller 送的內容，
+  在 verify ensemble 裡讀起來像一次乾淨的通過。另外：PROMPT 引數與 `--prompt-file` 同時給也改為報錯
+  （以前 `--prompt-file` 默默勝出）；新增 `--` 結束旗標解析。
+  - **相容性**：以 `-` 開頭的字串以前能當位置參數 PROMPT，現在要放在 `--` 之後。契約 §8 把 exit code
+    列為 STABLE，嚴格說這是行為變更；判定為修 bug、不做 major bump 的理由：會受影響的只有「把 `-` 開頭的
+    字串當位置參數傳入」的呼叫，而 pai、codex-pro、issue-driven-dev 的已知呼叫者全都用 `--prompt-file` 或
+    stdin，掃過沒有任何一個傳了 codex-call 不認得的旗標。
+  - 測試：`test/codex-call-args.bats`，10 個 case（`grep -c "^@test" test/codex-call-args.bats`）；
+    issue 表格的三列各一則。修之前跑同一份檔，7 個失敗、3 個通過（那 3 個是「既有寫法不能被弄壞」的護欄）。
 
 ## [2.23.0] - 2026-09-10
 

@@ -11,12 +11,28 @@
 
 ```
 codex-call --output FILE [--model M] [--effort E] [--service-tier T] [--max-time S]
-           [--instructions TEXT] [--prompt-file FILE | PROMPT]
+           [--instructions TEXT] [--image FILE]... [--prompt-file FILE | PROMPT | -- PROMPT]
 ```
 
 - 阻塞直到回應完成或 `--max-time` 到期。stdout 無輸出；stderr 有 `[codex-call] …` 診斷。
 - exit `0` 且 `FILE` 非空 = 成功。**空輸出視為失敗**（exit 非零，不寫檔）——空檔會被 ensemble 誤讀成「通過」。
 - 這條路徑是 codex-pro producer skills 走的；本契約保證它**逐 byte 不變**。
+- **`--image FILE`（v2.24.0+，#87；可重複，只限同步模式）**：每張圖以
+  `{"type":"input_image","image_url":"data:<mime>;base64,…"}` 依命令列順序接在 user message 的
+  `input_text` 之後。送出前逐張驗證，任何一張不合格整通呼叫 exit `1`、**在讀 auth 之前**、不發任何請求：
+  檔案不存在／不可讀／是目錄；原檔超過 20 MB（20,971,520 bytes）；檔頭不是 PNG／JPEG／WebP／GIF
+  （看檔頭不看副檔名）；檔頭對但解不開。長邊超過 2048 px 時在記憶體內縮到長邊 2048（JPEG 維持 JPEG，
+  其餘輸出 PNG），stderr 記一行 `downscaled WxH → wxh`。與 `--detach`／`--poll`／`--abort`／`--force-reap`
+  並用 → exit `1`：worker 從 `meta.json`＋`prompt.txt` 重建請求，那裡不帶圖，接受它就等於默默送出沒有圖的請求。
+- **不帶 `--image` 時請求結構不變**：仍是一則 user message、裡面恰好一個 `input_text`。「不變」指 JSON
+  結構，不是位元組——request body 是 Swift `Dictionary` 經 `JSONSerialization` 序列化，key 順序本來就
+  每次執行不同（實測同一份 body 連跑五次得到五種順序），所以位元組在 #87 之前就不是固定的。
+- **參數解析（v2.24.0+，#80）**：不認得的旗標（任何以 `-` 開頭、不在旗標表裡的字串）→ exit `1`
+  `unknown option: <flag>`，在讀 prompt、讀 auth、建立任何 run 之前。以 `-` 開頭的 PROMPT 放在 `--` 之後。
+  PROMPT 引數與 `--prompt-file` 同時給 → exit `1`（以前 `--prompt-file` 默默勝出）。修之前不認得的旗標
+  會變成 PROMPT：搭配 stdin 時旗標字串**取代**整份 stdin prompt、rc=0，模型沒看到 caller 送的內容。
+- **下游偵測方式**：`codex-call --help` 的輸出含 `--image FILE` 即支援。舊版會把不認得的旗標當成 PROMPT
+  吞掉且 rc=0（#80），所以不能「傳了再看有沒有報錯」。
 
 ## 2. 背景模式（v2.23.0+，#37）
 
@@ -176,6 +192,9 @@ run 狀態（**封閉列舉，五種**，round 9 Stage B 之後只有一個目�
 - `--_selftest-classify DOMAIN CODE`：印出該 NSError 會寫成的 status token，無副作用（測 catch 分支的 (domain, code) 分類）。
 - **隱藏旗標同 uid 皆可達**：它們是測試鉤子不是安全邊界，契約 §6 第一列已把同 uid 排除。
 - `--selftest-error-extract`（#25，既有）。
+- `--_selftest-payload`（#87）：同步模式專用。跑完參數解析、prompt 讀取與圖片驗證，把**將要送出**的
+  request body 以 sorted-key JSON 印到 stdout、exit `0`；不讀 auth、不發 HTTP。與背景模式旗標並用 → exit `1`。
+  它的位置就在圖片驗證之後、讀 auth 之前，所以「壞圖被拒時沒印出 payload」同時證明驗證先於送出。
 
 ## 8. 穩定性承諾
 
