@@ -1,0 +1,20 @@
+# R48（#33 verify R47 security／Codex，放行條件 5）：步驟文字提到神諭的儀器變數（`ORACLE_AUD`、`ORACLE_INJECT`…，`--strict` 都當普通指派放行）能讓稽核與注入哨兵失效——替身 lint 全放行時判「一致」。
+# 現在步驟文字提到 `ORACLE_`／`__orc_` 的 step 判「量不到」（儀器不可信）、rc=0，不再是假的「一致」。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            ORACLE_AUD=/dev/null
+            ORACLE_INJECT=/dev/null
+            test {-v,"$PR_TITLE"} || :
+          } 2>&1 | python3 scripts/neutralise.py

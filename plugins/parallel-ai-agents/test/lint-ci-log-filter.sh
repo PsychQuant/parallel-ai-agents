@@ -2689,8 +2689,9 @@ def _logical_lines(code_lines):
 #         `_fl_chan_line_ok` 檢查：echo 的第一個參數是 `-n`／`-e`／`-E` 的選項、printf 格式裡除了結尾 `\n` 的 `\` 與除了 `%s` 的 `%` 先擋，所以跳脫序列寫不出第二行；
 #         **單行、`$GITHUB_ENV` 的鍵是字面 `NAME=` 且不在 `_fl_env_key_denied`、`$GITHUB_PATH` 的值是絕對路徑（或 `$HOME`／`$RUNNER_TEMP` 開頭）且不含
 #         `$GITHUB_WORKSPACE`、沒有一段是 `..`（**只擋拼法**：字面的 `/home/runner/work/…` 本身 lint 看不出它是工作區——那是維護者寫的字面值、不是 PR 文字；R46，#33 verify R45 security 第 2 列），這幾項只對 `$GITHUB_ENV` 與 `$GITHUB_PATH` 成立**——其餘三個的保證是：參數是字面（或那三個變數）、沒有 echo 選項與 printf 跳脫，沒有單行檢查）。
-#      命令自己沒有重導向時，它的 fd 2 與（管線最後一個命令的）fd 1 都在 neutralise.py 的管線上，非最後一個命令的 fd 1 進內層管線；自己開的重導向只落在
-#      第 8 類點名的目標加上第 9 類的 `>> "$GITHUB_…"`（寫進檔案的東西不進 job log）。
+#      命令自己沒有重導向時，它的 fd 2 與（管線最後一個命令的）fd 1 都在 neutralise.py 的管線上，非最後一個命令的 fd 1 進內層管線（接 `|&` 時它的 fd 2 也進內層管線、不直接在 neutralise.py 的管線上；R47 宣稱查核）；自己開的重導向只落在
+#      第 8 類點名的目標加上第 9 類的 `>> "$GITHUB_…"`。**寫進檔案的東西不進 job log，但不是無害**（R47 第 2 列更正：前一版把「不進 job log」當成這些目標安全的理由，那是錯的）：相對路徑的目標
+#      （`> scripts/neutralise.py`）能改寫過濾器本身或它 import 的檔（`validate.py`），PR 標題因此能成為過濾器的程式，或讓過濾器變成 passthrough——見 L1 與 L4。
 #      展開規則：命令**參數**裡的參數展開（`$NAME`、`${…}`、`$?`）一律在雙引號裡；不在此限的是指派右值（bash 不對它斷詞、不 glob）。未加引號的 glob 字元（`*`、`?`、`[`）：
 #      在 `echo` 與 `printf` 的資料參數裡只影響輸出（照收，bash 5.3 實測 `printf "%s\n" *`、`echo *` 不執行任何東西），在外部命令的參數裡由那個程式處理（L1），
 #      在 `test`／`[` 的運算元與 `printf` 的格式裡不收（第 2、3 類）；波浪號展開的結果不來自 PR 的檔名，照收。**R46 更正**：R44 這一句還寫「未加引號的大括號與波浪號展開的結果不來自 PR 的檔名，照收」——
@@ -2701,10 +2702,10 @@ def _logical_lines(code_lines):
 #     S0 詞法（引號、保留字、IO_NUMBER、`{名稱}` 重導向前綴）：`{NAME}`／`{NAME[下標]}` 緊貼 `<`／`>` 是具名 fd，bash 把 fd 號碼指派給該變數，下標被算術求值——能。整個詞以 `{` 開頭、以 `}`
 #        結尾又緊接 `<`／`>` 一律擋（`fl_tokens`）；`!`、`time`、`[[`、`((`、heredoc、`<(`、`>(` 本來就不在文法裡。
 #     S1 大括號展開：在其他所有展開之前，改變參數的**個數與位置**——能（`test {-v,"$X"}` → `test -v "$X"`；`printf {-v,x} y` → `printf -v x y`；`echo {-e,…}` 多出選項；`[ -n {a..c} ]` 運算元變三個）。
-#        文法收的 builtin（`FL_INERT` 與 `trap`）的參數不收會展開的大括號詞——未加引號的字面合起來同時有 `{` 與（`,` 或 `..`）（`_fl_brace_expands`）；引號裡的逗號、沒有逗號的 `{NAME}`、
-#        外部命令的參數（L1，`mkdir -p out/{bin,lib}`）不受影響。靠管線過濾的群組裡，重導向目標含**未加引號**的大括號一律擋——不是因為展開（會展開的 `>{a,b}` bash 判 ambiguous redirect、不執行；不會展開的 `>{a}` bash 會建出檔名字面是 `{a}` 的檔），而是目標的字元集（`FL_REL_TARGET_RE`，經 `_fl_target_ok`）
+#        文法收的 builtin（`FL_INERT` 與 `trap`）的參數不收會展開的大括號詞——未加引號的字面合起來同時有 `{` 與（`,` 或 `..`）（`_fl_brace_expands`；**粗略判準**：bash 其實不展開的 `echo a{b}c,d`、`echo release{draft,final` 也擋，是保守誤擋，見 CHANGELOG verify R47 的「沒做的 LOW」）；引號裡的逗號、沒有逗號的 `{NAME}`、
+#        外部命令的參數（L1，`mkdir -p out/{bin,lib}`）不受影響。靠管線過濾的群組裡，重導向目標含大括號的字面一律擋（**不論有沒有加引號**：`"x{a}"`、`"$RUNNER_TEMP/{a}"` 也擋；R47 logic 更正前一版「未加引號」的暗示）——不是因為展開（會展開的 `>{a,b}` bash 判 ambiguous redirect、不執行；不會展開的 `>{a}` bash 會建出檔名字面是 `{a}` 的檔），而是目標的字元集（`FL_REL_TARGET_RE` 與 `FL_TEMP_TARGET_RE`，經 `_fl_target_ok`）
 #        不含 `{`、`,`、`}`，所以 `_fl_brace_expands` 不必涵蓋它；參數展開語法的大括號（`> "${RUNNER_TEMP}/…"`、`< ${GITHUB_ENV}`）不是大括號展開，照收；宣告且被觸發的 step 不檢查重導向目標（`_fl_target_ok`
-#        只在靠管線過濾的群組裡跑，見 L3）。（這句改過兩次：獨立審閱者核對階段表時指出第一版與實作不符，R46 宣稱查核又指出第二版的「一律」過寬。）
+#        只在靠管線過濾的群組裡跑〔`ctx["filtered"]`〕；L3 講的是宣告而沒有觸發的 step，不談這個）。（這句改過三次：獨立審閱者核對階段表時指出第一版與實作不符，R46 宣稱查核指出第二版的「一律」過寬，R47 logic 指出第三版的「未加引號」暗示加了引號的放行。）
 #     S2 波浪號展開：`~`、`~+`、`~-`、`~user` 只產生一個路徑字串、不改變 argv 個數——不能。照收。
 #     S3 參數／命令替換／算術展開：參數展開的值是 PR 可控的文字，原語是否把它當程式碼求值取決於它落在原語的哪個位置——`test`／`[` 的 `-v` 運算元、`printf` 的格式與選項位置。**位置由文法決定**：
 #        `test`／`[` 只收三種形狀（運算子位置只有字面）、`printf` 的第一個參數只收字面。命令替換（只收整個 `NAME=$(mktemp …)`）、算術展開 `$((…))`、`${!X}`、`${X:=…}`、`${X@…}` 不在文法裡。
@@ -2734,7 +2735,10 @@ def _logical_lines(code_lines):
 #      run 文字與任何一層 `env:` 覆寫它們。
 #   L3 宣告了 `# LOG-FILTER:`、而且既沒有寫出來的管線、也沒提到 `$GITHUB_ENV`／`$GITHUB_PATH` 的 step：不進文法。執行時才組出來的管線（`eval "$X"`、`source`、alias）看不到；
 #      宣告的 step 裡 `$GITHUB_ENV` 的檢查只看**字面的名字**，是抓無心之失的，不是封閉（`n=GITHUB_; … "${!n}"` 看不到）。
-#   L4 工作目錄：相對路徑的重導向目標照字面判，不對 `working-directory:` 求值，也不追 PR 提交的 symlink。
+#   L4 工作目錄：相對路徑的重導向目標照字面判，不對 `working-directory:` 求值，也不追 PR 提交的 symlink。**過濾器的完整性不在保證裡**（R47 第 2 列；R47 DA 與作者實測）：`--strict` 放行相對路徑的重導向
+#      （第 8 類）與 L1 的外部命令——`> scripts/neutralise.py`、`echo "$PR_TITLE" | tee scripts/neutralise.py`、`cp /dev/stdin scripts/neutralise.py`、`sed -i … scripts/neutralise.py`——所以群組能改寫過濾器本身（或 `scripts/validate.py`
+#      這類 `sys.path[0]` 上的檔）；群組在開頭就寫入時，寫入先於 `python3` 讀檔與 import（實測 5／5；是競賽、不是保證——延遲 20 ms 以上才寫就會輸）。刪掉相對路徑類關不掉這個暴露（外部命令一樣達到），所以決定**保留**第 8 類的相對路徑目標、**揭露**這個限制：
+#      這個閘門的邊界是 test.yml 檔頭寫的 `on: pull_request`（非 pull_request_target）＋`contents: read`＋零 secrets——每個 job 本來就執行 PR 的程式碼，PR 可以改過濾器本身（`neutralise.py` 的 docstring：fork 可以把它改成 `cat`）；lint 擋的是 PR 文字經 shell 構造外流或被求值，維護者寫的檔案操作（含無心的 `> scripts/neutralise.py`）不在保證內。
 #   L5 YAML：本 lint 的白名單解析器只有 block scalar 的縮排與折行（`corpus/foldcheck.py`）和神諭抽 step 的部分與 PyYAML 對帳，兩者都不是 GitHub 的解析器（差異的實測見 oracle.py 檔頭的「盲區」段）。
 #   L6 pipefail 以外的退出碼：`|| true`、群組裡的 `exit N`（`N` 是字面或展開，如 `exit "$rc"`；展開值的來源不受檢查）是維護者明寫的選擇，不在宣稱內。（trap 動作裡的 `exit` 不收：
 #      EXIT trap 的 `exit N` 會蓋掉整個 step 的退出碼。）另一個不在宣稱內：errexit（`bash -e {0}`、`set -e`）對 `&&`／`||` 清單裡**不是最後一個**的命令

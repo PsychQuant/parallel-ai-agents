@@ -1,0 +1,20 @@
+# R48（#33 verify R47 宣稱查核 E 組）：跨 step 通道檔（`GITHUB_ENV` 等）原本放在步驟 cwd 裡，`tee chan-GITHUB_E""NV < /dev/null`（外部命令，`--strict` 放行；加引號拆開名字繞過「提到通道」規則）
+# 能把寫進通道的 PR 文字截斷、讓神諭看不到——替身 lint 全放行時判「一致」。現在通道檔放在步驟 cwd 底下名稱帶隨機後綴、以 `.` 開頭的儀器子目錄，步驟拿不到名字：
+# 這個 step 把 PR 文字寫進 `$GITHUB_ENV` 之後截斷不到它，替身 lint 全放行時 rc=1、「跨 step 通道」。（不是 sandbox：`ls -a` 仍看得到那個目錄。）
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "x=$PR_TITLE" >> "$GITHUB_ENV"
+            tee chan-GITHUB_E""NV < /dev/null
+          } 2>&1 | python3 scripts/neutralise.py

@@ -25,8 +25,9 @@
 
 EXPECTED_SURVIVE 的紀律（G-R29-5）：
   (a) 每一條要寫理由，且理由是「依構造等價」——不是「fixture 沒蓋到」；後者的正解是補會翻色的 fixture。
+      例外（R48，#33 verify R47）：其中兩條 `_cmdsub_end_case`（`at_word…|2`、`k += 1…|1`；另兩條同函式的條目不在此列）是「函式層級不等價、呼叫端不變式下不可達」，證據是有界的（插樁 0 次），理由文字已標明——它們是被承認的例外，不是「依構造等價」的範例。
   (b) 修法型的突變體（關掉一個當輪剛修好的機制）**不得**列入——那正是「新機制沒有網」。
-  (c) 集合大小 ≤ 存活總數的 1/3（含預期）；超過就是在用這個集合藏東西（R13 DA-5）。程式會檢查。
+  (c) 集合大小 ≤ 本次掃描突變體數的 10%（程式檢查）；另有審查規則：每輪新增條數 ≤ 該輪存活數的 1/3；超過就是在用這個集合藏東西（R13 DA-5）。（R48 宣稱查核更正：前一版寫成「存活總數的 1/3，程式會檢查」，程式其實是 10%。）
 """
 import argparse
 import ast
@@ -117,7 +118,7 @@ EXPECTED_SURVIVE = {   # id → 理由（依構造等價）。每一條都要能
     "drop-operand|_bash_template|rest = toks[1:-1] if len(toks) > 1 and toks[-1] == \"{0}\" else toks[1:]|1": "到這一行時 toks[0] 必然是 bash 路徑之一；只有一個 token 時它不可能等於 `{0}`，`len(toks) > 1` 是冗餘",
     "drop-operand|_case_head|return w_end > j and k > w_end and line.startswith(\"in\", k) and line[k + 2:k + 3] in (\"\", \" \", \"\\t\", \";\")|1": "`w_end == j`（詞為空）時第二個 while 一步也不會前進，`k > w_end` 必然為假，兩式同為假",
     "drop-operand|_case_head|return w_end > j and k > w_end and line.startswith(\"in\", k) and line[k + 2:k + 3] in (\"\", \" \", \"\\t\", \";\")|2": "`k > w_end` 為假時 line[w_end] 是分隔字元或行尾，`startswith(\"in\", k)` 必然為假；只有跳過空白才可能讓 `in` 成立",
-    "drop-operand|_cmdsub_end_case|at_word = prev in SHELL_WORD_BREAK or prev == \"\\n\"|2": "R44 把這條說成「同第 0 條」（`==↔!=|1`）——**那個前提是錯的**：`|1` 被殺是因為單行輸入（`a#b`：`prev` 從來不是 `\\n`，`!=` 讓 `at_word` 恆真），與 `\\n` 到不到得了無關（R45 requirements 第 7 列）。這一條只在 `c == \"\\n\"` 那一支被走到（命令替換**本體**含換行）時才與原碼不同；那一支在整套 selftest、三組產生語料與 600 個多行構造（差分模糊測試，預設與 `--strict` 各一輪）裡執行 **0 次**（插樁計數）；呼叫端傳進來的文字有含換行的（selftest 裡 10 次），換行都在替換收尾**之後**。有界證據，不是證明；拿掉 `prev == \"\\n\"` 只在換行之後的 `#`／關鍵字判斷有差",
+    "drop-operand|_cmdsub_end_case|at_word = prev in SHELL_WORD_BREAK or prev == \"\\n\"|2": "【**函式層級不是等價突變**（R47 DA／Codex 更正）：等價靠呼叫端的不變式「替換本體不含換行」、不可達的分支；證據有界，不是證明——這一條是 (a) 的**承認的例外**，不是範例】R44 把這條說成「同第 0 條」（`==↔!=|1`）——**那個前提是錯的**：`|1` 被殺是因為單行輸入（`a#b`：`prev` 從來不是 `\\n`，`!=` 讓 `at_word` 恆真），與 `\\n` 到不到得了無關（R45 requirements 第 7 列）。這一條只在 `c == \"\\n\"` 那一支被走到（命令替換**本體**含換行）時才與原碼不同；那一支在整套 selftest、三組產生語料與 600 個多行構造（差分模糊測試，預設與 `--strict` 各一輪）裡執行 **0 次**（插樁計數）；呼叫端傳進來的文字有含換行的（selftest 裡 10 次），換行都在替換收尾**之後**。有界證據，不是證明；拿掉 `prev == \"\\n\"` 只在換行之後的 `#`／關鍵字判斷有差",
     "drop-operand|_cmdsub_end_case|if cases and cases[-1][0] == depth and cases[-1][1] == \"cmd\" and line.startswith((\";;\", \";&\"), k):|3": "`cases[-1][1]` 只有 pat／cmd 兩值，這一句把它設成 pat；已是 pat 時再設一次是冪等賦值",
     "drop-operand|_cmdsub_end_case|if not (cases and cases[-1][0] == depth and cases[-1][1] == \"pat\"):|2": "迴圈不變式「狀態是 pat ⇒ `cases[-1][0] == depth`」由其餘未突變的四處寫入維持，拿掉深度比較不改變任何分支",
     "drop-operand|_dq_parts|if c == \"\\\\\" and i + 1 < n and body[i + 1] in '$`\"\\\\\\n':|2": "`body` 由 shell_scan 追蹤過引號狀態的 code 切出，結尾前的反斜線必為偶數個，最後一個字元不可能是落單的 `\\`",
@@ -145,7 +146,7 @@ EXPECTED_SURVIVE = {   # id → 理由（依構造等價）。每一條都要能
     "drop-operand|shell_scan|if dq_ret and ((ch == \"`\" and not bt) if dq_ret[-1] == 0 else (ch == \")\" and csub + cpar < dq_ret[-1])):|4": "同上一條（另一個運算元）",
     "drop-operand|shell_scan|if dq_ret and ((ch == \"`\" and not bt) if dq_ret[-1] == 0 else (ch == \")\" and csub + cpar < dq_ret[-1])):|5": "csub、cpar 只在 ch == \")\" 時遞減，而本條件每個字元都檢查、一滿足就 pop；第一次降到門檻以下的字元必然是 `)`",
     "drop-operand|simple|if name == \"eval\" and args and all(a[\"lit\"] is not None for a in args):|2": "裸 `eval`（args 為空）時突變體進分支、遞迴剖析空字串並 return，原版落到後面也找不到任何可命中的分支，判定相同",
-    "±1→±2|_cmdsub_end_case|code.append(\";\"); k += 1; prev = \"\\n\"; continue|1": "R44 把這條說成「同第 0 條」（`==↔!=|1`）——**那個前提是錯的**：`|1` 被殺是因為單行輸入（`a#b`：`prev` 從來不是 `\\n`，`!=` 讓 `at_word` 恆真），與 `\\n` 到不到得了無關（R45 requirements 第 7 列）。這一條只在 `c == \"\\n\"` 那一支被走到（命令替換**本體**含換行）時才與原碼不同；那一支在整套 selftest、三組產生語料與 600 個多行構造（差分模糊測試，預設與 `--strict` 各一輪）裡執行 **0 次**（插樁計數）；呼叫端傳進來的文字有含換行的（selftest 裡 10 次），換行都在替換收尾**之後**。有界證據，不是證明；`k += 2` 只在換行之後那個字元有差",
+    "±1→±2|_cmdsub_end_case|code.append(\";\"); k += 1; prev = \"\\n\"; continue|1": "【**函式層級不是等價突變**（R47 DA／Codex 更正）：等價靠呼叫端的不變式「替換本體不含換行」、不可達的分支；證據有界，不是證明——這一條是 (a) 的**承認的例外**，不是範例】R44 把這條說成「同第 0 條」（`==↔!=|1`）——**那個前提是錯的**：`|1` 被殺是因為單行輸入（`a#b`：`prev` 從來不是 `\\n`，`!=` 讓 `at_word` 恆真），與 `\\n` 到不到得了無關（R45 requirements 第 7 列）。這一條只在 `c == \"\\n\"` 那一支被走到（命令替換**本體**含換行）時才與原碼不同；那一支在整套 selftest、三組產生語料與 600 個多行構造（差分模糊測試，預設與 `--strict` 各一輪）裡執行 **0 次**（插樁計數）；呼叫端傳進來的文字有含換行的（selftest 裡 10 次），換行都在替換收尾**之後**。有界證據，不是證明；`k += 2` 只在換行之後那個字元有差",
     "±1→±2|parse_case|self.i += 1|6": "到這一行時 tok() 已確定是非 None、非 esac 的詞元，前面的模式掃描必然前進，`self.i == i0` 的安全網不可達",
     # R42（`--since` 掃描新增的 `_fl_*`／`flat_*`／`fl_tokens`）：70 個存活突變體**逐一提殺手假設**再判（`test/opsweep.py` 之外的手寫候選，兩輪共約百個輸入），
     # 58 個殺掉——補 10 張 fixture（`*-r42-flat-gh-forms2`、`-command-edges4`、`-tails2`…）、selftest 的假 bash 檢查（`--check-compgen` 的版本字串與
@@ -391,7 +392,7 @@ _KILLERS_LOCK = None
 
 
 def _selftest_env(work):
-    """突變體的 selftest 用提早結束＋優先清單＋小的平行度（R44 提速）：突變體只要有一張 fixture 變紅就算殺掉，不必把 919 張跑完；
+    """突變體的 selftest 用提早結束＋優先清單＋小的平行度（R44 提速）：突變體只要有一張 fixture 變紅就算殺掉，不必把整套 fixture 跑完；
     殺過突變體的 fixture 按次數排在最前面（`_note_killer` 更新、`LINT_SELFTEST_FIRST` 傳給 selftest），後面的突變體很快就撞到殺手。
     `--jobs` 個突變體同時在跑，每個 selftest 內部只開 2 個。**判定不變**（有失敗＝殺、全過＝存活）；輸出只含到第一個失敗為止，所以「當掉」與「判錯」的分項計數
     可能與完整 selftest 不同，總殺數不變（39 個突變體的對照：殺／存活與分項標籤逐個相同）。`OPSWEEP_FULL_SELFTEST=1` 退回完整的 selftest（驗證提速沒有改判定用）。"""

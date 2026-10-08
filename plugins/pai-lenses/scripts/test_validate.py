@@ -15,7 +15,7 @@
 mutation」，CHANGELOG 寫「十個 mutation 逐一確認轉紅」。**那三句話會讓下一個維護者以為改動 `validate.py` 有測試網接著。**
 
 現在用 `scripts/mutation_check.py` 量：跑一次就知道哪些閘門沒有測試網。
-**最近一次完整量測（R46，於 `git archive` 副本上跑，`--no-cache --jobs 8`）：485 個靶 → 481 殺 / 0 存活 / 4 預期存活 / 0 靶壞**（耗時、負載與量測樹的 commit 寫在 CHANGELOG 的「verify R45」段，不抄在這裡：
+**最近一次完整量測（R48，於 `git archive` 副本上跑，`--no-cache --jobs 8`）：494 個靶 → 490 殺 / 0 存活 / 4 預期存活 / 0 靶壞**（耗時、負載與量測樹的 commit 寫在 CHANGELOG 的「verify R47」段，不抄在這裡：
 本檔屬於 `validate`／`neutralise` 兩組的輸入（整個 repo 除 CHANGELOG、快取檔本身、`.git`、`__pycache__`、`.pytest_cache`），檔頭每改一個字，那兩組共一百多個靶的快取就整批失效，所以會隨每次量測變動的數字只放 CHANGELOG）。
 這一輪沿用 0 靶。**量測提速（R44）**：突變測試用 `LINT_SELFTEST_FAILFAST`／`LINT_SELFTEST_JOBS`／`LINT_SELFTEST_FIRST` 讓 `lint` 守備單位的 selftest 平行、第一張失敗就停、殺手 fixture 先跑——只改順序與耗時、不改判定（39 個樣本與完整 selftest 殺／存活逐個相同，CHANGELOG 有計時）；
 睡眠不會讓一個靶被誤記成殺掉：驗證指令 rc≠0 才算殺，神諭的逾時用單調時鐘（睡眠不計入）、逾時前沒有任何證據就判「量不到」、不改退出碼（逾時前已觀察到外流或通道帶 PR 文字的，另依證據判；lint 放行時 rc=1）。

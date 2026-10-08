@@ -14,8 +14,8 @@ R37 時有兩件事它驗不到——要驗它們，未突變的神諭在 fixtur
 
 批次與編號（編號＝下面 `CHECKS` 的順序；每一項的內容在它自己的說明欄，這裡不再複述一份會過期的描述——R43 第 21 列：
 前一版的 docstring 逐批列舉、數字加起來少一項，而且寫著「二十六項」「三十項」卻沒有一個地方真的數過）：
-  R37 1–2；R39 3–8；R40 9–10；R42 11–15；R42 WP7 16–19；R42 WP8 20–26；R44 27–31；R46 32–38。
-共 38 項。守衛：`main()` 開頭比對這一行的總數與批次區間的終點是否等於 `len(CHECKS)`，不等就 rc=1——數字與清單不是兩份各自維護的東西。
+  R37 1–2；R39 3–8；R40 9–10；R42 11–15；R42 WP7 16–19；R42 WP8 20–26；R44 27–31；R46 32–38；R48 39–45。
+共 45 項。守衛：`main()` 開頭比對這一行的總數與批次區間的終點是否等於 `len(CHECKS)`，不等就 rc=1——數字與清單不是兩份各自維護的東西。
 
 用法：test/oracle_selfcheck.py      rc=0：每一項都照預期；rc=1：至少一項沒有（或上面的數字與 `CHECKS` 不符）。
 """
@@ -79,7 +79,7 @@ CHECKS = [
     ("文法外類別的閘門：lint 多拒絕 `echo`",
      {}, [HERE / "fixtures" / "ci-log-filter-good-strict-group-forms.yml"], 1, "歸了類卻沒宣告",
      {"lint": ('FL_INERT = frozenset(("echo", "printf",', 'FL_INERT = frozenset(("printf",')}),
-    # 以下三項（R42 WP7）：pipefail 探針與跨 step 通道。lint 放行一切（`lint-pass-all.sh`）時，神諭自己要看得出來。
+    # 以下四項（R42 WP7）：pipefail 探針與跨 step 通道。lint 放行一切（`lint-pass-all.sh`）時，神諭自己要看得出來。
     ("pipefail 探針：lint 放行、管線在 pipefail 關閉下完成",
      {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
      [HERE / "fixtures" / "ci-log-filter-bypass-r40-pf-or-on.yml"], 1, "繞過（pipefail"),
@@ -129,10 +129,23 @@ CHECKS = [
      [PROBES / "injection-after-timeout.yml"], 1, "注入：PR 文字被當程式碼執行"),
     ("稽核與探針的範圍：宣告而沒有觸發的 step 不進文法、不報繞過（R46）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
      [PROBES / "audit-declared-step-not-in-grammar.yml"], 0, "一致 1"),
-    ("稽核與探針的範圍：只含 `||` 的宣告 step 同樣不進文法（與 lint 的 `flat_trigger` 同一套規則；R46 宣稱查核）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
-     [PROBES / "audit-declared-step-or-only-not-in-grammar.yml"], 0, "一致 1"),
     ("稽核的負對照：日常的 `test`／`[`／`printf` 不誤報（R46）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
      [PROBES / "audit-benign-test-and-printf.yml"], 0, "一致 1"),
+    ("稽核與探針的範圍：只含 `||` 的宣告 step 同樣不進文法（與 lint 的 `flat_trigger` 同一套規則；R46 宣稱查核）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "audit-declared-step-or-only-not-in-grammar.yml"], 0, "一致 1"),
+    ("稽核與探針的範圍：宣告寫在 YAML 層（step 的註解行）而沒有觸發的 step 同樣不進文法（R48，R47 logic）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "audit-declared-step-yaml-level-not-in-grammar.yml"], 0, "一致 1"),
+    ("儀器完整性：步驟文字提到 `ORACLE_*`／`__orc_*` 判量不到、不判一致（R48，R47 security／Codex）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "audit-tamper-instrument-var.yml"], 0, "量不到 1"),
+    ("儀器完整性：相對路徑重導向截斷不到儀器檔（R48，R47 security）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "audit-tamper-relative-truncate.yml"], 1, "primitive 稽核"),
+    ("儀器完整性：記錄邊界字元偽造不了稽核記錄（R48，R47 Codex）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "audit-forged-record-boundary.yml"], 1, "primitive 稽核"),
+    ("儀器完整性：外部命令截斷不到跨 step 通道檔（R48，R48 宣稱查核 E 組）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "audit-tamper-channel-truncate.yml"], 1, "跨 step 通道"),
+    ("稽核檔解析與儀器完整性（單元測試；R48）", {}, ["--selftest-aud"], 0, "aud_violations ok"),
+    ("儀器目錄的隨機後綴不污染「宣告差分」：xtrace 會印出儀器路徑的 step 仍判一致（R48 量測 v9 抓到的回歸）", {},
+     ["--min-comparable", "1", HERE / "fixtures" / "ci-log-filter-good-r37o-module-misc-env-trace-declared-logfilter.yml"], 0, "一致 1"),
 ]
 
 

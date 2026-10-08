@@ -123,6 +123,7 @@ PR 文字固定是 `ORACLE-PR-TITLE-MARKER`：算術展開（`$(( PR_TITLE ))` �
 用法：test/oracle.py [FILE…]   不給檔案 → 全部 test/fixtures/ci-log-filter-*.yml
       test/oracle.py --print-kd-hash FILE STEP   印出 step 的 `kd_hash`（新增或更新 KNOWN_DISAGREE 條目時用）
       test/oracle.py --selftest-severity         `select_most_severe` 的單元測試
+      test/oracle.py --selftest-aud              `aud_violations` 的單元測試（記錄編碼、init／fin、損毀記錄；R48）
       環境變數 `ORACLE_LINT=<path>` 換掉被對帳的 lint（只給突變測試用：量「神諭抓不抓得到某個 lint 突變」）。
 退出碼：神諭用的 bash 不在 lint 檔頭 `# ORACLE-BASH-SUPPORTED:` 的集合裡 → 1（`bash_supported`，第 13 列）；神諭與 lint 的
 `GH_SAFE_EXPRS` 不同步 → 載入時具名退出；有 `KNOWN_DISAGREE` 之外的不一致（含方向或雜湊不符的條目）→ 1；`KNOWN_DISAGREE` 裡的項目變成一致（理由不再成立）→ 1；
@@ -167,7 +168,7 @@ KNOWN_DISAGREE = {
         {"dir": "誤擋", "hash": "sha256:aa2fa76f86d686a69925a4ee1ecd7ac2eb07cd1033b861b13ff1e57b1ae8efee", "why": "`BASH_XTRACEFD` 單獨設定不會打開 xtrace（lint 的訊息也這樣寫）；擋的是它與 xtrace 並存時把 trace 轉到別的 fd。"},
     ("ci-log-filter-bypass-r37b-fd-bash-xtracefd-assign.yml", "run assigns BASH_XTRACEFD"): {"dir": "誤擋", "hash": "sha256:9a750ad6cd65ee44131b5fe4eb4a53085d367ae1d61519a0cd1916ff91a9e988", "why": "同上：run 裡指派。"},
     ("ci-log-filter-bypass-r37b-env-policy-ENV.yml", "step env ENV"):
-        {"dir": "誤擋", "hash": "sha256:aa2fa76f86d686a69925a4ee1ecd7ac2eb07cd1033b861b13ff1e57b1ae8efee", "why": "bash 只在互動**且** POSIX 模式啟動時讀 `ENV`（5.3.15 用 pty 實測：`--posix -i` 讀，單獨 `-i` 或單獨 `--posix` 不讀）；擋的是 `shell:` 換成 sh 或互動時它會執行別的檔。"},
+        {"dir": "誤擋", "hash": "sha256:aa2fa76f86d686a69925a4ee1ecd7ac2eb07cd1033b861b13ff1e57b1ae8efee", "why": "bash 只在互動**且** POSIX 模式的 shell 啟動時讀 `ENV`（5.3.15 用 pty 實測：`--posix -i`、以及標準輸入與標準錯誤都是終端機的單獨 `--posix`〔那也算互動；stderr 導到 /dev/null 就不讀〕都讀；`-c` 的非互動執行與單獨 `-i` 不讀；R47 DA 在 5.2.21 同結論）。runner 的 `shell:`（含 `sh -e {0}`）跑的是檔案、非互動，不會讀，所以 lint 擋的是機制、不是 runner 目前的行為。"},
     ("ci-log-filter-bypass-r37b-xtrace-verbose-set-o.yml", "verbose on a pipe-filtered step"):
         {"dir": "誤擋", "hash": "sha256:be52a2ebb9fe176759f98a26723285436ac273ddf27def8201c4933b9a07ad0d", "why": "`set -o verbose` 印的是原始碼；這一步的原始碼裡沒有 PR 文字——run 裡寫了 runner 運算式時（runner 先代換）才外流，"
         "那一類另由運算式規則擋。擋的是機制。"},
@@ -492,18 +493,47 @@ elif _m is None and LINT == (HERE / "lint-ci-log-filter.sh").resolve():
     sys.exit("✗ %s 裡找不到 FL_PRINTF_CONVERSIONS——神諭無法確認兩份同步" % LINT)
 
 
-def aud_violations(raw):
-    """`ORACLE_AUD` 的內容（PRELUDE 的包裝函式寫的：每筆以 \\x1e 結尾、欄位以 \\x1f 結尾）→ 文法形狀之外的觀察（字串清單）。
-    `test`／`[`：實際 argv 不是三種形狀（零或一個運算元、一元運算子加運算元、運算元加二元運算子加運算元）；`printf`：第一個參數是選項、或格式不在封閉的轉換列舉裡；
-    `trusted`：信任變數的值變了（每個命令之前、任何行程都比對，含管線的子殼層；例：`{RUNNER_TEMP[0]}>`、`printf '%n' HOME`）。這是**文法性質**的稽核——不問 PR 文字有沒有出現在 log。"""
-    out = []
-    for rec in raw.split("\x1e"):
-        f = rec.split("\x1f")
-        if f and f[-1] == "":
-            f.pop()
-        if not f:
-            continue
-        name, a = f[0], f[1:]
+ORC_NAME_RE = re.compile(r"ORACLE_|__orc_")
+AUD_INTEGRITY = "儀器："
+
+
+def aud_violations(raw, complete=True):
+    """稽核檔的內容（PRELUDE 的 `__orc_aud` 寫的位元組：每筆記錄是「名稱、欄位數、各欄位」，每個都以 NUL 結尾）→ 觀察（字串清單）。
+    **文法性質的違規**：`test`／`[`：實際 argv 不是三種形狀（零或一個運算元、一元運算子加運算元、運算元加二元運算子加運算元）；`printf`：第一個參數是選項、或格式不在封閉的轉換列舉裡；
+    `trusted`：信任變數的值變了（每個命令之前、任何行程都比對，含管線的子殼層；例：`{RUNNER_TEMP[0]}>`、`printf '%n' HOME`）。這是**文法性質**的稽核——不問 PR 文字有沒有出現在 log。
+    **儀器完整性**（R48，#33 verify R47；以 `AUD_INTEGRITY` 開頭的條目，不是違規）：稽核檔沒有 `init` 開頭（被截斷或改寫）、記錄解析不出來（損毀或被截斷）、`complete`（這次執行跑完了，不是逾時）卻沒有任何 `fin`——
+    這些都表示儀器不可信；呼叫端在（`--strict` 檔、lint 判 pass 或 RULE-red、step 在文法內、判定還不是「繞過」）時判「量不到」，不當成「沒有違規」。`raw` 是 bytes（也接受 str；目前沒有單元測試用到那個分支）。"""
+    if isinstance(raw, str):
+        raw = raw.encode("utf-8", "replace")
+    toks = raw.split(b"\0")
+    out, recs, bad = [], [], None
+    if toks and toks[-1] == b"":
+        toks.pop()
+    elif toks:
+        bad = "最後一筆記錄沒有結尾"
+    i = 0
+    while i < len(toks) and bad is None:
+        name = toks[i].decode("utf-8", "replace")
+        if i + 1 >= len(toks):
+            bad = "記錄 `%s` 缺欄位數" % name[:20]
+            break
+        try:
+            n = int(toks[i + 1])
+        except ValueError:
+            bad = "記錄 `%s` 的欄位數不是整數" % name[:20]
+            break
+        if n < 0 or i + 2 + n > len(toks):
+            bad = "記錄 `%s` 的欄位數 %d 超出檔案" % (name[:20], n)
+            break
+        recs.append((name, [t.decode("utf-8", "replace") for t in toks[i + 2:i + 2 + n]]))
+        i += 2 + n
+    if bad:
+        out.append(AUD_INTEGRITY + "稽核檔解析不出來（%s）" % bad)
+    if not recs or recs[0][0] != "init":
+        out.append(AUD_INTEGRITY + "稽核檔沒有 init 開頭（被截斷或改寫）")
+    if complete and not any(n == "fin" for n, _ in recs):
+        out.append(AUD_INTEGRITY + "這次執行跑完了，稽核檔卻沒有 fin 記錄")
+    for name, a in recs:
         if name == "trusted":
             out.append("信任變數 `%s` 在這個 step 裡的值變了" % (a[0] if a else "?"))
         elif name in ("test", "["):
@@ -521,7 +551,7 @@ def aud_violations(raw):
 
 # 已知類別在 repo 自己的 fixture 集（不給檔案參數）上的**確切**條數（R37，R36 第 2 列；同 selftest 門檻 R24 F9 的理由：
 # 寫成 `>=` 而實際更高時，那個差額沒有網——刪掉一張 G 範例 fixture 仍然綠）。must-fail 探針不算在內。
-# R46：301 → 264——51 個簽名消失（40 個改判「一致」：primitive 稽核讓原本只能說「沒有觀察到外流」的 step 直接看到違規；11 個是 `restrict-r44-test-shapes-corpus` 的第 016–026 個隨一元運算子清單補全移到 `good-r46-test-harmless-unary`、lint 改放行；見各 fixture 檔頭的 R46 註記），再加 R46 新 fixture 仍簽名的 14 個 step（大括號與具名 fd 各一、was-good 四、`$GITHUB_ENV` 鍵與特殊變數六、區域 opsweep 補的 trap 訊號與非字面 printf 格式各一）。
+# R46：301 → 264——51 個簽名消失（40 個改判「一致」：primitive 稽核看到 builtin 收到的 argv 超出 lint 的形狀——**不代表危險**：其中有無害的誤擋，如 `[ "$A" != b ]`（只有它在 301 之內；`printf '%ld'` 在 R44 的 lint 是放行的、從沒簽過），誤擋帳本不再記它們〔R47 第 5 列；R48 決定先揭露、不重簽 8 張 fixture 裡的 40 個 step〕；11 個是 `restrict-r44-test-shapes-corpus` 的第 016–026 個隨一元運算子清單補全移到 `good-r46-test-harmless-unary`、lint 改放行；見各 fixture 檔頭的 R46 註記），再加 R46 新 fixture 仍簽名的 14 個 step（大括號與具名 fd 各一、was-good 四、`$GITHUB_ENV` 鍵與特殊變數六、區域 opsweep 補的 trap 訊號與非字面 printf 格式各一）。
 FIXTURE_CLASS_TOTALS = {"G": 8, "S-2": 3, "文法外": 264, "文法外-without-proc": 2}
 # `文法外-without-proc` 只在沒有 /proc 的平台成立（見 `check_file` 的平台變體）；有 /proc 時預期是 0。
 FIXTURE_CLASS_PLATFORM_ONLY = frozenset(("文法外-without-proc",))
@@ -604,6 +634,7 @@ __orc_fin() {
   if [[ $__t = "$__orc_want" ]]; then echo "fin $BASHPID ok" >> "$ORACLE_PF"
   else echo "fin $BASHPID dbg-changed" >> "$ORACLE_PF"; fi
   __orc_chk
+  __orc_aud fin
 }
 __orc_ret() { return "$1"; }
 __orc_tail=$'\n:'
@@ -643,13 +674,18 @@ __orc_chk() {
     if [[ ${!__n-<unset>} != "${__orc_tv0[$__n]}" ]]; then __orc_aud trusted "$__n"; __orc_tv0[$__n]=${!__n-<unset>}; fi
   done
 }
+# R48（#33 verify R47 第 4 列〔security／Codex 第 1 條／DA〕；記錄編碼與原子寫入是 Codex 第 2 條）：記錄是「名稱、欄位數、各欄位」，每個都以 NUL 結尾——argv 不可能含 NUL，所以邊界無法偽造（前一版用 0x1f／0x1e 分隔，printf 的格式含這兩個
+# 字元時可以把 `%n` 藏掉）；整筆記錄用**一次** printf 寫完（記錄約 1 KB 內是單次 write、不交錯；更長的記錄 bash 的 printf 會分多次 write，同時寫會交錯——宣稱查核在 macOS bash 5.3.15 實測 1000 位元組不交錯、1500 位元組交錯；Linux 未測）；路徑存成唯讀的 `__orc_audp`，步驟改 `ORACLE_AUD` 不影響記錄。
 __orc_aud() {
-  builtin printf '%s\037' "$@" >> "$ORACLE_AUD"
-  builtin printf '\036' >> "$ORACLE_AUD"
+  local __f='%s\0%d\0' __a
+  for __a in "${@:2}"; do __f+='%s\0'; done
+  builtin printf "$__f" "$1" "$(( $# - 1 ))" "${@:2}" >> "$__orc_audp"
 }
 test() { local -; set +xv; __orc_aud test "$@"; builtin test "$@"; }
 [() { local -; set +xv; __orc_aud '[' "$@"; builtin '[' "$@"; }
 printf() { local -; set +xv; __orc_aud printf "$@"; builtin printf "$@"; }
+readonly __orc_audp=$ORACLE_AUD
+__orc_aud init
 for __n in "${__orc_tvn[@]}"; do __orc_tv0[$__n]=${!__n-<unset>}; done
 __orc_init
 '''
@@ -694,19 +730,23 @@ def run_script(run, bash, stub_bin, yaml_env=None, extra=False, inject=None):
     marker_lines: (stdout, stderr) 各自「含 PR 文字的行」的多重集合（Counter），臨時目錄路徑換成 `<TMP>`——
       已知類別 G 的差分比的是它（`classify_piped_leak`）：兩次執行的臨時目錄不同，bash 的錯誤訊息又帶腳本路徑。
     yaml_env: 從 YAML `env:` 收來的變數（R37，R36 第 8 列）；神諭自己的 PATH／HOME／PR_TITLE／ORACLE_MARK 一律蓋過它。
-    extra=True 時另外回傳第五項 dict：`pf`（`pf_observation`）與 `chan`（帶 PR 文字的通道名，見 `CHANNELS`）、`inject`（哨兵檔有沒有東西）。
+    extra=True 時另外回傳第五項 dict：`pf`（`pf_observation`）與 `chan`（帶 PR 文字的通道名，見 `CHANNELS`）、`inject`（哨兵檔有沒有東西）、`aud`（`aud_violations` 的觀察）。
     inject：`INJECT_PAYLOADS` 的一組——PR 相關的環境變數設成它（不是 PR_MARKER），`$ORACLE_INJECT` 指到哨兵檔（R44，第 1–3 列）。"""
     with tempfile.TemporaryDirectory() as d:
-        mark = os.path.join(d, "mark")
+        # R48（#33 verify R47 第 4 列；宣稱查核 E 組）：儀器檔（mark／pf／inject／aud）與跨 step 通道檔放在步驟 cwd **底下名稱帶隨機後綴、以 `.` 開頭的子目錄**——前一版放在 cwd 本身，`: > aud`、
+        # `tee chan-GITHUB_E""NV < /dev/null`（相對路徑重導向或外部命令）能把它們截斷、讓稽核與通道觀察失明；第二版固定叫 `.orc/`，外部命令（`tee .orc/inject`）仍到得了。現在步驟拿不到名字
+        # （`ls -a` 與 glob 仍看得到：**這不是 sandbox**，fixture 受信）；稽核檔另有 `init`／`fin`、解析、唯讀路徑的檢查（`aud_violations`），其餘檔案沒有完整性檢查。
+        inst = tempfile.mkdtemp(prefix=".orc-", dir=d)
+        mark = os.path.join(inst, "mark")
         open(mark, "w").close()
-        pf = os.path.join(d, "pf")
+        pf = os.path.join(inst, "pf")
         open(pf, "w").close()
-        chan = {c: os.path.join(d, "chan-" + c) for c in CHANNELS}
+        chan = {c: os.path.join(inst, "chan-" + c) for c in CHANNELS}
         for c in chan.values():
             open(c, "w").close()
         script = os.path.join(d, "s.sh")
         with open(script, "w") as fh:
-            # 收尾命令由 PRELUDE 的 `trap ':' EXIT` 提供——**不要**在這裡再補文字，
+            # 收尾命令由 PRELUDE 的 EXIT trap（`__orc_fin`；使用者的 `trap <動作> EXIT` 經 `trap` 函式接在它後面）提供——**不要**在這裡再補文字，
             # 那正是 R32 DA-6 抓到的缺陷（heredoc 會吞掉它）。
             fh.write(PRELUDE); fh.write(run); fh.write("\n")
         env = dict(yaml_env or {})
@@ -718,10 +758,10 @@ def run_script(run, bash, stub_bin, yaml_env=None, extra=False, inject=None):
                     "PR_TITLE": PR_MARKER, "HOME": d, "PS4": PS4_MARK,
                     "RUNNER_TEMP": runner_temp, "GITHUB_WORKSPACE": d})
         env.update(chan)
-        inj_file = os.path.join(d, "inject")
+        inj_file = os.path.join(inst, "inject")
         open(inj_file, "w").close()
         env["ORACLE_INJECT"] = inj_file
-        aud_file = os.path.join(d, "aud")
+        aud_file = os.path.join(inst, "aud")
         open(aud_file, "w").close()
         env["ORACLE_AUD"] = aud_file
         if inject is not None:
@@ -733,7 +773,7 @@ def run_script(run, bash, stub_bin, yaml_env=None, extra=False, inject=None):
             got_chan = [c for c, path in chan.items() if PR_MARKER in open(path, errors="replace").read()]
             return {"pf": pf_observation(recs), "chan": got_chan,
                     "inject": INJECT_MARKER in open(inj_file, errors="replace").read(),
-                    "aud": aud_violations(open(aud_file, errors="replace").read())}
+                    "aud": aud_violations(open(aud_file, "rb").read())}
         try:
             # stdin **一定要**是 /dev/null：繼承呼叫端的 stdin 會讓任何讀 stdin 的指令卡住，
             # 於是「量不到」變成隨呼叫環境而定的東西（R31 自查：同一個 fixture 在終端機下逾時、
@@ -745,21 +785,23 @@ def run_script(run, bash, stub_bin, yaml_env=None, extra=False, inject=None):
             # TIMEOUT_S 慢的 step 就變成 rc=0。這一次不拿來差分（obs=None），只回報已經看到的外流。
             so, se = e.stdout or b"", e.stderr or b""
             leaked = (PR_MARKER.encode() in so, PR_MARKER.encode() in se)
-            mlines = tuple(collections.Counter(l.replace(d, "<TMP>") for l in s.decode("utf-8", "replace").split("\n")
+            mlines = tuple(collections.Counter(l.replace(inst, "<INST>").replace(d, "<TMP>") for l in s.decode("utf-8", "replace").split("\n")
                                                if PR_MARKER in l) for s in (so, se))
             # R44（#33 verify R43 第 7 列）：通道檔裡已經寫進去的 PR 文字也是事實，不因為之後逾時而撤銷（stdout／stderr 同一個原則）。
             got_chan = [c for c, path in chan.items() if PR_MARKER in open(path, errors="replace").read()]
             return ("timeout", None, leaked, mlines) + (({"pf": "unmeasured", "chan": got_chan,
                                                            "inject": INJECT_MARKER in open(inj_file, errors="replace").read(),
-                                                           "aud": aud_violations(open(aud_file, errors="replace").read())},) if extra else ())
+                                                           "aud": aud_violations(open(aud_file, "rb").read(), complete=False)},) if extra else ())
         got = open(mark).read().split("\n")
         # 分開記 stdout 與 stderr：外流走哪一條流是歸類的輸入（S-2 只可能走 stderr；管線自己印到 stdout 一律是繞過）。
         leaked = (PR_MARKER.encode() in r.stdout, PR_MARKER.encode() in r.stderr)
         # 暫存目錄換成 `<TMP>`（R42 自查）：bash 的錯誤訊息帶腳本路徑，每次執行的暫存目錄不同——前一版的差分（`real_declaration`）
         # 因此在任何會印 bash 錯誤的宣告 step 上都判「不是宣告」（`gen-g-d-008`：`[ -n a{b,c} ]` 的錯誤訊息）。`mlines` 早就這樣做。
-        tmpb = d.encode()
-        obs = (r.returncode, r.stdout.replace(tmpb, b"<TMP>"), r.stderr.replace(tmpb, b"<TMP>"), sorted(got))
-        mlines = tuple(collections.Counter(l.replace(d, "<TMP>") for l in s.decode("utf-8", "replace").split("\n")
+        # R48：儀器目錄（`.orc-` 加隨機後綴）先換成 `<INST>`——它在 `d` 底下，不先換的話每次執行的後綴不同，xtrace 之類會印出路徑的 step 在宣告差分裡每次都「不同」
+        # （量測 v9 抓到：`good-r37o-module-misc-env-trace-declared-logfilter` 從一致變量不到）。
+        tmpb, instb = d.encode(), inst.encode()
+        obs = (r.returncode, r.stdout.replace(instb, b"<INST>").replace(tmpb, b"<TMP>"), r.stderr.replace(instb, b"<INST>").replace(tmpb, b"<TMP>"), sorted(got))
+        mlines = tuple(collections.Counter(l.replace(inst, "<INST>").replace(d, "<TMP>") for l in s.decode("utf-8", "replace").split("\n")
                                            if PR_MARKER in l) for s in (r.stdout, r.stderr))
         o = "piped" if "piped" in got else ("called-unpiped" if any(l.startswith("called ") for l in got) else "not-invoked")
         return (o, obs, leaked, mlines) + ((more(),) if extra else ())
@@ -781,13 +823,19 @@ def _without_or_lists(run):
     return "".join(out)
 
 
-def in_grammar(run):
-    """`--strict` 的正面文法對這個 step 有宣稱嗎（R46，#33 verify R45 logic 第 5 列）：宣告了 `# LOG-FILTER:` 而沒有觸發（剔除 `||` 之後的 run 文字沒有 `|`、沒提到 `GITHUB_ENV`／`GITHUB_PATH`）的
+def in_grammar(run, yaml_declared=False):
+    """`--strict` 的正面文法對這個 step 有宣稱嗎（R45 第 10 列〔logic〕）：宣告了 `# LOG-FILTER:` 而沒有觸發（剔除 `||` 之後的 run 文字沒有 `|`、沒提到 `GITHUB_ENV`／`GITHUB_PATH`）的
     step 不進文法（lint 檔頭 L3）——lint 對它放行是對的，神諭的 primitive 稽核與注入探針都不該把它報成「繞過」。
-    判準複製 lint 的 `flat_trigger` 的**第一種讀法**（原文）。R46 宣稱查核更正：前一版只看 `|` 字元，宣稱「同一把尺」，而 `flat_trigger` 先剔除 `||`，
-    所以只含 `||` 的宣告 step 被神諭當成在文法內（`audit-declared-step-or-only-not-in-grammar`）。`flat_trigger` 的**第二種讀法**（`flat_substitute` 把字面常數代換之後才出現的 `|`，
-    如 `${{ '|' }}`）神諭沒有複製：那種 step 神諭當成不在文法內（與前一版同），不會多報，但也不會對它跑稽核與探針。"""
-    return not (MARKER_RE.search(run) and "|" not in _without_or_lists(run) and not _GH_TRIGGER_RE.search(run))
+    **宣告有三個來源**（與 lint 的 `declared` 一致）：run 區塊內的註解（`MARKER_RE`）、step 範圍內的 YAML 註解行、`run:` 行尾註解（後兩者由 `yaml_declaration` 判，呼叫端算好傳 `yaml_declared`；
+    test.yml 自己用的是 YAML 層那種）；R47 之前只認第一種，YAML 層宣告而沒有觸發的 step 被當成在文法內、稽核報成「繞過」。
+    觸發條件複製 lint 的 `_fl_declared_trigger` 的**第一種讀法**（對原文跑 `flat_trigger`：先剔除前面不是反斜線的 `||`，再找 `|`）。R46 宣稱查核更正：前一版只看 `|` 字元、宣稱「同一把尺」，
+    所以只含 `||` 的宣告 step 被神諭當成在文法內（`audit-declared-step-or-only-not-in-grammar`）。**第二種讀法**（對 `flat_substitute` 之後的文字再跑一次 `flat_trigger`；兩種讀法 or 起來）：
+    R47 logic 的實例是 `echo x \\${{ '' }}||cat`——原文 `||` 前面是 `}`、被剔除當「或」，字面常數代換成空字串之後反斜線與 `||` 相鄰，第二種讀法觸發（lint `--strict` rc=1，對照沒有反斜線的 rc=0）。
+    神諭三個呼叫點傳進來的都是**代換之後**的 run（`substitute_runner_exprs`）：運算式全是字面常數時它等於第二種讀法的文字；非字面運算式在神諭是換成 payload、在 lint 的第二種讀法是刪掉，兩者不同
+    （例：`echo x \\${{ github.event.pull_request.title }}||cat` lint 觸發、神諭的 `in_grammar` 回 False）。兩個方向的差異都存在：原文才觸發、代換後不觸發的有 `fixtures/ci-log-filter-restrict-r42-declared-opsweep.yml`
+    第三步（`a |${{ null }}| b` 代換成 `a || b`，神諭看不到、lint 判 RULE）；非字面運算式裡的 `|` 那一型沒有 fixture。這些是殘餘，不是已修（R48 更正：這個 docstring 前兩版都把方向寫錯）。"""
+    declared = bool(yaml_declared) or bool(MARKER_RE.search(run))
+    return not (declared and "|" not in _without_or_lists(run) and not _GH_TRIGGER_RE.search(run))
 
 
 def real_declaration(run, bash, stub_bin, baseline, yaml_env=None):
@@ -1259,6 +1307,37 @@ def selftest_severity():
     return 0
 
 
+def selftest_aud():
+    """`--selftest-aud`：`aud_violations` 的單元測試（R48，#33 verify R47 第 4 列〔Codex 第 2 條〕；`oracle_selfcheck.py` 呼叫），合成的稽核檔位元組，不跑 bash。
+    覆蓋：合法的最小串流無違規；`%n` 格式、`-v` 運算元、信任變數被改寫各報一條；**偽造的記錄邊界字元（0x1e／0x1f）不再藏得住 `%n`**；沒有 init、沒有 fin（跑完的執行）、
+    逾時（`complete=False`）不要求 fin、截斷、欄位數不是整數、欄位數超出檔案、最後一筆沒結尾各**至少**報一條儀器完整性（損毀與截斷類連帶報「沒有 fin」，最後一筆沒結尾連「沒有 init」也報）；逾時不要求 fin、不報。"""
+    def rec(name, *fields):
+        return b"".join(x.encode() + b"\0" for x in (name, str(len(fields)), *fields))
+    init, fin = rec("init"), rec("fin")
+    integ = lambda out: [x for x in out if x.startswith(AUD_INTEGRITY)]
+    viol = lambda out: [x for x in out if not x.startswith(AUD_INTEGRITY)]
+    cases = [
+        ("合法的最小串流", aud_violations(init + rec("printf", "%s\n", "x") + rec("test", "-n", "a") + fin), lambda o: o == []),
+        ("`%n` 格式", aud_violations(init + rec("printf", "%n", "Z") + fin), lambda o: len(viol(o)) == 1 and not integ(o)),
+        ("`test -v` 運算元", aud_violations(init + rec("test", "-v", "X") + fin), lambda o: len(viol(o)) == 1 and not integ(o)),
+        ("信任變數被改寫", aud_violations(init + rec("trusted", "HOME") + fin), lambda o: len(viol(o)) == 1 and "HOME" in o[0]),
+        ("偽造記錄邊界字元藏不住 `%n`", aud_violations(init + rec("printf", "%s\x1eignored\x1f%n", "x", "Z") + fin), lambda o: len(viol(o)) == 1),
+        ("沒有 init", aud_violations(rec("printf", "%n", "Z") + fin), lambda o: len(integ(o)) == 1 and len(viol(o)) == 1),
+        ("跑完卻沒有 fin", aud_violations(init + rec("test", "-n", "a")), lambda o: len(integ(o)) == 1),
+        ("逾時不要求 fin", aud_violations(init + rec("test", "-n", "a"), complete=False), lambda o: o == []),
+        ("空檔（被截斷）", aud_violations(b""), lambda o: len(integ(o)) >= 1),
+        ("最後一筆沒有結尾", aud_violations(init + b"printf\x001\x00%n"), lambda o: any("沒有結尾" in x for x in o)),
+        ("欄位數不是整數", aud_violations(init + b"printf\x00x\x00"), lambda o: any("不是整數" in x for x in o)),
+        ("欄位數超出檔案", aud_violations(init + b"printf\x005\x00a\x00"), lambda o: any("超出檔案" in x for x in o)),
+    ]
+    for what, got, ok in cases:
+        if not ok(got):
+            print("✗ aud_violations（%s）= %r" % (what, got))
+            return 1
+    print("aud_violations ok（%d 組）" % len(cases))
+    return 0
+
+
 def run_lint(largs, f):
     return subprocess.run(["bash", str(LINT)] + largs + [str(f)], capture_output=True, text=True)
 
@@ -1330,6 +1409,7 @@ def check_file(f, text, bash, stub_bin):
                 res["uncomparable"].append(key)
                 res["failures"].append("%s（第 %d 行）：宣告了 ORACLE-COMPARABLE，卻不可比（%s）" % (name, a + 1, shell_note))
             continue
+        yaml_decl_step = yaml_declaration(text, a, b, bodies)   # R48：YAML 層的 `# LOG-FILTER:` 宣告（`in_grammar` 的第二個來源）
         def judge(run, o, obs, leaked, mlines, more):
             """一次執行的判定（R42 WP8 抽出來：每一組 payload 各判一次，再選一份）。回傳 (verdict, classes, 量不到?, lint)。"""
             unm = False
@@ -1458,9 +1538,17 @@ def check_file(f, text, bash, stub_bin):
                     unm = True
             # **primitive 稽核的疊加**（R46，#33 verify R45 第 1–3 列）：`--strict` 另外宣稱「文法收的 builtin 只會收到文法點名的形狀」——`test`／`[` 的 argv 在三種形狀裡、`printf` 的格式在封閉的轉換列舉裡、
             # 信任變數不被改寫。神諭看的是 builtin **實際**收到什麼（PRELUDE 的包裝函式），與 PR 文字有沒有出現在 log 無關，所以不需要任何 payload：lint 放行 ∧ 有違反 ⇒ 繞過；
-            # lint 擋下 ∧ 有違反 ⇒ 擋下是對的，一致（取代「誤擋」）。逾時之前已經記下的也算（同通道證據的原則）。宣告而沒有觸發的 step 不進文法（`in_grammar`）。
-            aud = more.get("aud") if isinstance(more, dict) else None
-            if aud and "--strict" in largs and lint in ("pass", "RULE-red") and in_grammar(run):
+            # lint 擋下 ∧ 有違反 ⇒ 擋下是對的，一致（取代「誤擋」；**「違反」是超出 lint 的形狀，不代表危險**——無害的誤擋如 `[ "$A" != b ]`、`printf '%ld'` 也在這裡被判一致，R47 第 5 列）。逾時之前已經記下的也算（同通道證據的原則）。宣告而沒有觸發的 step 不進文法（`in_grammar`）。
+            # R48（#33 verify R47 security／Codex）：**儀器完整性**——步驟文字提到 `ORACLE_*`／`__orc_*`，或稽核檔沒有 init／fin、解析不出來，儀器就不可信：判「量不到」，不判一致
+            # （已經看到外流的繞過不改：外流是事實）。這不是 sandbox：fixture 受信，這一層擋的是意外與兩個具體的失明法（改儀器變數、截斷儀器檔）。
+            aud_all = more.get("aud") if isinstance(more, dict) else None
+            aud = [x for x in (aud_all or []) if not x.startswith(AUD_INTEGRITY)]
+            integ = [x for x in (aud_all or []) if x.startswith(AUD_INTEGRITY)]
+            if "--strict" in largs and lint in ("pass", "RULE-red") and in_grammar(run, yaml_decl_step) \
+                    and (integ or ORC_NAME_RE.search(run)) and not verdict.startswith("不一致：繞過"):
+                verdict = "量不到（儀器不可信：%s）" % (integ[0][len(AUD_INTEGRITY):] if integ else "步驟文字提到神諭的儀器變數 `ORACLE_*`／`__orc_*`")
+                classes, unm = [], True
+            elif aud and "--strict" in largs and lint in ("pass", "RULE-red") and in_grammar(run, yaml_decl_step):
                 if lint == "pass" and not verdict.startswith("不一致：繞過"):
                     verdict, classes, unm = "不一致：繞過（primitive 稽核：%s）" % aud[0], [], False
                 elif lint == "RULE-red" and not verdict.startswith("一致"):
@@ -1503,7 +1591,7 @@ def check_file(f, text, bash, stub_bin):
             # 與 R44 自己對通道證據的原則（「後續逾時不抵銷先前已發生的效果」）不一致；探針自己逾時也沒關係，哨兵在逾時之前寫進去就看得到。(2) **只在文法內的 step 跑**（`in_grammar`）：
             # 宣告了 `# LOG-FILTER:` 而沒有觸發的 step 本來就不進正面文法（L3），探針不該把它報成未知繞過。
             timed = o == "timeout" and unm
-            if ("--strict" in largs and "$" in run0 and in_grammar(run)
+            if ("--strict" in largs and "$" in run0 and in_grammar(run, yaml_decl_step)
                     and ((lint == "pass" and (verdict.startswith("一致") or timed))
                          or (lint == "RULE-red" and (verdict.startswith("不一致：誤擋") or timed)))
                     and (not unm or timed)):
@@ -1614,6 +1702,8 @@ def main(argv):
         return print_kd_hash(argv[1:])
     if argv == ["--selftest-severity"]:
         return selftest_severity()
+    if argv == ["--selftest-aud"]:
+        return selftest_aud()
     # `--min-comparable N`（R44，#33 verify R43 第 22 列）：可比的 step（判一致或不一致，不含「不可比」「量不到」）少於 N 個就 rc=1。
     # 用在「這一組檔本來就該量得到東西」的地方——CI 的 macOS 子集：前一版那一步的 11 個 fixture step 全是 `lint=PARSE` 的「不可比」，
     # 只是一條絆線，rc=0 與「什麼都沒量」看不出差別。
