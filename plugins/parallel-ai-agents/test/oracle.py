@@ -735,7 +735,11 @@ def run_script(run, bash, stub_bin, yaml_env=None, extra=False, inject=None):
     yaml_env: 從 YAML `env:` 收來的變數（R37，R36 第 8 列）；神諭自己的 PATH／HOME／PR_TITLE／ORACLE_MARK 一律蓋過它。
     extra=True 時另外回傳第五項 dict：`pf`（`pf_observation`）與 `chan`（帶 PR 文字的通道名，見 `CHANNELS`）、`inject`（哨兵檔有沒有東西）、`aud`（`aud_violations` 的觀察）。
     inject：`INJECT_PAYLOADS` 的一組——PR 相關的環境變數設成它（不是 PR_MARKER），`$ORACLE_INJECT` 指到哨兵檔（R44，第 1–3 列）。"""
-    with tempfile.TemporaryDirectory() as d:
+    # `ignore_cleanup_errors=True`（Python 3.10+；R48 量測鏈 v10，#33）：步驟留下的背景行程（`cmd >/dev/null 2>&1 &`，不握著 stdout／stderr，`subprocess.run` 不等它）
+    # 在清理時還在寫儀器目錄——`rmtree` 剛刪掉通道檔，`>> "$GITHUB_ENV"` 又建回來，`rmdir` 報 `OSError: [Errno 66] Directory not empty`，整支神諭帶著 traceback 崩潰，
+    # mutation 的前置檢查（未突變的基準驗證）因此隨機紅了一次。清理發生在所有觀測都讀完之後，清不乾淨只是留下一個暫存目錄，不改變任何判定，所以吞掉這一類錯誤；
+    # 背景行程本身不殺（既有行為，也沒有東西要靠它被殺）。探針：`oracle-probes/straggler-writes-during-cleanup.yml`。
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
         # R48（#33 verify R47 第 4 列；宣稱查核 E 組）：儀器檔（mark／pf／inject／aud）與跨 step 通道檔放在步驟 cwd **底下名稱帶隨機後綴、以 `.` 開頭的子目錄**——前一版放在 cwd 本身，`: > aud`、
         # `tee chan-GITHUB_E""NV < /dev/null`（相對路徑重導向或外部命令）能把它們截斷、讓稽核與通道觀察失明；第二版固定叫 `.orc/`，外部命令（`tee .orc/inject`）仍到得了。現在步驟拿不到名字
         # （`ls -a` 與 glob 仍看得到：**這不是 sandbox**，fixture 受信）；稽核檔另有 `init`／`fin`、解析、唯讀路徑的檢查（`aud_violations`），其餘檔案沒有完整性檢查。

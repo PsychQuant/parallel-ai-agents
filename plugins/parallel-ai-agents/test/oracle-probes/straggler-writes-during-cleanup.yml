@@ -1,0 +1,21 @@
+# R48（量測鏈 v10 的 mutation 前置檢查，#33）：**步驟留下的背景行程在神諭收尾時還在寫儀器目錄**——`run_script` 的 `TemporaryDirectory`
+# 清理（`shutil.rmtree`）剛刪掉通道檔，背景行程的 `>> "$GITHUB_ENV"` 又把它建回來，`rmdir` 因此報 `OSError: [Errno 66] Directory not empty`，
+# 整支神諭帶著 traceback 崩潰（rc=1）。這個步驟的管線過濾是對的（lint 放行、神諭「一致」），崩潰與它的判定無關——清理發生在所有觀測都讀完之後。
+# R47 的 LOW 列過這一類（「TemporaryDirectory straggler」，當時沒做）；R48 把儀器目錄搬進 cwd 之後，量測鏈 v10 的 `oracle` 守備單位基準驗證因此隨機崩了一次。
+# 四個背景行程（同時寫，清理剛好撞上的機率才夠高、讓對應的 mutation 靶殺得穩）各以計數器封頂（40000 次）：目錄被刪掉之後寫入只會失敗（輸出丟掉），迴圈很快跑完，不會變成永久的 straggler。
+# 修法前：本檔跑神諭約一半以上會崩；修法後（`ignore_cleanup_errors=True`）恆為「一致 1」。
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: straggler
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          for w in 1 2 3 4; do
+            for i in {1..40000}; do echo x >> "$GITHUB_ENV"; done >/dev/null 2>&1 &
+          done
+          echo "$PR_TITLE" | python3 scripts/neutralise.py

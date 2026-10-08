@@ -1611,6 +1611,9 @@ MUTATIONS += [
      '    if bad:\n        out.append(AUD_INTEGRITY', '    if False:\n        out.append(AUD_INTEGRITY', 'oracle-inverted'),
     ('oracle: 逾時的 step 不跑注入探針（R46 → oracle_selfcheck「注入完成之後才逾時」）',
      '            timed = o == "timeout" and unm', '            timed = False', 'oracle-inverted'),
+    # ── R48 量測鏈 v10（#33）──
+    ('oracle: 收尾清理不容忍背景行程還在寫儀器目錄（R48 量測鏈 v10 → oracle_selfcheck「神諭收尾時步驟的背景行程仍在寫儀器目錄」）',
+     '    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:', '    with tempfile.TemporaryDirectory() as d:', 'oracle-inverted'),
 ]
 
 EXPECTED_SURVIVE = {

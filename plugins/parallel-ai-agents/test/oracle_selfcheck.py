@@ -14,8 +14,8 @@ R37 時有兩件事它驗不到——要驗它們，未突變的神諭在 fixtur
 
 批次與編號（編號＝下面 `CHECKS` 的順序；每一項的內容在它自己的說明欄，這裡不再複述一份會過期的描述——R43 第 21 列：
 前一版的 docstring 逐批列舉、數字加起來少一項，而且寫著「二十六項」「三十項」卻沒有一個地方真的數過）：
-  R37 1–2；R39 3–8；R40 9–10；R42 11–15；R42 WP7 16–19；R42 WP8 20–26；R44 27–31；R46 32–38；R48 39–45。
-共 45 項。守衛：`main()` 開頭比對這一行的總數與批次區間的終點是否等於 `len(CHECKS)`，不等就 rc=1——數字與清單不是兩份各自維護的東西。
+  R37 1–2；R39 3–8；R40 9–10；R42 11–15；R42 WP7 16–19；R42 WP8 20–26；R44 27–31；R46 32–38；R48 39–46。
+共 46 項。守衛：`main()` 開頭比對這一行的總數與批次區間的終點是否等於 `len(CHECKS)`，不等就 rc=1——數字與清單不是兩份各自維護的東西。
 
 用法：test/oracle_selfcheck.py      rc=0：每一項都照預期；rc=1：至少一項沒有（或上面的數字與 `CHECKS` 不符）。
 """
@@ -146,6 +146,10 @@ CHECKS = [
     ("稽核檔解析與儀器完整性（單元測試；R48）", {}, ["--selftest-aud"], 0, "aud_violations ok"),
     ("儀器目錄的隨機後綴不污染「宣告差分」：xtrace 會印出儀器路徑的 step 仍判一致（R48 量測 v9 抓到的回歸）", {},
      ["--min-comparable", "1", HERE / "fixtures" / "ci-log-filter-good-r37o-module-misc-env-trace-declared-logfilter.yml"], 0, "一致 1"),
+    # 步驟留下的背景行程在神諭收尾時還在寫儀器目錄：`TemporaryDirectory` 清理撞上 `OSError: [Errno 66]`（R48 量測鏈 v10 的 mutation 前置檢查隨機紅了一次）。
+    # 同一個探針傳四次＝同一支神諭跑四個獨立的步驟；修法前單次崩潰率約 80%，四次至少崩一次的機率 > 99%，所以拿掉 `ignore_cleanup_errors` 的突變殺得穩。
+    ("神諭收尾時步驟的背景行程仍在寫儀器目錄：清理不崩潰、判定照常（R48 量測鏈 v10，R47 LOW「TemporaryDirectory straggler」）", {},
+     [PROBES / "straggler-writes-during-cleanup.yml"] * 4, 0, "一致 4"),
 ]
 
 
