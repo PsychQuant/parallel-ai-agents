@@ -1,0 +1,16 @@
+# R50：lint 已經擋下的 step（RULE-red：PR 文字未經過濾就印出）——神諭看到外流、判「一致」。主 shell 關掉稽核 fd 不改變這個：擋下是對的，儀器不可信只對「lint 放行」的 step 有意義。
+# 讓儀器不可信也套用到 RULE-red，會把它變成「量不到（儀器不可信）」（預設 rc=1）。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$PR_TITLE"
+          exec 199>&-

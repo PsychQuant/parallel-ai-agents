@@ -2737,8 +2737,8 @@ def _logical_lines(code_lines):
 #      宣告的 step 裡 `$GITHUB_ENV` 的檢查只看**字面的名字**，是抓無心之失的，不是封閉（`n=GITHUB_; … "${!n}"` 看不到）。
 #   L4 工作目錄：相對路徑的重導向目標照字面判，不對 `working-directory:` 求值，也不追 PR 提交的 symlink。**過濾器的完整性不在保證裡**（R47 第 2 列；R47 DA 與作者實測）：`--strict` 放行相對路徑的重導向
 #      （第 8 類）與 L1 的外部命令——`> scripts/neutralise.py`、`echo "$PR_TITLE" | tee scripts/neutralise.py`、`cp /dev/stdin scripts/neutralise.py`、`sed -i … scripts/neutralise.py`——所以群組能改寫過濾器本身（或 `scripts/validate.py`
-#      這類 `sys.path[0]` 上的檔）；群組在開頭就寫入時，寫入先於 `python3` 讀檔與 import（實測 5／5；是競賽、不是保證——延遲 20 ms 以上才寫就會輸）。刪掉相對路徑類關不掉這個暴露（外部命令一樣達到），所以決定**保留**第 8 類的相對路徑目標、**揭露**這個限制：
-#      這個閘門的邊界是 test.yml 檔頭寫的 `on: pull_request`（非 pull_request_target）＋`contents: read`＋零 secrets——每個 job 本來就執行 PR 的程式碼，PR 可以改過濾器本身（`neutralise.py` 的 docstring：fork 可以把它改成 `cat`）；lint 擋的是 PR 文字經 shell 構造外流或被求值，維護者寫的檔案操作（含無心的 `> scripts/neutralise.py`）不在保證內。
+#      這類 `sys.path[0]` 上的檔）；群組在開頭就寫入時，寫入先於同一個 step 的 `python3` 讀檔與 import（實測 5／5；對**同一個 step** 是競賽、不是保證——延遲 20 ms 以上才寫就會輸）；**對同一個 job 之後的 step 不是競賽**：寫進 workspace 的檔案會留到之後的 step，後續 step 載入的就是被改過的過濾器（R49 security 實測：改寫後 `{ echo "::error::x"; } 2>&1 | python3 scripts/neutralise.py` 原樣印出 `::error::x`）；`test.yml` 本身沒有對 `scripts/*.py` 的相對路徑寫入。刪掉相對路徑類關不掉這個暴露（外部命令一樣達到），所以決定**保留**第 8 類的相對路徑目標、**揭露**這個限制：
+#      這個閘門的邊界是 test.yml 第 42–43 行的註解寫的 `on: pull_request`（非 pull_request_target；`on:` 另有 `push`〔`branches: [main]`〕與 `workflow_dispatch`）＋`contents: read`（`permissions:` 區塊，第 12–13 行）＋零 secrets——每個 job 本來就執行 PR 的程式碼，PR 可以改過濾器本身（`neutralise.py` 的 docstring：fork 可以把它改成 `cat`）；lint 擋的是 PR 文字經 shell 構造外流或被求值，維護者寫的檔案操作（含無心的 `> scripts/neutralise.py`）不在保證內。
 #   L5 YAML：本 lint 的白名單解析器只有 block scalar 的縮排與折行（`corpus/foldcheck.py`）和神諭抽 step 的部分與 PyYAML 對帳，兩者都不是 GitHub 的解析器（差異的實測見 oracle.py 檔頭的「盲區」段）。
 #   L6 pipefail 以外的退出碼：`|| true`、群組裡的 `exit N`（`N` 是字面或展開，如 `exit "$rc"`；展開值的來源不受檢查）是維護者明寫的選擇，不在宣稱內。（trap 動作裡的 `exit` 不收：
 #      EXIT trap 的 `exit N` 會蓋掉整個 step 的退出碼。）另一個不在宣稱內：errexit（`bash -e {0}`、`set -e`）對 `&&`／`||` 清單裡**不是最後一個**的命令

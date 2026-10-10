@@ -1,0 +1,17 @@
+# R50 第五輪宣稱查核 L3：stub `python3` 對只有選項的呼叫（`--version`、`-V`、`--help`、空 stdin）原本 `exit 1`，真 CPython 都 exit 0；`shell: bash` 的預設是 errexit，
+# 所以 `python3 --version` 之後整段 step 在神諭裡沒被觀測——下面的 `echo "$PR_TITLE"`（lint 放行的外流）因此判『量不到（沒有觀察到 PR 文字外流）』rc=0 而不是『不一致：繞過』rc=1。
+# 這張探針用替身 lint（`lint-pass-all.sh`）跑；修法：`--version|-V|-VV|-h|--help` 與空 stdin 都 exit 0。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: version-then-leak
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          python3 --version
+          echo "$PR_TITLE"

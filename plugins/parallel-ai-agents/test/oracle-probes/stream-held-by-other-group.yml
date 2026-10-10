@@ -1,0 +1,19 @@
+# R50：有行程握著儀器的資料流，卻**不在步驟的行程群組裡**（`set -m` 讓背景工作自成一個群組，所以收尾時整群殺掉殺不到它）——神諭收不到 EOF，
+# 判「量不到（儀器不可信：儀器的資料流沒有收乾淨）」，不是卡住。背景行程是真的 `/bin/sleep 4`（stub 的 sleep 是空操作），4 秒後自己結束，不會留下來。
+# 這張探針用 `--allow-distrust` 跑。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          set -m
+          /bin/sleep 4 >/dev/null 2>&1 &
+          { echo hi; } 2>&1 | python3 scripts/neutralise.py

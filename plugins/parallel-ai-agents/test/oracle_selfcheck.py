@@ -14,8 +14,8 @@ R37 時有兩件事它驗不到——要驗它們，未突變的神諭在 fixtur
 
 批次與編號（編號＝下面 `CHECKS` 的順序；每一項的內容在它自己的說明欄，這裡不再複述一份會過期的描述——R43 第 21 列：
 前一版的 docstring 逐批列舉、數字加起來少一項，而且寫著「二十六項」「三十項」卻沒有一個地方真的數過）：
-  R37 1–2；R39 3–8；R40 9–10；R42 11–15；R42 WP7 16–19；R42 WP8 20–26；R44 27–31；R46 32–38；R48 39–46。
-共 46 項。守衛：`main()` 開頭比對這一行的總數與批次區間的終點是否等於 `len(CHECKS)`，不等就 rc=1——數字與清單不是兩份各自維護的東西。
+  R37 1–2；R39 3–8；R40 9–10；R42 11–15；R42 WP7 16–19；R42 WP8 20–26；R44 27–31；R46 32–38；R48 39–45；R50 46–72。
+共 72 項。守衛：`main()` 開頭比對這一行的總數與批次區間的終點是否等於 `len(CHECKS)`，不等就 rc=1——數字與清單不是兩份各自維護的東西。
 
 用法：test/oracle_selfcheck.py      rc=0：每一項都照預期；rc=1：至少一項沒有（或上面的數字與 `CHECKS` 不符）。
 """
@@ -135,21 +135,82 @@ CHECKS = [
      [PROBES / "audit-declared-step-or-only-not-in-grammar.yml"], 0, "一致 1"),
     ("稽核與探針的範圍：宣告寫在 YAML 層（step 的註解行）而沒有觸發的 step 同樣不進文法（R48，R47 logic）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
      [PROBES / "audit-declared-step-yaml-level-not-in-grammar.yml"], 0, "一致 1"),
-    ("儀器完整性：步驟文字提到 `ORACLE_*`／`__orc_*` 判量不到、不判一致（R48，R47 security／Codex）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
-     [PROBES / "audit-tamper-instrument-var.yml"], 0, "量不到 1"),
+    ("儀器完整性：改 `ORACLE_*` 環境變數沒有任何作用（`ORACLE_AUD`／`ORACLE_INJECT` 等已不存在；僅剩的 `ORACLE_PRIV` 在開頭被複製進唯讀的 `__orc_priv`，改它沒有作用）——稽核走繼承的 fd，違規照樣被看到（R50 取代 R48 的文字守衛；R49 requirements／logic／security／DA 與 Codex 同報守衛是吸收器）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "audit-tamper-instrument-var.yml"], 1, "primitive 稽核"),
     ("儀器完整性：相對路徑重導向截斷不到儀器檔（R48，R47 security）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
      [PROBES / "audit-tamper-relative-truncate.yml"], 1, "primitive 稽核"),
     ("儀器完整性：記錄邊界字元偽造不了稽核記錄（R48，R47 Codex）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
      [PROBES / "audit-forged-record-boundary.yml"], 1, "primitive 稽核"),
-    ("儀器完整性：外部命令截斷不到跨 step 通道檔（R48，R48 宣稱查核 E 組）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+    ("儀器完整性：cwd 裡同名的檔（`chan-GITHUB_ENV`）不是通道，截斷它截斷不到真的通道（R48 歷史項；R50 起通道檔在 `$RUNNER_TEMP/_runner_file_commands/`；R48 宣稱查核 E 組）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
      [PROBES / "audit-tamper-channel-truncate.yml"], 1, "跨 step 通道"),
     ("稽核檔解析與儀器完整性（單元測試；R48）", {}, ["--selftest-aud"], 0, "aud_violations ok"),
-    ("儀器目錄的隨機後綴不污染「宣告差分」：xtrace 會印出儀器路徑的 step 仍判一致（R48 量測 v9 抓到的回歸）", {},
+    ("宣告差分不被儀器污染：xtrace 會印出路徑的 step 仍判一致（R48 量測 v9 抓到的回歸——當時儀器目錄的隨機後綴漏進去；R50 起 cwd 裡沒有儀器的資料或記錄檔〔只有 `s.sh` 與 `runner_temp/`〕，這一項守著不要再有東西漏進宣告差分）", {},
      ["--min-comparable", "1", HERE / "fixtures" / "ci-log-filter-good-r37o-module-misc-env-trace-declared-logfilter.yml"], 0, "一致 1"),
-    # 步驟留下的背景行程在神諭收尾時還在寫儀器目錄：`TemporaryDirectory` 清理撞上 `OSError: [Errno 66]`（R48 量測鏈 v10 的 mutation 前置檢查隨機紅了一次）。
-    # 同一個探針傳四次＝同一支神諭跑四個獨立的步驟；修法前單次崩潰率約 80%，四次至少崩一次的機率 > 99%，所以拿掉 `ignore_cleanup_errors` 的突變殺得穩。
-    ("神諭收尾時步驟的背景行程仍在寫儀器目錄：清理不崩潰、判定照常（R48 量測鏈 v10，R47 LOW「TemporaryDirectory straggler」）", {},
-     [PROBES / "straggler-writes-during-cleanup.yml"] * 4, 0, "一致 4"),
+    # ── R50（#33 verify R49）：儀器改走繼承的 pipe fd、判決證據優先、行程群組收束、儀器不可信預設 rc=1。以下二十七項（46–72）。 ──
+    # R49 找到的、針對稽核檔的路徑式失明法（截到 init、存檔還原、萬用字元覆寫）：稽核已經不是檔案，違規照樣被看到。通道檔仍是路徑（換成 FIFO 判量不到，見下面的 FIFO 項）；R49 的儀器目錄已不存在（`$ORACLE_PRIV` 仍可刪，判量不到〔缺 fin〕，rc=1）；
+    # 哨兵／事件流仍沒有完整性檢查。**這不是防竄改**——步驟與儀器在同一個 shell，盲點類見 `instrument-*.yml` 四張探針（含對照組）對應的項。
+    ("儀器完整性：把稽核截到只剩 init 也截不到——沒有稽核檔（R49 requirements F2）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "audit-truncate-to-init.yml"], 1, "primitive 稽核"),
+    ("儀器完整性：先存檔、違規、再還原也沒有稽核檔可存（R49 regression）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "audit-save-restore-derived-path.yml"], 1, "primitive 稽核"),
+    ("儀器完整性：用萬用字元覆寫成假的 init／fin 也沒有檔案可覆寫（R49 Codex 第 1 條）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "audit-glob-overwrite-forged-init-fin.yml"], 1, "primitive 稽核"),
+    ("通道檔被換成 FIFO：神諭不卡住，判量不到（儀器不可信）（R49 Codex 第 3 條）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     ["--allow-distrust", PROBES / "channel-replaced-by-fifo.yml"], 0, "不是一般檔案"),
+    # 文字守衛已移除：獨立的注入探針與稽核證據都不受步驟文字影響。
+    ("步驟文字提到 ORACLE_ 不關掉獨立的注入探針（R49 security／logic／Codex 同報守衛連注入探針一起關掉）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "injection-with-oracle-token.yml"], 1, "注入"),
+    ("步驟文字（註解）提到 ORACLE_ 不撤銷已被稽核看到的違規（R49 requirements F1／logic M1）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "audit-violation-with-oracle-token-comment.yml"], 1, "primitive 稽核"),
+    # 行程群組收束：確定性的快照；儀器不可信預設 rc=1。
+    ("背景行程在收尾時仍在跑：整群殺掉，判量不到（儀器不可信；在 `--strict`、lint 放行、step 在文法內、記錄無違規時）；對遠超寬限的行程是確定的（R49 Codex 第 4 條，取代 R48 的 ignore_cleanup_errors）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     ["--allow-distrust", PROBES / "straggler-keeps-running.yml"], 0, "背景行程在神諭收尾時仍在跑"),
+    ("儀器不可信預設讓神諭 rc=1（不是 rc=0 的吸收器）；--allow-distrust 只給探針用（R49 security 的建議）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "straggler-keeps-running.yml"], 1, "儀器不可信（R50）"),
+    ("主 shell 自己關掉稽核 fd：寫不出 fin，判量不到（儀器不可信）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     ["--allow-distrust", PROBES / "audit-fd-closed-in-main-shell.yml"], 0, "主 shell 卻沒有 fin"),
+    ("**已知盲點（文件化，不是保證）**：子殼層自己關掉稽核 fd，看不到那個子殼層裡的違規，判一致——這只是「步驟與儀器在同一個 shell」這個類別的一個形狀（類別探針與對照組見 `instrument-*.yml` 對應的項）；若有一天補上，這一項會紅，改它時須一併改 README 與 oracle.py 的措辭（沒有機制連結，靠人記得）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "audit-fd-closed-in-subshell-known-blind-spot.yml"], 0, "一致 1"),
+    # 宣告差分與 YAML 範圍
+    ("cwd 裡沒有儀器的裸名：宣告 step 印出目錄項目（echo .*）仍判一致（R49 logic／requirements LOW）", {},
+     ["--min-comparable", "1", PROBES / "declared-step-lists-cwd.yml"], 0, "一致 1"),
+    ("宣告註解寫在 bare `-` 與第一個鍵之間：神諭的 step 範圍涵蓋它（R49 logic LOW）", {},
+     ["--min-comparable", "1", PROBES / "yaml-bare-dash-declaration.yml"], 0, "一致 1"),
+    ("YAML 層宣告而沒有觸發的 step 不進正面文法，注入探針不跑（`in_grammar(run, yaml_decl_step)` 的呼叫點；R49 logic M2）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "injection-yaml-declared.yml"], 0, "一致 1"),
+    # 把新機制接進網（R49 logic M2：5 個突變體通過 46 項 selfcheck）：證據優先、儀器不可信不關掉注入探針、儀器不可信只對 lint 放行的 step、通道檔裸名的正規化、資料流溢出、資料流沒收乾淨。
+    ("證據優先：違規記錄先寫進去、之後才關掉稽核 fd——已經看到的違規不撤銷（R49 logic M1）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "audit-evidence-then-fd-closed.yml"], 1, "primitive 稽核"),
+    ("儀器不可信不關掉獨立的注入探針（R49 security M）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "injection-with-fd-closed.yml"], 1, "注入"),
+    ("儀器不可信只對 lint 放行的 step：lint 已擋下（RULE-red）而神諭看到外流，仍判一致（R50）", {},
+     ["--min-comparable", "1", PROBES / "audit-fd-closed-lint-blocked.yml"], 0, "一致 1"),
+    ("宣告 step 列出 `$RUNNER_TEMP/_runner_file_commands`：通道檔裸名（uuid）先換成固定標記，宣告差分才判得成（R50）", {},
+     ["--min-comparable", "1", PROBES / "declared-step-lists-runner-commands.yml"], 0, "一致 1"),
+    ("儀器資料流有上限：超過判量不到（儀器不可信）；步驟自己的 stdout／stderr 沒有位元組上限，只受 5 秒逾時限制（`ORACLE_STREAM_CAP` 是神諭自己的環境變數，步驟改不到；R50）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh"), "ORACLE_STREAM_CAP": "30"},
+     ["--allow-distrust", PROBES / "audit-stream-overflow.yml"], 0, "流超過 30 位元組"),
+    ("有行程握著儀器的資料流卻不在步驟的行程群組裡（`set -m` 的背景工作）：收不到 EOF 也不卡住，判量不到（儀器不可信）（R50）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     ["--allow-distrust", PROBES / "stream-held-by-other-group.yml"], 0, "資料流沒有收乾淨"),
+    # 已知盲點類（R50，文件化，不是保證）：步驟與儀器同一個 shell、同一個信任域，神諭不是 sandbox。四項：對照組（沒有動儀器時，同樣的違規被看到）＋三張盲點探針（每張釘一組效果，各 step 是不同的到達方式；代表形狀，不是窮舉）。
+    ("對照組：不動儀器的同一批違規（`printf '%n'`、改寫信任變數、可注入構造、pipefail 關閉）全部判『不一致：繞過』——盲點探針的『一致』『量不到』因此不是違規本來就看不到（R50）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "instrument-fd-blind-spots-control.yml"], 1, "不一致 4"),
+    ("**已知盲點類（文件化，不是保證）**：步驟用編號指到稽核或注入哨兵的 fd（單一命令重導向、先存再還原、永久關掉後偽造 fin、經 `/dev/fd/199` 偽造記錄、`exec 197>/dev/null`）——判一致；真的 `--strict` lint 對這五個 step 的寫法全部 RULE-red；經 fd 寫入的外部命令寫法（`tee /dev/fd/199`、`dd of=/dev/fd/199`、`sh -c '… >&199'`）在文法內放行，神諭同樣判一致（垃圾併進子殼層 `fin` 記錄的名稱，主 shell 的 `fin` 完好）。若有一天補上某一種，這一項會紅，改它時須一併改 README 與 oracle.py 的措辭（R50）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "instrument-fd-known-blind-spots.yml"], 0, "一致 5"),
+    ("**已知盲點類（文件化，不是保證）**：讓 pipefail 觀測量不到——`exec 198>/dev/null`（事件流）、`$ORACLE_PRIV` 裡的 FIFO、管線後接逾時的外部命令、對 PRELUDE 變數的純量指派——判『量不到』且 rc=0（R42 起的設計，R50 沒改）；真的 `--strict` lint 對前三個 step 的寫法全部 RULE-red，第四個（`__orc_want=x`）在文法內被放行（R50）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "instrument-event-and-priv-known-blind-spots.yml"], 0, "量不到 4"),
+    ("**已知盲點類（文件化，不是保證）**：不碰 fd 編號——`unset -f printf`、`builtin printf`、`unset __orc_tvn`——步驟動 PRELUDE 裝進同一個 shell 的東西，判一致；真的 `--strict` lint 對這三個 step 全部 RULE-red（`unset`／`builtin` 在文法外）（R50）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "instrument-prelude-known-blind-spots.yml"], 0, "一致 3"),
+    # 第三輪宣稱查核 I 組：事件流被偽造的行不能讓神諭崩潰（崩潰＝整輪沒有判定表）。
+    ("事件流有解析不出來的行（偽造的 `P fin x`）：判量不到（儀器不可信），不崩潰（R50 第三輪宣稱查核 I 組）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     ["--allow-distrust", PROBES / "event-stream-forged-line.yml"], 0, "事件流有無法解析的行"),
+    # 第四輪宣稱查核 K 組：宣告 step 的差分不被事件行帶的絕對路徑污染（K4）。
+    ("宣告 step 用絕對路徑呼叫過濾器（`\"$GITHUB_WORKSPACE/scripts/neutralise.py\"`）：事件行的路徑先正規化，宣告差分判一致，不是『不一致：繞過』（R50 第四輪 K4）", {},
+     ["--min-comparable", "1", PROBES / "declared-step-absolute-path-stub.yml"], 0, "一致 1"),
+    # 第五輪宣稱查核 L 組：L1（stub 目錄的深目錄樹；Python 3.12 的 CI 才會崩，本機 3.13 看不出來，由 Docker 實證）、L3（stub 的 `--version` 在 errexit 下截斷後面的整段）。
+    ("深目錄樹建在全程序共用的 stub 目錄（`PATH` 的第一段）：神諭離開 `main()` 清理時不崩潰，判定表照印（R50 第五輪 L1，K1 的漏網之魚；Python ≤3.12 才重現）", {},
+     ["--min-comparable", "1", PROBES / "deep-tree-in-stub-dir.yml"], 0, "一致 1"),
+    ("stub `python3 --version` 之後的 `echo \"$PR_TITLE\"`（errexit 的 step）：判『不一致：繞過』，不是被截斷而『量不到』（R50 第五輪 L3）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "stub-python-version-errexit.yml"], 1, "不一致：繞過"),
 ]
 
 
@@ -174,8 +235,11 @@ def run_check(extra, files, mut):
                 oracle = dst
                 env.setdefault("ORACLE_LINT", str(LINT))   # 突變版神諭的 HERE 是暫存目錄，lint 要明確指回 repo 的那一支
             dst.write_text(src, encoding="utf-8")
-        r = subprocess.run([sys.executable, str(oracle)] + [str(f) for f in files],
-                           env=env, capture_output=True, text=True, errors="replace")
+        try:
+            r = subprocess.run([sys.executable, str(oracle)] + [str(f) for f in files],
+                               env=env, capture_output=True, text=True, errors="replace", timeout=600)
+        except subprocess.TimeoutExpired as e:
+            return 124, "（selfcheck：神諭 600 秒沒跑完，卡住了）" + (e.stdout.decode("utf-8", "replace") if isinstance(e.stdout, bytes) else (e.stdout or ""))
         return r.returncode, r.stdout + r.stderr
 
 

@@ -1,0 +1,17 @@
+# R50：注入探針與稽核無關。主 shell 關掉稽核 fd（儀器不可信：缺 fin）之後，獨立的注入探針照跑——`[ -n $PR_TITLE ]` 的注入仍判「繞過（注入…）」、rc=1。
+# 拿掉「儀器不可信不關掉注入探針」會把它變成 rc=0／1 的「量不到（儀器不可信）」（沒有「注入」二字）。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          exec 199>&-
+          { [ -n $PR_TITLE ] && echo "has title"; } 2>&1 | python3 scripts/neutralise.py

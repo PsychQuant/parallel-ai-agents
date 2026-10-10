@@ -1,0 +1,16 @@
+# R50：儀器的資料流有上限（`STREAM_CAP`，預設 8 MiB）。超過就判「量不到（儀器不可信：…流超過…）」；步驟自己的 stdout／stderr 沒有位元組上限（只受 5 秒逾時限制）。
+# 這張探針用 `ORACLE_STREAM_CAP=30`（神諭自己的環境變數，步驟改不到）和 `--allow-distrust` 跑；上限這麼小，幾個 `test` 就溢出——事件流與稽核記錄流各溢出一次、各報一條，判定列只印第一條（這張印的是「事件流」）。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { test -n a; test -n b; test -n c; test -n d; } 2>&1 | python3 scripts/neutralise.py

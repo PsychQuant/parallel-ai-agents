@@ -1,0 +1,17 @@
+# R50 第三輪宣稱查核 I 組發現的崩潰：步驟經 `/dev/fd/198`（真的 `--strict` lint 對這種外部命令寫法放行）寫入一行偽造的事件 `P fin x`，
+# 事件解析（`pf_observation`）原本在 `dict(l.split()[1:3] …)` 拋 `ValueError`，神諭崩潰、整輪沒有判定表（R49 把『刪目錄是 traceback』點名為缺陷，同一個形狀）。
+# 現在解析不出來的事件行判「量不到（儀器不可信：事件流有無法解析的行…）」，不崩潰；這張探針用替身 lint 與 `--allow-distrust` 跑。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { echo "P fin x" | tee /dev/fd/198; echo hi; } 2>&1 | python3 scripts/neutralise.py

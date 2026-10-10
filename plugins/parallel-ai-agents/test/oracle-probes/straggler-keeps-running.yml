@@ -1,0 +1,18 @@
+# R49（#33 verify R49 Codex 第 4 條、logic LOW）→ R50：步驟留下的背景行程在神諭收尾時還在跑（並且還在寫通道檔）。R48 的做法是吞掉清理錯誤，觀測仍取決於排程。
+# R50：步驟放進自己的行程群組，主 shell 結束後給寬限（`STRAGGLER_GRACE_S`），還活著就整群殺掉，並判「量不到（儀器不可信：背景行程在神諭收尾時仍在跑（已整群殺掉）：觀測不是穩定快照）」——只在 `--strict`、lint 放行、step 在文法內、記錄無違規時（拿掉 `# LINT-ARGS: --strict` 判一致）。對遠超寬限的背景行程是確定的；結束時間落在 1 秒上下的行程，判定隨負載與機器而變（R50 宣稱查核：B 組在負載約 70 的機器上量到迴圈 1500–2500 次寫入時 8 次裡有 3–4 次判一致；G、H 組在負載 14–55 下同樣的迴圈 8/8 判一致、8000 次 8/8 量不到）。
+# 背景行程是一個很長的迴圈（遠超寬限；macOS 上不帶儀器跑完要 9–52 秒，隨負載而變：E 組 13.6–21 秒、G 組 10.4 秒、H 組 8.9 與 51.9 秒；沒有 Linux 數字）；它被殺掉，所以不會留下來。這張探針用 `--allow-distrust` 跑。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          for i in {1..400000}; do echo x >> "$GITHUB_ENV"; done >/dev/null 2>&1 &
+          { echo ok; } 2>&1 | python3 scripts/neutralise.py

@@ -1,0 +1,17 @@
+# R50 第五輪宣稱查核 L1（K1 的漏網之魚）：深目錄樹建在**全程序共用的 stub 目錄**（`PATH` 的第一段，神諭的 `main()` 開的臨時目錄），而不是 step 的 cwd——
+# 清理走 `tempfile.TemporaryDirectory` 時，Python ≤3.12 的 `shutil.rmtree` 遞迴到 `RecursionError`，神諭離開 `main()` 時崩潰、判定表沒印（Python 3.13 不會，所以本機 macOS 看不出來；
+# 在 Linux／Python 3.12 的 Docker 容器實證修前崩、修後過，CI 的 python3 是 3.12）。真的 `--strict` lint 放行這種寫法。現在 stub 目錄也走 `_Scratch`（遇 `RecursionError` 改 `rm -rf`）。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: deep-tree-in-stub-dir
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { sh -c 'cd "${PATH%%:*}"; p=$(printf "d/%.0s" $(seq 1 400)); for j in 1 2 3; do mkdir -p "$p" && cd "$p"; done'; echo hi; } 2>&1 | python3 scripts/neutralise.py

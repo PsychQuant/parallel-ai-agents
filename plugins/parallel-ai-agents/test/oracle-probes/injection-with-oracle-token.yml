@@ -1,0 +1,17 @@
+# R49（#33 verify R49 security／logic／Codex 同報守衛連注入探針一起關掉；requirements／DA 報的是稽核被降級）：R48 的文字守衛——步驟文字提到 `ORACLE_*`／`__orc_*` 就判「量不到」——連獨立的注入探針一起關掉：
+# 同一個注入（`[ -n $PR_TITLE ] && …`）加一行 `: ORACLE_X` 就從 rc=1 變 rc=0。R50 移除文字守衛：替身 lint 全放行時仍判「繞過（注入…）」、rc=1。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          : ORACLE_X
+          { [ -n $PR_TITLE ] && echo "has title"; } 2>&1 | python3 scripts/neutralise.py

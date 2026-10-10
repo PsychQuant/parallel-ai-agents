@@ -1,0 +1,16 @@
+# R49（#33 verify R49 logic LOW）：宣告註解寫在 bare `-` 與第一個鍵之間——lint 認它是宣告（`--strict` rc=0），R48 的神諭的 step 範圍漏掉那一行，判「不一致：繞過」。R50 把範圍往上吞到上一個 step 之後。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      -
+        # LOG-FILTER: none — the log is not produced by this step
+        name: bare dash declared
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          [ -v PR_TITLE ] && echo set

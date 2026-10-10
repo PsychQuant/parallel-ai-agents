@@ -80,8 +80,8 @@ for t in test/*.test.mjs; do echo "  $t"; node "$t"; done
 
 # #33 verify R11：pack（plugins/pai-lenses）的 python 測試先前沒有任何本機入口，只有 CI 的
 # manifests-and-lens-pack job 會跑；test/README.md 卻寫「CI 跑同一組」。這裡對齊那個 job
-# （完整 mutation 量測仍是手動：python3 scripts/mutation_check.py；實測數字見 ../pai-lenses/scripts/test_validate.py 檔頭——
-#   那是唯一 current 的來源，這裡刻意不抄一份會過期的，#33 verify R23）。
+# （完整 mutation 量測仍是手動：python3 scripts/mutation_check.py；實測數字見 CHANGELOG 最新 verify 條目的量測段——
+#   那是唯一 current 的來源（R50 起 test_validate.py 檔頭也不再抄數字），這裡刻意不抄一份會過期的，#33 verify R23）。
 # #33 verify R12：CI 的 builtin-lenses.csv drift step 也搬過來 —— 它是 run.sh 與 CI 之間最後一處分岔。
 echo "── builtin-lenses.csv drift (regenerate → expect no diff) ──"
 # R13 logic N4：非 git checkout（plugin cache 副本）下 `git diff` rc=129，不能拿它當「過期」。

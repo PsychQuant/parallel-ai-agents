@@ -1,0 +1,20 @@
+# R49（#33 verify R49 Codex 第 1 條）：用萬用字元找到稽核檔、整個覆寫成只有 init 和 fin 的假檔。R50 起沒有稽核檔：替身 lint 全放行時 `printf '%n'` 仍被看到（rc=1、「primitive 稽核」）。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            printf '%n' HOME
+            for p in .*/aud "${GITHUB_ENV%/*}"/aud; do
+              builtin printf 'init\0000\000fin\0000\000' > "$p" 2>/dev/null || :
+            done
+          } 2>&1 | python3 scripts/neutralise.py

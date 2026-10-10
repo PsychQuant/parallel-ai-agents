@@ -1,0 +1,18 @@
+# 已知盲點（R50，**文件化，不是保證**）：子殼層只關掉自己那份稽核 fd（`( exec 199>&-; … )`），主 shell 的 init／fin 完好，那個子殼層裡的違規就看不到——判「一致」。
+# 這只是「步驟與儀器同一個 shell」這個類別的一個形狀：單一命令重導向、先存再還原、偽造記錄、關掉注入哨兵流等同類形狀見 `instrument-fd-known-blind-spots.yml`，
+# 不碰 fd 編號的形狀見 `instrument-prelude-known-blind-spots.yml`（R50 宣稱查核發現 oracle.py 原本的措辭——「知道 fd 編號並在子殼層裡關掉它」——比實況窄；這張探針原文是「在子殼層裡動手」）。若有一天補上，這一項會紅；改它時要一併改 README 與 `oracle.py` 的措辭（沒有機制連結，靠人記得）。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          ( exec 199>&-; printf '%n' HOME )
+          { echo hi; } 2>&1 | python3 scripts/neutralise.py

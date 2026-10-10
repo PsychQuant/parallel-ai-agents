@@ -1,0 +1,17 @@
+# R49（#33 verify R49 requirements F1／logic M1／Codex 第 2 條）：步驟文字裡只有一個註解提到 `ORACLE_HOME`，R48 的文字守衛就把已被稽核看到的 `printf '%n'` 從「繞過」降成 rc=0 的「量不到」。
+# R50 移除文字守衛、證據優先：替身 lint 全放行時仍判「繞過（primitive 稽核…）」、rc=1。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          # ORACLE_HOME is just a database variable here
+          { printf '%n' HOME; } 2>&1 | python3 scripts/neutralise.py

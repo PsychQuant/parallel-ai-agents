@@ -1,0 +1,49 @@
+# 已知盲點類（R50，**文件化，不是保證**）：讓 pipefail 觀測量不到。前三個 step 都先 `set +o pipefail`——pipefail 關閉本來是繞過
+# （對照：不動儀器時判「不一致：繞過（pipefail：…）」，見 `instrument-fd-blind-spots-control.yml` 的 ctl-pipefail-off），但：
+#   close-event-stream     `exec 198>/dev/null`——探針的事件寫不出去，判「量不到（pipefail 探針被換掉…）」
+#   fifo-in-priv           `mkfifo "$ORACLE_PRIV/t$$"`——探針的暫存檔變成 FIFO，step 卡住直到逾時，判「量不到（逾時 5s）」（`$ORACLE_PRIV` 只有 FIFO 有效；`rm`、`mkdir`、`ln -s`、`chmod` 蓋掉它都不行）
+#   timeout-pipefail-off   管線之後接一個逾時的外部命令（`/bin/sleep 30`）——不碰儀器：逾時路徑不疊加 pipefail 觀測，判「量不到（逾時 5s）」（神諭的 `sleep` 是空操作 stub，所以要用外部的 `/bin/sleep`）
+#   assign-prelude-var     `{ __orc_want=x; echo hi; } 2>&1 | python3 …`——對 PRELUDE 變數的純量指派，判「量不到（pipefail 探針被換掉…）」。**這個寫法在真的 `--strict` 文法內（lint 放行，實測）**；
+#                          pipefail 本來就開著所以沒有東西被藏——它說明『動 PRELUDE 的手段都在 lint 文法外』不成立（`unset`、`builtin` 才在文法外，見 `instrument-prelude-known-blind-spots.yml`）
+# 四者都是 rc=0 的「量不到」，不是 rc=1。這是 R42 起的設計（`oracle.py` 檔頭：pipefail 探針被換掉 ⇒ 量不到；逾時不疊加），R50 沒有改變它；它是 rc=0 的出口，所以釘成文件。
+# 真的 `--strict` lint 對前三個 step 的寫法全部 RULE-red（`198>` 重導向、雙引號裡的 `$$`、`set +o pipefail` 不在 `set` 前綴白名單）；第四個 step lint 放行。前三個的手段也有文法內的拼法——群組裡的外部命令
+# （`{ mkfifo "$ORACLE_PRIV/t$BASHPID"; …; } 2>&1 | python3 …`）lint 放行（實測），但文法內的拼法只在 pipefail 開著時放行，那時沒有東西可藏；pipefail 關閉的寫法（`set +o pipefail`）仍 RULE-red。
+# 神諭的判決是 macOS／bash 5.3.15 的實測；Linux 在 Docker（Ubuntu 24.04 aarch64、bash 5.2.21、非 root）預跑過整套 selfcheck（這些探針都在裡面）；GitHub CI 尚未跑（PR 頭仍是 R48 的 `5b5a46d`）。若有一天補上，這一項會紅；改它時要一併改 README 與 `oracle.py` 的措辭（沒有機制連結，靠人記得）。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: close-event-stream
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set +o pipefail
+          exec 198>/dev/null
+          { false; } 2>&1 | python3 scripts/neutralise.py
+      - name: fifo-in-priv
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set +o pipefail
+          mkfifo "$ORACLE_PRIV/t$$"
+          { false; } 2>&1 | python3 scripts/neutralise.py
+      - name: timeout-pipefail-off
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set +o pipefail
+          { false; } 2>&1 | python3 scripts/neutralise.py
+          /bin/sleep 30
+      - name: assign-prelude-var
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { __orc_want=x; echo hi; } 2>&1 | python3 scripts/neutralise.py
