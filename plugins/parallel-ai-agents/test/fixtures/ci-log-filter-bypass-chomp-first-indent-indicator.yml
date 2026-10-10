@@ -1,0 +1,18 @@
+# R31：縮排指示子的兩種順序都合法——`|2-` 與 `|-2`。只認前者會讓後者的 explicit_pad 算不出來，
+# 於是內文被多剝兩格、`  EOF` 變成行首的 `EOF` 而提早終止 heredoc，後面那條假管線因此被當成 code。
+# bash 的實況：終止字必須是行首的 `EOF`，這裡是 `  EOF`（指示子保留了兩格）→ 不終止 → 整段是資料。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: chomp indicator before the indentation indicator
+        run: |-2
+            cat <<EOF
+            $PR_TITLE
+            EOF
+            echo done | python3 scripts/neutralise.py
+      - name: compliant control
+        run: echo hi | python3 scripts/neutralise.py

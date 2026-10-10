@@ -1,0 +1,17 @@
+# R46（#33 verify R45 logic 第 4 列）：注入探針遇到逾時就不跑，「注入完成之後才被 `/bin/sleep` 拖逾時」的 step 判量不到（rc=0）。這個 step 先做 `[ -n $PR_TITLE ]`（標題含 `-v PWD[$(命令)]`
+# 時命令替換執行）、再 `/bin/sleep 60`（神諭把 PATH 上的 `sleep` 換成空操作，所以要用絕對路徑才會真的逾時）。替身 lint 全放行時，神諭必須判「繞過（注入…）」、rc=1；
+# 沒有注入的逾時照舊判量不到（`timeout-after-leak` 是對照）。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { [ -n $PR_TITLE ]; /bin/sleep 60; } 2>&1 | python3 scripts/neutralise.py

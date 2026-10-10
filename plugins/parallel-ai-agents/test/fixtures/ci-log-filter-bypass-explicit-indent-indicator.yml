@@ -1,0 +1,15 @@
+name: t
+on: push
+# EXPECT: rule-red
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: explicit indentation indicator keeps two spaces so EOF never terminates
+        run: |2
+            cat <<EOF
+            $PR_TITLE
+            EOF
+            x | python3 scripts/neutralise.py
+      - name: compliant control
+        run: echo hi | python3 scripts/neutralise.py

@@ -1,0 +1,25 @@
+# #33 verify R43 第 5 列（logic＋DA）：P2 不成立——宣告了 `# LOG-FILTER:` 的 step 裡，只寫在 trap 動作字串中的管線不算「寫出來的管線」，lint 不要求
+# pipefail，失敗被遮蔽（`shell: bash -e {0}`：`-e` 而沒有 pipefail 時 step rc=0，有 pipefail 時 rc=1）。同一個檔裡直接寫在本體的 `false | true` 被正確擋下：
+# 「觸發」（`flat_trigger` 看文字裡的 `|`）與「要求」（`flat_declared` 的 `piped` 只看頂層運算子）用了兩把尺。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-EACH-STEP: rule-red
+# EXPECT-MSG: 卻沒有跑在 pipefail 之下
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: declared step with a pipeline in a single-quoted trap action
+        shell: bash -e {0}
+        run: |
+          # LOG-FILTER: none — x
+          trap 'false | true' EXIT
+          echo hi
+      - name: declared step with a pipeline in a double-quoted trap action
+        shell: bash -e {0}
+        run: |
+          # LOG-FILTER: none — x
+          trap "make check | tee log" EXIT
+          make build

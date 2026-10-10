@@ -1,0 +1,16 @@
+# R46（#33 verify R45 第 2 列）：信任變數稽核。群組跑在管線的子殼層裡，`{RUNNER_TEMP[0]}>` 把 `RUNNER_TEMP` 改成 10，主 shell 結束時看不到——神諭逐命令比對信任變數（任何行程）。
+# 替身 lint 全放行時，神諭必須判「繞過（primitive 稽核：信任變數 …）」、rc=1。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { echo hi {RUNNER_TEMP[0]}>/dev/null; echo done; } 2>&1 | python3 scripts/neutralise.py

@@ -1,0 +1,13 @@
+# `$'…'` 跨行：bash 的 ANSI-C 字串可以跨行，R33 版到行尾就重置 ⇒ 下一行字串內容裡的假管線變 code。沒收尾 ⇒ fail-closed PARSE（logic F3 r2）。
+# 來源（#33 verify R34 logic F1／F3／F4 的探針；DA 的 n 系列是它在 da-work/probes 留下的檔案）
+# EXPECT: parse-red
+name: t
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: r2-ansic-multiline
+        run: |
+          echo $'
+          x| python3 scripts/neutralise.py '; echo "$PR_TITLE"

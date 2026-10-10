@@ -1,0 +1,15 @@
+# 群組規則的 `set` 前綴：第一個詞必須是 `set`——只帶選項長相的參數不夠（`$PR_TITLE -e` 會把 PR 文字當命令名執行，
+# 「command not found」帶著它印到群組外的 stderr）。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: option-shaped line that is not set
+        shell: bash
+        run: |
+          $PR_TITLE -e
+          { echo safe; } 2>&1 | python3 scripts/neutralise.py

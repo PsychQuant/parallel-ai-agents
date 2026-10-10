@@ -1,0 +1,11 @@
+name: t
+on: push
+# EXPECT: pass
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: here-string must not latch as a heredoc
+        run: |
+          cat <<< "$PR_BODY" > /tmp/body
+          echo "$PR_TITLE" | python3 scripts/neutralise.py

@@ -1,0 +1,37 @@
+# #33 verify R43 第 10 列（regression）(a)：trap 動作裡不准 `exit`——EXIT trap 的 `exit N` 會蓋掉整個 step 的退出碼（bash 5.3 以 runner 樣板跑：
+# `set -euo pipefail`、`trap 'exit 0' EXIT`、一條失敗的管線，step rc=0；沒有 trap 時 rc=1）。R43 這條規則沒有 fixture，拿掉檢查 selftest 照綠。
+# 這是**文法外**——保守擋下；神諭實跑沒有外流。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-EACH-STEP: rule-red
+# EXPECT-MSG: trap 動作裡的 `exit`
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: single-quoted trap action that exits
+        shell: bash
+        run: |
+          {
+            trap 'exit 0' EXIT
+            false | tee log
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: double-quoted trap action that exits
+        shell: bash
+        run: |
+          {
+            trap "exit" EXIT
+            make test
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: trap action cleans up and exits
+        shell: bash
+        run: |
+          {
+            trap 'rm -f x; exit' EXIT
+            make test
+          } 2>&1 | python3 scripts/neutralise.py

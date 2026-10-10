@@ -1,0 +1,14 @@
+# #33 verify R35：**已知類別 S-2 的範例**（按機制）：`cat "$PR_TITLE"` 找不到檔案，錯誤訊息帶著 PR 文字走 stderr，
+# 而接 neutralise 的管線沒有 `2>&1`。預設模式不要求 `2>&1` ⇒ lint 放行；`--strict`（CI 對真 workflow 用的模式）會擋
+# （`bypass-strict-missing-2to1`）。神諭必須把這一檔歸成 S-2，否則 rc=1（KNOWN-CLASS 過期）。
+# KNOWN-CLASS: S-2
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: command error goes to stderr, pipeline without 2>&1
+        run: |
+          cat "$PR_TITLE" | python3 scripts/neutralise.py

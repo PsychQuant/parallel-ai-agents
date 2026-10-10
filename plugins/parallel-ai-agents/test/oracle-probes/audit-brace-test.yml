@@ -1,0 +1,16 @@
+# R46（#33 verify R45 第 1 列）：primitive 稽核。`test {-v,"$PR_TITLE"}` 在 bash 裡是 `test -v "$PR_TITLE"`——`-v` 的運算元被算術求值。PR_MARKER 不含下標，所以注入探針
+# 以外的神諭觀測（stdout／通道）全看不到；稽核看的是 `test` 實際收到的 argv（兩個運算元、第一個是 `-v`，不在文法的三種形狀裡）。替身 lint 全放行時，神諭必須判「繞過（primitive 稽核…）」、rc=1。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { test {-v,"$PR_TITLE"}; } 2>&1 | python3 scripts/neutralise.py

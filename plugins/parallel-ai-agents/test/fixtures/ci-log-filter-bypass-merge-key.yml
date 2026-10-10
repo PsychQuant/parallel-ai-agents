@@ -1,0 +1,11 @@
+# fixture（R17 logic L-1 C）：run 由 YAML merge key 帶入——本 lint 不解析，必須拒絕
+# EXPECT: parse-red
+x-base: &base
+  run: shellcheck foo.sh
+jobs:
+  j:
+    steps:
+      - name: filtered
+        run: echo x | python3 scripts/neutralise.py
+      - <<: *base
+        name: merged

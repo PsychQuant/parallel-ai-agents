@@ -1,0 +1,12 @@
+name: t
+on: push
+# EXPECT: pass
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: compliant control
+        run: echo hi | python3 scripts/neutralise.py
+    strategy:
+      matrix:
+        suffix: ["", "x:y"]

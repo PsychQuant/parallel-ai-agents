@@ -1,0 +1,15 @@
+# #33 verify R40 最終量測：R40 的運算式規則只管**靠管線過濾**的 step；宣告了 `# LOG-FILTER:` 的 step 不在它的範圍裡（`not declared` 被拿掉時誤擋）。
+# **R44 預設模式雙胞胎**（#33 verify R43 第 9 列）：上面是 `good-r40-ghexpr-declared-step` 的說明，那張在 `--strict` 下跑；R42 起 `--strict` 的判定由正面文法擔任、不再經過
+# 預設模式的 `_analyse`／`_Sh`，所以拿掉 `--strict` 的這一份才是殺下面這個突變體的網：模組層 `elif not declared and any(not gh_literal(inner) …)` 拿掉 `not declared`：宣告的 step 的非字面 runner 運算式被誤擋。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: declared step with a matrix expression
+        shell: bash
+        run: |
+          # LOG-FILTER: none — prints no PR text
+          echo "${{ matrix.os }}"

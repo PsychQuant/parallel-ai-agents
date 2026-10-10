@@ -1,0 +1,22 @@
+# #33 R46 區域 opsweep（`if p0 == "printf" and args and _fl_lit(args[0]) and …` 的 `_fl_lit(args[0])` 運算元）：這個運算元是冗餘的——`_fl_value` 對雙引號裡的 `V` 片段略過、只看字面部分，
+# 所以拿掉它不改變任何判定；R46 直接把它刪了（不是補殺手、也不是列 EXPECTED_SURVIVE）。這一張釘住刪掉之後的行為：`printf "$PR_TITLE" x`（格式是加了引號的展開、過了引號規則）
+# 仍然由下一個守衛的「第一個參數（格式）必須是字面」擋下，不是被格式列舉誤判成放行。
+# LINT-ARGS: --strict
+# KNOWN-CLASS: 文法外
+# EXPECT: rule-red
+# EXPECT-MSG: `printf` 的第一個參數（格式）必須是字面
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: printf with a quoted expansion as the format
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            printf "$PR_TITLE" x
+          } 2>&1 | python3 scripts/neutralise.py

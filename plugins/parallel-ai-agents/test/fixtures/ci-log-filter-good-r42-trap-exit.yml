@@ -1,0 +1,54 @@
+# #33 verify R41 第 10 列、R42 放行條件 11：`trap … EXIT` 是最常見的清理寫法。EXIT trap 在最後一個命令之後才執行，
+# 碰不到群組裡管線的 pipefail，也不把 PR 文字送出群組。四個 step 逐字取自 R41 regression lens 的 c1 輸入
+# trap-dq-exit、trap-set-word、trap-sq-exit、trap-dq-literal（step 名稱是輸入檔名）。
+# 45dee04 的 `--strict` 擋下前兩個（誤擋：雙引號動作裡的 `$tmp`、動作字串裡的 `set` 字樣）；R42 的正面文法四個都要放行。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: trap-dq-exit
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+          {
+            tmp=$(mktemp -d)
+            trap "rm -rf $tmp" EXIT
+            make test | tee "$tmp/log"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: trap-set-word
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+          {
+            trap 'echo set up done' EXIT
+            make test | tee log
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: trap-sq-exit
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+          {
+            tmp=$(mktemp -d)
+            trap 'rm -rf "$tmp"' EXIT
+            make test | tee "$tmp/log"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: trap-dq-literal
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+          {
+            trap "rm -f build.lock" EXIT
+            make test | tee log
+          } 2>&1 | python3 scripts/neutralise.py

@@ -1,0 +1,16 @@
+# R46：primitive 稽核的負對照——文法收的 `test`／`[`／`printf` 的日常寫法不會被誤報（形狀都在三種之內、格式都在轉換列舉裡、信任變數沒變）。
+# 替身 lint 全放行時，神諭必須判一致、rc=0。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { [ -n "$PR_TITLE" ] && [ "$PR_TITLE" = x ]; test -z ""; printf '%s %d\n' a 1; echo "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py

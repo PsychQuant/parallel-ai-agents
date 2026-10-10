@@ -1,0 +1,13 @@
+name: t
+on: push
+# EXPECT: rule-red
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: two spaces after the run key, then a redirect instead of a pipe
+        run:  |
+          python3 scripts/neutralise.py < notes.txt
+          echo "$PR_TITLE"
+      - name: compliant control
+        run: echo hi | python3 scripts/neutralise.py

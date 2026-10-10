@@ -1,0 +1,21 @@
+# #33 verify R39 第 7 列：`command`／`builtin` 是 **builtin**，加引號或跳脫照樣執行——前一版用挖空後的 `code` 判前綴詞，`\command`、
+# `\builtin` 的 code 是空的，於是被當成命令名、後面的 `set -x` 看不到。bash 5.3 實跑：`\command -p set -x` 之後的命令原樣印到 stderr。
+# R40：這兩個詞改用 `lit` 判。**保留字不在此列**：`'time' -p set -x` 加了引號就不是保留字，執行的是外部 `time`、不開 xtrace
+# （bash 5.3 實跑：`time: set: No such file`）——R39 報告把它列成繞過，那一格不成立。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: escaped command
+        run: |
+          set -o pipefail
+          \command -p set -x
+          echo "$PR_TITLE" | python3 scripts/neutralise.py
+      - name: escaped builtin
+        run: |
+          set -o pipefail
+          \builtin set -x
+          echo "$PR_TITLE" | python3 scripts/neutralise.py

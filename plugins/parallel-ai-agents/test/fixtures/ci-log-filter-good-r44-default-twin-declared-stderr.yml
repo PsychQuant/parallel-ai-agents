@@ -1,0 +1,18 @@
+# #33 verify R35（opsweep 存活者：fd 流向規則與 `--strict` 的 `2>&1` 規則各自的 `not declared` 運算元）：step 帶
+# `# LOG-FILTER:` 宣告＝作者已說明這一步的輸出不必過濾，兩條 stderr 規則都不再管它。既有 fixture 裡宣告過的 step
+# 都沒有 `>&2`、也沒有接 neutralise 的管線，拿掉任一個 `not declared` 照樣全綠。
+# **R44 預設模式雙胞胎**（#33 verify R43 第 9 列）：上面是 `good-strict-declared-overrides-stderr-rules` 的說明，那張在 `--strict` 下跑；R42 起 `--strict` 的判定由正面文法擔任、不再經過
+# 預設模式的 `_analyse`／`_Sh`，所以拿掉 `--strict` 的這一份才是殺下面這個突變體的網：模組層 `elif not declared and an["fd"]` 拿掉 `not declared`：宣告的 step 被當成靠管線過濾的 step，fd 規則誤擋。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: declared step that writes to stderr
+        shell: bash
+        # LOG-FILTER: none — only constant strings and the file listing of a fixed directory are printed
+        run: |
+          echo "building" >&2
+          ls dist | python3 scripts/neutralise.py

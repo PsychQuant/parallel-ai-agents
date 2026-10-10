@@ -1,0 +1,29 @@
+# #33 verify R37 opsweep 補件：殺
+# `strip→id|_env_names|inline = _uncomment(KEY_RE.match(norm[l0]).group(3) or "").strip()|1`
+# ——把 `_env_names()` 裡 `inline` 的 `.strip()` 拿掉。
+# 這裡 step 的 `env:` 那一行故意在冒號後面多打一個空格（`env:  `，共兩個空格，YAML 允許、
+# 語意上等於 `env:`——mapping 內容照樣寫在接下來縮排更深的子行）。`KEY_RE` 的 `(?:\s(.*))?`
+# 只吃掉冒號後**一個**空白，剩下的一個空白留在 `group(3)` 裡，所以傳進 `_env_names()` 的
+# `inline` 在 `.strip()` 之前是 `" "`（一個空白字元，非空字串）。
+# 原版：`.strip()` 把它變成 `""`，`if inline:` 判 False，走進 `_kids()` 那條路正確解析出
+# 子鍵名稱 `["FOO"]`——`FOO` 不在 `ENV_TRACE_KEYS` 裡，`env_hit` 空，這個 step 靠管線過濾、
+# 沒有任何 env 疑慮，整體 `pass`。
+# 突變體拿掉 `.strip()`，`inline` 是 `" "`（非空字串），`if inline:` 判 True，落到
+# `inline[:1] in ("{", "[")` 那條分支——`" "[:1]` 是空白，不在集合裡，回傳 `["?"]`（fail-closed
+# 的「看不到鍵名」標記）。`"?"` 讓 `env_hit` 非空，觸發「靠管線過濾卻帶了看不到鍵名的 env」
+# 拒絕，變成 `rule-red`。兩者不同，這張 fixture 殺得掉它。
+# bash 5.3 實測：`echo hi 2>&1 | python3 -c "import sys; sys.stdin.read()"` rc=0；
+# `FOO=bar bash -c 'echo hi 2>&1 | python3 -c pass'` 正常執行、與 pipefail／xtrace 無關，
+# 確認 `FOO` 本身對安全判定沒有影響，爭點純粹在 `_env_names()` 解不解得到鍵名。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe
+        env:  
+          FOO: bar
+        run: |
+          echo hi 2>&1 | python3 scripts/neutralise.py

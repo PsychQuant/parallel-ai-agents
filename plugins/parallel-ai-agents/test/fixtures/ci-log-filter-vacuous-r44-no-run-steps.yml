@@ -1,0 +1,11 @@
+# #33 R44 全輪 opsweep 的存活者：沒有任何 `run:` step 的檔帶 `--require-run-steps` ⇒ VACUOUS（selftest 的 vacuity 守衛）。前一版沒有 fixture 走到這條路：
+# `bad` 與 bypass fixture 都有 run step，所以 `seen == 0` 那個條件被關掉也沒有東西會紅。`EXPECT: vacuity` 不計入正向／規則紅／解析紅的張數。
+# EXPECT: vacuity
+# EXPECT-MSG: VACUOUS
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4

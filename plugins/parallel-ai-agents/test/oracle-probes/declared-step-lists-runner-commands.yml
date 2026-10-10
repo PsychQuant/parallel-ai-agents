@@ -1,0 +1,16 @@
+# R50：通道檔在 `$RUNNER_TEMP/_runner_file_commands/` 底下、檔名帶隨機 uuid（真的 runner 的版面）。宣告 step 列出那個目錄，兩次執行的檔名不同——差分前要把通道檔的裸名換成固定標記，
+# 否則宣告判不成、一致變「量不到」。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: declared lists runner commands
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          # LOG-FILTER: none — the log is not produced by this step
+          ls "$RUNNER_TEMP/_runner_file_commands"

@@ -1,0 +1,19 @@
+# R31 自查（opsweep 的存活指出這一行沒有網）：雙引號分隔字裡的反斜線**只在 `$` `` ` `` `"` `\` 之前**
+# 才是逃脫。`<<"E\OF"` 的終止字是 `E\OF`（bash 5.3 實測），一行 `EOF` 不終止它——
+# 若 lint 把它讀成 `EOF`，heredoc 提早結束、後面的假管線變 code 而放行，而 runner 照樣印出 PR 文字。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: backslash inside a double-quoted delimiter is literal
+        run: |
+          cat <<"E\OF"
+          EOF
+          x | python3 scripts/neutralise.py
+          E\OF
+          echo "$PR_TITLE"
+      - name: compliant control
+        run: echo hi | python3 scripts/neutralise.py

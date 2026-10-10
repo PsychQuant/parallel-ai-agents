@@ -1,0 +1,13 @@
+# #33 verify R34（security S-2／logic F5／DA G-B）：這一檔原名 `known-stderr-leak-piped-stdout`、被當成已知類別 S-2 的範例，
+# 但它用的機制是 `>&2`——把 stdout 轉到 stderr、繞過只接 stdout 的管線；S-2 的名稱講的卻是「管線不要求 `2>&1`」。
+# R34 原定的規則（要求 `2>&1`／`|&`）連這一檔都關不掉（`>&2 2>&1 |` 照樣外流）。所以它不是已知類別，是 fd 流向規則要擋的繞過。
+# R35：run 區塊裡有 `>&2`／`1>&2`／`>/dev/stderr`／xtrace，且不是靠 `# LOG-FILTER:` 宣告放行的 ⇒ RULE。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: stderr leaks past a stdout-only pipeline
+        run: echo "$PR_TITLE" >&2 | python3 scripts/neutralise.py

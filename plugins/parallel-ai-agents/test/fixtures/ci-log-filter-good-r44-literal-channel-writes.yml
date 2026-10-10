@@ -1,0 +1,29 @@
+# #33 verify R43 第 11、12 列：五個 runner 通道（`GITHUB_ENV`／`PATH`／`OUTPUT`／`STATE`／`STEP_SUMMARY`）R44 起用同一個產生式——`echo`／`printf` 全字面參數
+# `>>` 寫進它本身。字面 `echo "ok=true" >> "$GITHUB_OUTPUT"` 是 Actions 最常見的寫入，R43 的 `--strict` 把它擋成誤擋。負對照：`bypass-r44-channel-argument`、
+# `bypass-r44-ghenv-keys`（鍵名與 PATH 的值照樣檢查）。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: literal writes to the output and summary files
+        shell: bash
+        run: |
+          {
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+            echo "mode=fast" >> "$GITHUB_STATE"
+            echo '## Build completed' >> "$GITHUB_STEP_SUMMARY"
+            make test
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: literal writes to the env and path files
+        shell: bash
+        run: |
+          {
+            echo "CACHE_DIR=$HOME/.cache" >> "$GITHUB_ENV"
+            printf 'MODE=%s\n' fast >> "$GITHUB_ENV"
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+            make test
+          } 2>&1 | python3 scripts/neutralise.py

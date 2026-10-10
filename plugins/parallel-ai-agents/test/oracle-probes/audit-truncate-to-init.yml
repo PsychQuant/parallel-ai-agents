@@ -1,0 +1,21 @@
+# R49（#33 verify R49 requirements F2）：把稽核檔截到只剩 `init` 記錄（7 個位元組）；`fin` 之後由 EXIT trap 補上，所以 init／fin 的檢查看不出來。R50 起稽核記錄走繼承的檔案描述元：沒有檔案可以截斷（`/dev/fd/199` 仍是一條可寫入的路徑，可偽造記錄，見 `instrument-fd-known-blind-spots.yml`），
+# 這個 step 用各種方式找檔案來截斷都找不到：替身 lint 全放行時，`printf '%n'` 仍被稽核看到（rc=1、「primitive 稽核」）。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            printf '%n' HOME
+            for f in .*/aud ./*/aud "${GITHUB_ENV%/*}"/aud "$RUNNER_TEMP"/*/aud "$TMPDIR"/*/aud; do
+              dd if=/dev/null of="$f" bs=1 seek=7 2>/dev/null || :
+            done
+          } 2>&1 | python3 scripts/neutralise.py

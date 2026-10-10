@@ -1,0 +1,39 @@
+# 對照組（R50）：`instrument-fd-known-blind-spots.yml`、`instrument-prelude-known-blind-spots.yml`、`instrument-event-and-priv-known-blind-spots.yml` 的 step 去掉動 fd／動 PRELUDE／動 `$ORACLE_PRIV`／逾時的那一行之後的原樣違規——
+# 替身 lint 全放行，神諭四個都判「不一致：繞過」（primitive 稽核 ×2、注入、pipefail）。沒有這張，盲點探針的「一致」「量不到」可能只是因為那些違規本來就看不到。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: ctl-printf-n
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          printf '%n' Z
+          { echo hi; } 2>&1 | python3 scripts/neutralise.py
+      - name: ctl-trusted-var
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          HOME=/y
+          { echo hi; } 2>&1 | python3 scripts/neutralise.py
+      - name: ctl-injection
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { [ -n $PR_TITLE ] && echo "has title"; } 2>&1 | python3 scripts/neutralise.py
+      - name: ctl-pipefail-off
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set +o pipefail
+          { false; } 2>&1 | python3 scripts/neutralise.py

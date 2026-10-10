@@ -1,0 +1,44 @@
+# #33 verify R37 opsweep 補件：delim_align 群組——殺兩個突變體（同一行、同一場景一次補齊）：
+#   1. `drop-operand|_skip_delim_word|k += 2 if (s[k] == "\\" and (q != "'" or ansic)) else 1|1`
+#      （拿掉 `s[k] == "\\"`，剩 `(q != "'" or ansic)`）
+#   2. `drop-operand|_skip_delim_word|k += 2 if (s[k] == "\\" and (q != "'" or ansic)) else 1|3`
+#      （拿掉內層 `or` 的 `q != "'"`，剩 `s[k] == "\\" and ansic`）
+#
+# 用雙引號分隔字 `<<"A\"B"`（`A\"B` 裡的 `\"` 是雙引號的逃脫字元，bash 解成字面雙引號，
+# 終止字是 `A"B`）。原版：`q='"'`、`ansic=False`，逃脫判定 `(q!="'" or ansic)` 因
+# `q!="'"` 為真而成立；掃到內部的 `\` 時 `s[k]=="\\"` 也成立，兩者皆真，`k+=2`（反斜線＋
+# 被逃脫的引號一起跳過），繼續往後找到真正的收尾引號，回傳正確位置。
+#
+# 突變體1（拿掉 `s[k]=="\\"`）：條件退化成 `(q!="'" or ansic)`，對雙引號字**恆真**（不論
+# 當前字元是不是反斜線），於是每一格都當成「2 格一跳」，越過真正的收尾引號、落在它
+# 之後，之後找不到第二個收尾引號、回傳 `None`。
+#
+# 突變體3（拿掉內層 `q != "'"`）：條件退化成 `s[k]=="\\" and ansic`，對雙引號
+# （`ansic=False`）**恆假**，反斜線因此被當成字面字元、不再跳過被逃脫的引號——掃到
+# `\"` 裡的那個 `"` 就被誤判成收尾，分隔字提早結束成 `A\`；之後找不到真正的收尾引號、
+# 回傳 `None`。
+#
+# 兩個突變體都讓分隔字對不齊，之後接的安全重導向目標 `>/tmp/out` 因此讀不到原文，
+# 被判定「目標看不到原文，不解析就不放行」＝規則誤擋。
+#
+# 原版為什麼是 pass：heredoc 本體只是把 PR 標題寫進 `/tmp/out`（不落在 `/dev`／
+# `/proc`），下一個 step 再讀出來餵給 neutralise.py，整個區塊沒有未過濾的外流路徑。
+#
+# bash 5.3.15 實測：`cat <<"A\"B"` 的終止字確實是 `A"B`（雙引號裡 `\"` 逃脫成字面
+# `"`），本體與該終止字都能正確收尾（`bash -c 'cat <<"A\"B"
+# hi
+# A"B'` 印出 `hi`）。
+#
+# EXPECT: pass
+name: t
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: heredoc terminator is a double-quoted word with a backslash-escaped quote inside, target safe, later neutralised
+        run: |
+          cat <<"A\"B" >/tmp/out
+          $PR_TITLE
+          A"B
+          cat /tmp/out | python3 scripts/neutralise.py

@@ -1,0 +1,14 @@
+# #33 verify R39 第 12 列（第八種）：預設模式、頂層的 `export PYTHONPATH="$PWD/src"`——之後啟動的過濾器 python3 會讀它，lint 不分辨
+# 哪個 `PYTHON*` 鍵危險、值不是字面就擋（R39 第 9 列的規則）。寫在群組裡不擋：群組是管線的一段，右邊的 python3 讀不到那個 export。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: export PYTHONPATH at top level
+        run: |
+          set -o pipefail
+          export PYTHONPATH="$PWD/src"
+          make 2>&1 | python3 scripts/neutralise.py

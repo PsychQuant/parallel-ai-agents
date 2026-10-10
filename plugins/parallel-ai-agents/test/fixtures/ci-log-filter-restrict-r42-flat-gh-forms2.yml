@@ -1,0 +1,66 @@
+# #33 R42 opsweep（killer 假設驗證第二輪）：`_fl_command` 的 GITHUB_ENV／GITHUB_PATH 產生式裡，每個守衛各自被拿掉時放行的形狀。
+# 每一步都是**只違反一個守衛**的寫入或讀取，原碼全部 RULE、拿掉對應守衛的突變體放行（或改走另一條訊息）：
+# 字面參數本身含 GH 字樣、讀取重導向的目標多帶了字元、多一個重導向、單個 `>`（覆寫）、目標多帶字元、
+# 讀取旁邊多一個寫入到不在文法的目標、雙引號裡的變數帶預設值。
+# LINT-ARGS: --strict
+# R42：這一張的 7 步是**文法外**——不在 `--strict` 的正面文法裡、神諭實跑沒有外流（stdout／stderr／跨 step 通道都沒有）、
+# pipefail 探針沒看到關閉。保守擋下，由下面的宣告簽名（神諭的類別閘門是雙向的）。
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# EXPECT: rule-red
+# EXPECT-EACH-STEP: rule-red
+# EXPECT-MSG: 的地方只收一種形狀
+# EXPECT-MSG: 重導向目標 `/tmp/r42-target` 不在文法裡
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: a literal argument that itself mentions GITHUB_ENV
+        shell: bash
+        run: |
+          {
+            echo 'GITHUB_ENV' >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a read redirect whose target has extra characters
+        shell: bash
+        run: |
+          {
+            cat < "$GITHUB_ENV.bak"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a second redirect after the GITHUB_ENV write
+        shell: bash
+        run: |
+          {
+            echo hi >> "$GITHUB_ENV" 2>&1
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a single greater-than overwrites GITHUB_ENV
+        shell: bash
+        run: |
+          {
+            echo hi > "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a write target with extra characters
+        shell: bash
+        run: |
+          {
+            echo hi >> "$GITHUB_ENV.x"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a read redirect next to a write to a target outside the grammar
+        shell: bash
+        run: |
+          {
+            grep -q x < "$GITHUB_ENV" > /tmp/r42-target
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a double-quoted variable with a default value
+        shell: bash
+        run: |
+          {
+            echo "X=${HOME:-x}" >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py

@@ -5,10 +5,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "── shellcheck (bash scripts) ──"
-shellcheck bin/pai-build-diff bin/pai-parse-verdict bin/pai-iter-commit test/lint-bats.sh test/lint-changelog-counts.sh test/lint-contract-enumerations.sh
+# 這份清單與 .github/workflows/test.yml 的 shellcheck step 是兩份寫死的規格（#30 追蹤自動列舉）；
+# #33 verify R11 抓到兩邊互相都不是對方的超集 —— 改其中一邊時請一併改另一邊。
+shellcheck bin/pai-build-diff bin/pai-parse-verdict bin/pai-iter-commit bin/pai-list-profiles references/regen-builtin-lenses.sh test/run.sh test/assert-tap-complete.sh test/lint-bats.sh test/lint-changelog-counts.sh test/lint-contract-enumerations.sh test/lint-ci-log-filter.sh
 
 echo "── py_compile (python scripts) ──"
-python3 -m py_compile bin/pai-parse-lens-csv
+python3 -m py_compile bin/pai-parse-lens-csv bin/pai-collect-lens-layers
 
 echo "── lint-bats (bare ! assertions are no-ops under bats errexit — round 6 RC11) ──"
 bash test/lint-bats.sh --selftest
@@ -22,10 +24,97 @@ echo "── lint-contract-enumerations (contract closed lists vs bin/codex-call
 bash test/lint-contract-enumerations.sh --selftest
 bash test/lint-contract-enumerations.sh
 
+echo "── lint-ci-log-filter (every CI run step must say how its log is filtered — #33 verify R15) ──"
+bash test/lint-ci-log-filter.sh --selftest
+# R46（#33 verify R45 logic 第 2 列）：提早結束模式不讀 stdin。nullglob 下 `"${resd}"/*.cnt` 在還沒有結果檔時展開成空、`grep` 改讀 stdin——stdin 有一行 `1 …` 時第一圈就 break、一張 fixture 都沒跑
+# （rc=1，「正向 fixture 是 0 個」）；stdin 是開著的管線時整個卡住。mutation_check 的 lint 守備單位就是用這個模式跑、而且繼承呼叫端的 stdin。
+printf '1 x\n' | LINT_SELFTEST_FAILFAST=1 bash test/lint-ci-log-filter.sh --selftest
+# R16 logic L-2：非 monorepo 佈局沒有 .github/ —— 明說略過，不是 traceback。
+if [ -f ../../.github/workflows/test.yml ]; then bash test/lint-ci-log-filter.sh --strict; else echo "（非 monorepo 佈局，略過 workflow 檢查）"; fi
+
+echo "── oracle：lint 判定 vs bash 真的有沒有把 neutralise.py 接在管線後（#33 verify R28 DA／R29）──"
+# selftest 只證「lint 判定 = 作者宣告」，神諭把 runner 拉進來對帳。PyYAML 缺席本機明說略過（CI 會 pip 裝再跑）。
+# `oracle_selfcheck.py` 與產生語料的神諭（#33 verify R38 第 18 列）：CI 的 oracle step 兩者都跑，run.sh 前一版都沒跟上——
+# R37 自己承認的錯（沒重跑產生語料神諭、推上去 CI 紅）在本機因此仍然量不到。**本機是 macOS 時，神諭的數字只對 macOS 成立**
+# （`/bin/sh` 不是 dash、沒有 `/proc`——R38 第 1 列）；CI（Linux）為準。
+# 兩支分開寫、不用 `&&` 接（#33 verify R39 第 6 列）：`if` 的 then 裡 `A && B`，A 失敗不觸發 errexit——fixture 神諭紅了
+# 這一段照樣往下走、run.sh 最後回 0。那是 R39 自己引入的回歸，測試在 test_validate.py 的 run.sh 神諭區塊那一條。
+if python3 -c 'import yaml' 2>/dev/null; then
+  python3 test/oracle.py
+  python3 test/oracle_selfcheck.py
+else echo "（缺 PyYAML：python3 -m pip install pyyaml；本機略過 oracle，CI 會跑）"; fi
+echo "── 形狀普查：本輪每個新機制在產生語料裡都要有 > 0 檔（#33 verify R32 DA-9 / G-R32-DA-5）──"
+# 散文規則（shapes.py 檔頭 6-7 行）R31 遵守、R32 破壞——一輪就失守，所以改成會紅的閘門。
+if python3 -c 'import yaml' 2>/dev/null; then
+  # 兩組都產生，與 CI 同一個目錄同樣的內容（test.yml 的產生語料 step）：R37 有 7 列（R37-1、2、4–8）只出現在
+  # `--strict` 組，只產生預設組時這 7 列恆為 0、這一步必紅——R37 加 `--strict` 組時只改了 CI，run.sh 沒跟上（R37 自查）。
+  GEN=$(mktemp -d); python3 test/corpus/shellgen.py --out "$GEN" >/dev/null
+  python3 test/corpus/shellgen.py --strict --out "$GEN" >/dev/null
+  # tail -2：摘要行（一致／不一致…）之後還有一行「已知類別：…」（R39 起）——只留一行會只看到類別計數、看不到判定
+  python3 test/oracle.py "$GEN"/*.yml | tail -2
+  find "$GEN" -name '*.yml' -print | sort | sed 's/^/x /' > "$GEN/list.txt"   # 不用 ls（SC2012）
+  python3 test/corpus/shapes.py --require-nonzero R3 "$GEN/list.txt" | tail -1
+  rm -rf "$GEN"
+else echo "（缺 PyYAML：本機略過形狀普查，CI 會跑）"; fi
+
+echo "── assert-tap-complete selftest（守門的東西自己要有網——R18 requirements F-7）──"
+bash test/assert-tap-complete.sh --selftest
+
 echo "── bats test/ ──"
 bats test/
 
+# #33 verify R15（regression LOW）：CI 的 pack 錨點 no-skip 守衛（R14 新增）run.sh 沒跟上——R12 才關掉的分岔又開。
+# R16：非 monorepo 佈局（plugin cache 副本）沒有 sibling pack，錨點依設計 skip——那不是 vacuous，是不適用；只在 monorepo 跑守衛。
+echo "── bats (pack anchor) — fail on skip ──"
+if [ ! -d ../pai-lenses ]; then
+  echo "（非 monorepo 佈局，pack 錨點不適用，略過 no-skip 守衛）"
+else
+TAP="$(mktemp)"
+bats --formatter tap test/pai-collect-lens-layers.bats > "$TAP" || { cat "$TAP"; exit 1; }
+bash test/assert-tap-complete.sh "$TAP" "pai-collect-lens-layers.bats" || { cat "$TAP"; exit 1; }
+rm -f "$TAP"
+fi
+
 echo "── node tests ──"
 for t in test/*.test.mjs; do echo "  $t"; node "$t"; done
+
+# #33 verify R11：pack（plugins/pai-lenses）的 python 測試先前沒有任何本機入口，只有 CI 的
+# manifests-and-lens-pack job 會跑；test/README.md 卻寫「CI 跑同一組」。這裡對齊那個 job
+# （完整 mutation 量測仍是手動：python3 scripts/mutation_check.py；實測數字見 CHANGELOG 最新 verify 條目的量測段——
+#   那是唯一 current 的來源（R50 起 test_validate.py 檔頭也不再抄數字），這裡刻意不抄一份會過期的，#33 verify R23）。
+# #33 verify R12：CI 的 builtin-lenses.csv drift step 也搬過來 —— 它是 run.sh 與 CI 之間最後一處分岔。
+echo "── builtin-lenses.csv drift (regenerate → expect no diff) ──"
+# R13 logic N4：非 git checkout（plugin cache 副本）下 `git diff` rc=129，不能拿它當「過期」。
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  # R14 regression E-1：regen 腳本的 node 例外會印 harness 原始碼——與 CI 同一份過濾器（monorepo 才有）。
+  # 注意這一步會**改寫工作樹**（catalog 過期時留下重生後的檔）——R13 reg R13-4，明示不改：那正是「請 commit」的用意。
+  if [ -f ../pai-lenses/scripts/neutralise.py ]; then
+    ( set -o pipefail; bash references/regen-builtin-lenses.sh 2>&1 | python3 ../pai-lenses/scripts/neutralise.py )
+  else
+    bash references/regen-builtin-lenses.sh
+  fi
+  # R13 requirements R13-5：不印 diff 內容 —— catalog 的 focus 是 fork 可控文字，`##[…]`/`::` 會原樣進 step log。
+  git diff --quiet -- references/builtin-lenses.csv || { echo "references/builtin-lenses.csv 過期 —— 上面已重生，請 commit（內容不印：見 git diff）"; exit 1; }
+else
+  echo "（非 git checkout，略過 drift 檢查）"
+fi
+
+echo "── pai-lenses pack (validate.py 的測試、靶清單、validator 本體) ──"
+# 這段只在 monorepo 佈局下成立（plugin cache 裡的副本沒有 sibling pack）。
+if [ ! -d ../pai-lenses ]; then
+  echo "（非 monorepo 佈局，略過 pack 測試）"
+else
+  ( cd ../pai-lenses && python3 -m py_compile scripts/*.py \
+    && python3 scripts/test_validate.py \
+    && python3 scripts/mutation_check.py --check-targets )
+  # #33 verify R12：拿不到 origin/main 時**不要**拿 HEAD 當替身 —— `--base HEAD` 恆印「無需 bump ✓」，
+  # 正是本 PR 一路在消滅的肯定式假綠燈。validate.py 對「本機且無 base」自己會說「bump 檢查未跑」。
+  if BASE="$(git merge-base origin/main HEAD 2>/dev/null)" && [ -n "$BASE" ] && [ "$BASE" != "$(git rev-parse HEAD)" ]; then
+    ( cd ../pai-lenses && python3 scripts/validate.py --base "$BASE" --event pull_request )
+  else
+    echo "（找不到 origin/main，或 HEAD 就在 main 上：bump 檢查本次未跑，只跑其餘閘門）"
+    ( cd ../pai-lenses && python3 scripts/validate.py )
+  fi
+fi
 
 echo "✓ 全部通過"

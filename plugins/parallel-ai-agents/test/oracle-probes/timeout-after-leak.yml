@@ -1,0 +1,16 @@
+# #33 verify R39 第 8 列：PR 文字已經印出去，之後的命令跑到逾時——前一版在逾時分支丟掉部分輸出、判「量不到」、rc=0，
+# 與 R39 自己的原則「分類失敗不抵銷已觀察到的外流」矛盾。任何比 5 s 慢的真實命令都能把一個已觀察到的繞過變成量不到。
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "::notice::$PR_TITLE"
+          echo safe | python3 scripts/neutralise.py
+          while :; do :; done

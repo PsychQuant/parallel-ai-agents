@@ -1,0 +1,13 @@
+# #33 verify R34 requirements F2：`${…}` 裡的雙引號內，`\` 是逃脫——`${PR_TITLE#"\"}| … "}` 在 bash 5.3 裡整段 `"\"}| python3 … "` 是 pattern 的
+# 雙引號字串，沒有管線，`echo` 照樣印出 PR 文字。R33 就有這個分支、但刪掉它 selftest、642 檔、神諭全部不翻色——
+# 只有 requirements 手寫的探針抓得到。這一檔是它的網：刪掉 `_param_end` 雙引號裡的反斜線處理 ⇒ 本檔翻綠。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: dq-escape inside param expansion
+        run: |
+          echo ${PR_TITLE#"\"}| python3 ../pai-lenses/scripts/neutralise.py "}

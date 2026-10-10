@@ -1,0 +1,14 @@
+# #33 R44 全輪 opsweep 的存活者（`odd = next((ch for ch in ln if … or ch in "\r\v\f…"), "?")` 的第二個運算元）：含 `\n` 以外行界字元的檔印出**那個字元**（`%r`），
+# 讓維護者知道是哪一個；拿掉 `ch in "…"` 這個運算元，第一個運算元（`len(ch.splitlines()) > 1`，對單一字元恆為假）永遠找不到，訊息會一律印 `'?'`。
+# 用 U+0085（NEL）：PyYAML 與 Python 的 `str.splitlines()` 都把它當行界，bash 與 YAML 對它的看法不同，是這類檔案危險的原因。
+# EXPECT: parse-red
+# EXPECT-MSG: 這一行含 `\n` 以外的行界字元 '\x85'
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        run: |
+          echo a b | python3 scripts/neutralise.py

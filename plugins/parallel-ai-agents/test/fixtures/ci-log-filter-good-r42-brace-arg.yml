@@ -1,0 +1,15 @@
+# #33 verify R41 第 10 列：`echo { }` 的大括號是一般參數，不是群組。逐字取自 R41 requirements lens 的 c11 輸入
+# s-t25-bare-brace-arg。45dee04 的 `--strict` 擋下（誤擋：群組規則把行中的 `{` 當成第二個群組）。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s-t25-bare-brace-arg
+        shell: bash
+        run: |
+          set -o pipefail
+          { echo { }; } 2>&1 | python3 scripts/neutralise.py

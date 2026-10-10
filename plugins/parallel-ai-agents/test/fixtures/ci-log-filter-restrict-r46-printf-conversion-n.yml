@@ -1,0 +1,40 @@
+# #33 R45 verify（Codex，協調者實測 bash 5.3 與 3.2）：`printf` 的轉換 `%n` 把已輸出的字元數指派給**參數所命名的變數**（`printf '%n' HOME` 之後 `HOME=0`；`%5n`、`%ln` 同）。
+# R44 說「printf 沒有指派副作用，除了 `-v`」——前提錯了。`printf '%n' 'a[$(cmd)]'` 被 bash 以 not a valid identifier 拒絕，所以沒有命令執行路徑；後果是信任變數與特殊變數被改寫成小整數
+# （P1 第 5 類、第 8 類對 `"$RUNNER_TEMP/…"` 的假設落空）。格式改成只收封閉的轉換列舉（`FL_PRINTF_FMT_RE`）。三個 step 各自要有自己的 RULE 行。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-EACH-STEP: rule-red
+# EXPECT-MSG: `printf` 的格式
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: printf %n writes a variable
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            printf '%n' HOME
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: printf %n after a conversion
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            printf '%s%n\n' x RUNNER_TEMP
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: printf %ln with a length modifier
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            printf '%ln' HOME
+          } 2>&1 | python3 scripts/neutralise.py

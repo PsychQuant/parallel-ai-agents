@@ -1,0 +1,28 @@
+# #33 verify R43 第 10 列（regression）(c)：`$GITHUB_ENV` 的字面值裡不准 glob／大括號／波浪號（`echo NOTES=* >> "$GITHUB_ENV"`）——檔名來自 PR 的 checkout，
+# 可以含換行。神諭在空目錄跑，glob 展開成它自己，看不到。R43 這條沒有 fixture。這是**文法外**——保守擋下；神諭實跑沒有外流。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-EACH-STEP: rule-red
+# EXPECT-MSG: 不在 `--strict` 的正面文法裡
+# EXPECT-MSG: 跨 step 通道
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: a glob in an env-file value
+        shell: bash
+        run: |
+          {
+            echo NOTES=* >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a brace in an env-file value
+        shell: bash
+        run: |
+          {
+            echo 'NOTES={a,b}' | cat > /dev/null
+            echo NOTES={a,b} >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py

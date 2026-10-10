@@ -1,0 +1,21 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺 drop-operand|_is_2to1|...|3（拿掉 `r["t"] is not None`）。
+# 群組的單一收尾重導向寫成 `2>&`（緊接 `|`，中間無空白、無目標字），custom lexer 對這個位置
+# （下一個字元在 `_WORD_END` 裡）留 `t=None`；bash 對 `2>&|…` 本身是語法錯誤（已用
+# `bash -c '{ echo hi; } 2>&|cat'` 實測：rc=2, "syntax error near unexpected token `|'"，
+# group body 不會執行，PR_TITLE 不會外流；原版藉由「既沒有經 neutralise.py」判紅仍是 rule-red，
+# 屬 fail-closed、無外流）。原版 `_is_2to1` 先判 `t is not None` 才短路,安全回 False；
+# 突變體拿掉這個 guard 後直接對 `r["t"]["lit"]` 取值,而 `r["t"]` 是 `None`——丟出未被
+# `except (IndexError, KeyError, ValueError, RecursionError)` 接住的 `TypeError`,
+# 整支 lint 當掉（非 0 exit、無 `RULE:`/`PARSE:`/`VACUOUS` 字樣），與原版的 rule-red 可機械區分。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: missing redir target glued to pipe
+        shell: bash
+        run: |
+          { echo "$PR_TITLE" >&2; } 2>&|python3 scripts/neutralise.py

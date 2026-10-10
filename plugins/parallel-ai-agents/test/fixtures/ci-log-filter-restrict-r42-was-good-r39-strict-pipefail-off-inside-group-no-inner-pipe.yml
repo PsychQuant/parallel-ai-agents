@@ -1,0 +1,28 @@
+# #33 R42：原名 `good-r39-strict-pipefail-off-inside-group-no-inner-pipe`（EXPECT: pass）。R39 範圍模型：群組是管線的一段，裡面的 `set +o pipefail` 管不到外層那條進 neutralise 的管線；那套模型在 R42 刪除。
+# 正面文法在群組裡不收 `set`（`set` 只能當群組前的前綴），保守擋下：群組裡沒有別的管線，PR 文字經 neutralise.py 過濾，
+# 是揭露的誤擋。
+# run 區塊逐字保留。
+# LINT-ARGS: --strict
+# R42：這一張的 1 步是**文法外**——不在 `--strict` 的正面文法裡、神諭實跑沒有外流（stdout／stderr／跨 step 通道都沒有）、
+# pipefail 探針沒看到關閉。保守擋下，由下面的宣告簽名（神諭的類別閘門是雙向的）。
+# KNOWN-CLASS: 文法外
+# EXPECT: rule-red
+# EXPECT-MSG: 不在 `--strict` 的正面文法裡
+# ── R42 之前的檔頭（當時是 good fixture；描述的是 R42 刪除前的 lint，只留作沿革）──
+# R39 範圍模型（R38 第 8、11 列）：群組是管線的一段、在子殼層裡跑，裡面的 `set +o pipefail` 管不到外層那條進 neutralise 的管線；
+# 群組內又沒有別的管線——沒有失敗會被吞。這張釘住「管線自己的 `|` 在所在的 shell 裡求值、不搬進段的範圍」。
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: pipefail off inside the group, no inner pipe
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            set +o pipefail
+            echo "$PR_TITLE"
+          } 2>&1 | python3 scripts/neutralise.py

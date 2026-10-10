@@ -1,0 +1,17 @@
+# #33 verify R43 第 9 列（網失效）：`shopt_cmd` 的 `elif "s" in flags and nm in _TRACE_OPTS` 拿掉第二個運算元的突變體存活——突變體把**任何**
+# `shopt -so <選項>` 當成開 trace。群組裡的 `shopt` 在預設模式因為輸出走管線而放行、看不出差別，所以這張把它寫在群組**之前**的頂層：
+# `shopt -so pipefail` 開的不是 trace（`_TRACE_OPTS` 是 xtrace 與 verbose），原版放行；突變體判「開了 pipefail」紅。「應放行」型。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: shopt -so pipefail before the group
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          shopt -so pipefail
+          { echo "$PR_TITLE"; } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py

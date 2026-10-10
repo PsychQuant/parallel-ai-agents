@@ -1,0 +1,9 @@
+# R30 MB-9／R31 探針 run 34938201988：GitHub **接受並執行** `- "\x72un":<TAB>echo …`
+# EXPECT: parse-red
+name: r31-probe-hexkey-tab
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - "\x72un":	echo HEXKEY-TAB-PROBE

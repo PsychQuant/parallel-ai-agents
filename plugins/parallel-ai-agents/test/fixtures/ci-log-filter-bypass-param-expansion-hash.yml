@@ -1,0 +1,11 @@
+# R30 H-3：`${VAR#pattern}` 裡的 `#` 不是註解、`|` 不是管線
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: leak
+        run: |
+          echo ${PR_TITLE#| python3 ../pai-lenses/scripts/neutralise.py }

@@ -1,0 +1,15 @@
+# #33 verify R35（opsweep 存活者 container／Windows 規則的 `job["windows"]` 運算元）：`runs-on: windows-latest` 沒寫 shell ⇒ runner 用
+# pwsh。run 內容本身在 bash 下完全合規（先 `set -o pipefail`、管線帶 `2>&1`），所以**只有** Windows 規則擋得住它——
+# 既有的 `bypass-shell-windows-default` 的內容是 PowerShell 語法，拿掉 Windows 規則仍被別的規則打成 PARSE，分辨不出這條規則。
+# LINT-ARGS: --strict
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: windows-latest
+    steps:
+      - name: bash-clean content on a Windows runner without a shell
+        run: |
+          set -o pipefail
+          echo hi 2>&1 | python3 scripts/neutralise.py

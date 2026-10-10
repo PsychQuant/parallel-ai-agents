@@ -1,0 +1,20 @@
+# #33 verify R37（R36 logic 第 10 列）：`dedent_block` 用不帶參數的 `.strip()` 篩「非空行」，把
+# 「9 個空格 + 1 個 tab」的第一行誤判成空行、排出縮排計算——YAML 只把 SPACE 算縮排，tab 是內容，
+# 這一行的縮排其實是 9（不是其餘內容行的 10）。前一版因此把 pad 算成 10，把那個 tab 行整行剝空，
+# 後面 `cat <<EOF` 的終止字 `EOF` 因為少算一次縮排、被 lint 誤判成「已經 flush」而提早收尾，
+# 真正的過澾管線被吞。bash 5.3 對帳：那一行帶著殘留的前導空白，`<<EOF` 的終止字比對是逐字元的，
+# 一個空格都不能多，heredoc 因此吃到檔尾（EOF 警告），`echo "$PR_TITLE"` 未經 neutralise 直接洩漏。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: dedent-tab-first-line
+        shell: bash
+        run: |
+         	
+          echo "$PR_TITLE"; cat <<EOF
+          EOF
+          echo x 2>&1 | python3 scripts/neutralise.py

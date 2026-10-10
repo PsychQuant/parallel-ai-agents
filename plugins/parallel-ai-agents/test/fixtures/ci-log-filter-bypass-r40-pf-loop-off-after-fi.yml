@@ -1,0 +1,20 @@
+# #33 verify R40 最終量測：opsweep 在 R40 的 pipefail 控制流程上報存活，R40 的 fixture 只釘住了點名的輸入、沒有釘住機制。
+# 迴圈本體裡的 `if … fi` 不能把迴圈從堆疊裡拿掉：之後的「關」仍在同一個迴圈裡，第二趟時作用到前面的管線（`ctl` 在 `fi` 也 pop 時放行）。
+# bash 5.3：第二趟 `"false" | cat` 在 pipefail 關掉之後執行、失敗被遮蔽。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: loop off after fi
+        shell: bash
+        run: |
+          # LOG-FILTER: none — prints no PR text
+          for c in true false; do
+            "$c" | cat
+            if true; then :; fi
+            set +o pipefail
+          done

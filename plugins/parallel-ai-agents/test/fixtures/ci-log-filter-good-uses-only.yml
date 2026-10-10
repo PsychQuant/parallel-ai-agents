@@ -1,0 +1,10 @@
+# 正向 fixture：純 `uses:` workflow —— 沒有 run step 是合法的，不該讓整支 lint 變紅
+# EXPECT: pass
+name: t
+on:
+  pull_request:
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4

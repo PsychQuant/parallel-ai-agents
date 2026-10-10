@@ -1,0 +1,16 @@
+# R39 opsweep 存活者（`--since c53ac22`）：`_env_names` 的 `k_.startswith("PYTHON")`。`SHELLOPTS` 的值是運算式：本來就是 `ENV_TRACE_KEYS`；拿掉那個運算元，它被記成
+# `SHELLOPTS=${{ … }}` 而不再等於 `SHELLOPTS`，env 規則看不到它。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: SHELLOPTS from an expression
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          SHELLOPTS: ${{ github.event.inputs.opts }}
+        run: |
+          echo "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py

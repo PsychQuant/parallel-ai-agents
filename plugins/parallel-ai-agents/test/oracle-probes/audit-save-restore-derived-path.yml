@@ -1,0 +1,21 @@
+# R49（#33 verify R49 regression）：先存檔、違規、再還原稽核檔——`${GITHUB_ENV%/*}` 導出儀器目錄，還原後仍有合法的 init／fin，R48 的完整性檢查看不出來（判「一致」）。
+# R50 起沒有稽核檔可存：替身 lint 全放行時 `printf '%n'` 仍被看到（rc=1、「primitive 稽核」）。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            d=${GITHUB_ENV%/*}
+            cp "$d/aud" "$RUNNER_TEMP/save" 2>/dev/null || :
+            printf '%n' HOME
+            cp "$RUNNER_TEMP/save" "$d/aud" 2>/dev/null || :
+          } 2>&1 | python3 scripts/neutralise.py

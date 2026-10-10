@@ -1,0 +1,17 @@
+# 跨行的 `$((1` ⏎ `<<2 ))`：算術深度要跨行保留，R33 版每一行歸零 ⇒ 第二行的 `<<` 被當成 heredoc（DA 的 t2prime：分隔字詞不含括號，所以不靠括號修法翻色）。
+# 來源（#33 verify R34 logic F1／F3／F4 的探針；DA 的 n 系列是它在 da-work/probes 留下的檔案）
+# EXPECT: rule-red
+name: t
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: t2prime
+        run: |
+          echo $((1
+          <<2 ))
+          echo "$PR_TITLE"; cat <<'Z'
+          2
+          x| python3 scripts/neutralise.py
+          Z

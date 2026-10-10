@@ -1,0 +1,17 @@
+# #33 R42 opsweep（`fl_tokens` 的 `s[i] in "\n;&|<>()#"`）：重導向運算子後面緊接分隔符 `;`。原碼說「沒有目標」；
+# 拿掉分隔符判斷的突變體把 `;` 當成詞的開頭，改說「`;` 不在文法裡」。兩者都 RULE，只有訊息不同——單步、EXPECT-MSG 釘住。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-MSG: 重導向 `>` 沒有目標
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: a redirect operator followed by a semicolon
+        shell: bash
+        run: |
+          {
+            echo hi > ;
+          } 2>&1 | python3 scripts/neutralise.py

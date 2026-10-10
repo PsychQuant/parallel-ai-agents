@@ -1,0 +1,16 @@
+# R46（#33 verify R45 第 3 列）：primitive 稽核。`printf '%n' scratch` 把 `scratch` 改成 0——沒有任何 PR 文字出現，**也不是信任變數**（用 `HOME` 時信任變數稽核同樣會報，掩蓋格式稽核——R46 的 mutation 靶「稽核不查 printf 的格式」因此存活過一次）。稽核看的是 printf 實際收到的格式（不在封閉的轉換列舉裡）。
+# 替身 lint 全放行時，神諭必須判「繞過（primitive 稽核…）」、rc=1。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { printf '%n' scratch; } 2>&1 | python3 scripts/neutralise.py

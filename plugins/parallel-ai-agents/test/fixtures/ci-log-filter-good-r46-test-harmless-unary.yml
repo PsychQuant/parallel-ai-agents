@@ -1,0 +1,121 @@
+# #33 R45 verify（regression 第 8 列）：`test -S /var/run/docker.sock` 一類不求值、不執行的檔案測試是常見寫法，前一版的一元運算子清單只有十一個、全被擋。補上 `-b -c -g -k -p -t -u -G -N -O -S`；
+# `-v`、`-R`（下標求值）、`-a`、`-o` 仍不收（`restrict-r44-test-shapes-corpus`）。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: socket and fifo tests
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ -S /var/run/docker.sock ] && echo has-docker
+            test -p fifo || true
+            [ -t 1 ] || true
+            [ -O README.md ] && [ -G README.md ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: unary operator -t
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ -t 1 ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: unary operator -p
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ -p f ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: unary operator -S
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ -S f ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: unary operator -k
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ -k f ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: unary operator -O
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ -O f ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: unary operator -G
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ -G f ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: unary operator -N
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ -N f ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: unary operator -b
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ -b f ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: unary operator -c
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ -c f ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: unary operator -g
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ -g f ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: unary operator -u
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ -u f ]
+          } 2>&1 | python3 scripts/neutralise.py

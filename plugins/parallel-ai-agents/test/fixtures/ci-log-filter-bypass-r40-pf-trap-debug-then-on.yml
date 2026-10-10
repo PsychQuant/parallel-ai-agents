@@ -1,0 +1,19 @@
+# #33 verify R39 第 5 列的相鄰輸入：DEBUG trap 在**每個命令之前**執行，所以 trap 之後再 `set -o pipefail` 也救不回來——
+# bash 5.3 實跑：`trap 'set +o pipefail' DEBUG; set -o pipefail; false | cat` 的失敗被遮蔽、rc=0。trap 的「關」要一直作用到底，
+# 不能被之後的「開」蓋掉（R40 第一版就蓋掉了——mutation 的 glob 靶存活才看到）。寫在頂層、宣告不過濾：群組形式的話，外層那條
+# `{ … } | python3` 本身也是管線，會讓這張因為別的原因紅。獨立成一張：同檔另一個 step 紅了，selftest 就看不出這一個。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: trap then on again
+        shell: bash
+        run: |
+          # LOG-FILTER: none — prints no PR text
+          trap 'set +o pipefail' DEBUG
+          set -o pipefail
+          false | cat

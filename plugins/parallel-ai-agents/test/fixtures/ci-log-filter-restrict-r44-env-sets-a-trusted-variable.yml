@@ -1,0 +1,22 @@
+# #33 verify R43 第 10 列（regression）(b)：可信變數經 `env:` 設定——`env: HOME: ${{ github.event.pull_request.title }}` 再讓群組把 `$HOME` 寫進 `$GITHUB_ENV`。
+# bash 裡 `HOME=$'x\nBASH_ENV=/tmp/pwn'` 會把一行 `BASH_ENV=…` 寫進 GITHUB_ENV。神諭把 HOME／RUNNER_TEMP／GITHUB_WORKSPACE 一律蓋成自己的值，看不到這一類。
+# R43 唯一設定可信變數的 fixture 是正向的、從未觸發。這是**文法外**——保守擋下；神諭實跑沒有外流（它蓋掉了 env）。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-MSG: 文法信任這些變數是 runner 給的值
+# EXPECT-MSG: 不在 `--strict` 的正面文法裡
+# KNOWN-CLASS: 文法外
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: env sets HOME to PR text
+        shell: bash
+        env:
+          HOME: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            echo "CACHE_DIR=$HOME/.cache" >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py

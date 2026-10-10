@@ -1,0 +1,14 @@
+# #33 R44 全輪 opsweep 的存活者（YAML 結構分類器，差分模糊測試找到的殺手；2 個突變體靠它）。
+# EXPECT: rule-red
+# EXPECT-MSG: PARSE: 欄位用 anchor／alias／merge key／tag 帶入——本 lint 不解析：`*a`
+name: t
+on:    *a
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s1
+        run: |
+          echo hi | python3 scripts/neutralise.py
+      - 'x'
+        run: echo ok

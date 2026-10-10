@@ -1,0 +1,16 @@
+# R49（#33 verify R49 logic M2a/b）：YAML 層宣告而沒有觸發的 step 不進正面文法，注入探針不跑（`in_grammar(run, yaml_decl_step)` 的兩個呼叫點）。
+# 替身 lint 全放行時，這個含可注入構造（`[ -v $PR_TITLE ]`）的 step 判「一致」、rc=0。拿掉注入呼叫點的 `yaml_decl_step` 參數，它會變成「不一致：繞過（注入…）」；拿掉稽核疊加呼叫點的，變成「不一致：繞過（primitive 稽核：…）」。兩者 rc=1，且都被 selfcheck 第 58 項殺掉。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: declared with dollar
+        shell: bash
+        # LOG-FILTER: none — the log is not produced by this step
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          [ -v $PR_TITLE ] && echo set

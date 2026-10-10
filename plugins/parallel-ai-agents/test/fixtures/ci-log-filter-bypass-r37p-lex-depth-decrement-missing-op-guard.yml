@@ -1,0 +1,55 @@
+# #33 verify R37 opsweep 補件（最終 lint，lex 群）：殺兩個突變體，同一句 `elif op == ")" and depth:
+# depth -= 1`（管「裸 `)` 該不該把 `depth` 減一」，`and` 有兩個運算元 `op==")"` 與 `depth`）：
+#   drop-operand|_lex|elif op == ")" and depth:|1
+#     （拿掉第一個運算元 `op==")"`，只留 `elif depth:`──也就是不管運算子是不是 `)`，只要 `depth`
+#     目前非零，**任何**運算子都會把它減一）
+#   ==↔!=|_lex|elif op == ")" and depth:|1
+#     （把 `op == ")"` 換成 `op != ")"`──裸 `)` 反而**不**減一，其他任何運算子只要 `depth` 非零就
+#     減一；對下面這個構造而言，效果與上面那個 drop-operand 突變體相同：那個讓群組自己的收尾 `)`
+#     提早把 `depth` 減完的角色，都改由群組內部的 `;` 頂替）。
+#
+# 構造：`X=$( (true; false) ; set -o pipefail )`──命令替換裡的裸群組 `(true; false)` 內部有一個
+# `;` 運算子，在群組自己的收尾 `)` 之前出現、且這時 `depth` 已經是 1（進 `(` 之後）。
+#
+# 原版：`;` 不是 `(` 也不是 `)`，兩個分支都不碰，`depth` 維持 1，直到群組自己的 `)` 才正確減回 0；
+# 之後 `; set -o pipefail` 落在**同一層命令替換的內容裡**（跟裸群組同一層、還沒到外層），`depth`
+# 這時是 0，遇到最外層真正的 `)` 時 `not depth` 成立，正確在那裡收尾——`set -o pipefail` 落在
+# `$(…)` 的 `subs`（`sub=True`），對外層 pipefail 狀態沒有作用；`shell: bash -e {0}` 本身不帶
+# `-o pipefail`，頂層從未被打開，`echo ok | cat` 在 `--strict` 下因為沒有 pipefail 被判紅，
+# RULE-red。
+#
+# 突變體拿掉 `op==")"` 這個條件後，`;`（非 `(` 非 `)` 的一般運算子）只要撞上 `depth` 非零，一樣觸發
+# `elif depth:` 把它減一──裸群組**還沒讀到自己的收尾 `)`** 就先被這個 `;` 把 `depth` 從 1 提早減成
+# 0。緊接著群組自己的 `)` 出現時：`depth` 已經是 0，`if op=="(":` 不成立、`elif depth:` 也不成立
+# （0 是假），這個 `)` 什麼都不做地被吃掉——但因為 `depth==0`、`cased==0`，**這個判斷式在字元一進來
+# 時就先被判定為提早收尾**（`stop==")" and c==")" and not depth and not cased` 四個條件同時成立，
+# 這一步發生在到達運算子比對之前）：整個遞迴呼叫在這個裸群組自己的 `)` 上就結束，回傳給
+# `_word()`。命令替換的內容被錯誤地截斷成只有 `(true; false`，之後 `) ; set -o pipefail )` 這一截
+# 被吐回給呼叫端、落在**頂層**（`sub=False`）。`set -o pipefail` 因此真的把外層 pipefail 打開，
+# `--strict` 對後面的管線判定通過，PASS，不等於 `EXPECT` 的 `rule-red`，KILL。
+#
+# 第二個突變體（`op != ")"`）對同一個構造走法略有不同但終點一樣：這次是群組自己的收尾 `)`
+# **不會**觸發減一（`op != ")"` 對真的 `)` 為假），但前面那個 `;` 一樣觸發（`;` != `)` 為真、
+# 且 `depth` 非零），一樣把 `depth` 從 1 提早減成 0；群組自己的 `)` 出現時 `depth` 已經是 0，
+# 一樣在那個位置提早收尾，把 `set -o pipefail` 錯判成頂層陳述，PASS，KILL。
+#
+# LOG-FILTER 宣告理由同群組內另兩張姊妹 fixture：跳過「有沒有接管線」「fd 流向」「群組規則」三條，
+# 只看 pipefail 模擬本身（這個構造本來就寫不成 `{ …; } 2>&1 | python3 …` 的群組形狀）。
+#
+# bash 5.3 實測：`bash -e {0}` 底下 `X=$( (true; false) ; set -o pipefail )` 執行完，
+# `set -o pipefail` 只在這個命令替換的子殼層裡生效、對外層完全沒有作用；緊接著的 `echo ok | cat`
+# 仍然跑在**沒有** pipefail 的狀態下──原版判紅（缺 pipefail）與這個事實一致，突變體判過是錯的方向。
+# EXPECT: rule-red
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: t1
+        shell: bash -e {0}
+        run: |
+          # LOG-FILTER: none — fixture 只測 `_lex` 對 `$(…)` 裡巢狀裸括號的 depth 追蹤，不測群組／fd 規則
+          X=$( (true; false) ; set -o pipefail )
+          echo ok | cat

@@ -1,0 +1,19 @@
+# R38 第 8 列（logic MEDIUM-3b）：`set -o pipefail &` 在背景子殼層裡跑，管不到外面；前一版把 `&` 當成 `;`、當成開了 pipefail。
+# 宣告了 `# LOG-FILTER:` 的 step 才走到 pipefail 規則（沒有群組規則擋在前面）。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: set -o pipefail in the background
+        shell: bash -e {0}
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          # LOG-FILTER: none — test
+          set -o pipefail &
+          wait
+          false | true

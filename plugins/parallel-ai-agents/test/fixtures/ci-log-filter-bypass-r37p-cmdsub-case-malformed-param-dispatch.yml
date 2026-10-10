@@ -1,0 +1,30 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺
+# `==↔!=|_cmdsub_end_case|else _param_end(line, k) if line[k + 1] == "{" else _cmdsub_end_case(line, k))|1`（L572）。
+#
+# `_cmdsub_end_case` 遇到 `${…}` 或 `$(…)` 時（L570 判斷式已經認出是這兩者之一），要靠 L572 的 `line[k+1]=="{"`
+# 分派給正確的配對函式：是 `{` 交給 `_param_end`（`${…}` 的配對），不是則交給自己遞迴（`$(…)` 的配對）。
+# 這份 fixture 的雙引號命令替換裡，在真正的 leak（`echo "$PR_TITLE" >&2`）後面接了一個**故意寫壞、沒有收尾
+# 的參數展開** `${))`——原版正確分派給 `_param_end`，`_param_end` 從 `{` 後面開始找配對的 `}`，這段裡只有
+# 兩個 `)`、沒有 `}`，同一行沒收尾，回 None；外層 `_cmdsub_end_case` 因此 `return None`，最終雙引號到 run
+# 區塊結尾都沒收，PARSE。
+#
+# `==` 換成 `!=` 之後，`line[k+1]=="{"`（此處為真）被判定式的相反面接住，於是這個**真的是 `${…}`** 的構造被
+# 誤分派給 `_cmdsub_end_case`（遞迴呼叫自己，當成 `$(…)` 處理）。這個遞迴呼叫直接跳過開頭兩個字元（把 `${`
+# 誤當 `$(`），從 `)` 開始逐位掃：第一個 `)` 因為這裡沒有 `case`（`cases` 空）被當成裸括號收尾，回一個位置；
+# 外層拿到這個位置當作「`${))` 已經配對完」，繼續往下掃到緊接的第二個 `)`——這個才是外層 `$(` 自己真正該收
+# 的位置，湊巧也收斂到 0，回一個看似合法的收尾。真正存在的 `>&2` 因此被暴露給規則層當「已解析」內容重新
+# 掃過，判定從原版的 PARSE 變成 RULE——與宣告的 EXPECT 不同，構成殺點。
+#
+# bash 5.3 實測：`bash -n` 對這段話報 `unexpected EOF while looking for matching '"'`（`${))` 不是合法的
+# 參數展開語法，bash 剖析器直接卡住、連帶讓外層雙引號也判定沒收尾）——確認整段對 bash 是語法錯誤，不會執行；
+# PARSE（fail-closed）是對的方向，不要求神諭逐項比對真實外流。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: malformed-param-dispatch-mixup
+        run: |
+          echo "pre$(echo "$PR_TITLE" >&2 ${))post" 2>&1 | python3 scripts/neutralise.py

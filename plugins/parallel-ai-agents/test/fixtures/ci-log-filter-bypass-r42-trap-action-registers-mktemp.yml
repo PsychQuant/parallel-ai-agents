@@ -1,0 +1,27 @@
+# R42 正面文法：雙引號的 trap 動作在**設 trap 的當下**展開變數、離開時再當成程式碼剖析一次，所以只收「這個 body 裡由
+# `NAME=$(mktemp …)` 指派、之後沒再改過」的變數。trap 動作本身是離開時才執行的程式碼——動作裡的 `tmp=$(mktemp -d)` 在設下一個
+# trap 的時候還沒跑過，不得算成「tmp 已由 mktemp 指派」。risk-first 原型剖析動作時與外層共用同一個登記集合，這個 step 因此放行：
+# 設 trap 時 `$tmp` 是 PR 文字，離開時被當成程式碼執行（實測 bash 5.3：`PR_TITLE='x; echo "INJ=1" >> "$GITHUB_ENV"'` 寫進了
+# `$GITHUB_ENV`）。R42 移植時改成動作用自己的一份登記集合。
+# **R44**：這一步原本是 `KNOWN_DISAGREE`（神諭的 PR 標記是文字、不含 shell 字元，觸發不了動作字串裡的程式碼）。R44 的注入探針把 PR 文字換成
+# 會留下哨兵的程式碼再跑一次，現在觀察得到、判一致，簽名移除。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: trap action registers mktemp
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            tmp=$PR_TITLE
+            trap 'tmp=$(mktemp -d)' EXIT
+            trap "rm -rf $tmp" EXIT
+            make test
+          } 2>&1 | python3 scripts/neutralise.py

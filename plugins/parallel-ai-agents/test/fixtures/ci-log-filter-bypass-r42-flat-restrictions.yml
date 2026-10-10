@@ -1,0 +1,53 @@
+# R42 正面文法自己加的限制，一條一個 step，逐字取自 R42 risk-first 設計的 attack 電池（群組形式：`set -o pipefail`、`{`、該條、
+# `} 2>&1 | python3 scripts/neutralise.py`）：在 run 裡指派文法信任其值的變數（RUNNER_TEMP、HOME、TMPDIR、GITHUB_ENV）、以及
+# `printf -v` 指派。文法信任 `"$RUNNER_TEMP/…"` 當重導向目標、`$HOME` 等當 `$GITHUB_PATH` 的值——這些變數一旦在 run 裡被改成
+# PR 文字，信任就不成立。45dee04 的 `--strict` 全部放行。
+# LINT-ARGS: --strict
+# R42：這一張的 5 步是**文法外**——不在 `--strict` 的正面文法裡、神諭實跑沒有外流（stdout／stderr／跨 step 通道都沒有）、
+# pipefail 探針沒看到關閉。保守擋下，由下面的宣告簽名（神諭的類別閘門是雙向的）。
+# **R46（#33 verify R45）**：神諭新增 primitive 稽核（PRELUDE 把 `[`／`test`／`printf` 換成記錄實際 argv 的函式、逐命令比對信任變數）之後，這個檔原本簽名的 5 個 step 有 5 個改判「一致」（builtin 真的收到文法之外的 argv／格式，或信任變數被改寫——神諭直接看到了）；仍簽名的 0 個是稽核看不到的（沒有外流、沒有違規 argv）。簽名數照實測對齊。
+# EXPECT: rule-red
+# EXPECT-MSG: 指派 `RUNNER_TEMP=$PR_TITLE`
+# EXPECT-MSG: 指派 `HOME=$PR_TITLE`
+# EXPECT-MSG: 指派 `TMPDIR=/x`
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: assign RUNNER_TEMP
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+          RUNNER_TEMP=$PR_TITLE
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: assign HOME
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+          HOME=$PR_TITLE
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: assign TMPDIR
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+          TMPDIR=/x
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: assign GITHUB_ENV
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+          GITHUB_ENV=/tmp/x
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: printf -v
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+          printf -v RUNNER_TEMP %s x
+          } 2>&1 | python3 scripts/neutralise.py

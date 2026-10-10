@@ -1,0 +1,20 @@
+# #33 verify R41 logic F7：opsweep 報「無解」的存活者 `±1→±2 | _word | p += 1`（`_word` 從雙引號進入跨行命令替換那一支）其實殺得掉。
+# `echo "a $(` ⏎ `echo hi` ⏎ `)"'x' >&2`：原版照 bash 把 `)"` 之後的 `'x'` 接在同一個詞上、看到 `>&2`，fd 流向規則紅；
+# 突變體多跳一格，錯過收尾的 `"`，`>&2` 被吞進字串，放行。逐字取自 logic p/k3。預設模式。
+# EXPECT: rule-red
+# EXPECT-MSG: 卻有 `>&2` 複製 fd
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "a $(
+          echo hi
+          )"'x' >&2
+          echo x 2>&1 | python3 scripts/neutralise.py

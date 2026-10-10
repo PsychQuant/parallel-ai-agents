@@ -1,0 +1,26 @@
+# #33 verify R37 opsweep 補件：殺
+# `drop-operand|<module>|if STRICT and _flow_value(l2):|1`
+# ——把根層級 `defaults.run` flow-形式檢查裡的 `STRICT` 拿掉，變成 `if (_flow_value(l2)):`。
+# 原版：這個檢查只在 `--strict` 時才對 flow 形式的 `defaults.run` fail-closed（因為讀不到
+# `shell:`）；非 strict 模式下 flow 形式的 `defaults.run` 本來就不影響判定（GitHub 預設
+# `bash -e {0}`，本 lint 非 strict 模式假設 shell 是 bash，不去讀它）。這裡**不帶** `--strict`，
+# 而 `defaults.run` 寫成 flow 形式 `{shell: bash}`，原版因為沒有 `--strict` 完全不檢查這一行、
+# 直接放行（`pass`）。
+# 突變體拿掉 `STRICT` 之後，只剩 `_flow_value(l2)`——不論有沒有 `--strict` 都會因為 flow 形式
+# 被 fail-closed 拒絕，變成 `parse-red`。兩者不同，這張 fixture 殺得掉它。
+# bash 5.3 實測：`echo hi 2>&1 | python3 -c "import sys; sys.stdin.read()"` rc=0，
+# `bash -n` 對這段內嵌 shell 語法 parse 正常（無語法錯誤）；安全管線本身與本張 fixture 判定
+# 的爭點無關，這裡只是確保 step 本身不會因為別的原因翻紅。
+# EXPECT: pass
+name: t
+on: pull_request
+defaults:
+  run: {shell: bash}
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe
+        shell: bash
+        run: |
+          echo hi 2>&1 | python3 scripts/neutralise.py

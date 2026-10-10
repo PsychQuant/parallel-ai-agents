@@ -1,0 +1,18 @@
+# R39 mutation 全輪的存活者追到的（神諭的歸屬錯誤）：接 neutralise 的那一行以 `&&` 懸空、下一行是**另一條命令**。
+# 前一版的 `_continues` 把 `&&`／`||` 也當成同一條邏輯行，差分把下一行一起換掉——外流跟著消失，被錯判成「管線自己印到 stdout」。
+# 這是已知類別 G（一條管線＝整個區塊已過濾，lint 限制第 2 條）。
+# KNOWN-CLASS: G
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo safe | python3 scripts/neutralise.py &&
+            echo "$PR_TITLE"

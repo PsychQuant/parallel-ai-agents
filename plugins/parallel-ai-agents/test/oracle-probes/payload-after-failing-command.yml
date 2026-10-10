@@ -1,0 +1,18 @@
+# 神諭反向探針（R42 opsweep 之外的 mutation 全輪，靶 406 重新錨定）：runner 運算式前面的命令會失敗（`false`），
+# `bash -e`（樣板 `shell: bash`）下腳本就停在那裡，payload 的標記印不出來——除非每一組 payload 都先 `|| :`。
+# 替身 lint 全放行時，神諭必須看得到外流（rc=1、「繞過」）；payload 不 `|| :` 就量不到（rc=0）。
+# 同一個輸入在 `--strict` 的真 lint 下是 RULE（非字面運算式），所以只有替身 lint 走得到——這是 payload 家族僅存的觀測點。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [a]
+    steps:
+      - name: a failing command before the expression
+        shell: bash
+        run: |
+          { false ${{ matrix.target }}; } 2>&1 | python3 scripts/neutralise.py

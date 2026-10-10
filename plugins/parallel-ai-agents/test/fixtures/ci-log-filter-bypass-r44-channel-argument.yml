@@ -1,0 +1,45 @@
+# #33 verify R43 第 11 列（regression＋Codex）：`tee -a "$GITHUB_OUTPUT"`／`"$GITHUB_STEP_SUMMARY"` 在 R43 的 `--strict` rc=0，而神諭對同一個檔判「不一致：繞過
+# （跨 step 通道：GITHUB_OUTPUT）」；CHANGELOG 寫「一律 RULE」是假的——只有 `>> "$GITHUB_OUTPUT"` 的重導向形式被擋，而且只因為目標不在允許集合裡
+# （`FL_GH_RE` 只涵蓋 ENV 與 PATH）。R44 起五個 runner 通道（`GITHUB_ENV`／`PATH`／`OUTPUT`／`STATE`／`STEP_SUMMARY`）用同一個產生式：
+# 只收 `echo`／`printf` 全字面參數 `>>` 寫進它本身。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-EACH-STEP: rule-red
+# EXPECT-MSG: 不在 `--strict` 的正面文法裡
+# EXPECT-MSG: 跨 step 通道
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: tee into the output file
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            echo "title=$PR_TITLE" | tee -a "$GITHUB_OUTPUT"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: tee into the summary file
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            echo "## $PR_TITLE" | tee -a "$GITHUB_STEP_SUMMARY" > /dev/null
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a file copied into the output file
+        shell: bash
+        run: |
+          {
+            cat out.txt | tee -a "$GITHUB_OUTPUT"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: the state file as a program argument
+        shell: bash
+        run: |
+          {
+            ./save-state.sh "$GITHUB_STATE"
+          } 2>&1 | python3 scripts/neutralise.py

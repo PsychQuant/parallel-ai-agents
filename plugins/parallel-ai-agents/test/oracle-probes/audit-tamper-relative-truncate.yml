@@ -1,0 +1,20 @@
+# R48（#33 verify R47 security，放行條件 5）：儀器檔原本放在步驟的 cwd 裡，`: > aud`、`: > inject`（相對路徑重導向，`--strict` 放行）能把稽核檔與哨兵檔截斷。
+# R50 起儀器是繼承的 fd，cwd 裡沒有 `aud`／`inject` 這類儀器資料檔（只有 `s.sh` 與 `runner_temp/`；相對路徑 `aud`、`inject` 沒有對象）：這個 step 的 `test {-v,"$PR_TITLE"}` 仍然被稽核看到（替身 lint 全放行時 rc=1、「primitive 稽核」）。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            test {-v,"$PR_TITLE"} || :
+            : > aud
+            : > inject
+          } 2>&1 | python3 scripts/neutralise.py

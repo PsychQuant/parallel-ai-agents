@@ -1,0 +1,17 @@
+# #33 verify R35（opsweep 存活者 heredoc 登記的 `dq_resume` 運算元）：雙引號裡的 `$(` 只設 `dq_sub`、不加 `csub`——開在那裡的
+# heredoc 靠 `dq_resume` 才被標成「在命令替換裡」。內文 `EOFX` 是「以終止字開頭」的行 ⇒ fail-closed（bash 5.3 在此以警告收尾）。
+# 拿掉 `dq_resume` ⇒ 被當成不在命令替換裡 ⇒ `EOFX` 只是內文 ⇒ 放行。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: heredoc in a double-quoted command substitution with a prefix line
+        run: |
+          x="$(cat <<EOF
+          EOFX
+          EOF
+          )"
+          echo hi 2>&1 | python3 scripts/neutralise.py

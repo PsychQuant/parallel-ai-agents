@@ -1,0 +1,33 @@
+# #33 verify R37 opsweep 補件：一次殺三個 `_dq_parts` 對 `$(…)` 深度計數迴圈的存活突變體──
+#   `drop-operand|…|while i < n and d:|2`（拿掉 `d`，只剩 `i < n`：不管括號有沒有配對，直接吃到 body 結尾）
+#   `==↔!=|…|d += (body[i]=="(") - (body[i]==")")|1`（第一個比較反向：`d += (body[i]!="(") - (body[i]==")")`，
+#     幾乎每個字元都讓 `d` 往上跳，`d` 幾乎不可能歸零，效果同樣是吃到結尾）
+#   `±1→±2|…|i += 1`（步進改成 2，隔格漏看，同樣容易錯過真正的收尾 `)`）
+# 三者的共同後果：對 `$(true)` 這種在 body 中間、後面還接著字面文字的命令替換，`_dq_parts` 沒有正確地
+# 停在收尾 `)` 就把後面本來該是**字面文字**的部分也吞進「看不見」的挖空骨架（`sk` 全部或大半變成
+# `"\0"`），於是 body 剩下的字面文字（這裡是 `/dev/null`）從骨架 `sk` 裡消失。
+# 這個字面文字餵給 `_redir_hit` 的骨架保底檢查：`{"dev","proc"} & set(posixpath.normpath(sk).split("/"))`──
+#   - 原版：`_dq_parts("$(true)/dev/null")` 正確地只把 `$(true)` 那一段變成 `"\0"`，後面的 `/dev/null`
+#     原樣留在 `sk` 裡──`sk == "\0/dev/null"`，切開路徑段後含 `"dev"`，命中 RULE（「寫到 /dev 或 /proc
+#     底下」），正確：這個重導向目標的**已知部分**確實落在 `/dev` 底下，即使前綴是動態的。
+#   - 三個突變體：`$(true)` 之後的一路都被吃進 `"\0"`，`/dev/null` 這段字面文字從骨架裡消失，
+#     `sk` 變成純粹的 `"\0"`（或極短），路徑段裡完全看不到 `"dev"`，判定通過（pass）──把「已知會落在
+#     /dev 底下」的目標，誤判成「看不出目標」，方向正是漏放而非誤擋。
+# bash 5.3 實測：`echo hi > "$(true)/dev/null"` 因為 `$(true)` 輸出空字串，目標在執行期真的解析成
+# `/dev/null`；`bash -n` parse rc=0。
+# （這張 fixture 殺不掉 `==↔!=|…|d += … - (body[i]==")")|2`──它的失效方式不同：幾乎每個字元都讓 `d`
+# 快速掉到 0、迴圈**提早**結束而不是失控吃到結尾，後面的字面文字反而透過預設分支被原樣複製回 `sk`，
+# `/dev/null` 仍然留在骨架裡；另一張 fixture `ci-log-filter-good-r37o-dqbrace-dqparts-paren-dev-arg-safe.yml`
+# 專門殺它。）
+# 神諭對帳（R37 移植 #61 時補）：被擋下的那個命令改成真的把 PR 文字印出去（原本印常數、或那一支不會執行），
+# 讓 lint 的紅是「一致」而不是「誤擋」；殺掉的突變體逐一重驗仍然殺。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe
+        run: |
+          echo "$PR_TITLE" > "$(true)/dev/stderr" 2>&1 | python3 scripts/neutralise.py

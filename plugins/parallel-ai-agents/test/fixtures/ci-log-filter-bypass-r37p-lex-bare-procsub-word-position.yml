@@ -1,0 +1,33 @@
+# #33 verify R37 opsweep 補件（最終 lint，lex 群）：合併殺兩個突變體，兩者對 `<(` 這個輸入的行為完全一致
+# （`False or C.startswith(">(",p)` 等同直接拿掉第一個運算元）：
+#   startswith→F|_lex|if C.startswith("<(", p) or C.startswith(">(", p):   # process substitution：一個詞，裡面是一串命令|1
+#   drop-operand|_lex|if C.startswith("<(", p) or C.startswith(">(", p):   # process substitution：一個詞，裡面是一串命令|1
+#
+# 這行是 `_lex` 主迴圈最上層的判斷：一般詞位置（不是重導向目標）遇到 `<(`／`>(` 時，整段當成**一個不
+# 透明的詞**（process substitution），裡面的內容遞迴進 `_lex` 剖析。兩個突變體都讓「`<(` 這個開頭在這個
+# 位置完全不被辨認」，於是主迴圈的一般運算子比對（`_OPS`）接手：`<` 單獨被讀成一個重導向運算子；緊接著
+# 的 `(` 落在 `_WORD_END` 裡，「有沒有目標可讀」那句判斷式為假，目標讀不到（`t=None`）。迴圈回到最上層
+# 時，這個 `(` 現在被**當成裸的子殼層群組 `( … )`** 重新剖析（一般運算子比對表裡 `(` 本身也是一個 OP）。
+#
+# 構造：`echo <(echo "$PR_TITLE" >&2) 2>&1 | python3 scripts/neutralise.py`——這個裸群組剛好緊接著
+# `2>&1 | python3 …neutralise.py`，符合 `_analyse` 裡「群組收尾後緊接 `2>&1 |` 進 neutralise」的豁免
+# 條件（R36 第 9 列；`segs[k]["kind"]=="group"`、`conns[k]=="|"`、`trail` 恰好一個 `2>&1`）。原版正確
+# 辨認整個 `<(...)` 是**跟在 `echo` 後面的同一個詞**、不構成任何群組，`>&2` 的洩漏（process
+# substitution 裡的重導向照樣執行——本檔頭部已多次引用的既知行為）沒有被任何群組豁免，`out["fd"]`
+# 非空，RULE-red。突變體因為裸群組巧合湊成豁免形狀，讓這筆 hit 的 `stack` 含一個被判定豁免的
+# `gid`，`fd` 變空，PASS（誤放行）。
+#
+# bash 5.3 實測：`echo <(echo "$PR_TITLE" >&2) 2>&1 | cat` 確實在這個 `echo` 命令自己的 `2>&1`
+# 套用之前，就把 `$PR_TITLE` 印到 process substitution 繼承來的 stderr（未過濾）——原版判紅是對的、
+# 是真外流，不是 fail-closed；突變體的誤放行才是錯的方向。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: t1
+        shell: bash
+        run: |
+          echo <(echo "$PR_TITLE" >&2) 2>&1 | python3 scripts/neutralise.py

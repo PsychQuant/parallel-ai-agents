@@ -1,0 +1,31 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺
+# `drop-operand|_cmdsub_end_case|if cases and cases[-1][0] == depth and cases[-1][1] == "cmd" and line.startswith((";;", ";&"), k):|2`（L563）與
+# `drop-operand|_cmdsub_end_case|if not (cases and cases[-1][0] == depth and cases[-1][1] == "pat"):|3`（L577，
+# 與上一份 fixture 殺的是同一行、但這裡是另一個輸入形狀，一併釘住）。
+#
+# 這份 fixture 同樣是一個真的 bash 語法錯誤：`case x in a) … foo( ;; )(esac)`——`foo(` 開了沒有配對的括號，
+# 子句命令部分還沒收掉它就碰上 `;;`（L563 的 `;;`／`;&` 收尾判定要求 `cases[-1][0]==depth`；這裡 `depth` 已經
+# 被 `foo(` 墊高一層、跟 case 起點的 `cases[-1][0]` 對不上，原版因此不把這個 `;;` 當成子句收尾，`cases[-1][1]`
+# 留在 `"cmd"`）。接著的 `)` 收掉 `foo(` 那層、`(` 開新的一層、`esac` 因為 `cases[-1][0]` 仍對不上目前 `depth`
+# 而只被當成普通文字吃掉（不觸發 L557 的 pop）、最後的 `)` 再次因為 `cases[-1][1]` 仍是 `"cmd"` 命中「子句命令
+# 之後同一層的單獨 `)`：bash 語法錯誤」——None。`bash -n` 對這段話同樣直接報語法錯誤，PARSE 是對的方向。
+#
+# 兩個突變體各自拿掉 L563／L577 的深度守衛後，都把「深度對不上」的這個中間狀態當成合法：L563 突變體讓那個
+# `;;` 提早把 `cases[-1][1]` 撥回 `"pat"`（即使深度還沒回到 case 起點），後面的 `(esac)` 因此被當成合法的
+# pattern 前導括號＋pattern 收尾＋esac，一路算出一個看似合法的收尾；L577 突變體（拿掉深度守衛後 `if cases:`
+# 對任何非空 cases 都成立）讓 `(esac)` 裡的 `(` 被當成 pattern 前導括號（不管深度符不符），同樣湊出一個看似
+# 合法的收尾。兩者都因此把裡面真實存在的 `>&2` 複製 fd 重新暴露給規則層當「已解析」內容去掃，判定從原版的
+# PARSE 變成 RULE——與宣告的 EXPECT 不同，構成殺點。
+#
+# bash 5.3 實測：`bash -n` 對這段話報 `syntax error near unexpected token '(' while looking for matching ')'`
+# ——確認整段對 bash 就是語法錯誤，不會執行，PARSE（fail-closed）是對的方向。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: unmatched-paren-semisemi-esac-paren
+        run: |
+          echo "pre$(case x in a) echo "$PR_TITLE" >&2 foo( ;; )(esac)post" 2>&1 | python3 scripts/neutralise.py

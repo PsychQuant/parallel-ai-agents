@@ -1,0 +1,18 @@
+# #33 verify R41 第 5 列、R42 放行條件 10：跳脫的保留字 `\done 2>/dev/null || :` 是合法命令（`bash -n` 通過、實跑 rc=0），
+# 這個 step 不外流。正面文法不收未加引號的反斜線，保守擋下。逐字取自 R41 logic lens 的 p/done1。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-MSG: 未加引號的反斜線（逃脫、續行） 不在文法裡
+# EXPECT-MSG: 不在 `--strict` 的正面文法裡
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: done1
+        shell: bash
+        run: |
+          # LOG-FILTER: none — prints no PR text
+          \done 2>/dev/null || :
+          echo ok | cat

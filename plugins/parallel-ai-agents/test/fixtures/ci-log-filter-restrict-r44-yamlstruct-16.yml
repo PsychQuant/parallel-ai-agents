@@ -1,0 +1,14 @@
+# #33 R44 全輪 opsweep 的存活者（YAML 結構分類器，差分模糊測試找到的殺手；1 個突變體靠它）。
+# EXPECT: parse-red
+name: t
+on:    *a
+jobs:
+  j:
+    runs-on:  	[a, b]
+    steps:
+      - name: s1
+        run: |
+          echo hi | python3 scripts/neutralise.py
+      - name: s2
+        run:   
+          echo x

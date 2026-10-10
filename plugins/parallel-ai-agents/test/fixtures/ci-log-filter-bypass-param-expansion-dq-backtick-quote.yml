@@ -1,0 +1,12 @@
+# #33 verify R35（opsweep --since 6cf6864 的存活者）：同上，反引號版本。殺 `_param_end` 雙引號分支的反引號處理。
+# 預期判定用 bash 實測（oracle 一致／bash -n）。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: dq-backtick-in-param
+        run: |
+          echo ${PR_TITLE#"`echo "}| python3 scripts/neutralise.py {"`"}

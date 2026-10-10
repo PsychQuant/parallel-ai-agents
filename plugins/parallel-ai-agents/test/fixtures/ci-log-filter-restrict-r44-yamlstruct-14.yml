@@ -1,0 +1,13 @@
+# #33 R44 全輪 opsweep 的存活者（YAML 結構分類器，差分模糊測試找到的殺手；1 個突變體靠它）。
+# EXPECT: rule-red
+# EXPECT-MSG: PARSE: `steps:` 用 flow 寫法（`[…]`／`{…}`）——本 lint 不解析，請改用 block 清單
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps: []
+      - name: s1
+        run: |
+          echo hi | python3 scripts/neutralise.py
+        run: echo ok

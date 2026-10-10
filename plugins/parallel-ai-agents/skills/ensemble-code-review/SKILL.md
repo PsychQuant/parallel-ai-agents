@@ -163,6 +163,13 @@ esac
 
 #### Backend B — Legacy TeamCreate + Codex Bash（fallback）
 
+> ⚠️ **Backend B 吃不到層 ②③**（#33 verify R6）：上面 Phase 的 collector 結果只進
+> Backend A 的 `args.customLenses`，這裡的 reviewer 是固定的一組 prompt。也就是說在
+> 沒有 `Workflow` tool 的舊版 Claude Code 上，**裝了 `pai-lenses` 也不會生效，而且不會有
+> 任何警告** —— 與「沒裝」在輸出上完全一樣。要確認實際載入了哪幾層，看報表的 provenance 行。
+> 讓 Backend B 也消費 lens 清單需要把 teammate prompt 由 lens 陣列生成，不在本次範圍。
+
+
 > 每個 spawn 的 Agent 都帶顯式 `model: $PAI_AGENT_MODEL`（預設 `opus`，#20——不繼承 session 主迴圈模型）。
 
 > **diff 模式時**（不只換路徑字串）：① 把下方 prompt 的 `審閱範圍：{FILE_OR_DIR}` 換成 `審閱範圍（diff）：$DIFF_FILE`；② **在每個 reviewer prompt 開頭加一句框架引導**：「以下是一份 diff，只審變更行、評估**變更的影響面與回歸風險**；需要時自行 Read 周邊原始碼補 context」——否則 teammate 會用『審整棵原始碼樹』的 mental model 看 diff（如 architecture 的『檔案組織/死碼』對著一份 diff 語意走樣）；③ TeamCreate 的 `description` 不要塞 temp 檔路徑，用「diff review」之類描述。devil's-advocate 走 SendMessage 不受影響。

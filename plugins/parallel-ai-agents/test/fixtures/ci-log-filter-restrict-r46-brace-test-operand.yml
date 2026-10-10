@@ -1,0 +1,71 @@
+# #33 R45 verify（DA 與 Codex 各自找到）：大括號展開在**所有其他展開之前**做，能改變命令的參數個數與位置。`test {-v,"$PR_TITLE"}` 在 bash 裡是 `test -v "$PR_TITLE"`——
+# `-v` 的運算元被當成陣列下標做算術求值，標題 `PWD[$(命令)]` 的命令替換就執行了（bash 5.3 實測；DA 端到端寫進 `$GITHUB_ENV`）。R44 的 P1 寫「未加引號的大括號展開的結果不來自 PR 的檔名，照收」，
+# 只看了結果的來源、沒看展開對 argv 形狀的影響；`_fl_test_ok` 以 lint 的詞數判形狀，一個詞（`{-v,"$PR_TITLE"}`）就是一個運算元。
+# 六個 step 各自要有自己的 RULE 行：四個 `test`／`[` 的形狀（含 `trap` 動作字串裡的那一個與相鄰的 `-a`）、一個範圍展開（`{a..c}` 讓運算元個數變成三個）、一個通道寫入（`echo {-e,…}` 讓 echo 多出選項）。
+# 沒有外流時神諭判「誤擋」要簽名；有外流（注入探針／primitive 稽核看得到）時判一致、不簽。姊妹 fixture：`good-r46-brace-no-expansion`。
+# LINT-ARGS: --strict
+# R46：神諭的 primitive 稽核看不到這個檔的 1 個 step 有外流或違規 argv（沒有 PR 文字出現、沒有 builtin 收到文法之外的東西），逐步簽 `KNOWN-CLASS: 文法外`——不是安全證明。
+# KNOWN-CLASS: 文法外
+# EXPECT: rule-red
+# EXPECT-EACH-STEP: rule-red
+# EXPECT-MSG: 未加引號的大括號展開
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: test with a brace word that makes -v
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            test {-v,"$PR_TITLE"}
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: bracket with a brace word that makes -v
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ {-v,"$PR_TITLE"} ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: bracket with an adjacent brace word
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ {x,-a,-v,"$PR_TITLE"} ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: trap action with a brace word
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            trap '[ {-v,"$PR_TITLE"} ]' EXIT
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: range expansion changes the operand count
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ -n {a..c} ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: echo option made by a brace word on a channel write
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo {-e,K=v} >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py

@@ -1,0 +1,12 @@
+# #33 verify R36 第 8 列 → R37：fd 流向規則按流向判——重導向目標看去引號後的字、任何 fd 複製（`2>&1`／no-op `>&1` 除外）、xtrace 的各種拼法。
+# `/proc/…/fd/2` 底下的路徑：macOS 沒有 /proc，所以這裡讓目標帶 PR 文字，兩個平台的錯誤訊息都會把它印出來——規則管的是「目標在 /dev、/proc 底下」這個性質，`/proc/self/fd/2` 本身同一條規則（R36 點名）
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: stdout diverted around the pipe
+        run: |
+          printf 'x\n' >"/proc/self/fd/2/$PR_TITLE" 2>&1 | python3 scripts/neutralise.py

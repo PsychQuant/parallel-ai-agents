@@ -1,0 +1,19 @@
+# R39 opsweep 存活者（`--since c53ac22`）：`_pipefail_holds` 的 `e["k"] == "pf"`。群組內兩條管線：拿掉那個運算元，前一條管線的 `|` 事件被當成設定事件讀 `fn` 而 KeyError。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: two inner pipes
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            printf 'a\n' | cat
+            printf 'b\n' | cat
+            echo "$PR_TITLE"
+          } 2>&1 | python3 scripts/neutralise.py

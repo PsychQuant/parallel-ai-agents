@@ -1,0 +1,17 @@
+# R38 第 4 列（regression MEDIUM-2、logic MEDIUM-4）：`command -p set -x` 開了 xtrace，之後管線那一段的 `+ echo …` 寫到管線外的 stderr。
+# `_LEAD_WORDS` 只剝裸詞、不剝選項（`command -p`、`builtin --`、`eval --`、`time -p`）；`_word` 把 `$"…"` 讀成 `$` 加字串；
+# 非字面的命令名（`${X:-set}`）直接被當成不是 `set`。380e4a4 的 `FD_RE` 擋這幾種，R37 改讀結構後放行（回歸）。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: xtrace via command-p
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          command -p set -x
+          echo "$PR_TITLE" 2>&1 | python3 scripts/neutralise.py

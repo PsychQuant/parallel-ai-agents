@@ -1,0 +1,17 @@
+# 神諭反向探針（R42 WP6，#33 verify R41 DA-5）：KNOWN_DISAGREE 要比對**方向**。這一步其實是繞過（lint 放行、PR 文字經運算式
+# 逃出群組、印到 stdout），step 名卻剛好是 KD 裡一條登記成「誤擋」的條目（檔名也相同，所以放在子目錄）。R41 的神諭把它判成
+# 「已知」、rc=0。搭配 `lint-pass-all.sh` 跑，逐字取自 R41 DA 的 kd 輸入。
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: python3 -u
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            echo ${{ 'x; }; echo "$PR_TITLE"; { :' }}
+          } 2>&1 | python3 scripts/neutralise.py

@@ -1,0 +1,9 @@
+name: t
+on: push
+# EXPECT: pass
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: stderr pipe is a real pipe
+        run: echo hi |& python3 scripts/neutralise.py

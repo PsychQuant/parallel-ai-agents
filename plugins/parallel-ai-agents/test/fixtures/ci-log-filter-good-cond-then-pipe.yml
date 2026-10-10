@@ -1,0 +1,11 @@
+# #33 verify R35（R34 修法的誤擋守衛）：`[[ … ]]` 結束之後的 `|` 是真管線。`[[` 裡的內容不算 code，`]]` 之後恢復。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: conditional expression, then a real pipe
+        run: |
+          [[ -n "$HOME" && "$HOME" =~ ^/ ]] && echo hi 2>&1 | python3 scripts/neutralise.py

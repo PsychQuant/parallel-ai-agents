@@ -1,0 +1,280 @@
+# test／[ 形狀的逐運算元語料（_fl_test_ok）——被擋的 29 個（R46：第 016–026 個——`[ -t 1 ]` 與 `-p -S -k -O -G -N -b -c -g -u` 各一個——移出——一元運算子清單補上 `-t` 等無害的檔案測試之後它是合法寫法，改由 `good-r46-test-harmless-unary` 逐運算子守著）。每個 step 各自要有自己的 RULE 行（EXPECT-EACH-STEP）；神諭沒有觀察到外流（沒有 PR 文字進去），逐步簽 `KNOWN-CLASS: 文法外`。
+# 由 `test／[ 形狀的逐運算元語料（_fl_test_ok）` 的候選語料（77 個 step，每個是靠管線過濾的群組形式、各放一個命令）依基準 lint 的逐 step 判定拆成兩張：放行的一張（`good-`，EXPECT: pass）、被擋的一張（`restrict-`，
+# EXPECT-EACH-STEP: rule-red）。目的：#33 verify R44 的區域 opsweep（`--since 11e2b8f`）在這個函式的每個運算元上都有存活者——每個運算元沒有各自會翻色的輸入；
+# 這份語料按**運算元的邊界**取樣（每個接受／拒絕的分岔各有輸入），不挑已知形狀。
+# 簽名比被擋的 step 少一個：第 007 個（`[ ( x ) ]`）神諭沒有跑它（not-invoked），判一致，所以不簽 `文法外`。
+# LINT-ARGS: --strict
+# **R46（#33 verify R45）**：神諭新增 primitive 稽核（PRELUDE 把 `[`／`test`／`printf` 換成記錄實際 argv 的函式、逐命令比對信任變數）之後，這個檔原本簽名的 39 個 step：11 個（第 016–026 個）移出到 `good-r46-test-harmless-unary`（lint 改放行）、25 個改判「一致」（builtin 真的收到文法之外的 argv／格式，或信任變數被改寫——神諭直接看到了）；仍簽名的 3 個是稽核看不到的（沒有外流、沒有違規 argv）。簽名數照實測對齊。
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# EXPECT: rule-red
+# EXPECT-EACH-STEP: rule-red
+# EXPECT-MSG: 不在 `--strict` 的正面文法裡
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: test-shapes 000
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ -v X ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: test-shapes 001
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ -R X ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: test-shapes 002
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ ! x ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: test-shapes 003
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ -a x ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: test-shapes 004
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ -o x ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: test-shapes 005
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ x -a y ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: test-shapes 006
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ x -o y ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: test-shapes 007
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ ( x ) ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: test-shapes 008
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ "$A" "$B" ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: test-shapes 009
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ a b c ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: test-shapes 010
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ a b c d ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: test-shapes 011
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ -n a b ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: test-shapes 012
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ -n -n a ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: test-shapes 013
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ "$A" != b ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: test-shapes 014
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ "$A" -nt b ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: test-shapes 015
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ "$A" =~ b ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: test-shapes 027
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ -o noclobber ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: test-shapes 028
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ a = b c ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: test-shapes 029
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ ! -n x ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: test-shapes 030
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ "$A" -eq ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: test-shapes 031
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ = b ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: test-shapes 032
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            test -v X
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: test-shapes 033
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            test ! x
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: test-shapes 034
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            test a b c
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: test-shapes 035
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: test-shapes 036
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ -n "$X" 
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: test-shapes 037
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ "$A" = b
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: test-shapes 038
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ x ] ]
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: test-shapes 039
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ -n x ]]
+          } 2>&1 | python3 scripts/neutralise.py

@@ -1,0 +1,66 @@
+# 已知盲點類（R50，**文件化，不是保證**）：步驟與儀器在同一個 shell、同一個信任域，**步驟能對這個 shell 做的事幾乎都能對儀器做**（PRELUDE 的唯讀變數 `__orc_priv` 除外；已經寫進 pipe 的記錄無法撤回）；神諭是 lint 放行步驟的差分測試器，不是 sandbox。
+# 這張探針釘「用編號指到儀器的 fd」（197 注入哨兵、198 事件、199 稽核記錄）這一種。五個 step，各是不同的到達方式（**代表形狀，不是窮舉**）；替身 lint（`lint-pass-all.sh`）全放行，神諭都判「一致」
+# （對照：同樣的違規不動 fd 時判「不一致：繞過」，見 `instrument-fd-blind-spots-control.yml`）：
+#   cmd-redirect             單一命令的重導向 `printf '%n' Z 199>/dev/null`——那一筆違規記錄寫進 /dev/null（不需要子殼層）
+#   save-restore             把 199 存到別的 fd、關掉、違規、再還原
+#   close-forge-fin          永久關掉 199，但先留一個指向同一條 pipe 的 fd，事後用它補寫假的 `fin`——永久關掉不還原也不一定判量不到
+#   forge-dev-fd             經 `/dev/fd/199`（這條 pipe 在檔案系統裡**有路徑**；macOS 實測，Linux 未驗）寫一筆偽造記錄「名稱 x、欄位數 4」，吞掉其後那筆違規記錄的四個欄位——記錄的欄位數沒有被獨立核對
+#   close-injection-stream   `exec 197>/dev/null` 關掉注入哨兵流，同一個注入（`[ -n $PR_TITLE ] && …`）就看不到
+# 其他形狀：不碰 fd 編號的在 `instrument-prelude-known-blind-spots.yml`；事件流、`$ORACLE_PRIV`、逾時在 `instrument-event-and-priv-known-blind-spots.yml`；子殼層關掉在 `audit-fd-closed-in-subshell-known-blind-spot.yml`。
+# 真的 `--strict` lint 對這五個 step **的寫法**全部 RULE-red（`N>` 重導向、`>&N` 複製、`set` 前綴之後的第一個詞不是群組的 `{`）；經 fd 寫入的外部命令（`{ echo x | tee /dev/fd/199; …; } 2>&1 | python3 …`、`dd of=/dev/fd/199`、`sh -c 'echo x >&199'`）在文法內被 lint 放行（實測），
+# 神諭判『一致』：單獨寫入的垃圾會併進緊接著的子殼層 `fin` 記錄的名稱，主 shell 的 `fin` 完好，所以沒有完整性旗標；外部命令（`sh -c`、`bash -c`）本身就是文法內的任意程式，所以沒有『只有』。盲點危害的是 lint 放行的 step：藏得住的違規本身得先被 lint 放行。神諭的判決是 macOS／bash 5.3.15 的實測；Linux 在 Docker（Ubuntu 24.04 aarch64、bash 5.2.21、非 root）預跑過整套 selfcheck；GitHub CI 尚未跑這些探針（PR 頭仍是 R48 的 `5b5a46d`）。
+# 若有一天補上某一種，這一項會紅；改它時要一併改 README 與 `oracle.py` 的措辭（沒有機制連結，靠人記得）。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: cmd-redirect
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          printf '%n' Z 199>/dev/null
+          { echo hi; } 2>&1 | python3 scripts/neutralise.py
+      - name: save-restore
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          exec 3>&199
+          exec 199>/dev/null
+          printf '%n' Z
+          exec 199>&3 3>&-
+          { echo hi; } 2>&1 | python3 scripts/neutralise.py
+      - name: close-forge-fin
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          exec 9>&199
+          exec 199>&-
+          printf '%n' Z
+          printf 'fin\0%d\0%d\0' 1 "$$" >&9
+          { echo hi; } 2>&1 | python3 scripts/neutralise.py
+      - name: forge-dev-fd
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          printf 'x\0004\0' > /dev/fd/199
+          printf '%n' Z
+          { echo hi; } 2>&1 | python3 scripts/neutralise.py
+      - name: close-injection-stream
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          exec 197>/dev/null
+          { [ -n $PR_TITLE ] && echo "has title"; } 2>&1 | python3 scripts/neutralise.py

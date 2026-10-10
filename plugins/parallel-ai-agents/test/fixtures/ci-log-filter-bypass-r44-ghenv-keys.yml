@@ -1,0 +1,73 @@
+# #33 verify R43 第 8 列（security＋DA）：`$GITHUB_ENV`／`$GITHUB_PATH` 的字面寫入完全不看鍵名——`BASH_ENV`、`SHELLOPTS`、`BASHOPTS`、`PYTHONPATH`、`PATH`、
+# `TMPDIR`、`RUNNER_TEMP` 都被收下，而同一組鍵放在 step `env:` 會被擋（bash 或 python3 在群組存在之前就讀它們）。值是維護者寫死的字面、
+# 不是外流；`$GITHUB_PATH` 寫工作區目錄等於把 PR 的目錄放到過濾器 `python3` 的查找路徑前面。同一個信任邊界在兩條路徑上寫成兩種標準。
+# **神諭沒有觀察到這一類**（值是字面、不是 PR 文字；信任邊界類的缺口不在它的觀察範圍），所以每一步簽 `KNOWN-CLASS: 文法外`——
+# 那個類別是「保守擋下、神諭沒有觀察到外流」，不是安全證明（R44 起類別訊息這樣寫；#33 verify R43 第 16 列）。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-EACH-STEP: rule-red
+# EXPECT-MSG: 不在 `--strict` 的正面文法裡
+# EXPECT-MSG: `$GITHUB_ENV` 的鍵
+# EXPECT-MSG: 寫進 `$GITHUB_PATH` 的路徑必須是絕對路徑
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: write BASH_ENV
+        shell: bash
+        run: |
+          {
+            echo "BASH_ENV=$GITHUB_WORKSPACE/ci/env.sh" >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: write SHELLOPTS
+        shell: bash
+        run: |
+          {
+            echo 'SHELLOPTS=xtrace' >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: write BASHOPTS
+        shell: bash
+        run: |
+          {
+            echo 'BASHOPTS=extglob' >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: write PYTHONPATH
+        shell: bash
+        run: |
+          {
+            echo "PYTHONPATH=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: write PATH through the env file
+        shell: bash
+        run: |
+          {
+            echo 'PATH=/usr/bin' >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: write TMPDIR
+        shell: bash
+        run: |
+          {
+            echo 'TMPDIR=build/tmp' >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: write RUNNER_TEMP
+        shell: bash
+        run: |
+          {
+            echo 'RUNNER_TEMP=build' >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: put the workspace on the path file
+        shell: bash
+        run: |
+          {
+            echo "$GITHUB_WORKSPACE/bin" >> "$GITHUB_PATH"
+          } 2>&1 | python3 scripts/neutralise.py

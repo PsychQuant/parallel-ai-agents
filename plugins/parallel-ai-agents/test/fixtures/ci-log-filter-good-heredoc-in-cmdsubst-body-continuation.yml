@@ -1,0 +1,17 @@
+# #33 verify R35（opsweep --since 6cf6864 的存活者）：命令替換裡未引號 heredoc 的內文 `a \` 續行：下一行 `EOFx` 併進前一行、不是收尾候選。殺 prefix 規則的 `not body_continued` 運算元。
+# 預期判定用 bash 實測（oracle 一致／bash -n）。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: cmdsub-body-cont
+        run: |
+          x=$(cat <<EOF
+          a \
+          EOFx
+          EOF
+          )
+          echo "$x" 2>&1 | python3 scripts/neutralise.py

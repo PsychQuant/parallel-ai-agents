@@ -1,0 +1,15 @@
+# #33 verify R37（缺陷 c 修法的內部：`_interior_subs` 的雙引號段）：`_interior_subs` 要走進雙引號段找命令替換，而雙引號裡的 `'` 是字面——整段跳過雙引號段、或把那個 `'` 當成單引號的開頭（會往後找配對、越過這個條件式），裡面的 `$(… >&2)` 都會漏掉。bash 5.3 實測 PR 文字從 stderr 裸印。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          [[ -n "it's $(echo "$PR_TITLE" >&2)" ]] || [[ 'x' == x ]]
+          echo safe 2>&1 | python3 scripts/neutralise.py

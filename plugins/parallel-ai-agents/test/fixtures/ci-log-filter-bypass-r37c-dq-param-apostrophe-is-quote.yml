@@ -1,0 +1,15 @@
+# #33 verify R37（守一個**不做**的修法）：R36 第 16 列（codex 第 8 條）說雙引號裡 `${X:-…}` 的 word 內 `'` 是字面、
+# 要 `_param_end` 知道外層是雙引號。**bash 5.3 實跑證偽**：`"${MESSAGE:-it's fine}"` 是「尋找符合的 ' 時遇到檔案結束符」的
+# 語法錯誤（見 `bypass-r37c-dq-param-apostrophe-unbalanced`）；本檔的 `'…'` 在 bash 是 word 裡的單引號字串，`}` 與 `"`
+# 都在裡面，整串是 echo 的一個引數、沒有管線、PR 文字裸印。照 codex 第 8 條改（`'` 當字面）⇒ `${…}` 在第一個 `}` 結束、
+# 假管線變 code ⇒ 放行。380e4a4 已是 RULE（正確）；這張網守的是那個修法不被做。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: dq-param-apostrophe-is-quote
+        run: |
+          echo "$PR_TITLE${X:-'}" 2>&1 | python3 scripts/neutralise.py '}" #'

@@ -1,0 +1,18 @@
+# R48（#33 verify R47 logic，放行條件 3）：`# LOG-FILTER:` 宣告可以寫在 YAML 層（step 的註解行，test.yml 自己就這樣寫），不只在 run 文字裡。
+# 宣告了而沒有觸發（沒有 `|`、沒提到 GITHUB_ENV／GITHUB_PATH）的 step 不進 `--strict` 的正面文法（lint 檔頭 L3）——lint 放行是對的。
+# 前一版 `in_grammar` 只看 run 文字，把這種 step 當成在文法內：這個 step 裡的 `[ -v PR_TITLE ]`（argv 在三種形狀之外）被 primitive 稽核報成「繞過」。
+# 替身 lint 全放行時神諭必須判一致、rc=0（同 `audit-declared-step-not-in-grammar`，差別只在宣告寫在 YAML 層）。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe
+        shell: bash
+        # LOG-FILTER: none — the log is not produced by this step
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          [ -v PR_TITLE ] && echo set

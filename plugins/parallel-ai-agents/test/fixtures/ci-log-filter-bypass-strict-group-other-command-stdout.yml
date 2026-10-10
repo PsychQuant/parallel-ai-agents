@@ -1,0 +1,15 @@
+# #59（已知類別 G 在 `--strict` 下）：另一條命令把 PR 文字印到 stdout（偽造 annotation），同區塊另一行才是過濾管線。
+# 群組規則：整個區塊必須是一個群組——群組外的 `echo` 不經過濾。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: annotation from a command outside the filter
+        shell: bash
+        run: |
+          echo "::notice::$PR_TITLE"
+          { echo safe; } 2>&1 | python3 scripts/neutralise.py

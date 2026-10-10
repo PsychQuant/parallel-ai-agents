@@ -1,0 +1,87 @@
+# #33 verify R37 opsweep 補件（最終 lint，lex 群）：這張 fixture 合併殺六個存活突變體，全部是預設模式、都不需要
+#   `--strict`——各自針對 `_lex` 裡管重導向前綴／目標的邊界判斷，逐一舉出「原版正確判『安全』、突變體誤判成
+#   有洩漏或整支崩潰」的探針。
+#
+# 殺（照抄 id 去掉 `|L行號`）：
+#   1. `drop-operand|_lex|if (prev is not None and prev["k"] == "W" and prev["e"] == p - len(op) and prev["lit"] is not None|3`
+#      （拿掉 `prev["e"] == p - len(op)`，即「fd 前綴要緊貼運算子」的相鄰性檢查）
+#   2. `drop-operand|_lex|if (prev is not None and prev["k"] == "W" and prev["e"] == p - len(op) and prev["lit"] is not None|5`
+#      （拿掉 `prev["lit"] == prev["code"]`，即「fd 前綴必須是未加引號的字面」）
+#   3. `drop-operand|_lex|if (prev is not None and prev["k"] == "W" and prev["e"] == p - len(op) and prev["lit"] is not None|6`
+#      （拿掉 `re.fullmatch(r"[0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\}", prev["lit"])`，即「fd 前綴要是數字或 `{name}`」）
+#   4. `drop-operand|_lex|while p < n and C[p] in " \t" and S[p] in " \t\0":|3`（拿掉 `S[p] in " \t\0"`，
+#      即「只有原文也是空白才能跳過」——挖空的 `${…}` 在程式碼半邊看起來像空白，原文半邊不是）
+#   5. `drop-operand|_lex|while p < n and C[p] in " \t" and S[p] in " \t\0":|1`（拿掉 `p < n` 的邊界檢查）
+#   6. `drop-operand|_lex|elif p < n and (C[p] not in _WORD_END or (C[p] == " " and S[p] not in " \t\n\0")):|1`
+#      （拿掉 `p < n` 的邊界檢查，這次是「有沒有目標可讀」那一句）
+#
+# --- step t1（殺 1）：`echo 3 >&1` 中間有一個空白。原版：`3` 與 `>&1` 不相鄰，不當 fd 前綴消掉，`3` 留在
+#     `echo` 的引數裡，`>&1` 本身無前綴（`pre=""`）── `_redir_hit` 對 `pre in ("", "1", "2")` 判定安全（no-op）。
+#     突變體：拿掉相鄰性後，即使中間有空白，只要其餘條件成立就把 `3` 吃成前綴 `pre="3"`──`_redir_hit`
+#     判斷「複製 fd」而回報洩漏，變成 RULE-red。bash 5.3 實測 `echo 3 >&1` 印出 `3`（`>&1` 是 no-op），無害。
+# --- step t2（殺 2）：`echo "3">&1`，`"3"` 帶引號、緊貼 `>&1`。原版：`prev["lit"]=="3"` 但
+#     `prev["code"]=='"3"'`，兩者不等，判定不是字面前綴，不消掉；`>&1` 前綴仍是 `pre=""`，安全。突變體拿掉
+#     這條字面相等檢查後，只看 `prev["lit"]` 符合 `[0-9]+` 正則就吃成前綴 `pre="3"`──誤判洩漏。bash 5.3：
+#     `"3"` 加引號時 bash 不把它當 fd 數字，一樣是 `echo` 的參數加上無害的 `>&1`。
+# --- step t3（殺 3）：`echo foo>&1`，`foo` 緊貼 `>&1` 但不是數字也不是 `{name}`。原版：正則不比對 `foo`，
+#     不消掉，`pre=""` 安全。突變體拿掉正則檢查後，只要字面存在、字面等於程式碼、且相鄰，就把 `foo` 整段當
+#     fd 前綴（`pre="foo"`），`_redir_hit` 判定不在安全集合裡而回報洩漏。bash 5.3：`>` 前面接非數字字串一律
+#     是普通參數，`foo>&1` 等同 `foo` 這個詞加上安全的 `>&1`。
+# --- step t4（殺 4）：`echo hi >${PR_TITLE} /dev/stderr`。`${PR_TITLE}` 在程式碼半邊被挖成空白、原文半邊仍是
+#     `$`／`{`／`P`…等真字元。原版：略過重導向運算子後的空白時同時檢查程式碼與原文都是空白，這裡原文不是空白，
+#     迴圈立刻停下──目標從這個位置開始讀，正確讀到 `${PR_TITLE}`（值未知、不落在 `/dev`／`/proc`，`_redir_hit`
+#     判安全）；`/dev/stderr` 則是**另一個獨立的詞**（`echo` 的第二個引數），與這個重導向無關。突變體拿掉原文
+#     檢查後，只看程式碼半邊是不是空白字元，於是把 `${PR_TITLE}` 挖空後的整段空白、以及它後面真正的空白，
+#     全部當成可跳過的空白一路吃掉，最後把 `/dev/stderr` 誤讀成這個重導向的目標──`_redir_hit` 判定寫進
+#     `/dev` 底下而回報洩漏。bash 5.3：`>${PR_TITLE} /dev/stderr` 是「導向到 `$PR_TITLE` 的值」加上
+#     `echo` 的第二個引數 `/dev/stderr`，跟突變體的誤讀完全不同。
+# --- step t5（殺 5）：第二個 run 區塊以 `echo hi >` 收尾、後面還有一格空白後就是整個 run 字串的結尾。原版：
+#     略過空白的迴圈遇到 `p == n`（字串已經用完）就先靠 `p < n` 短路，正常結束（目標讀不到、`t=None`，
+#     `_redir_hit` 對缺目標的重導向視為安全，等同 bash 語法錯誤不會真的執行）。突變體拿掉 `p < n` 後，
+#     迴圈跳過那格空白、`p` 前進到剛好等於字串長度時再檢查一次 `C[p]`──直接 `IndexError`，整支 lint 對
+#     這個 fixture 崩潰（被 `except (IndexError, …)` 接住變成 `PARSE:`，不是 pass）。
+# --- step t6（殺 6）：同上但這次結尾是 `echo hi >`（沒有多一格空白），讓「有沒有目標可讀」那句判斷式本身
+#     在 `p == n` 上被求值。原版一樣靠 `p < n` 短路安全結束。突變體拿掉這句的 `p < n` 後，直接對
+#     `C[p]`（`p == n`）求值、`IndexError` 崩潰。
+#
+# bash 5.3 實測（`bash -n`／`bash -c`，皆對照 PRELUDE 不影響判定）：
+#   echo 3 >&1 | cat            → rc=0，印出 3（no-op 重導向，無害）
+#   echo "3">&1 | cat           → rc=0，印出 3（引號後不是 fd 數字，仍是 no-op）
+#   echo foo>&1 | cat           → rc=0，印出 foo（同上）
+#   echo hi >${PR_TITLE} /dev/stderr → 因 $PR_TITLE 未設而多半導向到空字串檔名／或視環境而定，
+#     與本 fixture 判定無關（判定只看「目標讀不到已知危險路徑」，不模擬實際檔案系統結果）
+#   echo hi >  （加一格尾隨空白）與 echo hi >（不加）→ 皆為 bash 語法錯誤（缺重導向目標），
+#     `bash -n` 回報 `syntax error near unexpected token`，rc≠0，不會執行、不會外流
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: t1
+        shell: bash
+        run: |
+          echo 3 >&1 | python3 scripts/neutralise.py
+      - name: t2
+        shell: bash
+        run: |
+          echo "3">&1 | python3 scripts/neutralise.py
+      - name: t3
+        shell: bash
+        run: |
+          echo foo>&1 | python3 scripts/neutralise.py
+      - name: t4
+        shell: bash
+        run: |
+          echo hi >${PR_TITLE} /dev/stderr | python3 scripts/neutralise.py
+      - name: t5
+        shell: bash
+        run: |
+          echo ok | python3 scripts/neutralise.py
+          echo hi > 
+      - name: t6
+        shell: bash
+        run: |
+          echo ok | python3 scripts/neutralise.py
+          echo hi >

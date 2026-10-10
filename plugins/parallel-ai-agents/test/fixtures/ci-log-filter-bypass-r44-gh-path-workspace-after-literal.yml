@@ -1,0 +1,21 @@
+# #33 verify R44 區域 opsweep 的存活者：`_fl_merge` 的 `if k == "L" and out and out[-1][0] == "L":` 拿掉 `k == "L"`——任何片段都併進前一個字面片段，
+# 變數被當成字面吃掉。`$GITHUB_PATH` 的規則「不碰 `$GITHUB_WORKSPACE`」靠片段種類判（`("V", "GITHUB_WORKSPACE")`），`/opt/$GITHUB_WORKSPACE/bin` 的變數接在字面後面，
+# 被併進字面、規則看不到——工作區（PR 的程式碼）進了每個後續 step 的查找路徑。原版 RULE；突變體放行。「應紅」型。這是**文法外**（神諭的標記不在路徑值裡、沒有外流）。
+# LINT-ARGS: --strict
+# KNOWN-CLASS: 文法外
+# EXPECT: rule-red
+# EXPECT-MSG: `$GITHUB_PATH` 的路徑
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: a workspace path after a literal prefix in the path file
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            echo "/opt/$GITHUB_WORKSPACE/bin" >> "$GITHUB_PATH"
+          } 2>&1 | python3 scripts/neutralise.py

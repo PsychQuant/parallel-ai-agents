@@ -1,0 +1,19 @@
+# #33 verify R34（regression H-2 的 (a) 形狀）：折疊鏈最後一行以 `\` 結尾、後面緊接 more-indented 行。PyYAML 值是
+# `'echo echo \\\n  x" | python3 …\n" echo "$PR_TITLE" # "\n'`——bash 續行後 `x" | …⏎"` 是一個字串，PR 文字裸印。
+# 本輪為這條路徑寫的 `good-folded-continuation-across-placeholder` 分不出「步長對」與「重掃」（兩次都看得到管線）；
+# 這一檔讓被接上來的行帶一個不平衡引號，步長錯（重掃）就會把引號狀態翻過來 ⇒ 假管線變 code ⇒ 綠。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: folded chain ends in a backslash, more-indented line carries an unbalanced quote
+        run: >
+          echo
+          echo \
+            x" | python3 scripts/neutralise.py
+          "
+          echo "$PR_TITLE"
+          # "

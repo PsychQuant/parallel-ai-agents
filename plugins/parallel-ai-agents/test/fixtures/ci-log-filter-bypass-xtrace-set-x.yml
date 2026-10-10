@@ -1,0 +1,15 @@
+# `set -x`：bash 在套用命令自己的 `2>&1` **之前**就把 trace 印到 shell 的 fd2——每個命令各帶的 `2>&1` 蓋不到 trace，
+# `##[` 注入在 trace 行中段照樣生效（#33 verify R34 security S-2 的探針；R35 的 fd 流向規則）。
+# EXPECT: rule-red
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: set -x in block, stderr merged per command
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -xo pipefail
+          printf '%s\n' "$PR_TITLE" 2>&1 | python3 ../pai-lenses/scripts/neutralise.py

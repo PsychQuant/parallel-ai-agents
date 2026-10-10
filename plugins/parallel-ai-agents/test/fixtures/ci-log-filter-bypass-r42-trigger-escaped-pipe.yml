@@ -1,0 +1,17 @@
+# #33 R42 WP10：殺 FLAT 靶「觸發條件的 `\||` 守衛拿掉」。宣告不過濾的 step 在 `bash -e {0}`（沒有 pipefail）下跑
+# `false \|| true`：bash 讀成 `false '|' | true`——一條管線、前段失敗被後段的 rc 蓋掉。守衛拿掉時觸發條件把 `||` 當成「或」，
+# 這一步不進文法、也沒有人查 pipefail。原本：觸發 ⇒ 未加引號的反斜線不在文法裡。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-MSG: 未加引號的反斜線
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: escaped pipe
+        shell: bash -e {0}
+        run: |
+          # LOG-FILTER: none — prints no PR text
+          false \|| true

@@ -1,0 +1,30 @@
+# #33 verify R37 opsweep 補件：delim_align 群組——殺 `±1→±2|_skip_delim_word|j += 1|1`。
+# `_skip_delim_word` 讀 `<<-` 的 `-` 之後 `j += 1`（跳過那個 `-` 字元本身）；突變體把它改成
+# `j += 2`。當 `-` 後面緊接著一個「引號字元」時（沒有空白，如 `<<-'EOF_Q'`），原版跳 1 格
+# 之後恰好停在開引號 `'` 上，主迴圈的引號分支才會被觸發、正確找到收尾的 `'`；突變體多跳
+# 1 格，直接落在引號**內部**（`'EOF_Q'` 的 `E`），開引號被當成普通字元吃掉——之後掃到的
+# 反而是**結尾引號**，被誤判成一個新的開引號，於是向後找下一個 `'` 收尾，在這個 heredoc
+# 行裡找不到，回傳 `None`（對不齊）。這一行 heredoc 之後接的安全重導向目標
+# （`>/tmp/out`）就因此讀不到原文，被判定「目標看不到原文，不解析就不放行」＝規則誤擋。
+#
+# 原版為什麼是 pass：heredoc 本體只是把 PR 標題寫進 `/tmp/out`（不落在 `/dev`／`/proc`），
+# 下一個 step 再把它讀出來餵給 neutralise.py——整個區塊沒有任何未過濾的外流路徑。
+#
+# bash 5.3.15 實測：`cat <<-'EOF_Q'` 後面接 tab 縮排的 `EOF_Q` 可以正確收尾（`<<-` 剝掉
+# 終止字前導 tab），且引號不影響終止字比對——`bash -c 'cat <<-'"'"'EOF_Q'"'"'
+# data
+# 	EOF_Q'` 正確印出 `data`。
+#
+# EXPECT: pass
+name: t
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: dash heredoc with a quoted terminator piped straight into a safe target, then neutralised
+        run: |
+          cat <<-'EOF_Q' >/tmp/out
+          $PR_TITLE
+          	EOF_Q
+          cat /tmp/out | python3 scripts/neutralise.py

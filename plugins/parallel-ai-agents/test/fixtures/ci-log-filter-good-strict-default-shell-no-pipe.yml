@@ -1,0 +1,14 @@
+# #33 verify R35（opsweep 存活者：`--strict` pipefail 規則的 `first_pipe is not None`）：預設 shell（`bash -e {0}`，沒有
+# pipefail）而 run 裡**完全沒有管線**——pipefail 規則沒有東西可管，必須放行。既有的 `--strict` 正向 fixture 都寫了
+# `shell: bash` 或帶管線，走不到「沒有管線」這一支，拿掉那個判斷式也照樣全綠。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: no pipe under the default shell
+        # LOG-FILTER: none — prints a constant, no PR-controlled text
+        run: echo done

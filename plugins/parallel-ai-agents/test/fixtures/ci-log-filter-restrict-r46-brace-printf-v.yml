@@ -1,0 +1,30 @@
+# #33 R45 verify 的相鄰輸入（協調者實測，bash 5.3 與 3.2）：`printf {-v,x} y` 在 bash 裡是 `printf -v x y`——指派變數 `x`。R44 的 printf 守衛（`_fl_lit` 拒收 `{}`）其實早就擋它——11e2b8f 與 2835ead 的 lint 都是 rc=1，訊息是「`printf` 的第一個參數（格式）必須是字面…」；
+# 這張 fixture 釘的是 R46 起由大括號規則先擋、訊息是「未加引號的大括號展開」（`EXPECT-MSG`）。（前一版這句寫成「所以放行」，R46 宣稱查核更正。）目標是信任變數時（`{-v,RUNNER_TEMP}`）P1 第 5 類「信任變數不得被改寫」的前提落空。兩個 step 各自要有自己的 RULE 行。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-EACH-STEP: rule-red
+# EXPECT-MSG: 未加引號的大括號展開
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: printf with a brace word that makes -v
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            printf {-v,x} y
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: printf -v made by a brace word targets a trusted variable
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            printf {-v,RUNNER_TEMP} 5
+          } 2>&1 | python3 scripts/neutralise.py

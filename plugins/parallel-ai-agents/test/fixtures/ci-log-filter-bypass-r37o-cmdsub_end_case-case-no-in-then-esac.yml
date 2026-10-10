@@ -1,0 +1,31 @@
+# #33 verify R37 opsweep 補件：`_cmdsub_end_case` 遇到詞首 `case` 時，`if not (at_cmd and _case_head(line, k)):
+# return None` 要求「在命令起點」**且**「後面是合法的 `WORD in` 形狀」才承認這是真的 case 子句、開始追蹤模式括號；
+# 兩個條件缺一都要 fail-closed。拿掉 `_case_head(line, k)` 這個 operand（只留 `at_cmd`）後，任何在命令起點出現的
+# `case` 都會被誤判成合法子句、無條件把 `cases` push 一筆 `[depth, "pat"]`。
+#
+# `case echo esac` 裡的 `case` 後面是 `echo`（不是接 `in`），`_case_head` 判定為 False——原版因此在 `case`這裡
+# 就整段 bail 掉（回 None）。呼叫端找不到收尾就把 `$(` 之後的內容改當 code 掃、一路掃到 run 區塊結尾都沒有任何
+# 東西能讓雙引號重新收口，最終落到「雙引號裡的命令替換到 run 區塊結尾都沒收——那一行在 bash 是語法錯誤、不會
+# 執行，本 lint 不解析」這個 PARSE。
+#
+# 拿掉 `_case_head` 檢查的突變體會誤把 `case`（後面接的其實是 `echo`，不是合法的 `WORD in`）當成開了一個
+# case 子句：`echo` 被吃成模式字、繼續掃到後面巧合出現的 `esac` 時（`cases[-1][1]` 仍是 `"pat"`）成功 pop，
+# 讓最外層 `$(…)` 提早在這裡收尾——整段被判定成功配對、視為不透明內容而放行整支管線（含它自己夾帶的
+# `>&2` 都被吃進「已驗證安全」的範圍內，量測結果是這一步反而變成 RULE：`>&2` 複製 fd，但整體判定與原版的
+# PARSE 不同，構成殺點）。
+#
+# bash 5.3 實測：`bash -n` 對 `echo "pre$(case echo esac >&2)post"` 直接報
+# `syntax error near unexpected token 'esac' while looking for matching ')'`——`case echo`（沒有 `in`）本身
+# 就不是合法 bash，`esac` 在這裡沒有東西可以收。原版判它 PARSE（本 lint 不解析、不放行）正是對的方向；
+# 突變體反而「成功」配對出一個根本不存在的合法邊界。
+#
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: bogus-case-no-in-then-esac
+        run: |
+          echo "pre$(case echo esac >&2)post" 2>&1 | python3 scripts/neutralise.py

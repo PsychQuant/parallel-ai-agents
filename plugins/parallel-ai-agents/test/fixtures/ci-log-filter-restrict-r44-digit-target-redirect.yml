@@ -1,0 +1,21 @@
+# #33 verify R43 第 13 列（logic，LOW）：重導向運算子後面緊接另一個重導向（`echo "$PR_TITLE" >> 2>/dev/null`）——斷詞器把 `2` 當成目標，bash 的詞法器先把
+# `2>` 讀成 IO_NUMBER 加運算子而判語法錯誤，群組裡什麼都不跑。fail-loud、不外流；R44 起斷詞器在讀目標前先看它是不是另一個重導向。
+# 這是**文法外**——保守擋下、神諭實跑沒有外流（語法錯誤）。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-MSG: 不在 `--strict` 的正面文法裡
+# EXPECT-MSG: 的目標是另一個重導向
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: a redirect operator followed by a redirect
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            echo "$PR_TITLE" >> 2>/dev/null
+          } 2>&1 | python3 scripts/neutralise.py

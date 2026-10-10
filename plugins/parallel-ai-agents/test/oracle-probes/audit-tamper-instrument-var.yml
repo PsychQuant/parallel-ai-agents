@@ -1,0 +1,20 @@
+# R48（#33 verify R47 security／Codex，放行條件 5）：步驟文字提到神諭的儀器變數（`ORACLE_AUD`、`ORACLE_INJECT`…，`--strict` 都當普通指派放行）能讓稽核與注入哨兵失效——替身 lint 全放行時判「一致」。
+# R48 的做法（文字守衛：提到 `ORACLE_`／`__orc_` 就判「量不到」）在 R50 移除（它是吸收器）。**現在改 `ORACLE_*` 環境變數沒有任何作用**（`ORACLE_AUD`／`ORACLE_INJECT` 等已不存在；僅剩的 `ORACLE_PRIV` 在開頭被複製進唯讀的 `__orc_priv`，改它沒有作用）：稽核走繼承的 fd，違規照樣被看到，替身 lint 全放行時判「不一致：繞過（primitive 稽核…）」、rc=1（selfcheck 第 40 項）。PRELUDE 在 shell 裡的 `__orc_*` 變數與函式則不在這個保證裡，見 `instrument-prelude-known-blind-spots.yml`。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            ORACLE_AUD=/dev/null
+            ORACLE_INJECT=/dev/null
+            test {-v,"$PR_TITLE"} || :
+          } 2>&1 | python3 scripts/neutralise.py

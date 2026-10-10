@@ -1,0 +1,45 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺
+# ±1→±2|parse_command|self.i += 1|5、
+# drop-operand|parse_command|if self.tok() is not None and self.tok()["k"] == "W":|2、
+# ==↔!=|parse_command|if self.tok() is not None and self.tok()["k"] == "W":|1。
+#
+# `function` 這個保留字被辨識出來之後，第一件事是 `self.i += 1` 消耗掉 `function` 本身這一格
+# （這是這一段程式碼裡第 5 次出現 `self.i += 1`），接著檢查下一格是不是名字（W 型別）。
+# `function >&2 f { : ; }`：`function` 之後直接是 `>&2`（R 型別的重導向 token，不是名字）——
+# 原版：消耗 `function`（`i += 1`）後 `self.tok()` 正確是 `>&2`；名字檢查 `self.tok()["k"] ==
+# "W"` 正確判定 `>&2` 是 R 不是 W，不消耗；`()` 檢查同樣不成立；`skip_nl()`；遞迴呼叫
+# `parse_command`，這次把 `>&2` 當成函式主體收詞迴圈裡的一個重導向正常吃掉、呼叫
+# `self.redir()`、記一筆 hit。
+#
+# 三個突變體各自用不同方式把這格 `>&2` 跳過而不呼叫 `self.redir()`：
+#   · `self.i += 1`（第 5 次出現）變成 `+= 2`：消耗 `function` 時多跳一格，直接跳過 `>&2`，
+#     落到 `f`；名字檢查看到 `f` 是 W 型別，正確消耗（但這其實是把 `>&2` 跳過後才輪到 `f`，
+#     `>&2` 已經永遠沒被看到）。
+#   · `if self.tok() is not None and self.tok()["k"] == "W":` 拿掉第二個 operand（只留
+#     `is not None`）：`>&2` 不是 `None`，條件恆真，被誤判成名字直接吃掉、不呼叫 `self.redir()`。
+#   · 同一格的 `==` 換成 `!=`：條件變成「不是 W 才吃」，`>&2`（R 型別）滿足「不是 W」，
+#     同樣被誤吃。
+#
+# 三種突變體殊途同歸：`>&2` 那個 hit 永遠不會被記到 `an["fd"]` 裡，群組（`{ : ; }`，這裡其實
+# 落回一般收詞、不是真正的群組，但這不影響——關鍵是重導向有沒有被看到）豁免與否已經不重要，
+# `fd` 直接是空的 → 突變體放行；原版正確留著那個 hit → RULE。
+#
+# 這一行後面接了一段跟它無關、但字面上真的符合 `python3 …neutralise.py` 的 `true | python3
+# scripts/neutralise.py`，讓整個 step 的 `ok=True`（`via_pipe` 逐行掃整段邏輯行文字），逼 lint
+# 走到 `elif not declared and an["fd"]:` 這一支，才量得到「重導向有沒有被看到」這個真正的分歧點，
+# 不被「根本沒有管線」這個更表面的理由先擋掉。
+#
+# bash 5.3 實測：`bash -n -c 'function >&2 f { :; }'` → `syntax error near unexpected token
+# '>&'`——函式關鍵字跟名字之間不能插重導向，本來就不是合法函式定義；這條規則對讀不懂的殘骸
+# fail-closed（RULE）是對的，不是誤判有外流。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: function keyword directly followed by a redirect, not a name
+        run: |
+          function >&2 f { : ; }
+          true | python3 scripts/neutralise.py

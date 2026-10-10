@@ -1,0 +1,13 @@
+# #33 R44 全輪 opsweep 的存活者（`if seen == 0 and not bad:` 的兩個突變體）：`--require-run-steps` 是給 selftest 用的旗標（正式執行時純 `uses:` 的 workflow 合法）；
+# 有 run step、沒有任何問題的檔帶這個旗標**必須放行**——前一版沒有任何放行的 fixture 帶這個旗標（rule-red 的帶，但 VACUOUS 的那一行被 RULE 蓋掉、看不出來），
+# 於是把條件改成「只要沒有 bad 就報 VACUOUS」或「`seen != 0` 才報」都沒有任何東西會紅。姊妹 fixture：`vacuous-r44-no-run-steps`（沒有 run step ⇒ VACUOUS）。
+# LINT-ARGS: --require-run-steps
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: filtered
+        run: echo hi | python3 scripts/neutralise.py

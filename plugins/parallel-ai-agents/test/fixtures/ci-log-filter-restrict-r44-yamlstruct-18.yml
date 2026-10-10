@@ -1,0 +1,23 @@
+# #33 R44 全輪 opsweep 的存活者（YAML 結構分類器，差分模糊測試找到的殺手；1 個突變體靠它）。
+# EXPECT: rule-red
+# EXPECT-MSG: RULE: step 's1' 的 run 區塊既沒有經 neutralise.py
+name: t
+on:
+  pull_request:
+    branches: [main]
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    env:
+      A: x
+    steps:
+      - "8080:8080"
+      - name: s1
+        shell: bash
+        run: |
+          echo hi
+          echo there
+        # LOG-FILTER: none — t
+  # c
+	  
+      - run: echo ok

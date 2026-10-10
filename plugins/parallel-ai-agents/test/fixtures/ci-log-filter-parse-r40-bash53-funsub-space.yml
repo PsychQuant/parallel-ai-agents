@@ -1,0 +1,15 @@
+# #33 verify R39 第 10 列：bash 5.3 的 `${ cmd; }` 在**目前的 shell** 執行 cmd——前一版把它讀成參數展開、內容挖空。bash 5.3 實跑：
+# `echo ${ set -x; }` 之後的命令原樣印到 stderr。本 repo 的 macOS job 跑的是 bash 5.3。`${` 後面緊接空白、tab 或行尾，在
+# bash 5.3 以前都是語法錯誤（bad substitution），所以一律不解析、不放行。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: funsub
+        run: |
+          set -o pipefail
+          echo ${ set -x; }
+          echo "$PR_TITLE" | python3 scripts/neutralise.py

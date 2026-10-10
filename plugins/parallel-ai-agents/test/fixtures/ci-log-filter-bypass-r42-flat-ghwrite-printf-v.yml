@@ -1,0 +1,25 @@
+# R42 正面文法：文法信任 `$RUNNER_TEMP` 是 runner 給的值（重導向目標 `"$RUNNER_TEMP/…"`），所以 run 裡不得指派它；`printf -v NAME`
+# 也是指派，`printf` 的第一個參數因此不得以 `-` 開頭。risk-first 原型在「寫進 `$GITHUB_ENV` 的 echo／printf」那個產生式裡先放行、
+# 沒走到 `printf` 的規則：`printf -v RUNNER_TEMP … >> "$GITHUB_ENV"` 的參數全是字面，於是 RUNNER_TEMP 在群組裡被改掉，之後的
+# `"$RUNNER_TEMP/…"` 不再是 runner 的暫存目錄。R42 移植時 `printf` 的規則在所有產生式之前檢查。
+# LINT-ARGS: --strict
+# R42：這一張的 1 步是**文法外**——不在 `--strict` 的正面文法裡、神諭實跑沒有外流（stdout／stderr／跨 step 通道都沒有）、
+# pipefail 探針沒看到關閉。保守擋下，由下面的宣告簽名（神諭的類別閘門是雙向的）。
+# **R46（#33 verify R45）**：神諭新增 primitive 稽核（PRELUDE 把 `[`／`test`／`printf` 換成記錄實際 argv 的函式、逐命令比對信任變數）之後，這個檔原本簽名的 1 個 step 有 1 個改判「一致」（builtin 真的收到文法之外的 argv／格式，或信任變數被改寫——神諭直接看到了）；仍簽名的 0 個是稽核看不到的（沒有外流、沒有違規 argv）。簽名數照實測對齊。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: printf -v in the GITHUB_ENV write
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            printf -v RUNNER_TEMP '%s' /dev >> "$GITHUB_ENV"
+            echo "$PR_TITLE" > "$RUNNER_TEMP/x"
+          } 2>&1 | python3 scripts/neutralise.py

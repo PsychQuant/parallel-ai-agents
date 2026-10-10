@@ -1,0 +1,13 @@
+# #33 verify R39 第 1 列的代價（揭露的保守誤擋）：R40 起靠管線過濾的 step，run 裡任何非字面的 runner 運算式一律 RULE。
+# `matrix.*` 通常是作者寫死的，但它可以經 `fromJSON(needs.*.outputs…)` 帶進 PR 文字，lint 分不出來——改經 step 的 `env:` 傳進來。
+# 神諭把每個非字面運算式換成會逃出引號與群組的 payload（oracle.py 的 RUNNER_PAYLOADS），所以它同意這個 step 會外流：判「一致」。
+# 原本在 `good-github-expression-format-brace`（R32 HIGH-1，野外 1565 檔中 11 檔帶此形狀）。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build
+        run: swift build${{ matrix.traits != '' && format(' --traits {0}', matrix.traits) || '' }} | python3 scripts/neutralise.py

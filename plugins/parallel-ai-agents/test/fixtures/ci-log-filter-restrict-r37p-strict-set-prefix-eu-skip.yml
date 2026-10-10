@@ -1,0 +1,55 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺一個 wave3-strict 存活突變體：
+#   ±1→±2|_set_prefix_line|k += 1|2
+#
+# 與 `ci-log-filter-bypass-r37p-strict-set-prefix-o-skip.yml` 是同一句原始碼（`k += 1`）
+# 在**不同**物理行的兩個獨立命中——那份殺的是 `if m.group(2):` 區塊裡的**內層** `k += 1`
+# （只在讀到 `-o NAME` 的 `NAME` 之後才多跑一次）；這份殺的是迴圈**每一輪**都會執行的
+# **外層**固定 `k += 1`（`if` 區塊外、迴圈本體最後一行）——是兩個不同的 AST 節點、兩個
+# 不同的突變體 id。
+#
+# `set -e badtoken` 當群組前綴行，後面接一個合規的 `{ …; } 2>&1 | python3 …neutralise.py`。
+# 原版：處理 `-e`（`k=1`）時 `m.group(2)` 為空（沒有 `o`），跳過內層區塊，外層固定
+# `k += 1` 把 `k` 推到 2；下一輪對 `toks[2]="badtoken"` 做 `re.fullmatch`——不是以 `-`
+# 開頭，匹配失敗，`return False`——正確識別出多餘的 token，回 False。
+# `strict_group_violation` 把這一行當成 body 開頭，`body[0][:1] != ["{"]` 成立，回
+# 違規字串，本 fixture 沒有宣告 `# LOG-FILTER:`，印 RULE-red。
+#
+# 把外層固定的 `k += 1` 改成 `k += 2` 後：處理完 `-e`（`k=1`），外層直接跳到 `k=3`——
+# **跳過了原本落在 `k=2` 的 `"badtoken"` 檢查**！`toks` 長度剛好是 3，`k=3=len(toks)`，
+# 迴圈結束，回 `True`：`"set -e badtoken"` 被誤判成合規前綴（`"badtoken"` 從未被
+# `re.fullmatch` 驗證過）。`strict_group_violation` 把這一行吃成 prefix，`k` 前進到
+# 下一個邏輯行（真正的群組），群組本身寫法合規，`group_why` 回 `None`——整份判定從
+# RULE-red 掉成 `pass`。
+#
+# 這是 `_set_prefix_line` 的獨立函式邏輯，不是要交給 `bash -c`／`bash -n` 執行的腳本；
+# 已用抽出的同一份原始碼直接呼叫驗證：`_set_prefix_line(["set","-e","badtoken"])`
+# 原版回 `False`，把外層固定的 `k += 1` 改成 `k += 2` 後回 `True`。
+#
+# bash 5.3 實測（`shell: bash` 對應 GitHub 的 `bash --noprofile --norc -eo pipefail {0}`，
+# `-e` 在場）：`bash -c 'set -e; set -e badtoken; echo SHOULD_NOT_PRINT'` → 印出
+# `SHOULD_NOT_PRINT`，rc=0——`badtoken` 在 `-e` 這個完整選項讀完之後，同樣被 bash 的
+# `set` 內建當成位置參數，不會出錯、不會觸發 `-e` 中止，後面的群組正常照跑。神諭對這個
+# step 的判定是「誤擋」（`oracle=piped`）：若放行，PR 文字最終仍會走經過濾的管線，不是
+# 真的外流。**這是 fail-closed、無外流的一例**——本 lint 拒絕的理由是「這一行不是
+# `-e`／`-u`／`-o <選項>` 的合規前綴形狀」，不是因為它真的會讓 PR 文字外流；本檔案要
+# 證明的是 `_set_prefix_line` 自己對這個輸入判得對，不是「這個輸入若被接受會不會外流」。
+# LINT-ARGS: --strict
+# **不是繞過，是限制**（fail-closed；神諭記在 KNOWN_DISAGREE）：這個輸入 bash 實際跑起來不會外流 PR 文字，lint 依設計保守地拒絕它；
+# 這張 fixture 釘住的是那個拒絕（突變體放寬後會放行）。
+# R42：這一張的 1 步是**文法外**——不在 `--strict` 的正面文法裡、神諭實跑沒有外流（stdout／stderr／跨 step 通道都沒有）、
+# pipefail 探針沒看到關閉。保守擋下，由下面的宣告簽名（神諭的類別閘門是雙向的）。
+# KNOWN-CLASS: 文法外
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: set -e followed by a bad token is not accepted as a group prefix line
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -e badtoken
+          { echo "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py

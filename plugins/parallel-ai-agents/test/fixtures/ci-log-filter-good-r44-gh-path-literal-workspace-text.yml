@@ -1,0 +1,21 @@
+# #33 R44 區域 opsweep 第二輪（`--since 11e2b8f`）：`_fl_chan_line_ok` 擋 `$GITHUB_WORKSPACE` 的那一行裡，`k == "V"` 運算元把「變數 `GITHUB_WORKSPACE`」與
+# 「文字恰好是 `GITHUB_WORKSPACE` 的字面片段」分開。拿掉它，`"/opt/${HOME}GITHUB_WORKSPACE"`（`$HOME` 之後緊接字面 `GITHUB_WORKSPACE`，合起來是一條絕對路徑、
+# 沒有任何一段是工作區）會被誤擋。這是**放行**方向的殺手——反方向（真的 `$GITHUB_WORKSPACE`）早有 `bypass-r44-gh-path-workspace-after-literal` 與
+# `restrict-r44-surv-corpus` 的 `"$GITHUB_WORKSPACE/bin"`、`"/x/$GITHUB_WORKSPACE"`。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: literal text that equals GITHUB_WORKSPACE
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "/opt/${HOME}GITHUB_WORKSPACE" >> "$GITHUB_PATH"
+          } 2>&1 | python3 scripts/neutralise.py

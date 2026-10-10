@@ -1,0 +1,16 @@
+# R49（#33 verify R49 logic LOW／requirements LOW）：R48 的儀器目錄 `.orc-XXXX` 在步驟 cwd 底下，`echo .*`／`ls -a` 印出它的裸名，兩次執行的後綴不同，宣告差分判「量不到」（28ec8c3 判一致）。
+# R50 起 cwd 裡沒有儀器的資料或記錄檔（只有 `s.sh` 與 `runner_temp/`）：真 lint `--strict` 放行這個宣告 step、神諭判一致。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: declared lists cwd
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          # LOG-FILTER: none — the log is not produced by this step
+          echo .* ./*

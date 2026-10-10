@@ -1,0 +1,14 @@
+# R30 MB-7：跨行雙引號 scalar 的續行寫在第 0 欄 —— root_indent 必須由**解析器認定的 key 行**決定
+# EXPECT: parse-red
+  name: "t
+x: y"
+  on: pull_request
+  jobs:
+    j:
+      runs-on: ubuntu-latest
+      strategy:
+        matrix:
+          include: [{os: ubuntu-latest, tag: b}]
+      steps:
+        - name: compliant control
+          run: echo hi | python3 scripts/neutralise.py

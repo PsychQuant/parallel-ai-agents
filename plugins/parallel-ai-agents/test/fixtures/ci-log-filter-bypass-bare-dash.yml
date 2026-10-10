@@ -1,0 +1,10 @@
+# fixture（R17 logic L-1 A）：bare `-`，鍵在下一行——合法 block sequence entry
+# EXPECT: rule-red
+jobs:
+  j:
+    steps:
+      - name: filtered
+        run: echo x | python3 scripts/neutralise.py
+      -
+        name: unfiltered
+        run: shellcheck foo.sh

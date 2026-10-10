@@ -1,0 +1,10 @@
+# R30 H-3 的反方向：`${…}` 吃完之後那條**真的**管線要看得到。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: parameter expansion then a real pipeline
+        run: echo "${PR_TITLE#prefix}" | python3 scripts/neutralise.py

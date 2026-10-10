@@ -1,0 +1,12 @@
+name: t
+# EXPECT: parse-red
+on:
+  pull_request:
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: compliant
+        run: echo hi | python3 ../pai-lenses/scripts/neutralise.py
+      - name: escaped key
+        "\x72un": echo "$PR_TITLE"

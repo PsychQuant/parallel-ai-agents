@@ -1,0 +1,32 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺 ±1→±2|parse_command|self.i += 1|1。
+# `parse_command` 認出當下的 token 是 OP `(` 之後，`self.i += 1` 消耗掉 `(` 本身這一格
+# （這段程式碼裡第 1 次出現 `self.i += 1`），再遞迴呼叫 `parse_list` 解析子殼層群組本體、
+# 找到收尾的 `)`。`(>&2 echo "$PR_TITLE")`：子殼層一開頭就是重導向 `>&2`（bash 允許重導向
+# 出現在一個簡單命令的任何位置，包含命令名字之前）。原版：`self.i += 1` 只消耗 `(`，
+# `self.tok()` 正確變成 `>&2`；子殼層本體的收詞迴圈把 `>&2` 當成第一個 token 正常吃掉、
+# 呼叫 `self.redir()`、記一筆 hit，接著收 `echo`、`"$PR_TITLE"` 兩個字，碰到 `)` 收尾。
+#
+# 拿掉這格的 `self.i += 1` 換成 `self.i += 2` 後，消耗 `(` 的同時多跳一格，把 `>&2` 也一起
+# 跳過，`self.redir()` 從來沒被呼叫過這個重導向；`self.tok()` 落到 `echo`，子殼層本體從
+# `echo "$PR_TITLE"` 開始收（沒有重導向），收尾在 `)`。`>&2` 那個 hit 永遠沒被看到，
+# `an["fd"]` 變空 → 突變體放行；原版正確留著那個 hit → RULE。
+#
+# 這一行後面接了一段跟它無關、但字面上真的符合 `python3 …neutralise.py` 的 `true | python3
+# scripts/neutralise.py`，讓整個 step 的 `ok=True`，逼 lint 走到 `elif not declared and
+# an["fd"]:` 這一支，量得到「子殼層開頭的重導向有沒有被看到」這個分歧點。
+#
+# bash 5.3 實測（`(>&2 echo "$PR_TITLE")` 本身就是合法語法，不需要退化輸入）：
+# `bash -c 'PR_TITLE=SECRET; (>&2 echo "$PR_TITLE") 2>/tmp/e | cat; cat /tmp/e'` →
+# stdout 空、`/tmp/e` 印出 `SECRET`——`$PR_TITLE` 真的被導向 fd2、繞過只接 stdout 的管線，
+# 是貨真價實的外流；原版判 RULE 是對的。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: subshell opens with a redirect before any word
+        run: |
+          (>&2 echo "$PR_TITLE")
+          true | python3 scripts/neutralise.py

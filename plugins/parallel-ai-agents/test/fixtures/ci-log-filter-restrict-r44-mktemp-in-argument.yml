@@ -1,0 +1,27 @@
+# #33 verify R43 第 15 列（logic，LOW）：`$(mktemp …)` 片段在任何「第一段是 `NAME=`」的參數詞裡都被收下（`echo X=$(mktemp -d)`），文法接受的集合比檔頭寫的產生式
+# `NAME=$(mktemp 字面…)`（整個指派）大。目前無害（mktemp 是外部命令、參數字面）；R44 起只收命令的第一個詞。這是**文法外**——保守擋下、神諭實跑沒有外流。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-EACH-STEP: rule-red
+# EXPECT-MSG: 不在 `--strict` 的正面文法裡
+# EXPECT-MSG: `$(mktemp …)` 只能是命令的第一個詞
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: a mktemp substitution in an argument
+        shell: bash
+        run: |
+          {
+            echo X=$(mktemp -d)
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a mktemp substitution after the command name
+        shell: bash
+        run: |
+          {
+            cat -n "}" x=$(mktemp) > /dev/null
+          } 2>&1 | python3 scripts/neutralise.py

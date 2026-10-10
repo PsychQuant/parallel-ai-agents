@@ -1,0 +1,17 @@
+# #33 verify R35（opsweep 存活者：fd 流向規則與 `--strict` 的 `2>&1` 規則各自的 `not declared` 運算元）：step 帶
+# `# LOG-FILTER:` 宣告＝作者已說明這一步的輸出不必過濾，兩條 stderr 規則都不再管它。既有 fixture 裡宣告過的 step
+# 都沒有 `>&2`、也沒有接 neutralise 的管線，拿掉任一個 `not declared` 照樣全綠。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: declared step that writes to stderr
+        shell: bash
+        # LOG-FILTER: none — only constant strings and the file listing of a fixed directory are printed
+        run: |
+          echo "building" >&2
+          ls dist | python3 scripts/neutralise.py

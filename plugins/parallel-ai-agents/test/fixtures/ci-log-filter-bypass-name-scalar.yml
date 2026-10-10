@@ -1,0 +1,14 @@
+# R20 security S-1：`name: |` 的 scalar 內容不是註解，不得用來放行
+# EXPECT: rule-red
+name: t
+on:
+  pull_request:
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: compliant
+        run: echo hi | python3 ../pai-lenses/scripts/neutralise.py
+      - name: |
+          # LOG-FILTER: none — this is a display name, not a comment
+        run: echo "$PR_TITLE"

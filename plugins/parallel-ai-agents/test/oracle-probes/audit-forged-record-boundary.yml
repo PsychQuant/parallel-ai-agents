@@ -1,0 +1,19 @@
+# R48（#33 verify R47 Codex 第 2 條，放行條件 5）：稽核檔的記錄原本用 0x1f（欄位）與 0x1e（記錄）分隔、沒有編碼，printf 的格式含這兩個字元時可以偽造記錄邊界，把 `%n` 藏掉
+# （`aud_violations` 解析成合法的 `%s` 加一筆未知記錄）。現在記錄是「名稱、欄位數、各欄位」以 NUL 分隔（argv 不可能含 NUL）：這個 step 的格式含 `%n`，
+# 替身 lint 全放行時 rc=1、「primitive 稽核」。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            printf $'%s\x1eignored\x1f%n' x Z
+          } 2>&1 | python3 scripts/neutralise.py

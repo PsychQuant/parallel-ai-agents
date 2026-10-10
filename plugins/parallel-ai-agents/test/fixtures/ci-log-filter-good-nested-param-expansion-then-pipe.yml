@@ -1,0 +1,12 @@
+# R31 opsweep：`${…}` 的巢狀深度加法（`depth += 1`）沒有網。bash 5.3：`${PR_TITLE#${SEP}}`
+# 是合法的巢狀展開（實測 `PR_TITLE=xyz SEP=x` → `yz`），**一個** `}` 收內層、下一個收外層。
+# 每個巢狀 `${` 加兩層的版本會把後面的真管線一起吃掉＝誤擋。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: nested parameter expansion then a real pipeline
+        run: echo ${PR_TITLE#${SEP}}| python3 scripts/neutralise.py

@@ -1,0 +1,16 @@
+# #33 R44 全輪 opsweep 的存活者（YAML 結構分類器，差分模糊測試找到的殺手；3 個突變體靠它）。
+# EXPECT: rule-red
+# EXPECT-MSG: PARSE: step 用了白名單外的欄位 `more:`——本 lint 只認 ['continue-on-error', 'env', 'id', 'if', 'name', 'run', 'shell', 'timeout-minutes', 'uses', 'with', 'working-directory']
+# EXPECT-MSG: RULE: step ''a\'' 的 run 區塊既沒有經 neutralise.py
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name:
+        run: |
+      - name: s2
+        name: 'a\'
+        more: 1
+        run: echo ok

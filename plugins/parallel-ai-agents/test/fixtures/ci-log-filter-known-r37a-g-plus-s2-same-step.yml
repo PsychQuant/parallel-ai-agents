@@ -1,0 +1,18 @@
+# #33 verify R37（R36 第 1 列的相鄰輸入）：**一個 step 同時有兩種外流**——第一行是管線以外的命令（G），第二行是
+# 接 neutralise 的管線自己從 stderr 外流、缺 `2>&1`（S-2：預設模式不要求，`--strict` 會擋）。
+# 前一版的神諭只要 stdout 有 PR 文字就整個 step 判 G，於是管線自己的外流被 G 蓋掉；差分比的是**逐行、計重數**的外流，
+# 換掉管線之後 stdout 那一行還在（G）、stderr 那一行消失（管線自己印的）⇒ 兩類都要歸、都要宣告。
+# 只比「換掉之後還有沒有外流」的突變會把它判成只有 G ⇒ S-2 宣告過期 ⇒ rc=1。
+# KNOWN-CLASS: S-2
+# KNOWN-CLASS: G
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: another command leaks on stdout and the pipeline leaks on stderr
+        run: |
+          echo "::notice::$PR_TITLE"
+          cat "$PR_TITLE" | python3 scripts/neutralise.py || true

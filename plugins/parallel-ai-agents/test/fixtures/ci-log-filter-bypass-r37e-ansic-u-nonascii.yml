@@ -1,0 +1,20 @@
+# #33 verify R37 相鄰輸入（作者與 reviewer 都沒點名）：`$'\u00e9'`（碼位逃脫）與 `$'\xe9'`（R36 第 5 列 (b) 的探針）
+# 走同一道「解出 ≥0x80 就 fail-closed」的門。兩者在 bash 裡並不相同：`\xe9` 產生單一位元組 0xE9，`\u00e9` 產生
+# UTF-8 的 c3 a9（本機 bash 5.3 在 C 與 UTF-8 locale 實測都如此）——所以這一檔的 heredoc 在 bash 裡會在字面 `é` 那一行
+# 正常收尾。lint 對 `\u`／`\U` 也 fail-closed，是比必要保守的簡化；這一檔判 PARSE 仍然對，因為第一行
+# `echo "$PR_TITLE"` 本來就裸印。本檔釘住的是「`\u` 也走同一道門」，不是「`\u` 會繞過」。
+# 原本這裡寫成「bash 產生的其實是原始位元組 0xE9、heredoc 吃到檔尾」——那是 `\x` 的行為，對 `\u` 是錯的。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: ansic-u-nonascii
+        shell: bash
+        run: |
+          echo "$PR_TITLE"
+          cat <<$'\u00e9'
+          é
+          echo hi 2>&1 | python3 scripts/neutralise.py

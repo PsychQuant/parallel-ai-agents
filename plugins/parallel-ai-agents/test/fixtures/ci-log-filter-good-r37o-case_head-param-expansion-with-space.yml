@@ -1,0 +1,29 @@
+# #33 verify R37 opsweep 補件：殺 `_case_head` 三個突變體——`startswith→F` 與 `drop-operand` 第1個
+# （都作用在 `elif line.startswith("${", k) or line.startswith("$(", k):` 的 `${` 那個判斷；兩者對含
+# `${…}` 的輸入效果相同——都讓這個 elif 分支比對不到 `${`，落到 else 逐字元掃），以及緊接著那一行的
+# `==↔!=`（`e = _param_end(line, k) if line[k + 1] == "{" else _cmdsub_end(line, k)` 的 `==` 換成
+# `!=`：`${` 進來時改呼叫 `_cmdsub_end` 而非 `_param_end`——`_cmdsub_end` 從 `{` 之後開始找配對的
+# `)`，`${X:-a b}` 裡沒有 `(`/`)`，於是一路掃過 `}` 跳到後面 case 模式的 `y)` 才收尾，把整個
+# `${X:-a b} in y)` 誤吃成一個詞，`in` 已經被吃掉，`_case_head` 誤回 `False`）。
+# 原版：`case ${X:-a b} in y) …` 裡，case 後面的詞是 `${X:-a b}`——內含空白（`" \t;&|()<>"` 的其中一個
+# 分隔字元），但整段被 `${…}`／`}` 包住，是**一個** shell 詞（bash 5.3 實測：`case ${X:-a b} in *) echo
+# other;; esac` 印 `other`，`a b` 沒有被詞切開）。`_case_head` 的第二個 while 迴圈遇到 `$` 時走
+# `elif line.startswith("${", k) or line.startswith("$(", k):` 這支，呼叫 `_param_end` 把整個
+# `${X:-a b}` 當一個 token 跳過（`k` 跳到收尾 `}` 之後），迴圈才在真正的分隔字元（`}` 後面那個空白）
+# 停下，`w_end` 落在 `}` 之後；接著跳過空白，`line.startswith("in", k)` 為真，`_case_head` 回 `True`。
+# 突變體讓這個 elif 分支對 `${` 比對不到，`$` 被當一般字元逐字元前進：下一步在 `{X:-a` 之後遇到
+# `${X:-a b}` **裡面**那個空白（詞法上還沒讀完 `${…}` 就先撞到分隔字元），迴圈在 `a` 後面的空白處提早
+# 停下，`w_end` 落在 `${X:-a` 之後；接著只跳過一個空白，`k` 落在 `b}` 上，`line.startswith("in", k)`
+# 為假（比對到 `b}`），`_case_head` 誤回 `False`。這讓主掃描器把一個合法、安全（已管線給
+# neutralise.py）的 case 起頭判成 fail-closed（`PARSE:`），與原版的 `pass` 判定不同，殺得掉。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: cmdsub-case-head-param-expansion-with-space
+        run: |
+          x=$(case ${X:-a b} in y) echo cy;; *) echo other;; esac)
+          echo "$x" 2>&1 | python3 scripts/neutralise.py

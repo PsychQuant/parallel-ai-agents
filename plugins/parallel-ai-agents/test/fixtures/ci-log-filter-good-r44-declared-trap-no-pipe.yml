@@ -1,0 +1,24 @@
+# #33 R44 區域 opsweep 存活者（`_fl_body` 的 `any(…)` 運算元）：宣告了 `# LOG-FILTER:` 的 step 裡，trap 動作字串**沒有**管線時不該因此被要求 pipefail——
+# `trap 'echo bye' EXIT` 在 `shell: bash -e {0}`（沒有 pipefail）下是合法的；拿掉「動作裡真的有管線」這個條件，每個宣告 step 的任何 trap 都會被誤擋。
+# 宣告 step 只在 run 文字裡有 `|` 字元（或提到 `GITHUB_ENV`／`GITHUB_PATH`）時才進文法檢查，所以兩個 step 各帶一個引號裡的 `|`——觸發了、但沒有任何寫出來的管線。
+# 姊妹 fixture `bypass-r44-declared-trap-pipe` 是反方向：動作裡寫了管線、沒有 pipefail → RULE。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: declared step with a pipeline-free single-quoted trap action
+        shell: bash -e {0}
+        run: |
+          # LOG-FILTER: none — x
+          trap 'echo bye' EXIT
+          echo "a|b"
+      - name: declared step with a pipeline-free double-quoted trap action
+        shell: bash -e {0}
+        run: |
+          # LOG-FILTER: none — x
+          trap "echo bye" EXIT
+          echo 'a|b'

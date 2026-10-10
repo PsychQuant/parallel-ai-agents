@@ -1,0 +1,12 @@
+# #33 verify R35（opsweep --since 6cf6864 的存活者）：命令替換裡的 subshell 括號 `$( (echo a) )`：深度要加一。殺 `_cmdsub_end` 的 `depth += 1`。
+# 預期判定用 bash 實測（oracle 一致／bash -n）。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: cmdsub-nested-paren
+        run: |
+          echo "${HOME:-$( (echo a) )}" 2>&1 | python3 scripts/neutralise.py

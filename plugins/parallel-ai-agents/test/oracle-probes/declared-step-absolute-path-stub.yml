@@ -1,0 +1,17 @@
+# R50 第四輪宣稱查核（K 組）K4：宣告 step 的差分比的是「可觀察結果」，其中事件行 `M called <腳本路徑>` 帶著 stub 被呼叫時的絕對路徑；`norm()` 只處理 stdout／stderr，
+# 沒處理事件行，所以用絕對路徑（`"$GITHUB_WORKSPACE/scripts/neutralise.py"`）呼叫過濾器的宣告 step，兩次執行（原文與切掉宣告行）的臨時目錄不同、永遠不相等，被誤判「不一致：繞過」；
+# 相對路徑 `scripts/neutralise.py` 判「一致」。現在建 `obs` 前對事件行也套 `norm()`，兩種寫法都判一致。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: declared absolute path
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          python3 "$GITHUB_WORKSPACE/scripts/neutralise.py" </dev/null  # LOG-FILTER: none — reads no PR text
+          echo "$PR_TITLE"  # LOG-FILTER: none — declared, so the differential compares what is left

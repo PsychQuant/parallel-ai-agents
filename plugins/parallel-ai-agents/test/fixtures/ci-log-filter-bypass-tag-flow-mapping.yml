@@ -1,0 +1,5 @@
+# R30 MB-8：`jobs: !!map {…}` 的 tag 讓三條規則全部跳過
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs: !!map {j: {runs-on: ubuntu-latest, steps: [{"\x72un": "echo PWN-$PR_TITLE"}]}}

@@ -1,0 +1,8 @@
+name: t
+# EXPECT: parse-red
+on:
+  pull_request:
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps: [{name: flow, run: echo "$PR_TITLE"}]

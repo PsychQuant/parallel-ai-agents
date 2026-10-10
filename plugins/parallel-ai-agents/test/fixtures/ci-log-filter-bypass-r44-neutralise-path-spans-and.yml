@@ -1,0 +1,17 @@
+# #33 verify R43 第 9、10 列（網）：`PIPED_RE` 的路徑部分 `[^\s;&|()<>`]*` 退回 `\S*` 的突變體在 R44 存活——原來的殺手（`bypass-r37m-neutralise-path-spans-and`）的
+# 路徑以 `-` 開頭（`python3 -mquopri&&scripts/neutralise.py`），R44 在同一條正規式加了 `(?!-)`（`python3 -Xneutralise.py` 是選項、不是腳本），那個輸入現在在
+# 字元類別之前就被擋下，字元類別怎麼改都看不出來。這一張的路徑**不以 `-` 開頭**：`python3 filter.py&&scripts/neutralise.py` 在 bash 是「管線接到
+# `python3 filter.py`，再另跑一個命令」；字元類別退回 `\S*` 之後，`filter.py&&scripts/neutralise.py` 整段被當成路徑、判成有過濾。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$PR_TITLE" 2>&1 | python3 filter.py&&scripts/neutralise.py

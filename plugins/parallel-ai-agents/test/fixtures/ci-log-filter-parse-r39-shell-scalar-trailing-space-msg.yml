@@ -1,0 +1,18 @@
+# R38 第 13 列（regression MEDIUM-5）：`_scalar` 的 `strip→id` 被 opsweep 的 EXPECTED_SURVIVE 列為等價（「消費者 `sh == "bash"` 恆假，
+# `sh.split()` 本身忽略頭尾空白」），但訊息裡印出的 shell 值不同：原碼 `'"bash\\q"'`、突變體 `'"bash\\q"   '`——R37 自己寫
+# 「`--verify-expected` 比對整段 stderr，『純訊息文字』這類等價理由整個撤掉」。這張用 EXPECT-MSG 釘住訊息，殺掉那個突變體。
+# LINT-ARGS: --strict
+# EXPECT: parse-red
+# EXPECT-MSG: step 的 shell 是 '"bash\\q"'——本 lint
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: "bash\q"   # comment
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          { echo "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py

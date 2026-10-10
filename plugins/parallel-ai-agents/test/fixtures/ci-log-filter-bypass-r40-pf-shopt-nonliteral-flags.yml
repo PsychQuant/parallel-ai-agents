@@ -1,0 +1,19 @@
+# #33 verify R40 最終量測（opsweep 在 `shopt_cmd` 上的存活者）：`shopt` 的旗標不是字面時，前一版只記一個外流類命中——宣告了
+# `# LOG-FILTER:` 的 step 不看外流類命中，pipefail 規則照樣適用，而 `O=-uo` 時 `shopt "$O" pipefail` 關掉 pipefail。
+# bash 5.3 實跑 rc=0。非字面旗標同 `set` 的非字面參數：當成關掉，也當成開了 lastpipe（兩個方向都 fail-closed）。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: shopt with non-literal flags
+        shell: bash
+        env:
+          O: '-uo'
+        run: |
+          # LOG-FILTER: none — prints no PR text
+          shopt "$O" pipefail
+          false | cat

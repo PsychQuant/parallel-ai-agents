@@ -1,0 +1,14 @@
+# #33 verify R37 相鄰輸入（R36 沒點名）：雙引號裡的 `$(case …)`。380e4a4 在第一個內層 `"` 收掉外層 ⇒ 假管線變 code ⇒ 放行。
+# R37 的「收不掉就照 code 掃、命令替換收尾時回雙引號」若不追蹤 case 的模式括號，`a)` 會被當成命令替換的收尾、
+# 提早回到雙引號，同一個繞過又回來。bash 5.3：整段是 x 的值，沒有管線，第二行裸印 PR 文字 ⇒ RULE。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: dq-case-cmdsub
+        run: |
+          x="$(case a in a) echo " 2>&1 | python3 scripts/neutralise.py ";; esac)"
+          echo "$PR_TITLE"

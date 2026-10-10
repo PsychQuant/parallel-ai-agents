@@ -1,0 +1,38 @@
+# #33 verify R37 opsweep 補件（最終 lint，lex 群）：殺 `drop-operand|_lex|toks.append(_opaque(C, p, e + 2, hs or (), bad_sub=hs is None))|2`
+# （`hs or ()` 拿掉 `()` 那個運算元）。
+#
+# 原版：`[[…]]`／`((…))` 這類算術／條件式命令的內容，掃描器（`shell_scan`）已經把它整段挖空成程式碼半邊
+# 全是空白／引號字元；`_lex` 檢查 `not C[p+2:e].strip(" \t\n'\"")` 成立時，回頭用 `_interior_subs` 重新
+# 掃原文（`S`），找出裡面「照樣會執行」的命令替換（#33 verify R37 完整性審查缺陷 c）。`_interior_subs`
+# 對不到收尾（例如裡面藏一個沒有配對 `)` 的 `$(`）時回 `None`，呼叫端 `hs or ()` 把它安全地換成空元組
+# `()`，同時 `bad_sub=hs is None` 設成 `True`，規則層對這種「解析不出來、不知道裡面藏了什麼」的情形
+# fail-closed 報一句「命令替換對不到收尾……不解析就不放行」。
+#
+# 突變體拿掉 `or ()` 那半，`hs` 是 `None` 時 `subs` 直接就是 `None`（不是空元組）。`bad_sub=True` 的
+# hit 訊息本身照常被加進 `out["hits"]`（那句在 `subs=None` 之前就執行），但緊接著
+# `for sub in w["subs"]:` 對 `None` 疊代──Python 直接拋 `TypeError: 'NoneType' object is not
+# iterable`。這個例外不在 `except (IndexError, KeyError, ValueError, RecursionError)` 的封閉列舉
+# 裡，不會被接成 `PARSE:`，整支 lint 對這個 fixture 的處理直接中止；`mutcheck.py` 的 `verdict()`
+# 因此得到 `rc=%d`（非 0、輸出裡沒有 `RULE:`／`PARSE:`／`VACUOUS`），不等於 `EXPECT` 的 `rule-red`，
+# 判定 KILL。
+#
+# 構造：`[[ -n $(echo x ]]`——條件式 `[[…]]` 的內容被掃描器整段挖空（只剩空白，符合「已挖空」的判斷），
+# 但原文裡藏著一個沒有收尾的 `$(`（只有外層 `]]` 收尾，`_cmdsub_end` 找不到配對的 `)`，`_interior_subs`
+# 因此回 `None`）。
+#
+# bash 5.3 實測：`bash -n` 對 `[[ -n $(echo x ]]` 回「unexpected EOF while looking for matching
+# `)'」，語法錯誤、什麼都不會執行——原版判 RULE-red 是 fail-closed（看不到原文就不放行），不是真的量到
+# 外流；第二行 `echo ok | python3 …neutralise.py` 只是用來滿足「這個 step 有接管線」的閘門
+# （`ok = via_pipe or declared`），真正觸發規則的是第一行的 `bad_sub` fail-closed。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: t1
+        shell: bash
+        run: |
+          [[ -n $(echo x ]]
+          echo ok | python3 scripts/neutralise.py

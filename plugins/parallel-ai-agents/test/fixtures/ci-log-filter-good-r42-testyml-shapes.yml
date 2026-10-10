@@ -1,0 +1,117 @@
+# R42 放行條件 1 的「不過度擋」改由這一張與 test.yml 本身承擔（#33 的 R42 決策紀錄 (a)）。內容是 `.github/workflows/test.yml`
+# 裡每一個靠管線過濾的 step（15 個），加上宣告了 `# LOG-FILTER:`、又有寫出來的管線的 `bats (codex-call, macOS-only)` step；
+# 每個 step 的 `shell:` 與 `run:` 逐字複製（`working-directory`、`id`、`if`、`env` 不複製），step 名稱是「job 名 / step 名」。
+# 正面文法收緊時先看這一張：它翻紅，就是 test.yml 自己會被擋。
+# **這是逐字複本，不會自己跟著變：test.yml 的任何一個過濾 step 改了，就要重新產生這一張。**
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: shellcheck-bats / shellcheck
+        shell: bash
+        run: |
+          set -o pipefail
+          { shellcheck bin/pai-build-diff bin/pai-parse-verdict bin/pai-iter-commit bin/pai-list-profiles references/regen-builtin-lenses.sh test/run.sh test/assert-tap-complete.sh test/lint-bats.sh test/lint-changelog-counts.sh test/lint-contract-enumerations.sh test/lint-ci-log-filter.sh; } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
+      - name: shellcheck-bats / lint-bats (bare ! assertions) — selftest, then the suite
+        shell: bash
+        run: |
+          set -o pipefail
+          { bash test/assert-tap-complete.sh --selftest && bash test/lint-bats.sh --selftest && bash test/lint-bats.sh; } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
+      - name: shellcheck-bats / lint-ci-log-filter — selftest, then this workflow
+        shell: bash
+        run: |
+          set -o pipefail
+          { bash test/lint-ci-log-filter.sh --selftest && bash test/lint-ci-log-filter.sh --strict; } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
+      - name: shellcheck-bats / oracle — lint verdict vs what bash actually pipes
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            python3 -c 'import yaml' || python3 -m pip install --quiet pyyaml
+            python3 test/oracle.py
+            # 反向探針（R37）：must-fail 的理由比對、oracle↔lint 的 RULE 字面耦合——只有神諭失敗時才成立的兩項檢查，
+            # fixture 集裡放不進去（未突變的神諭會本來就紅），寫成「期待失敗」的斷言另外跑。
+            python3 test/oracle_selfcheck.py
+          } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
+      - name: shellcheck-bats / oracle — against generated corpus (not author-written fixtures)
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            python3 test/corpus/shellgen.py --out "$RUNNER_TEMP/gen"
+            python3 test/corpus/shellgen.py --strict --out "$RUNNER_TEMP/gen"
+            python3 test/oracle.py "$RUNNER_TEMP"/gen/*.yml
+          } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
+      - name: shellcheck-bats / shape census — every new mechanism must have > 0 files in the generated corpus
+        shell: bash
+        run: |
+          {
+            find "$RUNNER_TEMP/gen" -name '*.yml' -print | sort | sed 's/^/x /' > "$RUNNER_TEMP/gen-list.txt"
+            python3 test/corpus/shapes.py --require-nonzero R3 "$RUNNER_TEMP/gen-list.txt"
+          } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
+      - name: shellcheck-bats / py_compile
+        shell: bash
+        run: |
+          set -o pipefail
+          { python3 -m py_compile bin/pai-parse-lens-csv bin/pai-collect-lens-layers; } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
+      - name: shellcheck-bats / builtin-lenses.csv drift (regenerate)
+        shell: bash
+        run: |
+          set -o pipefail
+          # #33 verify R14 (E-1): the regen script evaluates the harness with node — a SyntaxError code
+          # frame echoes fork-controlled source. Same filter as py_compile (single implementation).
+          { bash references/regen-builtin-lenses.sh; } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
+      - name: shellcheck-bats / bats (pack anchor) — run the suite, keep the TAP
+        shell: bash
+        run: |
+          set -o pipefail
+          { bats --formatter tap test/pai-collect-lens-layers.bats 2>&1 | tee "${RUNNER_TEMP:-/tmp}/pack-anchor.tap"; } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
+      - name: macos-swift-bats / lint-bats (bare ! assertions) — selftest, then the suite
+        shell: bash
+        run: |
+          set -o pipefail
+          { bash test/assert-tap-complete.sh --selftest && bash test/lint-bats.sh --selftest && bash test/lint-bats.sh; } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
+      - name: macos-swift-bats / lint-changelog-counts — selftest, then CHANGELOG.md
+        shell: bash
+        run: |
+          set -o pipefail
+          { bash test/lint-changelog-counts.sh --selftest && bash test/lint-changelog-counts.sh; } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
+      - name: macos-swift-bats / lint-contract-enumerations — selftest, then the real contract
+        shell: bash
+        run: |
+          set -o pipefail
+          { bash test/lint-contract-enumerations.sh --selftest && bash test/lint-contract-enumerations.sh; } 2>&1 | python3 ../pai-lenses/scripts/neutralise.py
+      - name: macos-swift-bats / bats (codex-call, macOS-only) — fail on failure OR on skip
+        shell: bash
+        run: |
+          # LOG-FILTER: none — runs PR-authored tests; their stdout is the PR's by construction
+          set -o pipefail
+          TAP="${RUNNER_TEMP:-/tmp}/codex-call-bats.tap"
+          # Capture bats' status instead of letting errexit abort here: with pipefail
+          # active a failing run would kill the step before any check below could emit
+          # its `::error::` line, so the three checks would be decorative and only the
+          # generic "Process completed with exit code 1" would surface.
+          rc=0
+          bats --formatter tap test/codex-call-*.bats | tee "$TAP" || rc=$?
+          # #33 verify R16 DA-6: one implementation of the TAP guard (test/assert-tap-complete.sh), three call sites.
+          bash test/assert-tap-complete.sh "$TAP" "codex-call bats (macOS)"
+          exit "$rc"
+      - name: manifests-and-lens-pack / py_compile（pack 內所有 Python）
+        shell: bash
+        run: |
+          set -o pipefail
+          { python3 -m py_compile scripts/*.py; } 2>&1 | python3 scripts/neutralise.py
+      - name: manifests-and-lens-pack / validate.py 自身的回歸測試（stdlib unittest，無額外依賴）
+        shell: bash
+        run: |
+          set -o pipefail
+          { python3 scripts/test_validate.py; } 2>&1 | python3 scripts/neutralise.py
+      - name: manifests-and-lens-pack / mutation 靶清單沒有漂移（秒級；完整量測仍是手動）
+        shell: bash
+        run: |
+          set -o pipefail
+          { python3 scripts/mutation_check.py --check-targets; } 2>&1 | python3 scripts/neutralise.py

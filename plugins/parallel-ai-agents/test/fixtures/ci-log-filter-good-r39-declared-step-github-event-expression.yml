@@ -1,0 +1,15 @@
+# R39 opsweep 存活者（`--since c53ac22`）：PR 可控運算式規則的 `not declared`。宣告了 `# LOG-FILTER:` 的 step 已聲明不印 PR 文字，那條規則只管靠管線過濾的 step。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: declared step with an event expression
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          # LOG-FILTER: none — prints only the PR number
+          echo "pr=${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"

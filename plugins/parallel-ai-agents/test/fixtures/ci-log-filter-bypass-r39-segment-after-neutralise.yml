@@ -1,0 +1,15 @@
+# R39 mutation 全輪的存活者追到的（預設模式的缺口）：neutralise **之後**還接了管線的一段——那一段自己的輸出不經過濾。
+# `--strict` 由群組尾巴規則擋（neutralise 必須是最後一段）；預設模式前一版沒有對應的規則，bash 實測 PR 文字裸印。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo safe | python3 scripts/neutralise.py | printf "%s\n" "$PR_TITLE"

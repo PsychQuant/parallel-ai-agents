@@ -1,0 +1,15 @@
+# R30 H-2：`$'…'` 是 ANSI-C 引號，裡面的 `\'` 是逃脫不是收尾——引號沒有提早收掉，
+# 所以引號內的 `| python3 …neutralise.py` 是**字串內容**，不是管線。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: ansic quote hides a fake pipeline
+        run: |
+          echo $'it\'s not a pipe | python3 scripts/neutralise.py here'
+          echo "$PR_TITLE"
+      - name: compliant control
+        run: echo hi | python3 scripts/neutralise.py

@@ -1,0 +1,16 @@
+name: t
+on: push
+# EXPECT: rule-red
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: backslash inside a quoted delimiter is literal
+        run: |
+          cat <<'E\OF'
+          EOF
+          x | python3 scripts/neutralise.py
+          E\OF
+          echo "$PR_TITLE"
+      - name: compliant control
+        run: echo hi | python3 scripts/neutralise.py

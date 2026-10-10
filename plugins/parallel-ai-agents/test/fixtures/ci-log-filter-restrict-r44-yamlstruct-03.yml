@@ -1,0 +1,15 @@
+# #33 R44 全輪 opsweep 的存活者（YAML 結構分類器，差分模糊測試找到的殺手；4 個突變體靠它）。
+# EXPECT: rule-red
+# EXPECT-MSG: PARSE: 本 lint 不解析這一行（不是 plain key、不是清單項、不是 block scalar 內容）：`echo hi | python3 scripts/neutralise.py`
+# EXPECT-MSG: PARSE: 清單項用本 lint 不解析的寫法（flow／anchor／alias／merge key）：`[a, b]`
+# EXPECT-MSG: RULE: step 's2' 的 run 區塊既沒有經 neutralise.py
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - [a, b]
+          echo hi | python3 scripts/neutralise.py
+      - name: s2
+        run: echo ok

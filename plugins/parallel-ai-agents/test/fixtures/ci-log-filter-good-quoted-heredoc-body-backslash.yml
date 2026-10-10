@@ -1,0 +1,13 @@
+name: t
+on: push
+# EXPECT: pass
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: backslash in a quoted heredoc body is literal, terminator still terminates
+        run: |
+          cat <<'EOF'
+          data \
+          EOF
+          echo "$PR_TITLE" | python3 scripts/neutralise.py

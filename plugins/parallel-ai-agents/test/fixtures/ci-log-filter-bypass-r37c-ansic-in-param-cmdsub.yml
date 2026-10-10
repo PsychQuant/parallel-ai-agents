@@ -1,0 +1,13 @@
+# #33 verify R36 第 7 列（codex 第 1 條，協調者 bash 實跑成立）：`_cmdsub_end` 沒有 `$'…'` 分支，普通單引號分支把
+# `\'` 的引號當成收尾 ⇒ `)`、`}` 提早收掉，字串裡的假管線變 code、`#` 把真正的收尾藏進註解 ⇒ 380e4a4 放行。
+# bash 5.3：`$'\') } 2>&1 | … #'` 整段是 ANSI-C 字串，沒有管線，PR 文字裸印。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: ansic-in-param-cmdsub
+        run: |
+          echo "$PR_TITLE" ${UNSET_X:-$(printf %s $'\') } 2>&1 | python3 scripts/neutralise.py #')}

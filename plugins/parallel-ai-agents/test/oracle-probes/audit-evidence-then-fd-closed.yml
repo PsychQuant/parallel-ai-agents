@@ -1,0 +1,18 @@
+# R50：證據優先。違規記錄先寫進去，之後主 shell 才把稽核 fd 關掉（所以缺 fin、儀器完整性有疑慮）。已經看到的違規不因為之後的疑慮撤銷：替身 lint 全放行時仍判「繞過（primitive 稽核…）」、rc=1。
+# 拿掉「有正證據就先判」（讓儀器不可信優先）會把它變成「量不到（儀器不可信）」。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          printf '%n' HOME
+          exec 199>&-
+          { echo hi; } 2>&1 | python3 scripts/neutralise.py

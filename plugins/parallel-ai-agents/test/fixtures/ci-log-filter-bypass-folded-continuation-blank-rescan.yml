@@ -1,0 +1,26 @@
+# #33 verify R34（regression H-2）：折疊區塊裡以 `\` 結尾的行後面接空行段，fold 之後是 `['echo \\', None, 'x" | …', …]`。
+# 續行跳過佔位 `None` 接上第 2 行，但呼叫端 `spans` 只加 1 ⇒ 被接上來的 `x" | …` **再被當成獨立的一行掃一次**，
+# 而且重掃時帶著第一次掃完留下的引號狀態：第一次掃 `echo x" | …` 時 `"` 打開的引號到行尾都沒關，重掃 `x" | …`
+# 時那個 `"` 就把它**關掉**，`| python3 …neutralise.py` 因此變成 code。bash 眼中整段都在字串裡，
+# `echo "$PR_TITLE"` 照樣裸印。R32 版 rc=1、R33 版 rc=0（R33 回歸）。`_next_phys` 改回傳消耗格數 ⇒ 本檔翻紅；
+# 還原成 `spans += 1` ⇒ 翻綠。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: folded continuation across a blank line
+        run: >
+          echo \
+
+          x" | python3 scripts/neutralise.py
+
+          "
+
+          echo "$PR_TITLE"
+
+          # "
+      - name: compliant control
+        run: echo hi | python3 scripts/neutralise.py

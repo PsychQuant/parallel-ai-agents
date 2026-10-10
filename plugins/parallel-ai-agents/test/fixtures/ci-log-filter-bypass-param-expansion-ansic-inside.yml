@@ -1,0 +1,12 @@
+# `${…}` 裡的 `$'\''`：`\'` 是 ANSI-C 逃脫、不是收尾，`}| python3 … '` 整段在字串裡（logic F1 p4）。
+# 來源（#33 verify R34 logic F1／F3／F4 的探針；DA 的 n 系列是它在 da-work/probes 留下的檔案）
+# EXPECT: rule-red
+name: t
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: p4-ansic-in-brace
+        run: |
+          echo ${PR_TITLE#$'\'}| python3 scripts/neutralise.py '}

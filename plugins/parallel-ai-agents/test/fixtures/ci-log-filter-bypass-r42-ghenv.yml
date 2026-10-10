@@ -1,0 +1,418 @@
+# #33 verify R41 第 1 列、R42 放行條件 3：靠管線過濾的群組裡，PR 文字經 cat／cp／ln／dd／sed -w／exec fd／變數別名／`${!n}`／
+# printenv／env／set／declare -p／python……寫進 `$GITHUB_ENV`（及 `$GITHUB_OUTPUT`、`$GITHUB_STATE`），之後的 step 都讀得到。
+# 放行條件 3 的驗收輸入，逐字複製、step 名稱是輸入檔名：requirements c6 的 a6–a25、a27；logic p/g1、g2、g4–g8；security wf/ge-*；
+# regression b3 的 ghenv-*（ghenv-grep-read 是唯讀，在 `restrict-r42-ghenv-read-arg`）與 b5/*；協調者 c5。
+# regression b3 的 param-* 三張不收：它們不含 `GITHUB_ENV`／`GITHUB_PATH`，量的是 `${ ` 的寫法，不是跨 step 通道。
+# 45dee04 的 `--strict` 擋下其中七個（a17-dd、a18-redir-first、a19-group-redir、a20-sed-w、a23-cmdsub-arg、ge-cat-file、
+# ghenv-control-direct；靠 R40 的 `github_env_write` 與群組規則），其餘全部放行。那兩段在 R42 刪除，這七個一起釘住。
+# R42 WP7：a21-ln 的連結路徑由原輸入的 `/tmp/e` 改成 `$RUNNER_TEMP/e`（唯一偏離逐字的地方）。神諭沒有沙箱，固定的 /tmp 路徑
+# 會把這一步建的符號連結留給之後的 step 與之後的執行——`ge-cp` 寫 `/tmp/e` 時寫進一個已刪除的暫存檔，通道外流因此量不到。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-EACH-STEP: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: a10-exec-fd
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -o pipefail
+          {
+            exec 3>>"$GITHUB_ENV"
+            echo "N=$PR_BODY" >&3
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a11-alias-var
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -o pipefail
+          {
+            F=$GITHUB_ENV
+            echo "N=$PR_BODY" >> "$F"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a12-cp
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -o pipefail
+          {
+            echo "N=$PR_BODY" > /tmp/b
+            cp /tmp/b "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a13-python
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -o pipefail
+          {
+            python3 -c 'import os; open(os.environ["GITHUB_ENV"],"a").write("N="+os.environ["PR_BODY"])'
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a14-declare-p
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -o pipefail
+          {
+            declare -p >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a15-set
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -o pipefail
+          {
+            set >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a16-export-p
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -o pipefail
+          {
+            export -p >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a17-dd
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -o pipefail
+          {
+            echo "N=$PR_BODY" | dd of="$GITHUB_ENV" oflag=append conv=notrunc
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a18-redir-first
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -o pipefail
+          {
+            >> "$GITHUB_ENV" echo "N=$PR_BODY"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a19-group-redir
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -o pipefail
+          {
+            { echo "N=$PR_BODY"; } >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a20-sed-w
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -o pipefail
+          {
+            echo "N=$PR_BODY" | sed -n "w $GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a21-ln
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -o pipefail
+          {
+            ln -sf "$GITHUB_ENV" "$RUNNER_TEMP/e"
+            echo "N=$PR_BODY" >> "$RUNNER_TEMP/e"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a22-gh-output
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -o pipefail
+          {
+            echo "N=$PR_BODY" >> "$GITHUB_OUTPUT"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a23-cmdsub-arg
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -o pipefail
+          {
+            echo "N=$(cat /tmp/b)" >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a24-while-read
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -o pipefail
+          {
+            while read -r l; do echo "$l"; done < /tmp/b >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a25-git-log
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -o pipefail
+          {
+            git log -1 --format=%B >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a27-GITHUB_STATE
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -o pipefail
+          {
+            echo "N=$PR_BODY" >> "$GITHUB_STATE"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a6-printenv
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -o pipefail
+          {
+            printenv >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a7-env
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -o pipefail
+          {
+            env >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a8-cat-file
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -o pipefail
+          {
+            echo "$PR_BODY" > /tmp/b
+            cat /tmp/b >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a9-cat-stdin-redir
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -o pipefail
+          {
+            echo "$PR_BODY" > /tmp/b
+            cat < /tmp/b >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: g1
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            f=$GITHUB_ENV
+            echo "NOTE=$PR_BODY" >> "$f"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: g2
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            exec 3>>"$GITHUB_ENV"
+            echo "NOTE=$PR_BODY" >&3
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: g4
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            printenv PR_BODY >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: g5
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            echo "NOTE=$PR_BODY" > >(cat >> "$GITHUB_ENV")
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: g6
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            if true; then echo "NOTE=$PR_BODY"; fi >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: g7
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            for l in "NOTE=$PR_BODY"; do echo "$l"; done >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: g8
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            printf 'NOTE=%s\n' "$PR_BODY" > note.txt
+            cat note.txt >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: ge-alias-var
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -o pipefail
+          {
+          E=$GITHUB_ENV
+          printf 'PYTHONIOENCODING<<EOF\n%s\nEOF\n' "$PR_BODY" > "$RUNNER_TEMP/e"
+          cat "$RUNNER_TEMP/e" >> "$E"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: ge-cat-file
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -o pipefail
+          {
+          printf 'PYTHONIOENCODING<<EOF\n%s\nEOF\n' "$PR_BODY" > "$RUNNER_TEMP/e"
+          cat "$RUNNER_TEMP/e" >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: ge-cp
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -o pipefail
+          {
+          printf 'PYTHONIOENCODING<<EOF\n%s\nEOF\n' "$PR_BODY" > /tmp/e
+          cp /tmp/e "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: ge-indirect
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -o pipefail
+          {
+          n=GITHUB_ENV
+          printf 'PYTHONIOENCODING<<EOF\n%s\nEOF\n' "$PR_BODY" >> "${!n}"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: ge-printenv
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -o pipefail
+          {
+          printf 'PYTHONIOENCODING<<EOF\n%s\nEOF\n' "$PR_BODY" >> "$(printenv GITHUB_ENV)"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: ge-python
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -o pipefail
+          {
+          python3 -c 'import os; open(os.environ["GITHUB_ENV"], "a").write("PYTHONIOENCODING<<EOF\n" + os.environ["PR_BODY"] + "\nEOF\n")'
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: ghenv-alias
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            f=$GITHUB_ENV
+            echo "NOTE=$PR_TITLE" >> "$f"
+            make | tee log
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: ghenv-cat-file
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            printf 'NOTE=%s\n' "$PR_TITLE" > note.env
+            cat note.env >> "$GITHUB_ENV"
+            make | tee log
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: ghenv-control-direct
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "NOTE=$PR_TITLE" >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: ghenv-stdin-redirect
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            printf 'NOTE=%s\n' "$PR_TITLE" > note.env
+            cat >> "$GITHUB_ENV" < note.env
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: ghenv-for-done-redirect
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            for x in "$PR_TITLE"; do echo "NOTE=$x"; done >> "$GITHUB_ENV"
+            make | tee log
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: ghenv-if-fi-redirect
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            if true; then echo "NOTE=$PR_TITLE"; fi >> "$GITHUB_ENV"
+            make | tee log
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: ghenv-subshell-redirect
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            (echo "NOTE=$PR_TITLE") >> "$GITHUB_ENV"
+            make | tee log
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: c5-ghenv-cat
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            printf 'PYTHONIOENCODING=%s\n' "$PR_TITLE" > payload.env
+            cat payload.env >> "$GITHUB_ENV"
+          } 2>&1 | python3 scripts/neutralise.py

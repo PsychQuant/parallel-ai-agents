@@ -1,0 +1,21 @@
+# #33 R46（R45 verify 第 1 列）：這一步原本在 `good-strict-group-forms` 的第 4 步，`{a,b}` 是「不是保留字的大括號」的例子。R46 起文法不收 builtin（這裡是 `echo`）的未加引號大括號展開：
+# `echo {-e,…}` 多出 echo 的選項、在通道寫入裡能改變寫出的行數；為了不留「echo 的參數可以展開、test 的不行」兩套規則，FL_INERT 的 builtin 一律不收。保留成 restrict fixture，
+# 好讓「群組裡的大括號詞」這個寫法的現況有紀錄（放行→擋）。
+# LINT-ARGS: --strict
+# R46：神諭的 primitive 稽核看不到這個檔的 1 個 step 有外流或違規 argv（沒有 PR 文字出現、沒有 builtin 收到文法之外的東西），逐步簽 `KNOWN-CLASS: 文法外`——不是安全證明。
+# KNOWN-CLASS: 文法外
+# EXPECT: rule-red
+# EXPECT-MSG: 未加引號的大括號展開
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: braces that are not reserved words, line break after the pipe
+        shell: bash
+        run: |
+          {
+            echo "{" '}' "${PR_TITLE}" {a,b}
+          } 2>&1 |
+            python3 ../pai-lenses/scripts/neutralise.py

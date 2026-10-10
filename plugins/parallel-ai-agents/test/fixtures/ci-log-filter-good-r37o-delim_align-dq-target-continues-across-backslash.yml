@@ -1,0 +1,52 @@
+# #33 verify R37 opsweep 補件：delim_align 群組——殺兩個突變體：
+#   1. `strip→id|_aligned_sources|ok = not c[i:].strip()`（`.strip()` 換成恆等，
+#      即 `ok = not c[i:]`）
+#   2. `drop-operand|_aligned_sources|if s[j] == "\\" and j == len(s) - 1 and
+#      joined(tail) is not None:|3`（拿掉第三個運算元 `joined(tail) is not None`）
+#
+# 場景是雙引號字串**在字串內部**用反斜線＋換行續行（POSIX：雙引號裡的 `\<換行>`
+# 兩者一起消失，不留痕跡），這裡續行的正是重導向目標：`"/tmp/x\` 換行 `y"`，bash
+# 收到的目標字面是 `/tmp/xy`。
+#
+# 兩個突變體都出在 `_aligned_sources` 逐字元比對兩個實體行時，處理「這一行的原文用完
+# 了，但程式碼那邊還剩幾格」的分支：
+#
+# **突變體1（`.strip()`→恆等）**：原文用完、程式碼還剩的那幾格是「反斜線＋換行」被
+# 挖空成的**空白**（等長代換，行尾多出一格代表被吃掉的換行本身）。原版用
+# `.strip()` 確認剩下的全是空白 → 判定這一行仍然對得齊（`ok=True`）。突變體拿掉
+# `.strip()`，只要剩下的字串**非空**就判 `ok=False`——即使它整段都是空白——把這一行
+# 對齊结果整個判成 `None`。
+#
+# **突變體2（拿掉 `joined(tail) is not None`）**：反斜線落在原文最後一格時，程式先
+# 「順手」檢查這是不是需要跨行接起來的續行（`joined(tail)`），確認**真的**有下一個
+# 需要接的實體行、且下一行在 `code_lines` 裡確實是被吸收的佔位（空字串）才去接；
+# 雙引號內部的續行不是這種「佔位」機制（它是靠 `shell_scan` 主迴圈的持續引號狀態
+# 跨行處理，下一行仍然是自己獨立、非空的程式碼行），所以 `joined(tail)` 正確回傳
+# `None`，程式退回上面那個「原文用完、程式碼還剩幾格空白」的正常分支處理。拿掉
+# 這個運算元後，程式誤以為需要接下一行、直接執行 `s = s[:j] + src_lines[tail]`——
+# 但 `tail = joined(tail)` 這時候是 `None`，對 `src_lines[None]` 取值會直接丟出
+# `TypeError`，整支 lint 當掉（非 0 結束碼、不是任何一種正常的 PARSE／RULE 判定）。
+#
+# 這兩種失效都發生在含有重導向目標的那一行，導致 `>/tmp/xy` 這個安全目標的原文
+# 讀不到（`sk is None`）或整支程式崩潰，原本該過關的 pass 因此不成立。
+#
+# 原版為什麼是 pass：`echo hi` 寫進的 `/tmp/xy` 是一般檔案（不落在 `/dev`／
+# `/proc`），下一個 step 再把它讀出來餵給 neutralise.py，整個流程沒有未過濾的
+# 外流路徑。
+#
+# bash 5.3.15 實測：`bash -c 'echo hi > "/tmp/x\` 換行 `y"'` 確實建立了 `/tmp/xy`
+# （`ls -la /tmp/xy` 存在、`cat /tmp/xy` 印出 `hi`），證明雙引號內的反斜線＋換行
+# 續行把目標接成單一檔名 `/tmp/xy`，不是兩個獨立東西。
+#
+# EXPECT: pass
+name: t
+on: push
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: double-quoted redirect target continues across a backslash-newline, target safe, later neutralised
+        run: |
+          echo hi > "/tmp/x\
+          y"
+          cat /tmp/xy | python3 scripts/neutralise.py

@@ -1,0 +1,19 @@
+# R50：稽核記錄走繼承的檔案描述元 199。**子殼層先正常收尾（它的 EXIT trap 寫出自己的 fin），主 shell 才把 fd 關掉**（`exec 199>&-`），主 shell 的 fin 因此寫不出去——
+# 判「量不到（儀器不可信：主 shell 卻沒有 fin）」，不判一致。fin 必須來自主 shell（init 記的 pid）：只要有「任一行程的 fin」就算數的話，子殼層的 fin 會讓它判一致。
+# 這張探針用 `--allow-distrust` 跑。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          ( : )
+          exec 199>&-
+          { printf '%n' HOME; } 2>&1 | python3 scripts/neutralise.py

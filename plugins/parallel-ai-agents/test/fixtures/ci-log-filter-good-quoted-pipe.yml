@@ -1,0 +1,9 @@
+name: t
+on: push
+# EXPECT: pass
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: quoted scalar with a real pipe
+        run: "echo hi | python3 scripts/neutralise.py"

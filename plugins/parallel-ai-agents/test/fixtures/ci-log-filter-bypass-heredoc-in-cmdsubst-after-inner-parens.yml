@@ -1,0 +1,17 @@
+# #33 verify R35（opsweep 存活者 `elif ch == ")" and cpar` 的刪運算元與 `==`↔`!=`）：heredoc 開在命令替換**裡面**、內層括號 `(true)` 之後。
+# 內層括號計數錯了 ⇒ `(true)` 的 `)` 被當成命令替換收尾 ⇒ heredoc 被認為在外面 ⇒ `EOFX` 只是內文 ⇒ 放行。
+# 正確的計數知道它還在命令替換裡：`EOFX` 是「以終止字開頭」的行 ⇒ fail-closed（bash 5.3 在此以警告收尾，版本相依）。
+# EXPECT: parse-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: heredoc opened inside a command substitution after inner parens
+        run: |
+          x=$( (true); cat <<EOF
+          EOFX
+          EOF
+          )
+          echo hi 2>&1 | python3 scripts/neutralise.py

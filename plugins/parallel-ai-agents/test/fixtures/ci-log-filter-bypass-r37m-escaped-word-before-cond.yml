@@ -1,0 +1,14 @@
+# #33 verify R37 合併時協調者發現（r37d 第 5(a) 列 `cmd_pos` 修法的相鄰輸入）：跳脫字元 `\x` 的分支 `continue` 掉、沒維護 cmd_pos；`\e\c\h\o [[ # ]]` 的管線是註解，bash 實測印出 `[[`。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          \e\c\h\o [[ # ]] 2>&1 | python3 scripts/neutralise.py

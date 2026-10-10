@@ -1,0 +1,18 @@
+# R49（#33 verify R49 Codex 第 3 條）：步驟把通道檔換成 FIFO——神諭讀它會永遠卡住（實測 `timeout 40` 到期、rc=124）。R50 起讀通道檔先 `fstat`（儀器本身已是 fd，沒有檔可 `fstat`），不是一般檔案就不讀、判「量不到（儀器不可信）」。
+# 這張探針用替身 lint（`ORACLE_LINT=…/lint-pass-all.sh`；真 lint 會把它歸成「誤擋（文法外）」）與 `--allow-distrust` 跑（儀器不可信預設讓神諭 rc=1，見 oracle.py 的 main）。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: probe
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          rm -f "$GITHUB_ENV"
+          mkfifo "$GITHUB_ENV"
+          { echo hi; } 2>&1 | python3 scripts/neutralise.py

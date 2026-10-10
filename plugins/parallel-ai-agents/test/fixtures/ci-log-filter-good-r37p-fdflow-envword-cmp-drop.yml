@@ -1,0 +1,22 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺 drop-operand|env_word|if text.startswith((key + "=", key +
+# "+=")) or (bare and text == key):|4（拿掉內層 `and` 的 `text == key`，只剩 `bare`）。
+# `export FOO=bar`：`FOO` 完全不在 `_RUN_ENV_KEYS`（`SHELLOPTS`／`BASHOPTS`／`BASH_ENV`／
+# `BASH_XTRACEFD`）之列，對 bash 啟動行為毫無影響，bash 實測就是單純設一個環境變數，PR_TITLE 不會
+# 因此外流。原版逐一比對 `_RUN_ENV_KEYS` 的每個 key，`A`（`startswith`）與 `B`（`bare and text==key`）
+# 對每個 key 都是假（`"FOO=bar"` 既不是 `"SHELLOPTS="` 開頭也不等於 `"SHELLOPTS"`……）→ 四個 key 都
+# 沒有命中 → `an["fd"]` 是空的 → 放行（`EXPECT: pass`，與 bash 實測一致）。
+# 突變體拿掉 `text == key` 這個 guard 後,`B` 直接變成只剩 `bare`——`bare` 對 `export`／`declare` 等的
+# 每個參數都是 `True`,與 `text` 或 `key` 的內容完全無關；迴圈第一輪（`key == "SHELLOPTS"`）`B` 就已經
+# 是 `True`,`export` 的任何參數（不管是不是危險 env key）都會被判命中 → 突變體誤判紅。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: export of an unrelated env var
+        shell: bash
+        run: |
+          export FOO=bar
+          echo "$PR_TITLE" | python3 scripts/neutralise.py

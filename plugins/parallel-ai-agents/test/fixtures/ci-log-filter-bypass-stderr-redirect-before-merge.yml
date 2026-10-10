@@ -1,0 +1,14 @@
+# `>&2 2>&1 |`：`>&2` 先把 fd1 指到原本的 stderr，`2>&1` 再把 fd2 指到同一處——管線裡什麼都沒有，PR 文字原樣進 log。
+# 帶了 `2>&1` 也照樣外流，所以 S-2 不能按「有沒有 `2>&1`」定義（#33 verify R34 security S-2 的探針；R35 的 fd 流向規則）。
+# EXPECT: rule-red
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: redir-order-2
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          printf "%s\n" "$PR_TITLE" >&2 2>&1 | python3 ../pai-lenses/scripts/neutralise.py

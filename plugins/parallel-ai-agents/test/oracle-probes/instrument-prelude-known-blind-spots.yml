@@ -1,0 +1,41 @@
+# 已知盲點類（R50，**文件化，不是保證**）：不碰 fd 編號的另一種——步驟在同一個 shell 裡動 PRELUDE 裝進來的東西。三個 step（**代表形狀，不是窮舉**），替身 lint 下：
+#   unset-wrapper   `unset -f printf` 移除 `printf` 的包裝函式，後面的 `printf '%n' Z` 沒有被記錄——判「一致」
+#   builtin-prefix  `builtin printf '%n' Z` 繞過包裝函式——判「一致」（`command printf` 同）
+#   unset-tvn       `unset __orc_tvn` 清掉信任變數清單，再改 `HOME`——判「一致」（`__orc_tvn=()` 同；純量指派 `__orc_tvn=` 反而讓 PRELUDE 的迴圈出錯、缺 `fin` 而判量不到）
+# 對照：同樣的違規不動 PRELUDE 時判「不一致：繞過」（`instrument-fd-blind-spots-control.yml` 的 ctl-printf-n、ctl-trusted-var）。真的 `--strict` lint 對這三個 step 全部 RULE-red
+# （`unset`、`builtin` 是 bash 的 builtin，文法只收外部命令與 echo、printf、test、[、true、false、:、exit；實測）。但這一類不都在文法外：對 `__orc_*` 的純量指派（`{ __orc_want=x; … }`）在文法內、lint 放行，
+# 實測可讓 pipefail 探針判量不到——見 `instrument-event-and-priv-known-blind-spots.yml` 的 assign-prelude-var（列舉也不是窮舉：放在群組裡的 `trap <動作> EXIT` 同樣在文法內；放在頂層則 RULE-red）。
+# `oracle.py` 的 PRELUDE 註解早就承認 `builtin`／`command` 前綴不在文法裡。若有一天補上，這一項會紅；改它時要一併改 README 與 `oracle.py` 的措辭（沒有機制連結，靠人記得）。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: unset-wrapper
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          unset -f printf
+          printf '%n' Z
+          { echo hi; } 2>&1 | python3 scripts/neutralise.py
+      - name: builtin-prefix
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          builtin printf '%n' Z
+          { echo hi; } 2>&1 | python3 scripts/neutralise.py
+      - name: unset-tvn
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          unset __orc_tvn
+          HOME=/y
+          { echo hi; } 2>&1 | python3 scripts/neutralise.py

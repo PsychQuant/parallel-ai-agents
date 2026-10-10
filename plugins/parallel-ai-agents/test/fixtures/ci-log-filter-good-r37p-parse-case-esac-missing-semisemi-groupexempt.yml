@@ -1,0 +1,30 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺 parse-case/
+# `self.parse_list(ctx, lambda x: self.op(x, ";;", ";&", ";;&") or self.word(x, "esac"))`（運算元 2，
+# 拿掉 `self.word(x, "esac")`，只留 `;;`／`;&`／`;;&` 當子句結尾判準）。
+# 主張「等價」的理由是：拿掉 esac-check 後，子句本體的 `parse_list` 不會在 `esac` 停下，會把它交給
+# `parse_andor→parse_pipeline→parse_command` 的一般詞收集迴圈——但那個論證只看到單一 token 的安全性，
+# 沒看到：`esac` 被吞成詞之後，`parse_list` 不會在這裡回頭，會繼續往下一路吞掉**同一層接下來的所有內容**，
+# 包括本來屬於外層 `{ … } 2>&1 | python3 …neutralise.py` 的收尾 `}`、以及它後面的 `2>&1`——這段被錯吞成
+# 另一個 simple-command 的 trail，使真正的群組（gid）的 `trail` 變成空、頂層的 pipeline 也不再是恰好
+# 「group + neut segment」的形狀，豁免機制（`_analyse` 的 `last = max(k for segs neut)` 那段）因此找不到
+# 可豁免的段、群組完全不被豁免——群組內原本安全的 `>&2` 外流就會被判成真正的 RULE 外流。
+# 本 fixture 不用 --strict（迴避 strict_group_violation 這條獨立的文字層檢查，只測 `_analyse` 自己的
+# 群組豁免），額外放一條乾淨的 `true | python3 …neutralise.py` 滿足 PIPED_RE 的 ok 判準。
+# 實測（bash 5.3.15）：原版 lint=pass、oracle=piped 一致；`test/mutcheck.py <此檔> @<id>` 對此突變體回 KILL
+# （mutant=rule-red）。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: case clause missing ;; before esac, real fd2 write inside exempted group
+        shell: bash
+        run: |
+          true | python3 scripts/neutralise.py
+          {
+            case "$1" in
+              a) echo "$PR_TITLE" >&2
+            esac
+          } 2>&1 | python3 scripts/neutralise.py

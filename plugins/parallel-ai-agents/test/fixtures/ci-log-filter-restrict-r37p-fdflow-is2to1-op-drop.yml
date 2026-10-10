@@ -1,0 +1,24 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺 drop-operand|_is_2to1|...|1（拿掉 `r["op"] == ">&"`）。
+# 群組收尾寫成 `2>1`——`>` 不是 `>&`，目標字面是 `1`，bash 會把它讀成「把 fd2 寫進當前目錄下
+# 名叫 `1` 的檔案」，不是 fd 複製。bash 實測（`cd /tmp && bash -c '{ echo SECRET >&2; } 2>1 | cat'; cat 1`）：
+# 管線那端（`cat`）什麼都沒印，SECRET 進了磁碟上的檔案 `1`——不算外流到本 step 被擷取的輸出
+# （原版判紅屬 fail-closed、無外流：見下）。`_redir_hit` 對 `2>1` 這個 trailing redir 本身不判定為
+# 命中（目標是純檔名、非 glob、非 `/dev`／`/proc`）,但原版 `_is_2to1` 要求 `op == ">&"`——`>` 不是
+# `>&"` → 正確判「不是 2>&1」→ 群組不豁免 → 群組內 `>&2` 的命中留在 `an["fd"]` → RULE 紅
+# （fail-closed，PR_TITLE 沒有真的跑進任何被擷取的輸出，只是寫進磁碟檔案，非本 lint 這條規則
+# 原本要防的「印到 log」意義下的外流）。
+# 突變體拿掉 `op == ">&"` 這個 guard 後，`pre == "2"` 且 `t["lit"] == "1"` 就足以被誤判成等同
+# `2>&1` → 群組被誤豁免 → 群組內 `>&2` 的命中被吞掉 → 突變體放行。
+# **不是繞過，是限制**（fail-closed；神諭記在 KNOWN_DISAGREE）：這個輸入 bash 實際跑起來不會外流 PR 文字，lint 依設計保守地拒絕它；
+# 這張 fixture 釘住的是那個拒絕（突變體放寬後會放行）。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: group trailer redirects to a file literally named 1, not fd dup
+        shell: bash
+        run: |
+          { echo "$PR_TITLE" >&2; } 2>1 | python3 scripts/neutralise.py

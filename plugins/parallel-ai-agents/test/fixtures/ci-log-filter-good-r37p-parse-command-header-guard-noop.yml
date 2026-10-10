@@ -1,0 +1,58 @@
+# #33 verify R37 opsweep 補件（最終 lint）：殺
+# drop-operand|parse_command|if t is None or t["k"] == "NL" or end(t):|3、
+# drop-operand|parse_command|if len(words) == 1 and not rs and self.op(self.tok(), "(") and self.op(self.tok(1), ")"):|1、
+# drop-operand|parse_command|if len(words) == 1 and not rs and self.op(self.tok(), "(") and self.op(self.tok(1), ")"):|2。
+#
+# 這三個是同一群守衛的另一半：原版該放行、突變體反而誤擋（fd 憑空多出一個本來被正確豁免掉的
+# hit）。三個 step 都是「群組收尾後緊接 `2>&1 | python3 …neutralise.py`」這個本來就該被豁免的
+# 安全寫法，只是刻意在群組收尾前多塞一個會干擾「這裡是不是群組結尾」判斷的殘骸：
+#
+#   · `{ echo "$PR_TITLE" >&2; ! } 2>&1 | python3 scripts/neutralise.py`：`!` 直接貼著群組的
+#     `}`（`!` 後面沒有命令，是「!」／「time」前綴消耗迴圈之後、`parse_command` 自己那格
+#     `if t is None or t["k"] == "NL" or end(t):` 唯一會摸到 `end(t)` 為真的路徑）。原版：
+#     `end(t)` 正確地認出 `}` 是群組的收尾，回傳 `None`，群組乾淨地在 `}` 收尾，之後的
+#     `2>&1 | python3 …neutralise.py` 正確地把它豁免（`trail=[2>&1]` 符合 `_is_2to1`）——
+#     `an["fd"]` 是空的。拿掉 `end(t)` 這個 operand 之後，`}` 被落到一般的「收詞」分支，當成
+#     一個普通的字（W 型別、`k in ("W","R")` 不分辨它是不是保留字）吃進去，群組**沒有**在
+#     `}` 收尾，後面那段 `2>&1 | python3 …neutralise.py` 反而被吃進「群組本體」內部的一段偽管線，
+#     群組本身的 `trail` 變空——豁免條件不成立，`>&2` 那個 hit 留在 `an["fd"]` 裡。
+#     bash 5.3 實測：`bash -n -c '{ echo hi >&2; ! } 2>&1 | cat'` → `syntax error near
+#     unexpected token '}'`——`! }` 本來就不是合法語法（`!` 後面一定要接命令），這一整段
+#     在真正的 bash 裡會直接語法錯誤、什麼都不會執行、當然也不會外流任何東西，所以「原版判定
+#     這裡安全」在 bash 的意義下是**平凡地真**（沒有東西會被印出來）——這正是本規則的守衛
+#     設計給殘骸語法 fail-safe（放行、不誤擋）而非 fail-closed（擋下）的一個例子；`end(t)` 這格
+#     守衛存在的目的正是不讓這種殘骸把後面本來乾淨的 `2>&1 | python3 …` 帶著一起被誤判。
+#   · `f g() { echo "$PR_TITLE" >&2; } 2>&1 | python3 x/neutralise.py`：`f()` 簡寫偵測的
+#     4-運算元 `len(words) == 1 and not rs and op(…"(") and op(…")")`——拿掉 `len(words) == 1`
+#     （occurrence 1）後，即使已經收了兩個字（`f`、`g`），只要接著出現空括號還是會誤判成
+#     `f()`／`g()` 那種「函式定義」捷徑，把 `()` 吃掉、把 `{ … }` 當函式主體遞迴呼叫
+#     `parse_command`——這次遞迴呼叫仍然正確辨識出 `{` 是群組、豁免仍然算得出來，**但整段的
+#     `kind` 從 `"simple"` 換成了 `"func"`**，而 `func` 這個 kind 在 `_analyse` 的豁免迴圈裡
+#     從來不會被當成需要豁免的東西看待（它本來就不該被辨識成函式定義捷徑——原版：`f`、`g`
+#     兩個字之後不該再觸發 `f()` 判斷，`(` `)` `{ … }` 落回上層當成三個獨立的命令個別解析，
+#     其中空的 `()` 是一個沒有內容的子殼層、`{ … }` 是獨立的群組，各自形成自己的管線，
+#     `{ … }` 這個群組後面接的 `2>&1 | python3 …neutralise.py` 依然正確豁免它）。
+#     `bash -n -c 'f g() { echo hi >&2; } 2>&1 | cat'` → `syntax error near unexpected
+#     token '('`（`f g()` 不是合法語法：函式定義的 `()` 前面只能有一個名字）。
+#   · `f 2>&1 () { echo "$PR_TITLE" >&2; } 2>&1 | python3 x/neutralise.py`：同一個判斷式的
+#     `not rs`（occurrence 2）——`f` 之後先收了一個重導向 `2>&1`（`rs` 非空），原版靠 `not rs`
+#     擋住、不觸發 `f()` 捷徑；拿掉之後只要接著出現空括號一樣會誤判。`bash -n -c 'f 2>&1 ()
+#     { echo hi >&2; } 2>&1 | cat'` → 同樣的語法錯誤（重導向不能插在函式名字跟 `()` 之間）。
+#
+# 三個 step 都已經自帶合法字面的 `2>&1 | python3 …neutralise.py`，`ok=True` 不需要額外湊。
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: bang-glued-to-group-close-before-neutralise
+        run: |
+          { echo "$PR_TITLE" >&2; ! } 2>&1 | python3 scripts/neutralise.py
+      - name: shorthand-func-detector-ignores-word-count
+        run: |
+          f g() { echo "$PR_TITLE" >&2; } 2>&1 | python3 x/neutralise.py
+      - name: shorthand-func-detector-ignores-prior-redirect
+        run: |
+          f 2>&1 () { echo "$PR_TITLE" >&2; } 2>&1 | python3 x/neutralise.py

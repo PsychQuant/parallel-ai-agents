@@ -1,0 +1,49 @@
+# #33 verify R43 第 1 列（DA，HIGH）：群組裡未加引號的 `$NAME` 當 `[`／`test` 的運算元。bash 先斷詞，標題斷詞後含 `-v` 與下標算術
+# `PWD[$(命令)]` 時，`[`／`test` 對 `-v` 的運算元做**算術求值**，下標裡的命令替換就執行了——PR 文字成了程式碼，可以寫跨 step 的通道，而
+# run 文字裡完全沒有 `GITHUB_ENV` 這個詞。bash 5.3 與 5.2.21 實跑確認（R43 報告第 1 列）。四種形狀：`-n`、`=`、`-z`、單一參數。
+# 神諭的 PR 標記是文字不是程式碼，R43 的神諭量不到這一類；R44 起神諭有注入探針（`INJECT_PAYLOADS`）。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-EACH-STEP: rule-red
+# EXPECT-MSG: 不在 `--strict` 的正面文法裡
+# EXPECT-MSG: 群組裡的展開一律要加雙引號
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: unquoted -n operand
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            [ -n $PR_TITLE ] && echo "has title"
+            make test
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: unquoted equals operand
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            [ $PR_TITLE = WIP ] || make test
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: unquoted -z operand
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          {
+            test -z $PR_BODY || echo body present
+            make test
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: unquoted single operand
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            [ $PR_TITLE ] || make test
+          } 2>&1 | python3 scripts/neutralise.py

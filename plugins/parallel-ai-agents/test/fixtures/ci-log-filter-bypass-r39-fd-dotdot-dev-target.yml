@@ -1,0 +1,15 @@
+# R38 第 20 列（logic LOW-6）：`/dev/fd/../../self/fd/2` 字面 `normpath` 成 `/self/fd/2`，看不到 dev／proc；Linux 上 `/dev/fd` 是
+# 指向 `/proc/self/fd` 的 symlink，實際寫到 stderr。原文含 `..` 又有 dev／proc 分量 ⇒ fail-closed。
+# EXPECT: rule-red
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: dotdot path under /dev
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$PR_TITLE" >/dev/fd/../../self/fd/2 2>&1 | python3 scripts/neutralise.py

@@ -1,0 +1,708 @@
+#!/usr/bin/env python3
+"""作者無關的運算子突變掃描：對 `lint-ci-log-filter.sh` 內嵌的 Python 逐一套用**固定的**運算子，看 `--selftest` 抓不抓得到。
+
+為什麼還要這一支（#33 verify R28 DA 的中心診斷）：`mutation_check.py` 的具名靶是**作者挑的**——RED 驗證的對象、
+突變的選擇、fixture 的內容，三者都由剛寫完那段程式碼的人決定。R28 的 DA 用固定運算子掃 R26 的新機制，
+62 個突變體 29 個存活，其中四個是**當輪剛修好的機制**（`probe == delim`、`balanced`、`top_key == "jobs"`…）——
+靶清單裡沒有它們，因為作者沒想到要放。這一支把「挑」拿掉：運算子集合是封閉的、套用位置由 AST 決定，
+作者剩下的選擇只有 EXPECTED_SURVIVE（而那個集合的每一條都要能回答「為什麼等價」，且受下方比例上限約束）。
+
+運算子（封閉列舉，五種；改動這個集合是另一次 change）：
+  strip→id       `x.strip()/.rstrip()/.lstrip()` 的呼叫換成 `x`
+  ±1→±2          `+= 1`／`-= 1` 換成 `+= 2`／`-= 2`
+  drop-operand   `a and b`／`a or b` 拿掉其中一個運算元（整個運算式換成其餘運算元各自加括號接回去）
+  startswith→F   `x.startswith(...)` 換成 `False`
+  ==↔!=          `==` 換成 `!=`
+
+用法：
+  test/opsweep.py --since REF   只掃「自 REF 起被改動的區域」：被 diff 觸及的**整個函式**，加上模組層**新增／改動的行**
+                                （R28 DA 指定的守備範圍：`git diff db0c0f2..HEAD` 觸及的函式；模組層以行文本比對）
+  test/opsweep.py               整段內嵌 Python（不分區域；數字只供揭露，收手條件用 --since）
+  test/opsweep.py --list        只列突變體 id 與數量，不跑
+  test/opsweep.py --json F      把結果寫成 JSON（CI／量測用）
+  test/opsweep.py --jobs N      同時跑 N 個突變體（判定不變，只改完成順序與耗時）
+退出碼：有**非預期**存活或**預期存活被殺**（等價性不再成立）→ 1；否則 0。
+
+EXPECTED_SURVIVE 的紀律（G-R29-5）：
+  (a) 每一條要寫理由，且理由是「依構造等價」——不是「fixture 沒蓋到」；後者的正解是補會翻色的 fixture。
+      例外（R48，#33 verify R47）：其中兩條 `_cmdsub_end_case`（`at_word…|2`、`k += 1…|1`；另兩條同函式的條目不在此列）是「函式層級不等價、呼叫端不變式下不可達」，證據是有界的（插樁 0 次），理由文字已標明——它們是被承認的例外，不是「依構造等價」的範例。
+  (b) 修法型的突變體（關掉一個當輪剛修好的機制）**不得**列入——那正是「新機制沒有網」。
+  (c) 集合大小 ≤ 本次掃描突變體數的 10%（程式檢查）；另有審查規則：每輪新增條數 ≤ 該輪存活數的 1/3；超過就是在用這個集合藏東西（R13 DA-5）。（R48 宣稱查核更正：前一版寫成「存活總數的 1/3，程式會檢查」，程式其實是 10%。）
+"""
+import argparse
+import ast
+import json
+import os
+import pathlib
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+
+HERE = pathlib.Path(__file__).resolve().parent          # plugins/parallel-ai-agents/test
+PLUGIN = HERE.parent
+LINT = HERE / "lint-ci-log-filter.sh"
+
+# 突變體 id 的形狀：`<op>|<函式>|<該行去空白的原文>|<同一行第幾個>`。用原文不用 offset：offset 會隨任何改動漂移，
+# 原文只在那一行真的改了才變——而那時本來就該重新判讀。
+EXPECTED_SURVIVE = {   # id → 理由（依構造等價）。每一條都要能回答「為什麼關掉它沒有任何輸出會變」
+    # `len(v) >= 2` 只擋單一字元的 `'`／`"`：那是沒收尾的引號，不是合法 YAML（PyYAML ScannerError、GitHub
+    # 「workflow file issue」），runner 不會跑。拿掉守衛只改變 lint 對無效輸入的訊息，不改變任何合法輸入的判定。
+    # R30 MB-11／Codex 第 4 條：這一條的「依構造等價」**是假的**——引號 heredoc 的分隔字可以是空白
+    # （`cat <<' '`），於是「剝不剝純空白行」會改變 heredoc 有沒有終止。R31 採納突變體的答案：
+    # `dedent_block` 現在對**每一行**剝（YAML 就是這樣），這一條從 EXPECTED_SURVIVE 移除，
+    # 並由 `good-whitespace-heredoc-delimiter` fixture 釘住。留這段註解當紀錄：
+    # **「依構造等價」若沒有一條會翻色的指令在守，它就只是一句散文**（R30 §六 擴寫後的第 8 類）。
+    # R27 在這裡列過 `shell_scan` 的 `startswith("<<<")`，理由是關掉之後落到 `<<` 分支、分隔字從第三個 `<` 讀起、
+    # delim 為空、不排 heredoc。**那個論證只看了第一個 `<<`，是錯的**（#33 verify R37：全輪 mutation 與最終 lint 的
+    # `--since 380e4a4` 掃描都殺掉了它）：`<<<<<EOF` 拿掉這個分支後，掃描器會在後面的 `<<` 登記 heredoc、對齊跟著錯位，
+    # `bypass-r37t8-misaligned-herestring-heredoc` 從 rule-red 變成 pass。已移除（mutation_check 同一條靶也已更正）。
+    # **R32 DA-2 之後，`fold_block` 在這裡只剩一條。** R31 列了四條，只有一條理由明白點名「佔位的空字串讓
+    # 下一行不再折」（另外兩條說的是 `more`／`prev_more` 已擋住折疊，第四條說的是折進去的只差行尾空白）——那句話描述的就是那個缺陷本身（兩兩折而非遞移折）。等價論證的根據是 bug，
+    # 論證就隨 bug 一起作廢，**不得改寫後沿用**。R32 重寫了 `fold_block`（遞移）；**「對 PyYAML
+    # 逐行相符」這句話 R37 改成有範圍、可重跑的量測**（#33 verify R36 requirements 第 20 列）：
+    # `test/corpus/foldcheck.py` 窮舉「10 空白基準縮排 ＋ 7 種前導（含 tab）× 3 種內容（空、`x`、帶行尾空白的
+    # `x `）＋ 真正的空行」這 22 種行的所有組合，`run: |` 與 `run: >` 各比一次整字串與內容承載行。
+    # 現行 lint：3 行各 6,518 組、4 行各 136,660 組合法 YAML，**整字串全部相等**；負對照 380e4a4（修 R36 第 10 列
+    # 的 tab 首行之前）3 行就有 literal 462 組、folded 588 組內容承載行不符。範圍外（沒有量、不宣稱）：5 行以上、
+    # 這 22 種以外的行形、`|N`／`>N` 顯式縮排指示子、chomping 指示子。
+    # R37 曾在這裡寫「blank-line 的計數／位置另有一個既有的簡化」並指向一段不存在的說明，
+    # 它自己的窮舉指令碼沒有進 repo、合併時已經找不到；上面那支工具在同一類構造下量不到任何空白行差異，所以刪掉。
+    # 它的突變體由 `--since` 掃描重新判讀：殺不掉的先補 fixture，真的依構造等價才回到這裡、且理由要能
+    # 用 `--verify-expected` 在產生語料上跑出來。
+    # **R33 曾在這裡列「折進去的那一段要不要 `strip()`」，R37 證明那一條也是假的**（#33 verify R36
+    # logic 第 11 列）：`--verify-expected` 用的產生語料裡「內容行帶行尾空白」這個維度（`shapes.py`
+    # R35-13）**只有 2 檔命中**，是**誠實邊界沒被兌現**——理由寫著「機械證據：642 檔上逐檔相同」，
+    # 聽起來像是「這個維度沒被測到」，但正確的講法是**測到了、只是分母小到不足以踩出分歧**（2 檔裡
+    # 剛好都沒有讓 `l.strip()` 在 heredoc 分隔字比對上翻色的組合）；逐檔相同不代表等價，只代表這 2 個
+    # 樣本沒有踩到分歧點。R36 DA 用突變體本身（把 `.strip()` 拿掉、也就是這裡曾經
+    # 列的那個 id）反手證明：PyYAML 折疊只在兩個內容行之間插入一個空白、不動任一行本身的內容，
+    # `l.strip()` 悄悄把**行尾**空白也吃掉，而 heredoc 分隔字比對用的正是沒被折走的整行——分隔字恰好
+    # 是空白時（`cat <<' '` 這一族）差一個字元就是有沒有終止的差別。拿掉 `.strip()` 之後 selftest 數字
+    # 不變（108／100／68），而它讓 `ci-log-filter-bypass-r37e-fold-trailing-space-terminator` 這類探針
+    # 從「lint 誤判 heredoc 已收尾、pass」翻成正確的 RULE。這是同一句規則第二次踩：**「依構造等價」若
+    # 沒有一條會翻色的指令在守，它就只是一句散文**——上面那句話本身就在講這件事，這裡曾經違反了它。
+    # R33：`prev_flush_content` 裡的 `acc is not None`。`acc` 為 None 只有兩種時刻：區塊開頭、或剛結束一個空行段——
+    # 而空行段會把**連續的**空行一次吃完，所以下一次進到空行段時 `acc` 必然已被一個內容行設定。唯一到得了的
+    # 情形是**區塊開頭的前導空行**：拿掉運算元會把它折成佔位，而一個前導空行在 shell 裡什麼都不是（空的
+    # code 行），判定不變。`--verify-expected` 在 624 檔上逐檔相同（#33 verify R37：語料自 R35 起
+    # 是 624 檔，不是 642——642 是 R33／R34 當時的舊數字，這裡先前照抄了那個數字沒跟著改）。
+    "drop-operand|fold_block|prev_flush_content = acc is not None and not prev_more     # 同上：acc 非 None ⇒ 非空內容行|1": "只在區塊開頭的前導空行到得了；前導空行在 shell 裡沒有效果",
+    # R31：`run` key 守恆式的計數增量。這個突變體**不關掉機制**，只把計數加得更多——而 `found` 唯一的
+    # 消費者是 `found > accounted`，`accounted ∈ {0, 1}`：
+    #   accounted = 0 → 原版 found ≥ 1 > 0，突變體 ≥ 2 > 0，兩邊都 reject；
+    #   accounted = 1 → 那個沒引號的 `run` key 本身會被 `PLAIN_RUN_KEY` 數到，所以進迴圈前 found ≥ 1，
+    #                   加完原版 ≥ 2 > 1、突變體 ≥ 3 > 1，兩邊也都 reject。
+    # 也就是說**只要這一行執行到，兩版的判定必定相同**；差別只在訊息裡印的那個數字，而 fixture 比的是
+    # pass／rule-red／parse-red，不是訊息文字。
+    "±1→±2|<module>|found += 1|1": "`found` 只用於 `found > accounted`，而這一行執行到時兩版都必然 reject",
+    # R31：邏輯行組裝前的正規化。`cs` 只餵給兩個地方：`PIPED_RE.search`（搜尋，不受前後空白影響）與
+    # `elif cs:`。差別只有「純空白的 code 行」——原版跳過，突變體推成一條邏輯行。而純空白的邏輯行
+    # 既不可能命中 `PIPED_RE`，也不可能命中 `CONT_RE`（它要求結尾是 `|`／`||`／`&&`），所以它當上
+    # `logical[-1]` 之後，下一行的續接判定**兩版都是否**；至於接進去時多出來的那段空白，同樣被
+    # `PIPED_RE` 的 `\\s*` 吸收。
+    # **R37 最終 lint（`--since 380e4a4`）的 42 條等價**：各群分析者給構造論證、另一位反駁者逐條試著寫出殺得掉的 fixture
+    # （推翻了 52 條裡的 6 條，已補 fixture），剩下的在補件之後由 opsweep 的正式判定重跑仍存活。理由類別：
+    # 被同一條件的其他運算元或緊接的檢查蘊含、依構造恆真的條件、冪等賦值、呼叫端保證到不了的分支。`--verify-expected` 在產生語料上實跑。
+    # **原本是 46 條，另 4 條理由寫「純訊息文字」——那一類整個撤掉**：`--verify-expected` 比對整段 stderr，訊息文字就是輸出，
+    # `set_cmd` 那條因此被推翻（`set -x` 印成「開了 verbose」）。改成在 selftest 加 `# EXPECT-MSG:` 斷言、用既有 fixture 殺掉
+    # 四個突變體；順帶修掉子 shell `-o xtrace` 的訊息實際印成 `-oo xtrace` 的缺陷——它就是因為沒有任何 fixture 看訊息才活下來的。
+    "==↔!=|shell_scan|quote = None; code.append(line[i:i + w]); i += w; prev_sig = \"`\" if w == 1 else \"(\"|1": "`\"`\"` 與 `\"(\"` 都在 SHELL_WORD_BREAK 裡、都不是 `$`；prev_sig 的消費者只問 None／in SHELL_WORD_BREAK／== \"$\"，對調不改變任何判定",
+    "drop-operand|<module>|if _flow_value(l_) and \":\" in yaml_split_comment(KEY_RE.match(norm[l_]).group(3) or \"\")[0]:|4": "左運算元 `_flow_value` 為真時 group(3) 必然是以 `{`／`[` 開頭的非空字串，`or \"\"` 的後備從不生效",
+    "drop-operand|<module>|if inline[:1] in (\"'\", '\"') and any(|1": "`kind[k] == \"SCALAR\"` 與 `owner[k] = r` 只在引號續行、block scalar 續行兩處同時寫入；引號開頭那個條件被 any(...) 蘊含",
+    "drop-operand|<module>|kind[k] == \"SCALAR\" and owner[k] == r for k in range(r + 1, s[\"end\"] + 1)):|1": "`owner[]` 只在設 `kind[j] = \"SCALAR\"` 的同一句被寫入，`owner[k] == r` 蘊含 `kind[k] == \"SCALAR\"`",
+    "drop-operand|_aligned_sources|if c.startswith(\"<<\", i) and s.startswith(\"<<\", j):|2": "對齊成立期間 code 與原文逐字相同，code 的 `<<` 只可能來自原文同一位置的 `<<`",
+    "drop-operand|_aligned_sources|s, tail, a, i, j, ok = src_lines[k] or \"\", k, [], 0, 0, True|2": "這一行只在 code 行非空時執行，而非空 code 行的原文依構造不會是 None，`or \"\"` 的後備從不生效",
+    "drop-operand|_bash_template|rest = toks[1:-1] if len(toks) > 1 and toks[-1] == \"{0}\" else toks[1:]|1": "到這一行時 toks[0] 必然是 bash 路徑之一；只有一個 token 時它不可能等於 `{0}`，`len(toks) > 1` 是冗餘",
+    "drop-operand|_case_head|return w_end > j and k > w_end and line.startswith(\"in\", k) and line[k + 2:k + 3] in (\"\", \" \", \"\\t\", \";\")|1": "`w_end == j`（詞為空）時第二個 while 一步也不會前進，`k > w_end` 必然為假，兩式同為假",
+    "drop-operand|_case_head|return w_end > j and k > w_end and line.startswith(\"in\", k) and line[k + 2:k + 3] in (\"\", \" \", \"\\t\", \";\")|2": "`k > w_end` 為假時 line[w_end] 是分隔字元或行尾，`startswith(\"in\", k)` 必然為假；只有跳過空白才可能讓 `in` 成立",
+    "drop-operand|_cmdsub_end_case|at_word = prev in SHELL_WORD_BREAK or prev == \"\\n\"|2": "【**函式層級不是等價突變**（R47 DA／Codex 更正）：等價靠呼叫端的不變式「替換本體不含換行」、不可達的分支；證據有界，不是證明——這一條是 (a) 的**承認的例外**，不是範例】R44 把這條說成「同第 0 條」（`==↔!=|1`）——**那個前提是錯的**：`|1` 被殺是因為單行輸入（`a#b`：`prev` 從來不是 `\\n`，`!=` 讓 `at_word` 恆真），與 `\\n` 到不到得了無關（R45 requirements 第 7 列）。這一條只在 `c == \"\\n\"` 那一支被走到（命令替換**本體**含換行）時才與原碼不同；那一支在整套 selftest、三組產生語料與 600 個多行構造（差分模糊測試，預設與 `--strict` 各一輪）裡執行 **0 次**（插樁計數）；呼叫端傳進來的文字有含換行的（selftest 裡 10 次），換行都在替換收尾**之後**。有界證據，不是證明；拿掉 `prev == \"\\n\"` 只在換行之後的 `#`／關鍵字判斷有差",
+    "drop-operand|_cmdsub_end_case|if cases and cases[-1][0] == depth and cases[-1][1] == \"cmd\" and line.startswith((\";;\", \";&\"), k):|3": "`cases[-1][1]` 只有 pat／cmd 兩值，這一句把它設成 pat；已是 pat 時再設一次是冪等賦值",
+    "drop-operand|_cmdsub_end_case|if not (cases and cases[-1][0] == depth and cases[-1][1] == \"pat\"):|2": "迴圈不變式「狀態是 pat ⇒ `cases[-1][0] == depth`」由其餘未突變的四處寫入維持，拿掉深度比較不改變任何分支",
+    "drop-operand|_dq_parts|if c == \"\\\\\" and i + 1 < n and body[i + 1] in '$`\"\\\\\\n':|2": "`body` 由 shell_scan 追蹤過引號狀態的 code 切出，結尾前的反斜線必為偶數個，最後一個字元不可能是落單的 `\\`",
+    "drop-operand|_lex|elif p < n and (C[p] not in _WORD_END or (C[p] == \" \" and S[p] not in \" \\t\\n\\0\")):|2": "p 位於 `_WORD_END` 字元時 `_word` 立即停下、讀到空詞，與不呼叫的結果相同",
+    "drop-operand|_lex|elif p < n and (C[p] not in _WORD_END or (C[p] == \" \" and S[p] not in \" \\t\\n\\0\")):|5": "同上一條：只剩 `S[p]` 的條件時，非空白的 `_WORD_END` 字元一樣讓 `_word` 讀到空詞",
+    "drop-operand|_lex|elif p < n and (C[p] not in _WORD_END or (C[p] == \" \" and S[p] not in \" \\t\\n\\0\")):|6": "前面的空白略過迴圈已吃掉原文也是空白的位置，C[p] 仍是空白時 S[p] 必然不是空白（是挖空佔位）",
+    "drop-operand|_lex|if (prev is not None and prev[\"k\"] == \"W\" and prev[\"e\"] == p - len(op) and prev[\"lit\"] is not None|4": "`prev[\"code\"]` 恆為字串，`prev[\"lit\"]` 為 None 時下一個條件 `lit == code` 必然為假",
+    "drop-operand|_lex|if stop == \")\" and w[\"lit\"] in (\"case\", \"esac\"):  # `$(case … a) …;; esac)` 的模式 `)` 不是收尾|1": "`cased` 只在同一次 `_lex` 呼叫的提早返回檢查裡被讀，而那個檢查本身就要求 `stop == \")\"`",
+    "drop-operand|_redir_hit|if op == \"<&\" or tl is None or t.get(\"psub\"):|3": "`psub` 只由 `_opaque` 寫入，而 `_opaque` 恆定 `lit = None`；psub 為真蘊含 `tl is None`",
+    "drop-operand|_word|while k < n and S[k] != \"'\":|1": "shell_scan 用逐字相同的逃脫規則確認過 `$'…'` 在同一行收尾（否則已 PARSE），這個迴圈必然在 k < n 內找到收尾",
+    "drop-operand|env_word|if text.startswith((key + \"=\", key + \"+=\")) or (bare and text == key):|3": "`bare = False` 的唯一呼叫端只在 `_ASSIGN_RE` 命中（text 必含 `=`）時呼叫，text 不可能等於不含 `=` 的 key",
+    "drop-operand|fold_block|out.append(None if (j >= n or (k == i and drop_first)) else lines[k])|1": "只有尾端空行段（之後沒有任何實體行）會走到不同分支，None 與 \"\" 對 shell_scan 與對齊都產生相同的空 code",
+    "drop-operand|parse_andor|if self.tok() is None or end(self.tok()):|1": "tok() 為 None 時 end(None) 對四種 end 都回 False；多跑的 parse_pipeline 在 tok() 為 None 時零消耗、零副作用",
+    "drop-operand|parse_andor|if self.tok() is None or end(self.tok()):|2": "滿足 end(tok()) 的收尾詞進 parse_pipeline 後，parse_command 開頭同樣的 end 檢查立即回 None，零消耗",
+    "drop-operand|parse_case|if self.tok() is None or self.word(self.tok(), \"esac\"):|1": "tok() 為 None 時突變體多跑一輪，但那一輪的每個敘述都對 None 安全、零消耗，外層迴圈隨即結束",
+    "drop-operand|parse_command|if t is None or t[\"k\"] == \"NL\" or end(t):|2": "唯一會讓 parse_command 看到 NL 的呼叫點，其 end 參數都把 NL 當成結束，拿掉 `t[\"k\"] == \"NL\"` 仍立即回 None",
+    "drop-operand|parse_list|if t[\"k\"] == \"NL\" or self.op(t, \";\", \"&\"):|1": "NL／`;`／`&` 不走快速跳過時，parse_command 同樣零消耗回 None，由 parse_list 的零進度安全網跳過同一個詞元",
+    "drop-operand|parse_list|if t[\"k\"] == \"NL\" or self.op(t, \";\", \"&\"):|2": "同上一條（BoolOp 的另一個運算元）",
+    "drop-operand|shell_scan|after_compound = arith_cmd and not arith; continue|2": "arith 依構造只有 0／1，這一行前一句剛把它從 1 減到 0，`not arith` 恆為真",
+    "drop-operand|shell_scan|if (cmd_pos and ch.isalpha() and (prev_sig is None or prev_sig in SHELL_WORD_BREAK)):|1": "這個分支只整段消費純字母的保留字；cmd_pos 為假時逐字元處理得到相同的 code、i、prev_sig，且 cmd_pos 維持假",
+    "drop-operand|shell_scan|if (cmd_pos and ch.isalpha() and (prev_sig is None or prev_sig in SHELL_WORD_BREAK)):|2": "緊接的 `re.match(r\"[A-Za-z]+\")` 本身就要求 ch 是字母，非字母時 w 為空、不在保留字集合裡",
+    "drop-operand|shell_scan|if (cmd_pos and ch.isalpha() and (prev_sig is None or prev_sig in SHELL_WORD_BREAK)):|3": "每一處把 cmd_pos 設成 True 的地方都同時讓 prev_sig 是 None 或詞界字元；不變式 cmd_pos ⇒ 詞界成立",
+    "drop-operand|shell_scan|if cases and cases[-1][0] == csub + cpar and cases[-1][1] == \"cmd\" and line.startswith((\";;\", \";&\"), i):|3": "`cases[-1][1]` 只有 pat／cmd 兩值，這一句把它設成 pat；已是 pat 時再設一次是冪等賦值",
+    "drop-operand|shell_scan|if dq_ret and ((ch == \"`\" and not bt) if dq_ret[-1] == 0 else (ch == \")\" and csub + cpar < dq_ret[-1])):|3": "bt 只在 ch == 反引號時被翻轉，且發生在本行之前的同一次迭代；此處 `ch == \"`\"` 與 `not bt` 互為充要",
+    "drop-operand|shell_scan|if dq_ret and ((ch == \"`\" and not bt) if dq_ret[-1] == 0 else (ch == \")\" and csub + cpar < dq_ret[-1])):|4": "同上一條（另一個運算元）",
+    "drop-operand|shell_scan|if dq_ret and ((ch == \"`\" and not bt) if dq_ret[-1] == 0 else (ch == \")\" and csub + cpar < dq_ret[-1])):|5": "csub、cpar 只在 ch == \")\" 時遞減，而本條件每個字元都檢查、一滿足就 pop；第一次降到門檻以下的字元必然是 `)`",
+    "drop-operand|simple|if name == \"eval\" and args and all(a[\"lit\"] is not None for a in args):|2": "裸 `eval`（args 為空）時突變體進分支、遞迴剖析空字串並 return，原版落到後面也找不到任何可命中的分支，判定相同",
+    "±1→±2|_cmdsub_end_case|code.append(\";\"); k += 1; prev = \"\\n\"; continue|1": "【**函式層級不是等價突變**（R47 DA／Codex 更正）：等價靠呼叫端的不變式「替換本體不含換行」、不可達的分支；證據有界，不是證明——這一條是 (a) 的**承認的例外**，不是範例】R44 把這條說成「同第 0 條」（`==↔!=|1`）——**那個前提是錯的**：`|1` 被殺是因為單行輸入（`a#b`：`prev` 從來不是 `\\n`，`!=` 讓 `at_word` 恆真），與 `\\n` 到不到得了無關（R45 requirements 第 7 列）。這一條只在 `c == \"\\n\"` 那一支被走到（命令替換**本體**含換行）時才與原碼不同；那一支在整套 selftest、三組產生語料與 600 個多行構造（差分模糊測試，預設與 `--strict` 各一輪）裡執行 **0 次**（插樁計數）；呼叫端傳進來的文字有含換行的（selftest 裡 10 次），換行都在替換收尾**之後**。有界證據，不是證明；`k += 2` 只在換行之後那個字元有差",
+    "±1→±2|parse_case|self.i += 1|6": "到這一行時 tok() 已確定是非 None、非 esac 的詞元，前面的模式掃描必然前進，`self.i == i0` 的安全網不可達",
+    # R42（`--since` 掃描新增的 `_fl_*`／`flat_*`／`fl_tokens`）：70 個存活突變體**逐一提殺手假設**再判（`test/opsweep.py` 之外的手寫候選，兩輪共約百個輸入），
+    # 58 個殺掉——補 10 張 fixture（`*-r42-flat-gh-forms2`、`-command-edges4`、`-tails2`…）、selftest 的假 bash 檢查（`--check-compgen` 的版本字串與
+    # rc≠0 訊息），其餘 12 個依構造等價，列在下面：每一條都寫出理由，其中 5 條點名它依賴的上游不變式，其餘靠區域代數、下游不讀該欄位、或窮舉。
+    # **先前用模板批量寫的 70 條 reason 有 58 條是假的**（例：拿掉 `p[0] == "D"` 會在 `'Value'` 這類字串上 IndexError；`"${HOME:-x}"` 的預設值；
+    # 兩行 `set` 前綴的 pipefail；`"${HOME}"` 的變數名）。它們的共同缺陷：「語料＋手寫輸入零區分」被寫成「同值」——語料只有 712 檔，
+    # 而每個缺口都是一個語料裡沒有的**形狀**（單引號字串、引號開頭的首詞、宣告 step 結尾的 `>`、群組內先放一條 neutralise 管線讓 R1 放行…）。
+    # 零區分只能寫成「有界」，不能寫成「等價」；下面 12 條每一條都有可指出的理由（11 條是結構論證、互斥那一條是有界窮舉），不是靠語料沒抓到。
+    "drop-operand|_fl_command|if gh_targets and all(r[1] == \"<\" and FL_GH_TARGET_RE.fullmatch(r[2][\"raw\"]) for r in gh_targets) \\|1": "拿掉 `gh_targets` 守衛：它為空時 `all([])` 為真，之後的 `gh_targets = []` 是冪等賦值，`redirs` 的過濾又因為沒有任何重導向目標含 GH 字樣而一項都不刪；`not any(FL_GH_RE… for w in words)` 為假時兩版都不進這個 if。兩版在每個輸入上的後續狀態相同",
+    "drop-operand|_fl_command|if len(w0[\"pieces\"]) != 2 or w0[\"pieces\"][0][1] != name + \"=\":|2": "`$(mktemp …)` 片段只在 `_fl_word` 看到 `pieces[0]` 是完全符合 `NAME=` 的未加引號字面時才產生（那裡的 `len(pieces) == 1 and FL_ASSIGN_RE.fullmatch(...)`），所以 `w0[\"pieces\"]` 含 M 片段時 `pieces[0][1] == name + \"=\"` 必然成立；依賴 `_fl_word` 的那個條件（改它要連這裡重判）",
+    "drop-operand|_fl_command|text.append(t_[1:] if t_.startswith(\"\\\\\") and t_[1:] in ('\"', \"\\\\\", \"$\", \"`\") else|1": "`t_[1:]` 屬於 `\"`／`\\`／`$`／`` ` `` 這四個單字元時 `len(t_) == 2`；兩字元的 T 片段只在 `_fl_word` 的 `d == \"\\\\\"` 分支以 `s[j:j + 2]` 產生、必以反斜線開頭，所以 `t_.startswith(\"\\\\\")` 由後一個條件蘊含（單字元的 T 片段，`t_[1:]` 是空字串，不在那四個字元裡）",
+    "drop-operand|_fl_split_prefix|if sep not in (\"NL\", \";\") or not items or items[0][0] != \"W\" or _fl_plain(items[0][1]) != \"set\":|1": "`_fl_lines` 給第一個命令的分隔符恆為 `NL`；第 k ≥ 1 個命令的 `sep` 等於前一個 `set` 前綴行迴圈尾端的 `nxt`，而那裡已對 `nxt not in (\"NL\", \";\")` 拋 `FlatReject`——到得了這個判斷時 `sep` 必然在 (`NL`, `;`) 裡",
+    "drop-operand|_fl_split_prefix|if sep not in (\"NL\", \";\") or not items or items[0][0] != \"W\" or _fl_plain(items[0][1]) != \"set\":|2": "`_fl_lines` 只在 `cur` 非空時才把命令加進串列，`items` 恆非空，`not items` 不可達",
+    "drop-operand|_fl_word|pieces.append((\"V\", m.group(1) or m.group(2) or \"?\", m.group(3)))|1": "未加引號的參數片段 `(\"V\", 名字, 預設值)` 的名字欄整個文法都不讀：`_fl_lit` 對 V／M 片段直接回 False、`_fl_command` 只看片段種類（`[0]`）、`trap` 的動作在種類不是 P／S／D 時就拒絕。名字被讀的只有雙引號裡的變數（`_fl_word` 的另一處 `parts.append`），那一處的三個運算元已由 fixture 殺掉",
+    "drop-operand|_fl_word|pieces.append((\"V\", m.group(1) or m.group(2) or \"?\", m.group(3)))|2": "未加引號的參數片段 `(\"V\", 名字, 預設值)` 的名字欄整個文法都不讀：`_fl_lit` 對 V／M 片段直接回 False、`_fl_command` 只看片段種類（`[0]`）、`trap` 的動作在種類不是 P／S／D 時就拒絕。名字被讀的只有雙引號裡的變數（`_fl_word` 的另一處 `parts.append`），那一處的三個運算元已由 fixture 殺掉",
+    "drop-operand|_fl_word|pieces.append((\"V\", m.group(1) or m.group(2) or \"?\", m.group(3)))|3": "未加引號的參數片段 `(\"V\", 名字, 預設值)` 的名字欄整個文法都不讀：`_fl_lit` 對 V／M 片段直接回 False、`_fl_command` 只看片段種類（`[0]`）、`trap` 的動作在種類不是 P／S／D 時就拒絕。名字被讀的只有雙引號裡的變數（`_fl_word` 的另一處 `parts.append`），那一處的三個運算元已由 fixture 殺掉",
+    "drop-operand|fl_tokens|if m and FL_REDIR_BAD_RE.match(s, i) and not FL_REDIR_DUP_OK_RE.match(s, i):|3": "`FL_REDIR_BAD_RE` 與 `FL_REDIR_DUP_OK_RE` 互斥：在重導向運算子的十個字元加一個「其他字元」的字母表上窮舉長度 0 到 7 的 21,435,888 個字串，沒有任何一個在位置 0 同時命中（`test/corpus/regexcheck.py`；人為重疊的負對照用 `--lint` 指向改過的副本做過，腳本本身不含），所以 `BAD` 命中時 `not DUP_OK` 恆為真。範圍：字母表與長度之外沒有量",
+    "drop-operand|flat_filtered|if ok and nl_pos:|2": "`ok` 為真時，`nl_pos` 為空則 `all(...)` 對空序列為真、`ok` 不變；`pipe_at = next(...)` 在 `ok` 為真時必找得到（shape 已含 `|` 或 `|&`）",
+    "drop-operand|flat_filtered|if t[0] == \"W\" and at_cmd and _fl_plain(t[1]) == \"}\" and (not body_toks or body_toks[-1][0] == \"NL\"|2": "`at_cmd` 在每輪迴圈尾端被設成「剛加入的詞元是 NL 或 OP」、初值為真（緊接 `{`）；後面的括號條件 `not body_toks or body_toks[-1][0] == \"NL\" or body_toks[-1] == (\"OP\", \";\")` 已蘊含它：`body_toks` 為空時還在初值，否則最後一個詞元是 NL 或 OP",
+    "drop-operand|flat_step_rules|triggered = not declared or _fl_declared_trigger(text)|1": "非宣告 step 只在 R1 的 `via_pipe` 為真時走到這裡；`PIPED_RE` 命中的 `|` 左邊（隔空白也一樣）不是 `|`、右邊也不是 `|`，是孤立的管線字元，而 `flat_trigger` 只略過**相鄰**的 `||` 配對，孤立的 `|` 一定被計入，所以 `_fl_declared_trigger` 對它也為真。前提：`text` 與 `PIPED_RE` 看的 code 在管線字元兩側的鄰字元相同（`shell_scan` 只挖空引號內容、不改引號外的字元）",
+    # R42 最終掃描（opsweep 全輪，`fa9f932`）：`_set_prefix_line` 因刪除死碼進入 `--since` 範圍，暴露兩個既有盲點——另一個（`len(toks) <= k + 1`）可殺、
+    # 補 `restrict-r42-flat-set-option-without-name`；這個依呼叫者的前置守衛等價。
+    # R44（#33 verify R43 第 9 列：13 個在 `--strict` 不再經過 `_analyse` 之後失效的突變體）：其中 12 個補了預設模式的 fixture 或雙胞胎、現在由 selftest 殺掉；這一個
+    # 逐一提過殺手假設仍殺不掉，列在這裡。`_logical_lines` 的 `cs = c.strip()` 拿掉之後，邏輯行會多帶前後空白、純空白行會多成一個邏輯行；
+    # 它的消費者只有三個——`CONT_RE`（`(\|\|?|\|&|&&)\s*$`）、`PIPED_RE`（運算子與 `python3` 之間是 `\s*`、路徑後的收尾是 `(?=[\s;&|)<>`]|$)`）、
+    # `FL_NEUT_NEAR_RE`（`\|&?\s*python3`，只用來挑訊息）——全部不在字串開頭錨定、對前後空白不敏感，所以多帶的空白不改變任何命中；純空白行留成一個邏輯行時，
+    # 它既不以續行運算子結尾（不接下一行）、前一個邏輯行以續行運算子結尾時它被接上去（接上去的是空白，結尾的運算子仍在）。原本對首尾空白敏感的消費者是 R37–R40
+    # 的 pipefail 模擬，R42 已刪除。差分模糊測試：160 個 step（種子 1、2：隨機縮排、行尾空白、空白行與註解行夾在續行運算子之間、行首的 `|`）0 個區分。
+    "strip→id|_logical_lines|cs = c.strip()|1": "消費者（CONT_RE、PIPED_RE、FL_NEUT_NEAR_RE）都不錨定字串開頭、對前後空白不敏感；對首尾空白敏感的 pipefail 模擬已在 R42 刪除；160 個隨機空白 step 0 區分",
+    "drop-operand|_set_prefix_line|if toks[:1] != [\"set\"] or len(toks) < 2:|1": "`_set_prefix_line` 唯一的呼叫者 `_fl_split_prefix` 在呼叫之前已 `break` 掉首詞不是 `set` 的行（`_fl_plain(items[0][1]) != \"set\"`），進來時 `toks[0]` 恆為 `\"set\"`，`toks[:1] != [\"set\"]` 恆為假；依賴那個呼叫前守衛（改它要連這裡重判）",
+    # R44 區域 opsweep（#33 verify R43 之後）：`_fl_chan_line_ok` 的 `okp` 三個種類運算元（`first[0] == "L"`、`first[0] == "V"`、`nxt[0] == "L"`）逐一提殺手假設——
+    # 它們被「V 片段的文字是變數名、不會以 `/` 開頭」與「`_fl_merge` 之後相鄰字面已合併」兩條不變式涵蓋，精簡掉（行為不變）；精簡後第三個運算元仍是依構造等價，列在這裡。
+    "drop-operand|_fl_chan_line_ok|okp = first[1].startswith(\"/\") or (first[1] in (\"HOME\", \"RUNNER_TEMP\") and nxt[1].startswith(\"/\"))|3": "拿掉 `first[1] in (\"HOME\", \"RUNNER_TEMP\")` 之後，第二個選項變成「`nxt[1]` 以 `/` 開頭」。依三條上游不變式，它只在 `first` 是 V 片段時為真：(1) `nxt[1]` 以 `/` 開頭只可能是字面片段，而 `_fl_merge` 之後相鄰的字面已合併，所以 `nxt` 是字面時 `first` 不可能是字面；(2) V 片段的名字只會是 `FL_GHVALUE_VARS` 的三個（呼叫端 `_fl_command` 先用 `_fl_lit(a, FL_GHVALUE_VARS)` 擋掉其他變數）；(3) 三個之中 `GITHUB_WORKSPACE` 在下一個條件被同一個 `FlatReject`（同一則訊息）擋掉。所以每個輸入的 (rc, stderr) 都與原碼相同；差分模糊測試找不到區分者（`--verify-expected` 的語料也一樣）。依賴 (2) 與 (3) 兩處上游守衛：哪天 `FL_GHVALUE_VARS` 加了第四個變數，這一條的等價就不成立，要重判",
+    # R44 全輪 opsweep（不帶 `--since`，最終樹上 1374 個）找到 54 個非預期存活——**54 個在 11e2b8f 上也存活**（長期缺口，區域掃描看不到：`<module>` 的 YAML 結構分類器
+    # 與 `_word` 都不在 R44 改動的區域）。41 個用差分模糊測試（`yamlfuzz`／`yamlfuzz2`：大量 YAML 結構變體、基準與突變版 lint 輸出不同的最小輸入）找到殺手、收成
+    # `*-r44-yamlstruct-*` 等 fixture；另 4 個只有手寫 fixture 殺得掉（`odd` 的第二個運算元靠 `restrict-r44-stray-line-boundary-char`、`owner[k] == r` 的第二個運算元靠
+    # `bypass-r44-two-block-scalars-filter-in-other-key`、`if seen == 0 and not bad` 的兩個靠 `good-r44-require-run-steps-pass`〔`==↔!=` 那個另有 `vacuous-r44-no-run-steps`〕）；`rc_all` 由 `vacuous-r44-no-run-steps` 與
+    # selftest 的多檔 rc 檢查都殺得掉（R46 宣稱查核更正分組；分組是逐 fixture 單獨跑突變版 lint 模擬 selftest 判準得出的）。剩下這 8 個每一個都有結構論證：
+    "drop-operand|_word|if c == '\"' and C[p + 1:e].strip():|1": "`C` 是把引號內容挖成空白的程式碼視圖（`hollow`：`c == \" \" and s not in …`），單引號的內容在 `C` 裡**恆為空白**，所以 `C[p + 1:e].strip()` 對 `'` 恆為空——拿掉 `c == '\"'` 之後，單引號走到的仍是原本的 else 分支；唯一會讓 `C[p + 1:e]` 非空的是掃描器把雙引號內的命令替換當 code 保留的那一種（`dq_ret`，R37），那只發生在 `\"` 上。有界證據：5000 個引號形狀（未結尾、`\\'`、`$'…'`、cmdsub 內的 `'`、註解與 heredoc 裡的 `'` …，`test/corpus` 之外的 `shellfuzz`）0 個區分",
+    "drop-operand|<module>|odd = next((ch for ch in ln if len(ch.splitlines()) > 1 or ch in \"\\r\\v\\f\\x1c\\x1d\\x1e\\x85\\u2028\\u2029\"), \"?\")|1": "`ch` 是**單一字元**，`str.splitlines()` 對單一字元最多回傳一個元素（窮舉全部 Unicode 碼位，最大長度 1），所以 `len(ch.splitlines()) > 1` 恆為假；拿掉它之後只剩 `ch in \"…\"`，結果相同。第二個運算元（`ch in \"…\"`）由 `restrict-r44-stray-line-boundary-char` 殺掉",
+    "drop-operand|<module>|rest = (m.group(2) or \"\")|2": "`m.group(2)` 只有在裸 `-`（沒有後面的 `(?:\\s(.*))?`）時是 `None`；`rest` 之後只被當真值用（`... + rest if rest else ln`），`None` 與 `\"\"` 都是假，所以拿掉 `or \"\"` 不改變任何輸出",
+    "strip→id|<module>|if seq_at[i] and not (SEQ_RE.match(ln).group(2) or \"\").strip():|1": "`group(2)` 只含空白（`-   `）時，原來走「裸 `-`」分支（設 `kind[i] = \"SEQ\"`、`continue`）；拿掉 `.strip()` 後改走下面的純量清單項分支，`code_rest` 是空字串、既沒有 `: ` 也不以 `:` 結尾，同樣設 `kind[i] = \"SEQ\"`、`continue`——兩條路徑的結果相同。差分模糊測試 0 個區分",
+    "drop-operand|<module>|rest_raw = (SEQ_RE.match(ln).group(2) or \"\")|2": "走到這一行時 `group(2)` 必為非空白字串：上面一個 `if seq_at[i] and not (… or \"\").strip(): … continue` 已把 `group(2)` 為 `None` 或只含空白的清單項處理掉並 `continue`，所以 `or \"\"` 這個後備在這裡不可達",
+    "drop-operand|<module>|while en > st and (not raw[en].strip() or kind[en] == \"COMMENT\"):|1": "`st` 是 `starts` 裡的行——只由 `seq_at[j] and ind == dash_indent` 加入，而那一個迴圈在這之前已用 `kind[j] in (\"BLANK\", \"COMMENT\", \"SCALAR\")` 略過空白與註解行——所以 `raw[st].strip()` 非空、`kind[st] != \"COMMENT\"`，`while` 在 `en == st` 時必停；`en > st` 這個守衛多餘",
+    "±1→±2|<module>|seen += 1|1": "`seen` 只有三處：初始化為 0、每個 workflow 檔的 run step 計數 `+= 1`、`if seen == 0 and not bad` 比對 0——計數加一或加二都不改變「是不是 0」",
+    "drop-operand|<module>|if kind[k] == \"SCALAR\" and owner[k] == r]|1": "`owner[k]` 只在兩處賦值（`kind[j] = \"SCALAR\"; owner[j] = i`），都與設 `\"SCALAR\"` 一起；`owner[k] == r`（`r` 是整數）為真就蘊含 `kind[k] == \"SCALAR\"`，前一個運算元多餘。第二個運算元（`owner[k] == r`）由 `bypass-r44-two-block-scalars-filter-in-other-key` 殺掉",
+}
+
+
+def embedded_python(src):
+    """回傳 (python 原始碼, 在 src 裡的起點)。"""
+    head, rest = src.split("<<'PY'\n", 1)
+    py, _tail = rest.rsplit("\nPY", 1)
+    return py, len(head) + len("<<'PY'\n")
+
+
+def _span(py_lines, node):
+    """(start_offset, end_offset) in the python text, from ast line/col (0-based col, 1-based line).
+
+    ast 的 col_offset／end_col_offset 是 **UTF-8 位元組**位置，不是字元位置。R37 以前這裡直接加，
+    同一行在節點前面有中文的節點就切錯位置——`==↔!=` 會找不到 `==` 而當掉，其他運算子則是
+    **安靜地**替換到別的文字上。這支工具 R28 進 repo 之後，查過的四個 lint 版本（d278e99、d8340a6、6cf6864、380e4a4）各有 3 個這樣的節點（`縮排含 tab` 那行的
+    `i += 1`、`cur["name"]` 那行的 `or`、`而不解析就不放行` 那行的 `.strip()`），一直沒人發現；R37 的 lint
+    多了 3 個，其中兩個是 `==`，量測時當掉才看到。"""
+    starts = [0]
+    for l in py_lines:
+        starts.append(starts[-1] + len(l) + 1)
+
+    def col(lineno, byte_col):
+        return len(py_lines[lineno - 1].encode()[:byte_col].decode())
+    return (starts[node.lineno - 1] + col(node.lineno, node.col_offset),
+            starts[node.end_lineno - 1] + col(node.end_lineno, node.end_col_offset))
+
+
+def mutants(py):
+    """依固定運算子產生 [(id, start, end, replacement)]。id 由 (op, 所在函式, 行原文, 行內序號) 組成。"""
+    tree = ast.parse(py)
+    lines = py.split("\n")
+    func_of = {}
+    for fn in ast.walk(tree):
+        if isinstance(fn, ast.FunctionDef):
+            for n in ast.walk(fn):
+                func_of.setdefault(id(n), fn.name)
+    raw = []
+
+    def add(op, node, start, end, new, part=None, cut=None):
+        # 切到的文字必須就是這個運算子的原文——位置算錯時要當場失敗，不能安靜地突變到別的文字上
+        # （_span 的位元組／字元混用就是這樣藏了好幾輪）。drop-operand 的切片含 and/or 與空白，只驗被拿掉的運算元在內。
+        want = {"==↔!=": "==", "±1→±2": "1"}.get(op) or ast.get_source_segment(py, part or node)
+        got = py[start:end]
+        if (want not in got) if part is not None else (got != want):
+            raise SystemExit("opsweep: %s 在第 %d 行切到 %r，應該是 %r——位置計算錯了" % (op, node.lineno, got, want))
+        # 排序鍵與行號用 (start, end)——id 的序號由它決定，不能動；實際替換的範圍與文字可以另給（cut）。
+        raw.append(((start, end, op, func_of.get(id(node), "<module>"), lines[node.lineno - 1].strip(), new),
+                    cut or (start, end, new)))
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr in ("strip", "rstrip", "lstrip"):
+                s, e = _span(lines, node); vs, ve = _span(lines, node.func.value)
+                add("strip→id", node, s, e, py[vs:ve])
+            elif node.func.attr == "startswith":
+                s, e = _span(lines, node)
+                add("startswith→F", node, s, e, "False")
+        elif isinstance(node, ast.AugAssign) and isinstance(node.op, (ast.Add, ast.Sub)) \
+                and isinstance(node.value, ast.Constant) and node.value.value == 1:
+            s, e = _span(lines, node.value)
+            add("±1→±2", node, s, e, "2")
+        elif isinstance(node, ast.BoolOp) and len(node.values) >= 2:
+            spans = [_span(lines, v) for v in node.values]
+            bs, be = _span(lines, node)
+            word = " and " if isinstance(node.op, ast.And) else " or "
+            for k in range(len(node.values)):
+                # 拿掉第 k 個運算元。(s, e) 是它連同前面（或它是第一個時後面）的 `and`/`or` 的範圍，只用來排序與驗位置；
+                # **實際的突變是把整個布林運算式換成其餘運算元各自加括號再接回去**。R37 以前直接刪 (s, e)，
+                # 而運算元外面的括號不在 AST 節點的範圍裡，`(a or (b and c))` 拿掉 a 會刪到 `a or (`——括號不平衡、
+                # 程式碼壞掉，那個位置等於沒量（R37 的 lint 全段 1044 個突變體裡有 46 個這樣）。
+                if k == 0:
+                    s, e = spans[0][0], spans[1][0]
+                else:
+                    s, e = spans[k - 1][1], spans[k][1]
+                rest = word.join("(%s)" % ast.get_source_segment(py, v) for i, v in enumerate(node.values) if i != k)
+                add("drop-operand", node, s, e, "", part=node.values[k], cut=(bs, be, rest))
+        elif isinstance(node, ast.Compare) and len(node.ops) == 1 and isinstance(node.ops[0], ast.Eq):
+            ls, le = _span(lines, node.left); rs, re_ = _span(lines, node.comparators[0])
+            gap = py[le:rs]
+            k = gap.index("==")
+            add("==↔!=", node, le + k, le + k + 2, "!=")
+    # 依原始碼位置排序後再編序號：同一函式裡同一行原文（`i += 1; continue` 這種）出現多次時，序號是
+    # 「第幾次出現」——與行號無關，所以插入一行註解不會讓 id 漂移。
+    out, seen = [], {}
+    starts = [0]
+    for l in lines:
+        starts.append(starts[-1] + len(l) + 1)
+    for (pos, _e, op, fn, line, _new), (start, end, new) in sorted(raw, key=lambda r: r[0]):
+        key = (op, fn, line)
+        seen[key] = seen.get(key, 0) + 1
+        lineno = next(k for k in range(len(lines), 0, -1) if starts[k - 1] <= pos)
+        out.append(("%s|%s|%s|%d|L%d" % (op, fn, line, seen[key], lineno), start, end, new))
+    return out
+
+
+def region_since(ref, py):
+    """回傳述詞 mutant → 是否在區域內。區域 = 被 `git diff REF` 觸及的函式全部 ＋ 模組層新增／改動的行。
+    「觸及」用函式原始碼逐行去空白比對；模組層用行文本是否存在於 REF 版判斷（改名也算新——保守方向）。"""
+    base_src = subprocess.run(["git", "-C", str(PLUGIN), "show", "%s:%s" % (ref, LINT.relative_to(PLUGIN.parent.parent))],
+                              capture_output=True, text=True, check=True).stdout
+    base_py, _ = embedded_python(base_src)
+    # **區域＝真正的變更行**（R30 MB-13／Codex 第 1 條）。前一版有兩個洞：
+    #   函式層用「去空白後的文字」比對——只改縮排（＝改控制流）而文字相同的函式判成沒動；
+    #   模組層用「文字集合」——新增一行與檔案別處相同的文字（`kind[i] = "BAD"; i += 1`）判成舊行。
+    # 兩者都不是「被 diff 觸及」的意思。改用 difflib 對**行**做真正的比對：變更行的集合是答案，
+    # 函式只要**有任何一行**落在變更行集合裡就整個進區域。
+    import difflib
+    base_lines, head_lines = base_py.split("\n"), py.split("\n")
+    changed = set()
+    sm = difflib.SequenceMatcher(None, base_lines, head_lines, autojunk=False)
+    for tag, _i1, _i2, j1, j2 in sm.get_opcodes():
+        if tag in ("replace", "insert"):
+            changed.update(range(j1 + 1, j2 + 1))          # 1-based，對齊 ast 的 lineno
+    tree = ast.parse(py)
+    spans = {n.name: (n.lineno, n.end_lineno) for n in tree.body if isinstance(n, ast.FunctionDef)}
+    # **類別方法也是單位**（R44，#33 verify R43 第 9 列）：前一版只看 `tree.body` 的頂層函式，`_Sh` 這類類別裡的方法改了，
+    # 整個方法都不進區域——R43 的 13 個失效突變體裡有 `_lex`／`_Sh` 方法，作者的 `--since` 掃描看不到它們。
+    # 每個方法各算一個單位（名字 `類別.方法`）：方法裡有任何一行被改，就整個方法進區域。巢狀函式隨外層函式一起算。
+    for c in tree.body:
+        if isinstance(c, ast.ClassDef):
+            for m in c.body:
+                if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    spans["%s.%s" % (c.name, m.name)] = (m.lineno, m.end_lineno)
+    touched = {name for name, (a, b) in spans.items() if any(a <= x <= b for x in changed)}
+    in_func = {x for name in touched for x in range(spans[name][0], spans[name][1] + 1)}
+    region_lines = changed | in_func
+
+    def inside(mid):
+        return int(mid.rsplit("|L", 1)[1]) in region_lines
+    return inside, touched
+
+
+def sample_corpus(work):
+    """產生一份**形狀完整的小樣本**（每個構造維度值至少一個檔）給突變體當第二道判準。
+
+    R30 §六 第 14 類：`opsweep` 的殺不殺只看 `--selftest`，而 selftest 餵的是**作者寫的** fixture ——
+    網目對了，投餵還是作者挑的。這裡把 `shellgen.py` 的產物抽樣進來：突變體只要讓**任何一個**
+    產生檔的判定改變，就算被抓到。抽樣（不是全 468 檔）是為了讓一輪跑得完：每個維度值取前兩檔，
+    覆蓋所有維度值而不取完整笛卡兒積。
+    """
+    gen = pathlib.Path(work) / "sample"
+    r = subprocess.run([sys.executable, str(HERE / "corpus" / "shellgen.py"), "--out", str(gen)],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        # **fail-loud，不是回空清單**（#33 verify R32：Codex 第 8 條／DA-12）。前一版失敗就 `return []`，
+        # 於是第二道判準整個消失、掃描照常跑完並回綠——「網不見了」與「網什麼都沒抓到」在輸出上
+        # 長得一模一樣。這一支存在的理由就是不要有那種東西。
+        raise SystemExit("✗ 第二道判準無法建立：shellgen.py rc=%d\n%s"
+                         % (r.returncode, (r.stdout + r.stderr)[-1500:]))
+    by_dim, out = {}, []
+    for f in sorted(gen.glob("*.yml")):
+        for token in f.stem.split("-")[1:]:
+            by_dim.setdefault(token, []).append(f)
+    for token, files in sorted(by_dim.items()):
+        out.extend(files[:2])
+    return sorted(set(out))
+
+
+def _tags(stderr):
+    """從 lint 的 stderr 抽出**紅的來源標記序列**（`RULE:`／`PARSE:`），忽略訊息文字與行號。
+
+    只比文字會讓「訊息改寫」也算殺掉（那不是行為差異）；只比 rc 會讓 `RULE:`⇄`PARSE:` 不算
+    （那是行為差異）。抽出標記序列剛好落在兩者之間。"""
+    return tuple(t for line in stderr.split("\n") for t in ("RULE", "PARSE") if (": %s: " % t) in line)
+
+
+# 突變體可能讓 lint 進無窮迴圈（R37 實測：有一個一邊迴圈一邊配置記憶體，38 分鐘吃到 22 GB）。沒有逾時，掃描會永遠
+# 停在那裡——`--jobs` 照順序輸出，一個卡住就整批不動。逾時由 main() 依未突變 selftest 的實測耗時設定。
+MUTANT_TIMEOUT = 1800
+
+
+class _Timeout(Exception):
+    pass
+
+
+def _run(args, cwd, env=None):
+    """跑一個子行程；逾時殺掉**整個行程群組**（lint 是 bash 包 python，只殺 bash 會留下還在跑的 python 孫行程），
+    stdin 接 /dev/null（避免某個突變體改成等 stdin 而 0% CPU 卡住）。"""
+    import signal
+    pr = subprocess.Popen(args, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          text=True, start_new_session=True, env=env)
+    try:
+        out, err = pr.communicate(timeout=MUTANT_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(pr.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        pr.communicate()
+        raise _Timeout()
+    return subprocess.CompletedProcess(args, pr.returncode, out, err)
+
+
+_KILLERS = {}                    # fixture 路徑 → 殺掉過幾個突變體；只用來排 selftest 的跑序（順序提示，不影響判定）
+_KILLERS_LOCK = None
+
+
+def _selftest_env(work):
+    """突變體的 selftest 用提早結束＋優先清單＋小的平行度（R44 提速）：突變體只要有一張 fixture 變紅就算殺掉，不必把整套 fixture 跑完；
+    殺過突變體的 fixture 按次數排在最前面（`_note_killer` 更新、`LINT_SELFTEST_FIRST` 傳給 selftest），後面的突變體很快就撞到殺手。
+    `--jobs` 個突變體同時在跑，每個 selftest 內部只開 2 個。**判定不變**（有失敗＝殺、全過＝存活）；輸出只含到第一個失敗為止，所以「當掉」與「判錯」的分項計數
+    可能與完整 selftest 不同，總殺數不變（39 個突變體的對照：殺／存活與分項標籤逐個相同）。`OPSWEEP_FULL_SELFTEST=1` 退回完整的 selftest（驗證提速沒有改判定用）。"""
+    env = dict(os.environ)
+    env["LINT_SELFTEST_JOBS"] = "2"
+    if os.environ.get("OPSWEEP_FULL_SELFTEST"):
+        env.pop("LINT_SELFTEST_FAILFAST", None)
+        env.pop("LINT_SELFTEST_FIRST", None)
+    else:
+        env["LINT_SELFTEST_FAILFAST"] = "1"
+        _seed_killers(work)
+        env["LINT_SELFTEST_FIRST"] = str(pathlib.Path(work) / "killers.txt")
+    return env
+
+
+KILLERS_CACHE = pathlib.Path(os.environ.get("OPSWEEP_KILLERS_CACHE", str(pathlib.Path.home() / ".cache" / "idd-verify" / "opsweep-killers.txt")))
+
+
+def _seed_killers(work):
+    """第一次呼叫時，用 repo 外的快取（上幾輪殺過突變體的 fixture，次數多的在前）當起點，讓這一輪從「已暖機」開始。只影響跑序、不影響判定；
+    快取不存在或讀不了就從空的開始。"""
+    global _KILLERS_LOCK
+    import threading
+    if _KILLERS_LOCK is None:
+        _KILLERS_LOCK = threading.Lock()
+    with _KILLERS_LOCK:
+        f = pathlib.Path(work) / "killers.txt"
+        if f.exists() or _KILLERS:
+            return
+        try:
+            lines = [l.strip() for l in KILLERS_CACHE.read_text(encoding="utf-8").splitlines() if l.strip()]
+        except OSError:
+            return
+        for rank, l in enumerate(lines):
+            _KILLERS[l] = max(1, len(lines) - rank)          # 保持快取裡的先後；本輪新殺的會一路加上去
+        f.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _note_killer(work, out):
+    """從 selftest 的輸出抓第一個 `selftest FAILED: <fixture>` 的 fixture 路徑，記一筆，並把清單（次數多的在前）寫回 `work/killers.txt`。"""
+    global _KILLERS_LOCK
+    import re as _re
+    import threading
+    if _KILLERS_LOCK is None:
+        _KILLERS_LOCK = threading.Lock()
+    m = _re.search(r"selftest FAILED: (test/fixtures/ci-log-filter-\S+\.yml)", out)
+    if not m:
+        return
+    with _KILLERS_LOCK:
+        _KILLERS[m.group(1)] = _KILLERS.get(m.group(1), 0) + 1
+        ordered = sorted(_KILLERS, key=lambda k: (-_KILLERS[k], k))
+        tmp = pathlib.Path(work) / "killers.txt.tmp"
+        tmp.write_text("\n".join(ordered) + "\n", encoding="utf-8")
+        os.replace(tmp, pathlib.Path(work) / "killers.txt")
+        try:
+            KILLERS_CACHE.parent.mkdir(parents=True, exist_ok=True)
+            KILLERS_CACHE.write_text("\n".join(ordered) + "\n", encoding="utf-8")
+        except OSError:
+            pass                                              # 快取只是順序提示，寫不了不影響結果
+
+
+def run_mutant(src, py, py_off, m, work, fixtures, sample):
+    """把突變後的 lint 放進臨時 plugin 樹，跑 selftest。fixtures 是**開跑時的快照**（copy，不是 symlink）：
+    R29 第一輪掃到一半時作者又加了三個 fixture，之後每個突變體都因「數量與門檻不符」被判殺——整輪後半段作廢。
+    lint 原始碼與 fixture 都要在同一個時間點凍結。"""
+    mid, s, e, new = m
+    # 語法壞掉要在跑 selftest **之前**直接判：selftest 每張 fixture 只印 stderr 的前兩行，`SyntaxError:` 那一行
+    # 被截掉，下面那個「輸出裡有沒有 SyntaxError」的判準因此量不到——R37 以前這類突變體一律記成 KILLED
+    # （R29、R30 DA 那個切錯位置、把 `if seq_at[i]:` 的冒號換成 2 的突變體就是這樣被算成殺掉的）。
+    try:
+        compile(py[:s] + new + py[e:], "<lint>", "exec")
+    except SyntaxError:
+        return "BROKEN"
+    mutated = src[:py_off] + py[:s] + new + py[e:] + src[py_off + len(py):]
+    d = tempfile.mkdtemp(dir=work, prefix="op_")
+    try:
+        (pathlib.Path(d) / "test").mkdir()
+        p = pathlib.Path(d) / "test" / "lint-ci-log-filter.sh"
+        p.write_text(mutated, encoding="utf-8")
+        os.symlink(fixtures, pathlib.Path(d) / "test" / "fixtures")
+        r = _run(["bash", str(p), "--selftest"], d, _selftest_env(work))
+        out = r.stdout + r.stderr
+        if r.returncode != 0:
+            _note_killer(work, out)
+        if r.returncode != 0 and "SyntaxError" in out:
+            return "BROKEN"                 # 運算子產出不合法的程式碼：是這支的缺陷，不是套件的功勞
+        if r.returncode != 0 and "Traceback" in out:
+            return "CRASHED"                # 突變體讓 lint 當掉：套件抓到了，但那是「當掉」不是「判錯」——分開報
+        if r.returncode != 0:
+            return "KILLED"
+        # selftest 沒抓到 → 再問**不是作者挑的**那份語料（形狀完整的小樣本）。
+        for f in sample:
+            a = _run(["bash", str(LINT), str(f)], PLUGIN)
+            b = _run(["bash", str(p), str(f)], d)
+            # **比 (rc, 紅的來源標記)，不只比 rc**（#33 verify R32：Codex 第 8 條）。
+            # 本輪特別在意的 `RULE:` ⇄ `PARSE:` 轉換兩邊 rc 都是 1，只比 rc 的網對它完全不靈敏——
+            # 而那正是「fail-closed 改判」這一類修法唯一會動到的東西。
+            if (a.returncode, _tags(a.stderr)) != (b.returncode, _tags(b.stderr)):
+                return "KILLED-BY-CORPUS"
+        return "SURVIVED"
+    except _Timeout:
+        return "TIMEOUT"                    # 突變體讓 lint 跑不完：CI 會逾時失敗，算抓到，但與「判錯」分開報
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def base_id(mid):
+    """去掉 id 尾端的 `|L<行號>`——行號會漂，理由不會。"""
+    return mid.rsplit("|L", 1)[0]
+
+
+def verify_expected(src, py, py_off, ms, jobs=1):
+    """把每一條 `EXPECTED_SURVIVE` 的「依構造等價」**真的跑一次**（R30 MB-11／G-R31-8）。
+
+    為什麼：「依構造等價」四個字在 R29 是散文，沒有任何會翻色的指令在守它——而其中一條是**假的**
+    （`dedent_block` 的純空白行：引號 heredoc 的分隔字可以是空白）。散文擋不住這種事，差分可以。
+    做法：用 `shellgen.py` 產生一份**獨立於 fixture** 的語料（作者挑不動它的形狀），對每一條
+    EXPECTED_SURVIVE 逐檔比對「原碼」與「突變體」的 `(rc, stderr)`；任何一檔不同 ⟹ 不等價 ⟹ rc=1。
+
+    **R37 補兩件**（#33 verify R37 量測時發現）：
+      · 語料加入 `shellgen.py --strict` 組，並照每檔第一行的 `# LINT-ARGS:` 帶旗標跑 lint。前一版只產生預設組、
+        也不帶 `--strict`，所以只在 `--strict` 下才有差別的突變體在這裡**永遠**「全部相同」——實測把
+        `elif STRICT and not declared and group_why:` 拿掉 `group_why`（明顯不等價）冒充成預期存活，前一版回報
+        「624 檔全部相同」、rc=0。
+      · 原碼的結果每檔只算一次（它不依賴突變體），各條 EXPECTED_SURVIVE 依 `--jobs` 平行跑；判定與前一版相同。
+    """
+    import shutil as _sh
+    from concurrent.futures import ThreadPoolExecutor
+    root = pathlib.Path(tempfile.mkdtemp(prefix="opsweep-exp-"))
+    for sub, extra in (("gen", []), ("gen-strict", ["--strict"])):
+        r = subprocess.run([sys.executable, str(HERE / "corpus" / "shellgen.py")] + extra + ["--out", str(root / sub)],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            print("✗ 產生語料失敗（%s）：\n" % sub + r.stdout + r.stderr); return 2
+    files = sorted(root.glob("gen*/*.yml"))
+
+    def lint_args(f):
+        # 與 `oracle.py` 同一個讀法（整個檔、`re.M`）：`# LINT-ARGS:` 不一定在第一行（`shellgen.py --strict` 的檔先有 `# KNOWN-CLASS:` 檔頭）。
+        # R44 宣稱查核抓到：前一版只看第一行，`--strict` 組有 22 個檔以預設模式跑，`--strict` 才有差別的突變體在這裡永遠「全部相同」。
+        m = re.search(r"^# LINT-ARGS: (.+)$", f.read_text(encoding="utf-8"), re.M)
+        return m[1].split() if m else []
+
+    fargs = {f: lint_args(f) for f in files}
+    print("對 %d 檔產生語料（其中 --strict 組 %d 檔）驗證 %d 條 EXPECTED_SURVIVE 的等價論證"
+          % (len(files), sum(1 for f in files if fargs[f]), len(EXPECTED_SURVIVE)), flush=True)
+    by_id = {base_id(m[0]): m for m in ms}
+
+    def run(lint, cwd, f):
+        o = subprocess.run(["bash", str(lint)] + fargs[f] + [str(f)], cwd=cwd, capture_output=True, text=True)
+        return o.returncode, o.stderr.replace(str(lint), "L")
+
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
+        base = dict(zip(files, pool.map(lambda f: run(LINT, PLUGIN, f), files)))
+    rc = 0
+    with tempfile.TemporaryDirectory(prefix="opsweep-exp-run-") as work:
+        fixtures = pathlib.Path(work) / "fixtures"
+        _sh.copytree(HERE / "fixtures", fixtures)
+
+        def check(item):
+            mid, why = item
+            m = by_id.get(mid)
+            if m is None:
+                return mid, why, None
+            _i, a, b, new = m
+            mutated = src[:py_off] + py[:a] + new + py[b:] + src[py_off + len(py):]
+            d = pathlib.Path(tempfile.mkdtemp(dir=work)); (d / "test").mkdir()
+            mp = d / "test" / "lint-ci-log-filter.sh"; mp.write_text(mutated, encoding="utf-8")
+            os.symlink(fixtures, d / "test" / "fixtures")
+            diffs = [f.relative_to(root).as_posix() for f in files if run(mp, d, f) != base[f]]
+            _sh.rmtree(d, ignore_errors=True)
+            return mid, why, diffs
+
+        with ThreadPoolExecutor(max_workers=jobs) as pool:
+            results = list(pool.map(check, sorted(EXPECTED_SURVIVE.items())))
+    for mid, why, diffs in results:
+        if diffs is None:
+            print("  ✗ %s —— 這個突變體不在本次掃描範圍內，無法驗證" % mid); rc = 1
+        elif diffs:
+            rc = 1
+            print("  ✗ %s\n     理由寫的是「%s」，但這 %d 檔上原碼與突變體給出不同答案（前三：%s）"
+                  % (mid, why, len(diffs), ", ".join(diffs[:3])))
+        else:
+            print("  ✓ %s（%d 檔全部相同）" % (mid, len(files)))
+    _sh.rmtree(root, ignore_errors=True)
+    return rc
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
+    ap.add_argument("--list", action="store_true", help="只列突變體，不跑")
+    ap.add_argument("--json", metavar="FILE", help="結果寫成 JSON")
+    ap.add_argument("--since", metavar="REF", help="只掃自 REF 起被改動的區域（見 docstring）")
+    ap.add_argument("--verify-expected", action="store_true",
+                    help="把每一條 EXPECTED_SURVIVE 的「依構造等價」真的跑一次（見 docstring）")
+    ap.add_argument("--jobs", type=int, default=1, metavar="N", help="同時跑幾個突變體（預設 1）")
+    args = ap.parse_args()
+    if args.jobs < 1:
+        ap.error("--jobs 至少是 1")
+    src = LINT.read_text(encoding="utf-8")
+    py, py_off = embedded_python(src)
+    ms = mutants(py)
+    all_ms = ms                           # `--verify-expected` 對全集做（R37 量測：拿區域清單去驗，區域外的舊條目
+                                          # 只會得到「不在本次掃描範圍內」——4 條因此從沒被驗過）
+    all_ids = [m[0] for m in ms]          # **陳舊性檢查對全集做**，不對區域做：
+                                          # 區域外的 EXPECTED_SURVIVE 本來就不會出現在區域清單裡，
+                                          # 拿區域清單去判「這個 key 還在不在」會對每一條區域外的條目誤報。
+    scope = "整段內嵌 Python"
+    if args.since:
+        inside, touched = region_since(args.since, py)
+        ms = [m for m in ms if inside(m[0])]
+        scope = "自 %s 起的區域（觸及的函式：%s；加模組層新行）——全集 %d 個中的 %d 個" % (
+            args.since, ", ".join(sorted(touched)) or "無", len(all_ids), len(ms))
+    ids = all_ids
+    dup = {i for i in ids if ids.count(i) > 1}
+    if dup:
+        print("✗ 突變體 id 不唯一（同一行同一運算子要靠序號分開，這裡分不開）：", sorted(dup)[:5]); return 2
+    # `EXPECTED_SURVIVE` 的 key **不含行號**：行號會隨任何插入而漂，而理由不會。
+    # id 的行號尾巴只給區域判定用。
+    stale = sorted(set(EXPECTED_SURVIVE) - {base_id(i) for i in ids})
+    if stale:
+        print("✗ EXPECTED_SURVIVE 裡有不存在的突變體（那一行改了，理由要重判）：")
+        for x in stale: print("  -", x)
+        return 2
+    print("%d 個突變體（五種運算子；%s）" % (len(ms), scope), flush=True)
+    if args.list:
+        for m in ms: print("  ", m[0])
+        return 0
+    if args.verify_expected:
+        return verify_expected(src, py, py_off, all_ms, args.jobs)
+    t0 = time.monotonic()
+    pre = subprocess.run(["bash", str(LINT), "--selftest"], cwd=PLUGIN, capture_output=True, text=True)
+    if pre.returncode != 0:
+        print("✗ 未突變的 selftest 就紅——先修綠再掃，否則每個突變體都會被誤判為殺掉。\n" + (pre.stdout + pre.stderr)[-1500:]); return 1
+    global MUTANT_TIMEOUT
+    base_s = time.monotonic() - t0
+    MUTANT_TIMEOUT = max(600, 10 * base_s)   # 未突變的一次 × 10，下限 10 分鐘（並行時每個會慢）
+    print("   每個突變體的逾時：%.0f s（未突變 selftest 實測 %.0f s × 10，下限 600）" % (MUTANT_TIMEOUT, base_s), flush=True)
+    results = {}
+    with tempfile.TemporaryDirectory(prefix="opsweep-") as work:
+        fixtures = pathlib.Path(work) / "fixtures"
+        shutil.copytree(HERE / "fixtures", fixtures)
+        sample = sample_corpus(work)
+        if not sample:
+            # 取樣為空 = 沒有第二道判準。前一版只印數字，而 0 印出來與 40 印出來一樣不引人注意。
+            raise SystemExit("✗ 第二道判準的樣本是空的——掃描會退化成只問 selftest，拒絕繼續")
+        print("   第二道判準：%d 個產生檔（形狀完整樣本，非作者挑選）" % len(sample), flush=True)
+
+        def one(m):
+            return m[0], run_mutant(src, py, py_off, m, work, fixtures, sample)
+        # 每個突變體在自己的 mkdtemp 裡跑、只讀共用的 fixture 快照與樣本，彼此沒有依賴；--jobs 只改完成順序，
+        # 不改任何一個突變體的判定（R37：區域 868 個突變體循序估計要 8 小時）。
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=args.jobs) as pool:
+            for mid, st in pool.map(one, ms):
+                results[mid] = st
+                tag = st if not (st == "SURVIVED" and base_id(mid) in EXPECTED_SURVIVE) else "EXPECTED"
+                print("  %-9s %s" % (tag, mid), flush=True)
+    elapsed = time.monotonic() - t0
+    survived = [i for i, st in results.items() if st == "SURVIVED"]
+    unexpected = [i for i in survived if base_id(i) not in EXPECTED_SURVIVE]
+    expected = [i for i in survived if base_id(i) in EXPECTED_SURVIVE]
+    # R46（#33 verify R45 regression 第 2 列）：前一版只數 `KILLED`——`CRASHED`、`TIMEOUT`、`KILLED-BY-CORPUS`、`BROKEN` 的預期存活突變體都不被報成「等價性不成立」。R44 的全輪 log 就列了兩條
+    # `yaml_decode_scalar` 的 `CRASHED`（`shell:` 無值時 `IndexError`），最終報告卻寫「預期 64」而 EXPECTED_SURVIVE 有 66 條，沒有人對帳。任何不是 SURVIVED 的狀態都推翻等價論證。
+    killed_expected = [i for i in EXPECTED_SURVIVE if any(base_id(k) == i and v != "SURVIVED" for k, v in results.items())]
+    broken = [i for i, st in results.items() if st == "BROKEN"]
+    print("\n耗時 %.1f 分 / %d 突變體（--jobs %d）= 每個 %.1f s 牆鐘" % (elapsed / 60, len(ms), args.jobs, elapsed / max(1, len(ms))))
+    crashed = [i for i, st in results.items() if st == "CRASHED"]
+    by_corpus = [i for i, st in results.items() if st == "KILLED-BY-CORPUS"]
+    timeout = [i for i, st in results.items() if st == "TIMEOUT"]
+    print("殺掉 %d（其中當掉 %d、逾時 %d、**產生語料抓到而 selftest 沒抓到的 %d**）/ 存活 %d（非預期 %d、預期 %d）/ 壞掉（語法）%d"
+          % (sum(1 for st in results.values() if st in ("KILLED", "CRASHED", "TIMEOUT", "KILLED-BY-CORPUS")), len(crashed),
+             len(timeout), len(by_corpus), len(survived), len(unexpected), len(expected), len(broken)))
+    if by_corpus:
+        print("\n這些突變體 **selftest 沒抓到、產生語料抓到了** —— 每一個都代表 fixture 集缺一個形狀：")
+        for i in by_corpus: print("  -", i)
+    rc = 0
+    if unexpected:
+        rc = 1
+        print("\n✗ 非預期存活（補會翻色的 fixture，或證明等價後列入 EXPECTED_SURVIVE 並寫理由）：")
+        for i in unexpected: print("  -", i)
+    if killed_expected:
+        rc = 1
+        print("\n✗ 預期存活卻被殺掉（等價性不再成立，從 EXPECTED_SURVIVE 移除）：")
+        for i in killed_expected: print("  -", i)
+    # 兩條上限：(1) 工具內守「EXPECTED_SURVIVE ≤ 本次掃描突變體數的 10%」——修完之後存活的只剩預期的，
+    # 「≤ 存活的 1/3」在工具裡會退化成永遠失敗；(2) 每輪「新增條數 ≤ 該輪存活數的 1/3」是**審查規則**，
+    # 對照該輪修法前的 sweep log 在 PR body 檢查（R29：30 存活 → 4 條預期 = 13%）。
+    # 分子與分母都是**這一次掃描的區域**（R40，#33 verify R39 第 18 列）：R37 以前用全集清單的條數比區域大小（R39 的區域 368 個、46 條
+    # 全集清單被判超過）；R39 改成全集分母，上限從 36 變 108、等於永遠滿足。同一個集合要跟同一個分母比——比的是區域裡落在
+    # EXPECTED_SURVIVE 的突變體數。
+    # `base_id`（去掉 `|L行號` 尾巴）才對得上 EXPECTED_SURVIVE 的 key；R44 宣稱查核（README 列）抓到前一版直接拿 `mid` 比、恆為 0，這個上限從來沒有生效
+    # R46：**全輪**（不帶 `--since`）要對帳——每一條 EXPECTED_SURVIVE 都必須對到一個突變體、而且那個突變體真的存活。區域掃描只看落在區域裡的那幾條。
+    if not args.since:
+        absent = [i for i in EXPECTED_SURVIVE if not any(base_id(k) == i for k in results)]
+        if absent:
+            rc = 1
+            print("\n✗ EXPECTED_SURVIVE 有 %d 條對不到任何突變體（程式改了、條目過期——移除或更新）：" % len(absent))
+            for i in absent: print("  -", i)
+        if len(expected) != len(EXPECTED_SURVIVE):
+            rc = 1
+            print("\n✗ 全輪的預期存活突變體是 %d 個，EXPECTED_SURVIVE 有 %d 條——對不上（上面列的是被殺或對不到的條目）" % (len(expected), len(EXPECTED_SURVIVE)))
+    in_region = sum(1 for mid in results if base_id(mid) in EXPECTED_SURVIVE)
+    cap = len(results) // 10
+    if in_region > cap:
+        rc = 1
+        print("\n✗ 區域裡落在 EXPECTED_SURVIVE 的突變體（%d）超過區域的 10%%（上限 %d）——這個集合在藏東西" % (in_region, cap))
+    if args.json:
+        pathlib.Path(args.json).write_text(json.dumps({"results": results, "elapsed_s": elapsed}, ensure_ascii=False, indent=1))
+    return rc
+
+
+if __name__ == "__main__":
+    sys.exit(main())

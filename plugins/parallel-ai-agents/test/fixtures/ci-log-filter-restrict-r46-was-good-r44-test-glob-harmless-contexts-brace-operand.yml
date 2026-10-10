@@ -1,0 +1,21 @@
+# #33 R46（R45 verify 第 1 列）：這一步原本在 `good-r44-test-glob-harmless-contexts`，宣稱「大括號的展開結果不來自 PR 的檔名」所以放行。R45 推翻了那個前提：大括號展開在所有其他展開之前做，
+# 會改變 `test`／`[` 的參數個數與位置（`[ -n {a,b} ]` 是 `[ -n a b ]`；`test {-v,"$X"}` 是 `test -v "$X"`）。文法現在不收 `test`／`[`／`printf`／`echo` 等 builtin 的未加引號大括號展開。
+# 這一步在 R44 是放行、R46 起是擋——保留成 restrict fixture，不是改寫舊 fixture 讓它仍然通過（R45 regression 抓到 R44 對三張 good fixture 這樣做、CHANGELOG 沒寫）。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-MSG: 未加引號的大括號展開
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: brace operand
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            [ -n {a,b} ]
+          } 2>&1 | python3 scripts/neutralise.py

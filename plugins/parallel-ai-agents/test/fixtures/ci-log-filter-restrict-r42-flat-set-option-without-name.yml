@@ -1,0 +1,35 @@
+# #33 R42 opsweep 最終掃描（`_set_prefix_line` 的 `len(toks) <= k + 1 or toks[k + 1] not in SET_OPT_NAMES`，drop 第一個運算元存活）：
+# `set` 前綴的 `-o` 後面一定要跟一個選項名（`-o pipefail`）。`-o` 是這一行的最後一個詞時沒有名字可讀，原碼回 False（RULE）；
+# 拿掉長度守衛的突變體直接取 `toks[k + 1]` 而 IndexError。三步是同一個缺口的三種寫法（單獨的 `-o`、與 `-e` 合寫、與 `-eu` 合寫）。
+# 這是 `set -o` 在 bash 裡會**印出所有選項的開關**（不帶名字的 `set -o` 列出 shell 選項）——所以文法不收，也是 `restrict` 而不是 `bypass`：
+# 神諭實跑沒有外流（列出的是選項而不是 PR 文字）。
+# LINT-ARGS: --strict
+# EXPECT: rule-red
+# EXPECT-EACH-STEP: rule-red
+# EXPECT-MSG: `set` 前綴只收
+# R42：這一張的 3 步是**文法外**——不在 `--strict` 的正面文法裡、神諭實跑沒有外流（stdout／stderr／跨 step 通道都沒有）、
+# pipefail 探針沒看到關閉。保守擋下，由下面的宣告簽名（神諭的類別閘門是雙向的）。
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+# KNOWN-CLASS: 文法外
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: a lone dash-o as the set prefix
+        shell: bash
+        run: |
+          set -o
+          { echo hi; } 2>&1 | python3 scripts/neutralise.py
+      - name: dash-o bundled with errexit
+        shell: bash
+        run: |
+          set -eo
+          { echo hi; } 2>&1 | python3 scripts/neutralise.py
+      - name: dash-o bundled with errexit and nounset
+        shell: bash
+        run: |
+          set -euo
+          { echo hi; } 2>&1 | python3 scripts/neutralise.py

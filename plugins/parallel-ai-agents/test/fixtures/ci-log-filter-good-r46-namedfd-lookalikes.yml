@@ -1,0 +1,46 @@
+# #33 R45 verify：具名 fd 的條件是「整個詞以 `{` 開頭、以 `}` 結尾、緊接 `<`／`>`」。下面的寫法都不是——大括號詞在 `>` 之前有空白（是資料參數、不是重導向前綴）、整個詞在引號裡、
+# 大括號前面還有別的字元。`restrict-r46-namedfd-array` 的負對照。
+# LINT-ARGS: --strict
+# EXPECT: pass
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: a bracket-and-brace word followed by a space
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo hi {a[1]} >out.txt
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a quoted brace word glued to a redirect
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo "{a[1]}">out.txt
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a word with text before the brace glued to a redirect
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo hi{c}>/dev/null
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: a word that starts with a brace but does not end with one
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            echo {a>out.txt
+          } 2>&1 | python3 scripts/neutralise.py

@@ -1,0 +1,11 @@
+name: t
+on: push
+# EXPECT: parse-red
+jobs:
+  j: {runs-on: ubuntu-latest, steps: [{name: leak,
+run: "echo $PR_TITLE"}]}
+  ok:
+    runs-on: ubuntu-latest
+    steps:
+      - name: compliant control
+        run: echo hi | python3 scripts/neutralise.py
