@@ -30,15 +30,17 @@ codex-call --output FILE [--model M] [--effort E] [--service-tier T] [--max-time
   "schema":<檔案原文>,"strict":true}}`。**schema 以原文嵌入**：驗證過的檔案文字（去掉開頭 BOM 與前後空白）
   直接放進請求，property 順序與數值寫法都不變——strict 輸出依 schema 順序生成欄位，順序屬於 caller 的要求。
   `name` 固定、`strict` 固定開啟，沒有關閉的旗標（非 strict 只是提示，等於沒鎖）。送出前驗證，任一項不符
-  exit `1`、**在讀 auth 之前**、`--detach` 下也不建立 run：檔案不存在／不可讀／是目錄；不是合法 JSON（含空檔）；
-  頂層不是 object（陣列或純量）；旗標給了兩次。schema 是否符合 strict 模式的規則由後端判定，錯誤經既有的
+  exit `1`、**在讀 auth 之前**、`--detach` 下也不建立 run：檔案不存在／不可讀／是目錄；不是合法 JSON（含空檔與尾逗號——
+  Foundation 的 `JSONSerialization` 接受尾逗號，原文又是原樣送出，所以另外掃描字串外的尾逗號）；頂層不是 object（陣列或純量）；旗標給了兩次。schema 是否符合 strict 模式的規則由後端判定，錯誤經既有的
   HTTP 錯誤路徑轉出（截至 500 字；實測 `code: invalid_json_schema`，訊息指出違反哪一條）。
   回覆端**只接受狀態為 `completed` 的回覆**：拒答（`response.refusal.delta`）、狀態 `incomplete`、沒收到完成事件
-  或其他狀態、輸出不是合法 JSON、或不是 JSON object → exit 非零、**不寫檔**。訊息引用的拒答原文、reason 與輸出
+  或其他狀態、輸出不是合法 JSON（含尾逗號）、或不是 JSON object → exit 非零、**不寫檔**。`response.completed` 沒有
+  `status` 欄位時視為 completed（`response.incomplete` 同理視為 incomplete）。訊息引用的拒答原文、reason 與輸出
   片段經 `sanitizeBackendText`、`stripInvisibleUnicode`、`clampToBudget`，與背景模式的 status 行同一套。
   「不寫檔」指本次不寫；`--output` 若已有舊檔，本工具不去刪它，與其他失敗路徑一致。
-  **已知限制**：#28 的 UTF-8 chunk 丟失仍在——丟在 JSON 字串值中間時，剩下的文字仍是合法 JSON、會被接受；
-  丟掉完成事件時則因收不到 `completed` 而失敗。與 `--poll`／`--abort`／`--force-reap` 並用 → exit `1`。
+  **已知限制（#28）**：UTF-8 chunk 丟失仍在——丟在 JSON 字串值中間時，剩下的文字仍是合法 JSON、會被接受；
+  丟掉完成事件時則因收不到 `completed` 而失敗。最後一個 SSE 事件若沒有結尾空行也會被丟掉，丟的是完成事件時
+  同樣是誤拒（失敗方向，不會誤收）。與 `--poll`／`--abort`／`--force-reap` 並用 → exit `1`。
   **不帶此旗標時**，請求的 `text` 仍是 `{"verbosity":"medium"}`，回覆端的行為也不變（拒答仍落到空輸出規則，
   見 #93）。
 - **不帶 `--image` 時請求結構不變**：仍是一則 user message、裡面恰好一個 `input_text`。「不變」指 JSON

@@ -367,7 +367,8 @@ final class StreamCollector: NSObject, URLSessionDataDelegate {
             if let delta = json["delta"] as? String { refusal += delta }
         case "response.completed", "response.incomplete":
             let r = json["response"] as? [String: Any]
-            terminalStatus = (r?["status"] as? String) ?? (type == "response.incomplete" ? "incomplete" : nil)
+            // The event type already says which: a missing `status` falls back to it, for both types.
+            terminalStatus = (r?["status"] as? String) ?? (type == "response.incomplete" ? "incomplete" : "completed")
             incompleteReason = (r?["incomplete_details"] as? [String: Any])?["reason"] as? String
         case "error", "response.failed":
             // Unconditional assignment — same as before #25. Which terminal event should
@@ -458,6 +459,31 @@ let JSON_SCHEMA_NAME = "codex_call_output"
 // random per process, so nothing in a prompt can collide with it.
 let JSON_SCHEMA_SLOT = "codex-call-json-schema-slot-\(UUID().uuidString)"
 
+// Foundation's JSONSerialization accepts trailing commas (`{"a":1,}`, `[1,2,]`). Everything else it was
+// probed with is rejected as strict JSON requires (`01`, `.5`, `NaN`, single quotes, raw control
+// characters, comments — #92 verify round 2). Since the schema text is now sent as written, this one
+// leniency has to be closed here, or a malformed request body goes out. Commas inside strings, escaped
+// quotes included, are not trailing commas.
+func hasTrailingComma(_ text: String) -> Bool {
+    var inString = false, escaped = false, commaPending = false
+    for u in text.unicodeScalars {
+        if inString {
+            if escaped { escaped = false }
+            else if u == "\\" { escaped = true }
+            else if u == "\"" { inString = false }
+            continue
+        }
+        switch u {
+        case "\"": inString = true; commaPending = false
+        case ",": commaPending = true
+        case "}", "]": if commaPending { return true }
+        case " ", "\t", "\n", "\r": break
+        default: commaPending = false
+        }
+    }
+    return false
+}
+
 // The text of `data` if it is exactly one JSON object, else why not. A leading UTF-8 BOM and surrounding
 // whitespace lie outside the value and are dropped; everything else is kept byte for byte.
 func jsonObjectText(_ data: Data) -> (text: String?, why: String) {
@@ -466,6 +492,7 @@ func jsonObjectText(_ data: Data) -> (text: String?, why: String) {
     guard let s = String(data: d, encoding: .utf8),
           let obj = try? JSONSerialization.jsonObject(with: d, options: [.fragmentsAllowed])
     else { return (nil, "not valid JSON") }
+    if hasTrailingComma(s) { return (nil, "not valid JSON (trailing comma)") }
     guard obj is [String: Any] else {
         return (nil, "the schema must be a JSON object (the top level is \(obj is [Any] ? "an array" : "a scalar"))")
     }
@@ -519,7 +546,8 @@ func structuredOutputProblem(text: String, refusal: String, terminalStatus: Stri
     }
     if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return nil }
     guard let data = text.data(using: .utf8),
-          let obj = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
+          let obj = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]),
+          !hasTrailingComma(text)
     else {
         return "Codex output is not valid JSON despite --json-schema — refusing to write it (it begins: \(shown(String(text.prefix(200)), 200)))"
     }

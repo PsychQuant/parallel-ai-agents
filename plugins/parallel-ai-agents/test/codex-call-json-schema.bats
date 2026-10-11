@@ -24,6 +24,13 @@ setup() {
   printf '%s\n' '{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"],"additionalProperties":false}' >"$T/schema.json"
   printf '[1, 2]\n' >"$T/array.json"
   printf '5\n' >"$T/scalar.json"
+  # Foundation 的 JSONSerialization 接受尾逗號；schema 以原文送出，這兩個必須在本地就被擋（verify round 2）
+  printf '%s\n' '{"type":"object","properties":{"a":{"type":"string"},},"required":["a"],"additionalProperties":false}' >"$T/trail_obj.json"
+  printf '%s\n' '{"type":"object","properties":{"a":{"type":"string"}},"required":["a",],"additionalProperties":false}' >"$T/trail_arr.json"
+  # 字串裡的 ",}" ",]" 與跳脫的引號不是尾逗號
+  printf '%s\n' '{"type":"object","description":"a,} b,] c\",}","properties":{"a":{"type":"string"}},"required":["a"],"additionalProperties":false}' >"$T/comma_in_string.json"
+  # 開頭帶 UTF-8 BOM：BOM 不送出，其餘原文與順序照送
+  printf '\357\273\277%s\n' '{"type":"object","properties":{"zeta":{"type":"string"},"alpha":{"type":"integer"}},"required":["zeta","alpha"],"additionalProperties":false}' >"$T/bom.json"
   # property 順序刻意不是字母序：結構化輸出依 schema 順序生成欄位，順序必須原樣送出
   printf '%s\n' '{"type":"object","properties":{"zeta":{"type":"string"},"alpha":{"type":"integer"}},"required":["zeta","alpha"],"additionalProperties":false}' >"$T/ordered.json"
   printf '{"type": \n' >"$T/broken.json"
@@ -168,6 +175,34 @@ print("ok")' <<<"$output"
   [[ "$stderr" == *"must be a JSON object"* ]]
 }
 
+@test "--json-schema: a trailing comma in an object is refused before anything is sent" {
+  run --separate-stderr payload --json-schema "$T/trail_obj.json" "hello"
+  [ "$status" -eq 1 ]
+  [ -z "$output" ]
+  [[ "$stderr" == *"not valid JSON"* ]]
+}
+
+@test "--json-schema: a trailing comma in an array is refused before anything is sent" {
+  run --separate-stderr payload --json-schema "$T/trail_arr.json" "hello"
+  [ "$status" -eq 1 ]
+  [ -z "$output" ]
+  [[ "$stderr" == *"not valid JSON"* ]]
+}
+
+@test "--json-schema: ',}' inside a string is not a trailing comma" {
+  run --separate-stderr payload --json-schema "$T/comma_in_string.json" "hello"
+  [ "$status" -eq 0 ]
+  run pyjson 'assert d["text"]["format"]["schema"]["description"]=="a,} b,] c\",}", d["text"]; print("ok")' <<<"$output"
+  [ "$status" -eq 0 ]
+}
+
+@test "--json-schema: a leading BOM is dropped and the rest is sent as written" {
+  run --separate-stderr payload --json-schema "$T/bom.json" "hello"
+  [ "$status" -eq 0 ]
+  raw="$(tr -d '\n' <"$T/ordered.json")"
+  [[ "$output" == *"\"schema\":$raw,"* ]]
+}
+
 @test "--json-schema given twice is refused instead of silently keeping one" {
   run --separate-stderr payload --json-schema "$T/schema.json" --json-schema "$T/schema.json" "hello"
   [ "$status" -eq 1 ]
@@ -177,6 +212,12 @@ print("ok")' <<<"$output"
 
 @test "--json-schema with --poll is refused" {
   run --separate-stderr "$BIN" --poll abcdefghijklmnopqrstuvwxyzabcdef --json-schema "$T/schema.json"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"--json-schema is only supported for a new request"* ]]
+}
+
+@test "--json-schema with --force-reap is refused" {
+  run --separate-stderr "$BIN" --force-reap abcdefghijklmnopqrstuvwxyzabcdef --json-schema "$T/schema.json"
   [ "$status" -eq 1 ]
   [[ "$stderr" == *"--json-schema is only supported for a new request"* ]]
 }
@@ -212,6 +253,14 @@ print("ok")' "$T/schema.json" <"$BASE/$id/meta.json"
   [[ "$output" == DONE* ]]
 }
 
+@test "--detach with a trailing-comma schema fails before a run is created" {
+  run --separate-stderr "$BIN" --detach --_selftest-sleep 1 --json-schema "$T/trail_obj.json" --instructions i "prompt"
+  [ "$status" -eq 1 ]
+  [ -z "$output" ]
+  [[ "$stderr" == *"not valid JSON"* ]]
+  [ ! -d "$BASE" ] || [ -z "$(find "$BASE" -mindepth 1 -maxdepth 1 -type d)" ]
+}
+
 @test "--detach with a broken schema fails before a run is created" {
   run --separate-stderr "$BIN" --detach --_selftest-sleep 1 --json-schema "$T/broken.json" --instructions i "prompt"
   [ "$status" -eq 1 ]
@@ -222,18 +271,18 @@ print("ok")' "$T/schema.json" <"$BASE/$id/meta.json"
 }
 
 @test "worker refuses a meta.json whose json_schema is not a JSON object (no silent schema-less request)" {
-  # prelock 視窗內把 json_schema 換成字串（同 detach.bats R5-F2d 的手法）
-  ( for _ in $(seq 1 60); do
+  # prelock 視窗內把 json_schema 換成字串（同 detach.bats R5-F2d 的手法）。迴圈最多等 60 秒、竄改成功就停：
+  # 整份檔一起跑時 swift 冷編譯可能超過 6 秒，只等 6 秒的版本會在 meta.json 出現前就結束、什麼都沒改到。
+  ( for _ in $(seq 1 600); do
       for d in "$BASE"/*/; do
         [ -f "$d/meta.json" ] && python3 -c '
-import json,sys
-import os
+import json,sys,os
 p=sys.argv[1]; m=json.load(open(p)); m["json_schema"]="oops"
-open(p+".tmp","w").write(json.dumps(m)); os.replace(p+".tmp",p)' "$d/meta.json" 2>/dev/null
+open(p+".tmp","w").write(json.dumps(m)); os.replace(p+".tmp",p)' "$d/meta.json" 2>/dev/null && exit 0
       done
       sleep 0.1
     done ) &
-  run "$BIN" --detach --_selftest-sleep 1 --_selftest-prelock-sleep 2 --json-schema "$T/schema.json" --instructions i "p"
+  run "$BIN" --detach --_selftest-sleep 1 --_selftest-prelock-sleep 3 --json-schema "$T/schema.json" --instructions i "p"
   wait
   if [ "$status" -eq 0 ]; then id="$output"; run "$BIN" --poll "$id" --wait 20; fi
   [[ "$output" == *"json_schema"* ]]
@@ -286,6 +335,21 @@ open(p+".tmp","w").write(json.dumps(m)); os.replace(p+".tmp",p)' "$d/meta.json" 
   [ "$status" -ne 0 ]
   [[ "$stderr" == *"cancelled"* ]]
   [ ! -e "$T/out.md" ]
+}
+
+@test "with --json-schema: a reply with a trailing comma is refused as not valid JSON" {
+  sse "$T/trail.sse" '{"type":"response.output_text.delta","delta":"{\"answer\":\"five\",}"}' "$COMPLETED"
+  run --separate-stderr stream "$T/trail.sse" --json-schema "$T/schema.json" "p"
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"not valid JSON"* ]]
+  [ ! -e "$T/out.md" ]
+}
+
+@test "with --json-schema: response.completed without a status field counts as completed" {
+  sse "$T/nostatus.sse" "$DELTA_OPEN" "$DELTA_CLOSE" '{"type":"response.completed","response":{"id":"r1"}}'
+  run --separate-stderr stream "$T/nostatus.sse" --json-schema "$T/schema.json" "p"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$T/out.md")" = '{"answer":"five"}' ]
 }
 
 @test "with --json-schema: valid JSON that is not an object is refused" {
