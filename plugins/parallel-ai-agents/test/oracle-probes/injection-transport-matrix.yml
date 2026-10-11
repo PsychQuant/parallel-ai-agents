@@ -1,0 +1,99 @@
+# R52 C6（#33 verify R51 DA）：注入哨兵的**傳輸矩陣**——求值者繼承什麼（環境 × fd × 行程群組 × cwd × shell 方言 × 剖析脈絡 × 文字被截斷 × 受限 shell），每一格是一個 step，**分母就是 step 數（12）**。R50 證明『傳輸改寫零回歸』用的是『1665 個 step 逐 step 相同』，
+# 但那組語料裡沒有這些形狀（分母 0）；這張探針把形狀放進分母：十二格全部要判『不一致：繞過（注入）』。同一張探針在三棵樹上的結果（協調者實跑 macOS／bash 5.3.15，替身 lint 全放行；這是固定 commit 的歷史事實）：
+#   `5b5a46d`（哨兵 = 環境變數指到的檔）：  A 繞過、B 一致、C 繞過、D 一致、E 繞過、F 一致、G 繞過、H 繞過、I 繞過、J 繞過、M 繞過、N 一致（8／12；清掉環境的格 B、D、F 看不到，受限 shell 的 N 禁止 `>` 檔名重導向）
+#   `8b45659`（哨兵 = fd 197）：              A 繞過、B 繞過、C 一致、D 一致、E 繞過、F 一致、G 一致、H 一致、I 一致、J 一致、M 繞過、N 繞過（5／12；關 fd 的格全看不到，dash 的 H、I 連保留 fd 也看不到〔`>&197` 是 dash 的語法錯誤〕）
+#   R52（短寫法 `>&197` ∪ 長寫法〔路徑先寫、fd 用 `>/dev/fd/197`〕∪ 程式碼行）： 十二格全部繞過（12／12）
+# H、I 是 R52 宣稱查核 E 組找到的（dash 把 `>&197` 當語法錯誤，整段 payload 不執行）；J 是程式碼行唯一起作用的脈絡（`IFS=` 之後的 `eval`：`${IFS}` 變成空字串，程式碼行用字面空白）；M、N 是 A 組找到的——
+# PR 文字被截斷到 100 字再做算術求值（`${title:0:100}`，長寫法的路徑太長、截在 `$(` 中間），與受限 bash（`-r` 禁止 `>` 檔名重導向、只允許 `>&197` 的 dup）：R52 第一版只留長寫法時這兩格是『一致』，所以把 R50 的短寫法原樣加回前面。
+# D 與 F 兩棵舊樹都漏——這就是『交換』的證據，也是『逐 step 相同』看不到它的原因。矩陣不是窮舉（沒有 Node、沒有 setsid 守護行程、沒有 zsh／tcsh、沒有 `IFS=` 之後的**算術**求值〔`${IFS}` 在那裡是空字串，已知限制〕），是代表形狀。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: A env-kept fd-kept
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /bin/bash -c "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: B env-cleared fd-kept
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/env -i /bin/bash -c "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: C env-kept fd-closed
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "-c", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: D env-cleared fd-closed
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "-c", sys.argv[1]], env={})' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: E new-session fd-kept
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "-c", sys.argv[1]], close_fds=False, start_new_session=True)' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: F new-session env-cleared fd-closed
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "-c", sys.argv[1]], env={}, start_new_session=True)' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: G cwd-elsewhere fd-closed
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "-c", sys.argv[1]], cwd="/")' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: H dash fd-kept
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /bin/dash -c "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: I dash fd-closed
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/dash", "-c", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: J bash IFS-empty eval fd-closed
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "-c", "IFS=; eval \"$0\"", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: M truncated PR text (first 100 chars) in arithmetic context
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { "$BASH" -c 't=${0:0:100}; (( t )) || :' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: N restricted bash
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { "$BASH" -r -c "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py

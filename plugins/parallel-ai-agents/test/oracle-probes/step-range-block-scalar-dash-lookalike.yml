@@ -1,0 +1,23 @@
+# R52（#33 verify R51 → R52 宣稱查核 D 組，**R52 自己引進的回歸**）：前一個 step 的 block scalar 內容有一行長得像 dash（`- #123`，markdown 清單），下一個 step 上方有一則 `# LOG-FILTER:` 註解（縮排與 dash 同欄，lint 不算它是 b 的宣告）。
+# R52 第一版放寬往上走的 dash 正規式（認行尾註解、跨空行），把那行內容當成 b 的 dash，b 的範圍吞進那則註解，神諭把 b 真實的外流（`echo "$PR_TITLE"`）判『一致』。修法：用序列 dash 的**欄位**當錨，內容行（縮排更深）不算 dash。
+# （預設模式；`8b45659` 與 `5b5a46d` 判『不一致：繞過』，R52 第一版判『一致』）
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: comment
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: 1
+          body: |
+            Related:
+            - #123
+      # LOG-FILTER: none — the next step prints only a constant
+      - name: b
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          if false; then echo x | python3 scripts/neutralise.py; fi
+          echo "$PR_TITLE"

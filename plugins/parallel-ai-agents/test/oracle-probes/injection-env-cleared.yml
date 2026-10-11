@@ -1,0 +1,16 @@
+# R52（#33 verify R51 DA）：清掉環境的求值者（`env -i /bin/bash -c "$PR_TITLE"`）——R49（`5b5a46d`，哨兵靠環境變數指到的檔）看不到，R50 的 fd 傳輸結構性地補上了。
+# 這張探針把 R50 的這個沒宣稱的收穫釘住：R52 的哨兵改法（fd ∪ 私有字面路徑）不得退掉它。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: evaluator with cleared environment
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/env -i /bin/bash -c "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py

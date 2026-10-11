@@ -14,8 +14,8 @@ R37 時有兩件事它驗不到——要驗它們，未突變的神諭在 fixtur
 
 批次與編號（編號＝下面 `CHECKS` 的順序；每一項的內容在它自己的說明欄，這裡不再複述一份會過期的描述——R43 第 21 列：
 前一版的 docstring 逐批列舉、數字加起來少一項，而且寫著「二十六項」「三十項」卻沒有一個地方真的數過）：
-  R37 1–2；R39 3–8；R40 9–10；R42 11–15；R42 WP7 16–19；R42 WP8 20–26；R44 27–31；R46 32–38；R48 39–45；R50 46–72。
-共 72 項。守衛：`main()` 開頭比對這一行的總數與批次區間的終點是否等於 `len(CHECKS)`，不等就 rc=1——數字與清單不是兩份各自維護的東西。
+  R37 1–2；R39 3–8；R40 9–10；R42 11–15；R42 WP7 16–19；R42 WP8 20–26；R44 27–31；R46 32–38；R48 39–45；R50 46–72；R52 73–95。
+共 95 項。守衛：`main()` 開頭比對這一行的總數與批次區間的終點是否等於 `len(CHECKS)`，不等就 rc=1——數字與清單不是兩份各自維護的東西。
 
 用法：test/oracle_selfcheck.py      rc=0：每一項都照預期；rc=1：至少一項沒有（或上面的數字與 `CHECKS` 不符）。
 """
@@ -135,7 +135,7 @@ CHECKS = [
      [PROBES / "audit-declared-step-or-only-not-in-grammar.yml"], 0, "一致 1"),
     ("稽核與探針的範圍：宣告寫在 YAML 層（step 的註解行）而沒有觸發的 step 同樣不進文法（R48，R47 logic）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
      [PROBES / "audit-declared-step-yaml-level-not-in-grammar.yml"], 0, "一致 1"),
-    ("儀器完整性：改 `ORACLE_*` 環境變數沒有任何作用（`ORACLE_AUD`／`ORACLE_INJECT` 等已不存在；僅剩的 `ORACLE_PRIV` 在開頭被複製進唯讀的 `__orc_priv`，改它沒有作用）——稽核走繼承的 fd，違規照樣被看到（R50 取代 R48 的文字守衛；R49 requirements／logic／security／DA 與 Codex 同報守衛是吸收器）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+    ("儀器完整性：改 `ORACLE_*` 環境變數沒有任何作用（`ORACLE_AUD`／`ORACLE_INJECT` 等已不存在；僅剩的 `ORACLE_PRIV` 在開頭被複製進 `__orc_priv`，改 `ORACLE_PRIV` 環境變數沒有作用；對 `__orc_priv` 本身的指派屬於 PRELUDE 變數那一類，見第 86 項）——稽核走繼承的 fd，違規照樣被看到（R50 取代 R48 的文字守衛；R49 requirements／logic／security／DA 與 Codex 同報守衛是吸收器）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
      [PROBES / "audit-tamper-instrument-var.yml"], 1, "primitive 稽核"),
     ("儀器完整性：相對路徑重導向截斷不到儀器檔（R48，R47 security）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
      [PROBES / "audit-tamper-relative-truncate.yml"], 1, "primitive 稽核"),
@@ -148,7 +148,7 @@ CHECKS = [
      ["--min-comparable", "1", HERE / "fixtures" / "ci-log-filter-good-r37o-module-misc-env-trace-declared-logfilter.yml"], 0, "一致 1"),
     # ── R50（#33 verify R49）：儀器改走繼承的 pipe fd、判決證據優先、行程群組收束、儀器不可信預設 rc=1。以下二十七項（46–72）。 ──
     # R49 找到的、針對稽核檔的路徑式失明法（截到 init、存檔還原、萬用字元覆寫）：稽核已經不是檔案，違規照樣被看到。通道檔仍是路徑（換成 FIFO 判量不到，見下面的 FIFO 項）；R49 的儀器目錄已不存在（`$ORACLE_PRIV` 仍可刪，判量不到〔缺 fin〕，rc=1）；
-    # 哨兵／事件流仍沒有完整性檢查。**這不是防竄改**——步驟與儀器在同一個 shell，盲點類見 `instrument-*.yml` 四張探針（含對照組）對應的項。
+    # 哨兵／事件流仍沒有完整性檢查。**這不是防竄改**——步驟與儀器在同一個信任域，盲點類見 `instrument-*.yml` 四張探針（含對照組）對應的項。
     ("儀器完整性：把稽核截到只剩 init 也截不到——沒有稽核檔（R49 requirements F2）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
      [PROBES / "audit-truncate-to-init.yml"], 1, "primitive 稽核"),
     ("儀器完整性：先存檔、違規、再還原也沒有稽核檔可存（R49 regression）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
@@ -169,7 +169,7 @@ CHECKS = [
      [PROBES / "straggler-keeps-running.yml"], 1, "儀器不可信（R50）"),
     ("主 shell 自己關掉稽核 fd：寫不出 fin，判量不到（儀器不可信）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
      ["--allow-distrust", PROBES / "audit-fd-closed-in-main-shell.yml"], 0, "主 shell 卻沒有 fin"),
-    ("**已知盲點（文件化，不是保證）**：子殼層自己關掉稽核 fd，看不到那個子殼層裡的違規，判一致——這只是「步驟與儀器在同一個 shell」這個類別的一個形狀（類別探針與對照組見 `instrument-*.yml` 對應的項）；若有一天補上，這一項會紅，改它時須一併改 README 與 oracle.py 的措辭（沒有機制連結，靠人記得）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+    ("**已知盲點（文件化，不是保證）**：子殼層自己關掉稽核 fd，看不到那個子殼層裡的違規，判一致——這只是「步驟或它啟動的程式對儀器做的事」這個類別的一個形狀（類別探針與對照組見 `instrument-*.yml` 對應的項）；若有一天補上，這一項會紅，改它時須一併改 README 與 oracle.py 的措辭（沒有機制連結，靠人記得）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
      [PROBES / "audit-fd-closed-in-subshell-known-blind-spot.yml"], 0, "一致 1"),
     # 宣告差分與 YAML 範圍
     ("cwd 裡沒有儀器的裸名：宣告 step 印出目錄項目（echo .*）仍判一致（R49 logic／requirements LOW）", {},
@@ -191,11 +191,11 @@ CHECKS = [
      ["--allow-distrust", PROBES / "audit-stream-overflow.yml"], 0, "流超過 30 位元組"),
     ("有行程握著儀器的資料流卻不在步驟的行程群組裡（`set -m` 的背景工作）：收不到 EOF 也不卡住，判量不到（儀器不可信）（R50）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
      ["--allow-distrust", PROBES / "stream-held-by-other-group.yml"], 0, "資料流沒有收乾淨"),
-    # 已知盲點類（R50，文件化，不是保證）：步驟與儀器同一個 shell、同一個信任域，神諭不是 sandbox。四項：對照組（沒有動儀器時，同樣的違規被看到）＋三張盲點探針（每張釘一組效果，各 step 是不同的到達方式；代表形狀，不是窮舉）。
+    # 已知盲點類（R50，文件化，不是保證）：步驟與儀器在同一個信任域，神諭不是 sandbox（限制有兩面，見 `oracle.py` 的 `FD_INJECT` 一帶；第二面〔runner 模型：fd 與環境的繼承、通道檔的讀法〕的探針是 73–79、82、89、90，第一面〔步驟或它啟動的程式動儀器〕的新探針是 81、86、88；80 是逾時時限的網，83–85、87 是 YAML 範圍歸屬）。四項：對照組（沒有動儀器時，同樣的違規被看到）＋三張盲點探針（每張釘一組效果，各 step 是不同的到達方式；代表形狀，不是窮舉）。
     ("對照組：不動儀器的同一批違規（`printf '%n'`、改寫信任變數、可注入構造、pipefail 關閉）全部判『不一致：繞過』——盲點探針的『一致』『量不到』因此不是違規本來就看不到（R50）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
      [PROBES / "instrument-fd-blind-spots-control.yml"], 1, "不一致 4"),
-    ("**已知盲點類（文件化，不是保證）**：步驟用編號指到稽核或注入哨兵的 fd（單一命令重導向、先存再還原、永久關掉後偽造 fin、經 `/dev/fd/199` 偽造記錄、`exec 197>/dev/null`）——判一致；真的 `--strict` lint 對這五個 step 的寫法全部 RULE-red；經 fd 寫入的外部命令寫法（`tee /dev/fd/199`、`dd of=/dev/fd/199`、`sh -c '… >&199'`）在文法內放行，神諭同樣判一致（垃圾併進子殼層 `fin` 記錄的名稱，主 shell 的 `fin` 完好）。若有一天補上某一種，這一項會紅，改它時須一併改 README 與 oracle.py 的措辭（R50）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
-     [PROBES / "instrument-fd-known-blind-spots.yml"], 0, "一致 5"),
+    ("**已知盲點類（文件化，不是保證）**：步驟用編號指到稽核或注入哨兵的 fd（單一命令重導向、先存再還原、永久關掉後偽造 fin、經 `/dev/fd/199` 偽造記錄）——判一致（R52 前還有 `exec 197>/dev/null`，已補上，見第 88 項）；真的 `--strict` lint 對這四個 step 的寫法全部 RULE-red；經 fd 寫入的外部命令寫法（`tee /dev/fd/199`、`dd of=/dev/fd/199`、`sh -c '… >&199'`）在文法內放行，神諭同樣判一致（垃圾併進子殼層 `fin` 記錄的名稱，主 shell 的 `fin` 完好）。若有一天補上某一種，這一項會紅，改它時須一併改 README 與 oracle.py 的措辭（R50）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "instrument-fd-known-blind-spots.yml"], 0, "一致 4"),
     ("**已知盲點類（文件化，不是保證）**：讓 pipefail 觀測量不到——`exec 198>/dev/null`（事件流）、`$ORACLE_PRIV` 裡的 FIFO、管線後接逾時的外部命令、對 PRELUDE 變數的純量指派——判『量不到』且 rc=0（R42 起的設計，R50 沒改）；真的 `--strict` lint 對前三個 step 的寫法全部 RULE-red，第四個（`__orc_want=x`）在文法內被放行（R50）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
      [PROBES / "instrument-event-and-priv-known-blind-spots.yml"], 0, "量不到 4"),
     ("**已知盲點類（文件化，不是保證）**：不碰 fd 編號——`unset -f printf`、`builtin printf`、`unset __orc_tvn`——步驟動 PRELUDE 裝進同一個 shell 的東西，判一致；真的 `--strict` lint 對這三個 step 全部 RULE-red（`unset`／`builtin` 在文法外）（R50）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
@@ -211,6 +211,56 @@ CHECKS = [
      ["--min-comparable", "1", PROBES / "deep-tree-in-stub-dir.yml"], 0, "一致 1"),
     ("stub `python3 --version` 之後的 `echo \"$PR_TITLE\"`（errexit 的 step）：判『不一致：繞過』，不是被截斷而『量不到』（R50 第五輪 L3）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
      [PROBES / "stub-python-version-errexit.yml"], 1, "不一致：繞過"),
+    # R52（#33 verify R51）：R50 的傳輸改寫是「交換」——注入哨兵（環境變數指到的檔 → fd 197）與通道檔的讀法（`O_NOFOLLOW`＋上限）各有一個方向看不到，R50 的零回歸證據在這兩個維度分母是 0。
+    # 前三項是哨兵的傳輸矩陣（孫行程關 fd／孫行程保留 fd／清掉環境的求值者）；後四項是通道證據（上限之內的證據優先、上限之外看不到不能判一致、符號連結、宣告 step 超量）；第 80 項是逾時路徑的第二次 `communicate` 的時限；第 81、82 項是注入哨兵的 fd 那一半與路徑那一半（各釘一半，刪目錄／關 fd 時另一半仍在）；第 86 項是 `__orc_priv` 不再 `readonly`；第 88、89 項是 `exec 197>/dev/null` 的補上與七格傳輸矩陣；第 90 項是 pipefail 探針被換掉不關注入探針。
+    ("注入哨兵：PR 文字由不繼承 fd 的孫行程（Python `subprocess` 預設 `close_fds=True`）當程式碼執行——判『繞過（注入）』，不是『一致』（R52，R51 regression M2／DA）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "injection-grandchild-closes-fds.yml"], 1, "注入"),
+    ("注入哨兵對照組：孫行程保留 fd（`close_fds=False`）——兩棵樹都判『繞過（注入）』，R52 不得退掉（R52）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "injection-grandchild-keeps-fds.yml"], 1, "注入"),
+    ("注入哨兵：清掉環境的求值者（`env -i /bin/bash -c \"$PR_TITLE\"`）——R49 看不到、R50 的 fd 傳輸補上了；R52 的改法不得退掉這個收穫（R52，R51 DA）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "injection-env-cleared.yml"], 1, "注入"),
+    ("通道證據優先：上限之內已寫進 `$GITHUB_ENV` 的 PR 文字是證據——超量另外報，不蓋掉證據（R52，R51 Codex 1／regression M1）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh"), "ORACLE_STREAM_CAP": "4096"},
+     [PROBES / "channel-overcap-evidence-first.yml"], 1, "跨 step 通道"),
+    ("通道上限的網：PR 文字寫在上限**之外**，神諭看不到，不能判『一致』——判『量不到（儀器不可信：通道檔 … 超過）』（R52 網，R51 logic M／G1）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh"), "ORACLE_STREAM_CAP": "4096"},
+     [PROBES / "channel-overcap-marker-after-cap.yml"], 1, "通道檔 GITHUB_ENV 超過 4096 位元組"),
+    ("通道檔換成指向含 PR 文字之檔案的符號連結（宣告 step）：真 runner 跟隨符號連結，判『繞過（跨 step 通道）』，不是『一致』（R52，R51 regression M1）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "channel-symlink-declared.yml"], 1, "跨 step 通道"),
+    ("宣告 step 寫了 PR 文字再把通道檔灌過上限：證據在上限之內，判『繞過（跨 step 通道）』（R52，R51 regression M1）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh"), "ORACLE_STREAM_CAP": "4096"},
+     [PROBES / "channel-overcap-declared.yml"], 1, "跨 step 通道"),
+    ("逾時路徑的第二次 `communicate` 有時限：逃脫行程（`set -m` 的背景工作）握著 stdout 不放，約 12 秒內結束並判『量不到（儀器不可信：資料流沒有收乾淨）』，不卡到逃脫行程結束（R52 網，R51 logic M／G3）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "escaped-holds-stdout.yml"], 1, "資料流沒有收乾淨"),
+    ("注入哨兵的 fd 那一半：步驟刪掉私有目錄（路徑那一半隨之失效），繼承 fd 的求值者仍被 fd 197 抓到（R52，R51 DA）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "injection-sentinel-fd-half.yml"], 1, "注入"),
+    ("注入哨兵的路徑那一半：孫行程關掉 fd，PR 文字只在 `[ -n $0 ]` 的 `-v` 下標算術裡被求值——只有 `-n -o -v PWD[…]` 那組 payload 命中（R52，R51 DA）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "injection-sentinel-path-half.yml"], 1, "注入"),
+    # R52 C5（#33 verify R51 requirements／security／regression／DA）：bare `-` 的相鄰形狀（83–85、87；86 是 `__orc_priv`，88–90 見上）。前兩項是 R50 修法（只往上吞註解行）漏掉的位置；第三項（dash 行尾註解）在 `5b5a46d` 就有，會讓前一個 step 的真外流被判一致。
+    ("bare `-` 後面先空一行、才是宣告註解：lint 認宣告，神諭的 step 範圍往上吞過空行，判一致（R52，R51 requirements 6／security／regression）", {},
+     ["--min-comparable", "1", PROBES / "bare-dash-blank-after-dash.yml"], 0, "一致 1"),
+    ("宣告註解與第一個鍵之間多一個空行：同上，另一個位置（R52，R51 requirements 6）", {},
+     ["--min-comparable", "1", PROBES / "bare-dash-blank-before-key.yml"], 0, "一致 1"),
+    ("`-  # 註解`（註解在 dash 那一行）：dash 行歸給這個 step，不是前一個 step——前一個 step 的 S-2 外流照樣被看到（R52，R51 regression／DA；`5b5a46d` 就有的缺陷）", {},
+     [PROBES / "dash-line-comment-attribution.yml"], 1, "已知類別 S-2"),
+    ("對 `__orc_priv` 做純量指派不弄瞎稽核：`readonly` 讓子殼層在神諭裡中止、真 runner 照常執行，其後的 `printf '%n'` 判一致；R52 拿掉 `readonly`，判『繞過（primitive 稽核）』（R52，R51 regression）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "priv-assign-keeps-audit.yml"], 1, "primitive 稽核"),
+    ("bare `-` 的 dash 行帶行尾註解、其後才是宣告註解：往上走的 dash 正規式要認得帶註解的 dash 行，宣告才算這個 step 的（R52 網）", {},
+     ["--min-comparable", "1", PROBES / "bare-dash-with-line-comment-declaration.yml"], 0, "一致 1"),
+    ("`exec 197>/dev/null` 關掉注入哨兵的 fd：R50 的已知盲點，R52 起注入哨兵另外走私有字面路徑，判『繞過（注入）』——盲點被補上（R52 收穫；原在 `instrument-fd-known-blind-spots.yml` 的第五個 step）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "injection-sentinel-fd-closed.yml"], 1, "注入"),
+    ("**注入哨兵的傳輸矩陣**（R52 C6，R51 DA）：求值者繼承什麼——環境 × fd × 行程群組 × cwd × shell 方言 × 剖析脈絡 × 文字被截斷 × 受限 shell 共十二格，分母 12，十二格全判『繞過（注入）』；`5b5a46d` 8／12、`8b45659` 5／12（探針檔頭有逐格結果）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "injection-transport-matrix.yml"], 1, "一致 0、不一致 12"),
+    ("pipefail 探針被換掉（文法內的 `__orc_want=x`）不關掉獨立的注入探針：同一群組的 `[ -n $PR_TITLE ]` 注入照樣判『繞過（注入）』（R52 `pfu` 閘門；`8b45659` 判『量不到』rc=0；R51 logic LOW）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "injection-with-pipefail-unmeasured.yml"], 1, "注入"),
+    ("注入 payload 的 fd 那一半在兩個寫入點各自有網：刪掉私有目錄、保留 fd 的求值者，在 `[ -n $0 ]` 的算術脈絡（只有 `_INJECT_SUB`）與 `IFS=` 之後的 `eval`（只有第 4 組）各被抓到（R52 網，R51 DA／E 組）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+     [PROBES / "injection-sentinel-fd-half-contexts.yml"], 1, "一致 0、不一致 2"),
+    # R52 宣稱查核 D 組：step 範圍的欄位錨定。92、93 是 R52 第一版放寬 dash 正規式引進的回歸（內容行長得像 dash）；94 是 `5b5a46d` 就有的缺陷（註解在下一個 step 的 dash 上方被算成前一個 step 的宣告）。
+    ("step 範圍的欄位錨定：前一個 step 的 block scalar 內容有一行 `- #123`（markdown 清單），下一個 step 上方有同欄的 `# LOG-FILTER:` 註解——內容行不是 dash，b 真實的外流照樣被判『繞過』（R52 宣稱查核 D 組；R52 第一版的回歸）", {},
+     [PROBES / "step-range-block-scalar-dash-lookalike.yml"], 1, "不一致：繞過"),
+    ("step 範圍的欄位錨定：前一個 run 續行到單獨一行 `-`、接空行與同欄的 `# LOG-FILTER:` 註解——續行的 `-` 是 run 區塊的內容，不是 dash（R52 宣稱查核 D 組；R52 第一版的回歸）", {},
+     [PROBES / "step-range-continuation-dash-lookalike.yml"], 1, "不一致：繞過"),
+    ("宣告只認縮排比 dash 更深的註解行：寫在下一個 step 的 dash 上方（同欄）的 `# LOG-FILTER:` 不是前一個 step 的宣告，前一個 step 真實的外流照樣被判『繞過』（R52 宣稱查核 D 組；`5b5a46d` 就有的缺陷）", {},
+     [PROBES / "step-range-comment-above-next-dash.yml"], 1, "不一致：繞過"),
+    ("`pfu` 閘門在 lint 擋下（RULE-red）那一側也開：pipefail 探針被換掉的 step 與沒被換掉的對照組，判定相同（一致 2）（R52 宣稱查核 A 組）", {"ORACLE_LINT": str(PROBES / "lint-strict-blocks-all.sh")},
+     [PROBES / "injection-with-pipefail-unmeasured-lint-blocked.yml"], 0, "一致 2"),
 ]
 
 

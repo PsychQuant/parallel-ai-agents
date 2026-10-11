@@ -1,0 +1,17 @@
+# R52 宣稱查核 D 組（pre-existing，`5b5a46d` 就有）：註解寫在**下一個** step 的 dash 上方（最常見的 YAML 寫法），縮排與 dash 同欄——lint 不算它是任何 step 的宣告（lint 檔頭：尾端的空白／註解行不屬於這個 step），
+# 神諭把它算成前一個 step a 的尾端宣告，a 真實的外流被判『一致』。修法：`yaml_declaration` 只認縮排比 dash 更深的註解行。
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: a
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          if false; then echo x | python3 scripts/neutralise.py; fi
+          echo "$PR_TITLE"
+      # LOG-FILTER: none — the next step prints only a constant
+      - name: b
+        run: echo constant

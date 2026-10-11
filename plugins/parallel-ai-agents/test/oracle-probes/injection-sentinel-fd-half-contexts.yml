@@ -1,0 +1,25 @@
+# R52 網（#33 verify R51 DA、E 組，C1/C3）：注入 payload 的 **fd 那一半**在兩個寫入點（短寫法 `_INJECT_S`、程式碼行）各自要有靶；長寫法的 fd 那一半與它們冗餘（EXPECTED_SURVIVE）。步驟先刪掉私有目錄（路徑那一半失效），再讓一個**保留 fd** 的求值者在兩個互斥的脈絡裡求值：
+#   K  `[ -n $0 ]` 的 `-v` 下標算術——只有短寫法（`_INJECT_S`，`>&197`）的 `-n -o -v PWD[…]` 命中（程式碼行在這裡只是 `[` 的參數，不會執行；長寫法的路徑已被刪）；
+#   L  `IFS=` 之後的 `eval`——只有程式碼行的 fd 那一半命中（短寫法與長寫法的 `${IFS}` 變成空字串，`echoMARK…` 不是命令）。
+# 兩格都要判『不一致：繞過（注入）』。求值者用 `"$BASH"`（跟步驟同一支 bash；macOS 的 `/bin/bash` 是 3.2，`[` 沒有 `-v`）。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: K arithmetic context, dir removed, fds kept
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /bin/rm -rf "$ORACLE_PRIV"; /usr/bin/python3 -c 'import sys, subprocess; subprocess.run([sys.argv[2], "-c", "[ -n $0 ]", sys.argv[1]], close_fds=False)' "$PR_TITLE" "$BASH"; } 2>&1 | python3 scripts/neutralise.py
+      - name: L IFS-empty eval, dir removed, fds kept
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /bin/rm -rf "$ORACLE_PRIV"; /usr/bin/python3 -c 'import sys, subprocess; subprocess.run([sys.argv[2], "-c", "IFS=; eval \"$0\"", sys.argv[1]], close_fds=False)' "$PR_TITLE" "$BASH"; } 2>&1 | python3 scripts/neutralise.py

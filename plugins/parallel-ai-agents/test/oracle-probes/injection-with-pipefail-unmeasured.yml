@@ -1,0 +1,17 @@
+# R52（#33 verify R51 logic LOW）：文法內的 `__orc_want=x`（`NAME=值` 在 `--strict` 的文法內，lint 放行）讓 pipefail 探針判『量不到（pipefail 探針被換掉…）』；R50 只對『儀器不可信』開門，
+# 這個『量不到』仍會關掉獨立的注入探針，所以同一個群組裡 `[ -n $PR_TITLE ]` 的注入（`-n -o -v PWD[…]`）從 rc=1 降成 rc=0（`8b45659`）。R52 的 `pfu` 閘門讓注入探針在這一格照跑：判『繞過（注入）』。
+# 對照：沒有 `__orc_want=x` 時同一個群組本來就判『繞過（注入）』（pipefail 探針量得到）。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: pipefail probe replaced, injection still probed
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { __orc_want=x; [ -n $PR_TITLE ]; echo hi; } 2>&1 | python3 scripts/neutralise.py

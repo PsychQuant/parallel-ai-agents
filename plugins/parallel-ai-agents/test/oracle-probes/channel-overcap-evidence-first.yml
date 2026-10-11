@@ -1,0 +1,18 @@
+# R52（#33 verify R51 Codex 1、regression M1、logic LOW）：通道檔超過上限時，**上限之內已讀到的 PR 文字是證據**——前一版 `more()` 的 `if why … elif PR_MARKER in content` 讓問題蓋掉資料，
+# 判『量不到（儀器不可信）』而沒有外流證據。證據優先：判『不一致：繞過（跨 step 通道…）』，超量另外報。要 `ORACLE_STREAM_CAP=4096`（selfcheck 設）。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: channel written then padded past the cap
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          printf 'X=%s\n' "$PR_TITLE" >> "$GITHUB_ENV"
+          head -c 8192 /dev/zero >> "$GITHUB_ENV"
+          { echo hi; } 2>&1 | python3 scripts/neutralise.py

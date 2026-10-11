@@ -1,0 +1,19 @@
+# R52 網（#33 verify R51 logic M、G3）：逃脫行程（`set -m` 讓背景工作離開步驟的行程群組）握著 stdout 不放——逾時路徑的第二次 `communicate(timeout=…)` 必須有時限，
+# 否則神諭卡到逃脫行程結束為止（這裡 40 秒）。未突變：約 12 秒結束，判『量不到（儀器不可信：儀器的資料流沒有收乾淨…）』（預設 rc=1）；
+# 把那一次 `communicate` 改成沒有時限的，神諭卡 40 秒、判『量不到（逾時）』rc=0。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: escaped job holds stdout
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          set -m
+          /bin/sleep 40 &
+          { echo hi; } 2>&1 | python3 scripts/neutralise.py

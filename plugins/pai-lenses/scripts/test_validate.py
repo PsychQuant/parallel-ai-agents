@@ -2484,6 +2484,38 @@ class ValidateTest(unittest.TestCase):
         for fact in ("proc=", "sh=", "python3="):
             self.assertIn(fact, tv, "執行環境的指紋要含 %s" % fact)
 
+    def test_mutation_cache_fingerprint_follows_every_oracle_env_var(self):
+        """R51 DA（R52 C5）：神諭讀的每一個 `ORACLE_*` 環境變數都會改變判定，指紋就得記它——R50 新增的 `ORACLE_STREAM_CAP` 沒進指紋，
+        在 export 了它的 shell 裡跑 `mutation_check.py`，`oracle-inverted` 的突變體會因儀器不可信 rc=1 被記成假「殺掉」，快取檔又進了版控。
+        變數清單從 `oracle.py` 的原始碼讀（`mutation_check.oracle_env_names` 用 AST 掃所有 `ORACLE_*` 形狀的字串常數，不管怎麼讀它），不是這裡再寫一份；名字被拼出來的（`\"ORACLE_\" + \"X\"`）仍然看不到——那一類測試擋不了。另外 `TMPDIR` 也改變神諭的結果（私有路徑含不安全字元時神諭具名退出），一併記進指紋。"""
+        sys.path.insert(0, str(HERE)); import mutation_check as M
+        # 名單的取法本身要涵蓋 `oracle.py` 讀環境變數的各種寫法（R52 宣稱查核 B、D 組：只認一種正規式時，`os.getenv(`／`os.environ[`／單引號／帶數字的名稱讀的變數兩邊都看不到）——
+        # 改用 AST 掃**所有**長得像 `ORACLE_*` 的字串常數（不管怎麼讀它）；唯一抓不到的是名字被拼出來的（`"ORACLE_" + "X"`）。
+        synthetic = ('import os\nfrom os import environ\n'
+                     'a = os.environ.get("ORACLE_FOO")\nb = os.getenv("ORACLE_BAR", "x")\nc = os.environ["ORACLE_B4Z"]\n'
+                     'd = os.environ.get( \'ORACLE_SQ\')\ne = environ.get("ORACLE_FROM")\nf = "ORACLE_" + "SPLIT"\ng = "not ORACLE_PROSE here"\n')
+        self.assertEqual(M.oracle_env_names(synthetic), ["ORACLE_B4Z", "ORACLE_BAR", "ORACLE_FOO", "ORACLE_FROM", "ORACLE_SQ"])
+        names = M.oracle_env_names(M.ORACLE.read_text(encoding="utf-8"))
+        self.assertIn("ORACLE_LINT", names, "讀不到 oracle.py 的環境變數清單——這條測試的前提壞了")
+        self.assertIn("ORACLE_STREAM_CAP", names, "讀不到 oracle.py 的環境變數清單——這條測試的前提壞了")
+        for var in names:
+            keep = os.environ.get(var)
+            try:
+                os.environ[var] = "/x/1"; a = M.tool_versions()
+                os.environ[var] = "/x/2"; b = M.tool_versions()
+            finally:
+                if keep is None: os.environ.pop(var, None)
+                else: os.environ[var] = keep
+            self.assertNotEqual(a, b, "%s 不同，key 必須不同（神諭讀它，會改變判定）" % var)
+        keep = os.environ.get("TMPDIR")
+        try:
+            os.environ["TMPDIR"] = "/x/1"; a = M.tool_versions()
+            os.environ["TMPDIR"] = "/x/2"; b = M.tool_versions()
+        finally:
+            if keep is None: os.environ.pop("TMPDIR", None)
+            else: os.environ["TMPDIR"] = keep
+        self.assertNotEqual(a, b, "TMPDIR 不同，key 必須不同（私有路徑含不安全字元時神諭具名退出）")
+
     def test_mutation_cache_fingerprint_follows_the_oracles_bash_and_sh(self):
         """R41 verify 第 16 列：指紋記的是 PATH 上的 bash，神諭卻優先用 `/opt/homebrew/bin/bash`（`pick_bash`）；`/bin/sh` 記的是
         `realpath`，而 macOS 的 `/bin/sh` 是個轉接程式、realpath 恆為 `/bin/sh`——換了它實際執行的 shell，key 不變。"""

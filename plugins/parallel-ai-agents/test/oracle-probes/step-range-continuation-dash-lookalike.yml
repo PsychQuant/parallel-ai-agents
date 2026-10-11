@@ -1,0 +1,19 @@
+# R52 宣稱查核 D 組（同上，另一個形狀）：前一個 run 以 `--body-file \` 續行到單獨一行 `-`，接空行與同欄的 `# LOG-FILTER:` 註解——續行的 `-` 是 run 區塊的內容，不是 dash。
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: a
+        run: |
+          echo "$GITHUB_SHA" | python3 scripts/neutralise.py | gh pr comment 1 --body-file \
+            -
+
+      # LOG-FILTER: none — the next step prints only a constant
+      - name: b
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          if false; then echo x | python3 scripts/neutralise.py; fi
+          echo "$PR_TITLE"

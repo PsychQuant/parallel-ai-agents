@@ -1,0 +1,17 @@
+# R52（#33 verify R51 DA，C1）：`exec 197>/dev/null` 關掉注入哨兵的 fd——R50 把它列為已知盲點（注入探針看不到，判『一致』）；R52 起注入哨兵另外走 payload 裡的私有字面路徑，路徑那一半不受影響，判『繞過（注入）』。
+# 這是 R52 的收穫，不是盲點：原本在 `instrument-fd-known-blind-spots.yml` 的第五個 step（close-injection-stream），搬來這裡。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: close-injection-stream
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          exec 197>/dev/null
+          { [ -n $PR_TITLE ] && echo "has title"; } 2>&1 | python3 scripts/neutralise.py

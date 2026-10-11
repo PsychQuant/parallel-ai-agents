@@ -1,0 +1,15 @@
+# R52 對照組：同上，但孫行程繼承 fd（`close_fds=False`）——兩棵樹（`5b5a46d`、`8b45659`）都判『繞過（注入）』，R52 的哨兵改法不得退掉它。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: grandchild keeps fds (close_fds=False)
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "-c", sys.argv[1]], close_fds=False)' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py

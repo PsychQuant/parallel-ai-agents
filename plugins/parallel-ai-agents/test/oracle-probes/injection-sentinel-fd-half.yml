@@ -1,0 +1,17 @@
+# R52 網（#33 verify R51 DA，C1/C3）：注入哨兵 = fd 197 ∪ payload 裡的私有路徑。這張釘住 **fd 那一半**：步驟刪掉私有目錄（路徑那一半隨之失效；pipefail 探針的暫存檔也沒了，step 判『量不到（儀器不可信：…沒有 fin）』，注入探針照跑），
+# 再讓一個**繼承 fd** 的 shell 把 PR 文字當程式碼執行——fd 197 仍收得到。沒有這一半，路徑式的失明法（刪目錄）會把哨兵弄瞎（R49 對稽核檔做過的事）。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: deleted private dir, evaluator keeps fds
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          rm -rf "$ORACLE_PRIV"
+          { /bin/bash -c "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py

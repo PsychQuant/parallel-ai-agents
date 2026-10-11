@@ -1,0 +1,18 @@
+# R52（#33 verify R51 regression M1）：宣告 step 把通道檔換成指向一個含 PR 文字的檔案的符號連結——真 runner 讀檔會**跟隨**符號連結，所以 PR 文字進了 `$GITHUB_ENV`。
+# R50 的 `_read_regular` 用 `O_NOFOLLOW` 打不開、整個證據被丟掉：宣告 step 從『繞過』(rc=1) 變『一致』(rc=0)。真 `--strict` lint 放行這個寫法（宣告 step 只看字面的 `$GITHUB_ENV`，L3）。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: declared step points the env file at a file it wrote
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          # LOG-FILTER: none — the log is not produced by this step
+          n=GITHUB_; e=ENV; v=$n$e
+          printf 'X=%s\n' "$PR_TITLE" > "$RUNNER_TEMP/x"
+          ln -sf "$RUNNER_TEMP/x" "${!v}"

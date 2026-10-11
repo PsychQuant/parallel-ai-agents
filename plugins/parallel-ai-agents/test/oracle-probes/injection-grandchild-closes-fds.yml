@@ -1,0 +1,17 @@
+# R52（#33 verify R51 regression M2／DA）：PR 文字由一個**不繼承 fd** 的孫行程當程式碼執行（Python `subprocess` 預設 `close_fds=True`；Node 的 `spawnSync` 只傳 0–2，同理）——
+# R50 把注入哨兵從「環境變數指到的檔」換成「fd 197」之後，這個形狀的哨兵寫不進去，神諭判「一致」（`5b5a46d` 判『繞過（注入）』）。真 `--strict` lint 放行這個寫法（外部命令，L1）。
+# 這張探針用替身 lint（一律放行）跑；R52 起哨兵同時走 fd 197 與一個嵌在 payload 裡的私有字面路徑，任一處有東西就算繞過。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: grandchild with close_fds (python subprocess default)
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "-c", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py

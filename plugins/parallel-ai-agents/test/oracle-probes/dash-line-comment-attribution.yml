@@ -1,0 +1,16 @@
+# R52（#33 verify R51 regression／DA）：`-  # 註解`（註解寫在 dash 那一行）——lint 把下一個 step 的 RULE 報在 dash 行，神諭的 `steps_with_lines` 不把 dash 行算進這個 step，
+# 它落在**前一個 step** 的範圍裡：前一個 step 真實的 S-2 外流因此被判「一致」(rc=0)，對照組（拿掉那行註解）判『不一致：繞過（已知類別 S-2）』(rc=1)。這個缺陷在 `5b5a46d` 就有，不是 R50 的回歸。
+# （預設模式：沒有 `# LINT-ARGS`——`--strict` 會把第一個 step 擋下，歸屬錯了也看不出來）
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: s2 leak through stderr
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: ls "$PR_TITLE" | python3 scripts/neutralise.py
+      -  # a plain comment on the dash line
+        name: plain
+        run: echo hi

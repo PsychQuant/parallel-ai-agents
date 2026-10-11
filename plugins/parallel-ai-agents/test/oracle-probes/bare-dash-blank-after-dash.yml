@@ -1,0 +1,18 @@
+# R52（#33 verify R51 requirements／security／regression）：bare `-` 後面先空一行、才是宣告註解——lint 認宣告（`--strict` rc=0），R50 的 `steps_with_lines` 往上走時只跨過註解行、遇到空行就停，
+# 宣告留在上一個 step 的範圍裡，神諭把這個 step 判「不一致：繞過（primitive 稽核…）」（fail-loud 的誤報；`5b5a46d` 同樣）。往上走要同時跨過空行與註解行。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      -
+
+        # LOG-FILTER: none — the log is not produced by this step
+        name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          [ -v PR_TITLE ] && echo set

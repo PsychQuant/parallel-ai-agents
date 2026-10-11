@@ -1,0 +1,17 @@
+# R52（#33 verify R51 regression）：對 PRELUDE 的 `__orc_priv` 做純量指派（`NAME=值` 在 `--strict` 的文法內，lint 放行）。R50 把它宣告成 `readonly`，而對唯讀變數賦值在非互動 bash 是致命錯誤——
+# 那個子殼層的其餘部分在**神諭裡**中止、真 runner 照常執行，其後的 `printf '%n'` 因此沒被稽核到、判『一致』（`5b5a46d` 對應的 `readonly __orc_audp` 當時被文字守衛判『量不到』）。
+# `readonly` 讓神諭**更瞎**，不是更安全：`__orc_fin` 失敗時本來就判儀器不可信。R52 拿掉 `readonly`：指派照常執行，稽核照樣看到 `%n`（pipefail 探針的暫存檔路徑壞了，那個觀測量不到，但注入探針照跑）。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: priv assignment must not hide the audit
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { __orc_priv=1; printf '%n' Z; } 2>&1 | python3 scripts/neutralise.py

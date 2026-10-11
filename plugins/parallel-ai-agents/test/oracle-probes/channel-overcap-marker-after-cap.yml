@@ -1,0 +1,18 @@
+# R52 網（#33 verify R51 logic M、G1）：PR 文字寫在通道檔的**上限之外**——神諭看不到那段，所以不能判『一致』，要判『量不到（儀器不可信：通道檔超過…）』（預設 rc=1）。
+# 把 `_read_regular` 的超量檢查拿掉，這張探針就變成『一致』rc=0；R50 的網沒有任何一項打到那一行。要 `ORACLE_STREAM_CAP=4096`（selfcheck 設）。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: channel padded past the cap and then written
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          head -c 8192 /dev/zero >> "$GITHUB_ENV"
+          printf 'X=%s\n' "$PR_TITLE" >> "$GITHUB_ENV"
+          { echo hi; } 2>&1 | python3 scripts/neutralise.py

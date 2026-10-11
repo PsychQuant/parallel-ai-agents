@@ -1,0 +1,17 @@
+# R52 網（#33 verify R51）：bare `-` 的 dash 行帶行尾註解（`-  # 說明`），其後才是宣告註解與第一個鍵——往上走的第一道判斷（`if` 的 dash 正規式）要認得帶註解的 dash 行，
+# 否則宣告落在範圍外，神諭把 lint 認的宣告 step 判『不一致：繞過（primitive 稽核）』。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      -  # a note on the dash line
+        # LOG-FILTER: none — the log is not produced by this step
+        name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          [ -v PR_TITLE ] && echo set

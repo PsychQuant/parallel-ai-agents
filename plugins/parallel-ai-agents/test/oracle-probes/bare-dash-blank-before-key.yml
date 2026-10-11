@@ -1,0 +1,17 @@
+# R52（#33 verify R51 requirements）：宣告註解與第一個鍵之間多一個空行——同上，另一個位置。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      -
+        # LOG-FILTER: none — the log is not produced by this step
+
+        name: s
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          [ -v PR_TITLE ] && echo set

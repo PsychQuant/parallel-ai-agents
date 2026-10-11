@@ -1,0 +1,24 @@
+# R52 宣稱查核 A 組（pfu 閘門的對稱性）：lint 擋下（RULE-red）、`__orc_want=x` 讓 pipefail 探針判『量不到』、群組裡 `bash -c "$PR_TITLE"` 把 PR 文字當程式碼執行——擋下是對的，注入探針照跑，判『一致』。
+# R52 第一版只在 lint 放行那一側開 `pfu` 的門：RULE-red 側 P1 判『量不到（pipefail 探針被換掉…）』，同一個 step 拿掉 `__orc_want=x` 的對照 P2 判『一致』。用 `lint-strict-blocks-all.sh` 跑。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: P1 pipefail probe replaced, bash evaluates PR text
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          __orc_want=x
+          { /bin/bash -c "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: P2 control without probe replacement
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /bin/bash -c "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py

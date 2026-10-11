@@ -1,0 +1,17 @@
+# R52（#33 verify R51 regression M1）：宣告 step 寫了 PR 文字再把通道檔灌過上限（`ORACLE_STREAM_CAP=4096`）——證據在上限之內，要判『繞過』，不是『一致』。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: declared step writes the env file then pads it past the cap
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          # LOG-FILTER: none — the log is not produced by this step
+          n=GITHUB_; e=ENV; v=$n$e
+          printf 'X=%s\n' "$PR_TITLE" >> "${!v}"
+          head -c 8192 /dev/zero >> "${!v}"
