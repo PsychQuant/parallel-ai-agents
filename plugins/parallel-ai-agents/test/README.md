@@ -29,6 +29,7 @@ ensemble-* 的程式表面看似都是「LLM 驅動的編排」，不可測。�
 | `codex-call-image.bats` | `../bin/codex-call` 的圖片輸入（`--image`；#87）—— **macOS-only**（另需 `sips` 產生測試圖）。每一則都帶 `--_selftest-payload` 或在送出前就被拒絕：HOME 不隔離憑證，沒帶鉤子又通過驗證的呼叫會真的發 HTTPS |
 | `codex-call-args.bats` | `../bin/codex-call` 的參數解析（#80）：不認得的旗標要報錯、不得當成 PROMPT；`--` 結束旗標；PROMPT 只能給一次 —— **macOS-only**。每一則都帶 `--_selftest-payload`（背景模式那則帶 `--_selftest-sleep`），解析錯放行時也不會發 HTTPS |
 | `codex-call-json-schema.bats` | `../bin/codex-call` 的結構化輸出（`--json-schema`；#92）—— **macOS-only**。請求端用 `--_selftest-payload`、回覆端用 `--_selftest-stream`（把 SSE 事件檔餵進與真實串流相同的收尾邏輯）、背景模式用 `--_selftest-sleep`；每一則都帶鉤子或在送出前就被拒絕，不會發 HTTPS |
+| `codex-call-stream-framing.bats` | `../bin/codex-call` 的 SSE 分幀（#28）：切在 UTF-8 字中間、切在事件中間、最後一個事件沒有結尾空行、壞位元組，以及終端事件政策不變 —— **macOS-only**。每一則都帶 `--_selftest-stream`，用 `--_selftest-cuts` 依位元組位移切段重播（`all` 在同一個程序內窮舉每個切點），不會發 HTTPS |
 | `codex-call-detach.bats` | `../bin/codex-call` 的背景模式（`--detach`／`--poll`／`--abort`／`--force-reap`；#37）—— **macOS-only**、95 case；全部走同一條 detach／lock／claim／poll 路徑，只用 `--_selftest-*` 旗標把 HTTP 換成 sleep＋寫檔（任何沒帶 selftest 旗標的 detach 都會真的發 HTTPS）。**不可與另一組 bats 在同一 checkout 並行**（`own_workers` 斷言是 checkout 級） |
 | `lint-bats.sh` | 護欄：bats 檔內不得有裸 `!` 斷言（errexit 不觸發，斷言變 no-op；round 6 RC11）。`--selftest` 對 `fixtures/lint-bats-bad.bats` 必須拒絕 |
 | `lint-changelog-counts.sh` | 護欄：CHANGELOG 每個「N 個 case（`grep -c "^@test" <file>`）」宣稱，N 必須等於那條命令此刻的輸出（RC13 第五度復發後機械化，#37 round 10）。`--selftest` 對 `fixtures/changelog-count-bad.md` 拒絕 |

@@ -218,9 +218,14 @@ run 狀態（**封閉列舉，五種**，round 9 Stage B 之後只有一個目�
 - `--_selftest-payload`（#87）：同步模式專用。跑完參數解析、prompt 讀取與圖片驗證，把**將要送出**的
   request body 以 sorted-key JSON 印到 stdout、exit `0`；不讀 auth、不發 HTTP。與背景模式旗標並用 → exit `1`。
   它的位置就在圖片驗證之後、讀 auth 之前，所以「壞圖被拒時沒印出 payload」同時證明驗證先於送出。
-- `--_selftest-stream FILE`（#92）：同步模式專用。把一份 SSE 事件檔餵進與真實串流相同的 `feed()` 與
-  `finalizeOutput()`（含 `--json-schema` 的回覆端檢查），照常寫 `--output` 或 exit 非零；不讀 auth、不發 HTTP。
-  與背景模式旗標並用 → exit `1`。
+- `--_selftest-stream FILE`（#92）：同步模式專用。把一份 SSE 事件檔（以位元組讀入）餵進與真實串流相同的
+  `ingest()`、`complete(transportError:)`（以一個正常結束的 200 串流重播：最後一個沒有結尾空行的事件也會
+  處理，#28）與 `finalizeOutput()`（含 `--json-schema` 的回覆端檢查），照常寫 `--output` 或 exit 非零；
+  不讀 auth、不發 HTTP。與背景模式旗標並用 → exit `1`。
+- `--_selftest-cuts N,N,…|all`（#28）：只能與 `--_selftest-stream` 並用（否則 exit `1`）。`N,N,…` 依位元組
+  位移把事件檔切段，依序餵進 `ingest()`，重現 TCP 切在字元或事件中間；位移必須是 `1..<檔案大小` 的整數、
+  嚴格遞增，否則 exit `1`（不夾到範圍內）。`all` 在同一個程序內對每個單一切點各重播一次，結果
+  （累積文字、拒答、終端狀態、錯誤）與不切時不同就 exit `1` 並印出位移；全部相同就照不切的結果繼續。
 
 ## 8. 穩定性承諾
 

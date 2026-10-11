@@ -287,7 +287,7 @@ func clampToBudget(_ s: String, maxBytes: Int = 2000, maxLines: Int = 20) -> Str
 
 final class StreamCollector: NSObject, URLSessionDataDelegate {
     var accumulated = ""
-    var buffer = ""
+    var buffer = Data()   // raw bytes: events are cut on bytes, never on a decoded chunk (#28)
     var statusCode: Int = 0
     var streamError: Error?
     let done = DispatchSemaphore(value: 0)
@@ -310,33 +310,68 @@ final class StreamCollector: NSObject, URLSessionDataDelegate {
             firstBytes = (firstBytes ?? Data()) + data
             return
         }
-        // KNOWN GAP (#28): `didReceive` delivers Data on TCP availability, with no
-        // alignment to UTF-8 codepoint boundaries. A cut mid-character makes this
-        // decode return nil and drops the WHOLE chunk — every complete event in it
-        // included — and the bytes are not retained for the next chunk. With this
-        // plugin defaulting to CJK output that is routine, not a corner case. Fixing
-        // it needs byte-level buffering; tracked in #28 with the rest of the framing.
-        guard let chunk = String(data: data, encoding: .utf8) else { return }
-        feed(chunk)
+        ingest(data)
     }
 
-    // Split the buffered text into SSE events. Separate from `didReceive` so `--_selftest-stream` (#92)
-    // replays a capture through exactly the code a live stream goes through.
-    func feed(_ chunk: String) {
-        buffer += chunk
-        while let range = buffer.range(of: "\n\n") {
-            let event = String(buffer[buffer.startIndex..<range.lowerBound])
+    // The one entry point for received bytes: a live stream's didReceive and the --_selftest-stream
+    // replay (#28) both come through here, so a replay cut at any byte offset exercises exactly the
+    // framing a live stream goes through.
+    //
+    // `didReceive` delivers Data on TCP availability, with no alignment to UTF-8 codepoint boundaries or
+    // to SSE event boundaries. Decoding each chunk on its own (the pre-#28 code) returned nil whenever a
+    // cut fell inside a character and dropped the whole chunk — every complete event in it included —
+    // which with CJK output is routine: a long structured answer lost its response.completed event and
+    // failed with "no completion event", and a lost delta could leave a shorter but still valid answer.
+    // So bytes are buffered as they arrive and only complete events are decoded.
+    func ingest(_ data: Data) {
+        buffer.append(data)
+        drain()
+    }
+
+    private static let eventSeparator = Data([0x0A, 0x0A])   // "\n\n"
+
+    // Split the buffered bytes into SSE events on the byte-level separator.
+    func drain() {
+        while let range = buffer.range(of: StreamCollector.eventSeparator) {
+            let event = buffer.subdata(in: buffer.startIndex..<range.lowerBound)
             buffer.removeSubrange(buffer.startIndex..<range.upperBound)
-            processEvent(event)
-            // KNOWN GAP (#28): this bail aborts the drain within a single callback,
-            // so sibling events already in `buffer` go unprocessed. Left as-is here
-            // deliberately — changing it only pays off together with the terminal-event
-            // policy, and that policy still lacks the backend trace it depends on.
+            // Lossy on purpose: the separator is ASCII, so a complete event is complete UTF-8 unless its
+            // bytes really are broken — and then a broken byte costs one U+FFFD, not the whole event. Do
+            // not read this as "no encoding errors can happen here".
+            processEvent(String(decoding: event, as: UTF8.self))
+            // KNOWN GAP (#28, not fixed by the framing change): this bail aborts the drain within a
+            // single callback, so sibling events already in `buffer` go unprocessed. Left as-is
+            // deliberately — changing it only pays off together with the terminal-event policy, and
+            // that policy still lacks the backend trace it depends on. CRLF-separated events
+            // ("\r\n\r\n") are likewise still not recognised; no backend is known to send them.
             if streamError != nil { return }
         }
     }
 
+    // End of a successful stream: a last event the server closed without a trailing blank line is
+    // still an event. Only while no error is recorded — processing a trailing error/failed event after
+    // the bail would silently change which terminal event wins, which is the open policy question.
+    func finishStream() {
+        guard streamError == nil else { return }
+        drain()
+        guard streamError == nil else { return }
+        let rest = String(decoding: buffer, as: UTF8.self)
+        buffer.removeAll()
+        if !rest.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { processEvent(rest) }
+    }
+
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        complete(transportError: error)
+        done.signal()
+    }
+
+    // End-of-stream handling, shared by the delegate above and the --_selftest-stream replay so the
+    // replay exercises the same completion path a live stream takes (#28).
+    func complete(transportError error: Error?) {
+        // Flush the last event only for a clean 200 finish. With a transport error the call fails anyway,
+        // and processing a residual error event first would replace that error — losing, for example,
+        // the NSURLErrorTimedOut classification.
+        if statusCode == 200 && error == nil { finishStream() }
         if statusCode != 200 {
             let body = firstBytes.flatMap { String(data: $0, encoding: .utf8) } ?? "(no body)"
             streamError = NSError(domain: "codex-call", code: statusCode,
@@ -344,7 +379,6 @@ final class StreamCollector: NSObject, URLSessionDataDelegate {
         } else if let err = error, streamError == nil {
             streamError = err
         }
-        done.signal()
     }
 
     func processEvent(_ event: String) {
@@ -1561,6 +1595,7 @@ struct Args {
     var jsonSchema: String?               // --json-schema FILE (#92); synchronous or --detach
     var selftestPayload = false           // hidden test hook (#87): print the request body, send nothing
     var selftestStream: String?           // hidden test hook (#92): replay an SSE capture, send nothing
+    var selftestCuts: String?             // hidden test hook (#28): split the replayed capture at byte offsets
     var selftestErrorExtract: String?   // hidden test hook (#25); see --selftest-error-extract
     var selftestClassify: (String, Int)?  // hidden test hook (R4-L1): --_selftest-classify DOMAIN CODE
     var selftestPrelockSleep: Int?        // hidden test hook (Codex R4 #3): worker sleeps BEFORE locking
@@ -1594,10 +1629,14 @@ func parseArgs() -> Args {
         // Hidden test hook (#87): prints the request body that would be sent (sorted-key JSON) and
         // exits 0 — no auth read, no HTTP. Same reason as --selftest-error-extract below.
         case "--_selftest-payload": a.selftestPayload = true
-        // Hidden test hook (#92): replays an SSE capture through the same feed() / finalizeOutput() as a
+        // Hidden test hook (#92): replays an SSE capture through the same ingest() / finalizeOutput() as a
         // live stream and exits — no auth read, no HTTP. The post-stream checks are otherwise unreachable
         // from bats for the same reason as above.
         case "--_selftest-stream": a.selftestStream = next()
+        // Hidden test hook (#28), only with --_selftest-stream: "N,N,..." splits the capture at those byte
+        // offsets before replaying it; "all" replays it once per possible single cut, in-process, and
+        // dies naming the first offset whose result differs from the uncut replay.
+        case "--_selftest-cuts": a.selftestCuts = next()
         // Hidden test hook (#25) — deliberately absent from --help. Feeds one SSE
         // event payload through extractErrorMessage and prints the result; sends no
         // HTTP. Exists because CODEX_URL is a hardcoded constant with no injection
@@ -1708,6 +1747,7 @@ if a.jsonSchema != nil && (a.workerId != nil || a.pollId != nil || a.abortId != 
 }
 if a.selftestPayload && modes > 0 { die("--_selftest-payload is only supported in synchronous mode") }
 if a.selftestStream != nil && modes > 0 { die("--_selftest-stream is only supported in synchronous mode") }
+if a.selftestCuts != nil && a.selftestStream == nil { die("--_selftest-cuts requires --_selftest-stream") }
 if a.selftestSleep != nil && !a.detach { die("--_selftest-sleep requires --detach") }
 // R3-L9: the test-only grace override must not be reachable from a production detach.
 if a.selftestGrace != nil && a.selftestSleep == nil { die("--_selftest-grace requires --_selftest-sleep") }
@@ -1781,11 +1821,46 @@ if a.selftestPayload {
 }
 
 if let capture = a.selftestStream {
-    guard let raw = try? String(contentsOfFile: capture, encoding: .utf8) else {
+    // Bytes, not a String: a String read rejects invalid UTF-8 outright, so the decode path a live
+    // stream takes on a broken byte would be untestable (#28).
+    guard let raw = FileManager.default.contents(atPath: capture) else {
         die("--_selftest-stream: cannot read \(capture)")
     }
-    let collector = StreamCollector()
-    collector.feed(raw)
+    func replay(_ cuts: [Int]) -> StreamCollector {
+        let c = StreamCollector()
+        c.statusCode = 200                       // a capture replays as a 200 stream
+        var start = 0
+        for end in cuts + [raw.count] { c.ingest(raw.subdata(in: start..<end)); start = end }
+        c.complete(transportError: nil)          // ...that finished cleanly, through the live completion path
+        return c
+    }
+    // What a replay produced, for comparing a cut replay with the uncut one.
+    func outcome(_ c: StreamCollector) -> [String] {
+        [c.accumulated, c.refusal, c.terminalStatus ?? "-", c.incompleteReason ?? "-",
+         c.streamError?.localizedDescription ?? "-"]
+    }
+    var cuts: [Int] = []
+    if let spec = a.selftestCuts {
+        if spec == "all" {
+            let baseline = outcome(replay([]))
+            for off in stride(from: 1, to: raw.count, by: 1) where outcome(replay([off])) != baseline {
+                die("--_selftest-cuts all: a cut at byte \(off) changes the result")
+            }
+        } else {
+            // Refuse anything malformed instead of clamping it: a clamped cut lets a test pass vacuously.
+            for item in spec.split(separator: ",", omittingEmptySubsequences: false) {
+                guard !item.isEmpty, item.allSatisfy({ $0.isASCII && $0.isNumber }), let n = Int(item) else {
+                    die("--_selftest-cuts: '\(item)' is not a byte offset (expected N,N,... or all)")
+                }
+                guard n >= 1 && n < raw.count else {
+                    die("--_selftest-cuts: \(n) is outside 1..<\(raw.count)")
+                }
+                guard n > (cuts.last ?? 0) else { die("--_selftest-cuts: offsets must be strictly increasing") }
+                cuts.append(n)
+            }
+        }
+    }
+    let collector = replay(cuts)
     if let err = collector.streamError { die(err.localizedDescription) }
     do { try finalizeOutput(collector, outputFile: output, structured: jsonSchema != nil) }
     catch { die(error.localizedDescription) }
