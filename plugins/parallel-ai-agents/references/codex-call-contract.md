@@ -11,7 +11,8 @@
 
 ```
 codex-call --output FILE [--model M] [--effort E] [--service-tier T] [--max-time S]
-           [--instructions TEXT] [--image FILE]... [--prompt-file FILE | PROMPT | -- PROMPT]
+           [--instructions TEXT] [--image FILE]... [--json-schema FILE]
+           [--prompt-file FILE | PROMPT | -- PROMPT]
 ```
 
 - 阻塞直到回應完成或 `--max-time` 到期。stdout 無輸出；stderr 有 `[codex-call] …` 診斷。
@@ -24,6 +25,25 @@ codex-call --output FILE [--model M] [--effort E] [--service-tier T] [--max-time
   （看檔頭不看副檔名）；檔頭對但解不開。長邊超過 2048 px 時在記憶體內縮到長邊 2048（JPEG 維持 JPEG，
   其餘輸出 PNG），stderr 記一行 `downscaled WxH → wxh`。與 `--detach`／`--poll`／`--abort`／`--force-reap`
   並用 → exit `1`：worker 從 `meta.json`＋`prompt.txt` 重建請求，那裡不帶圖，接受它就等於默默送出沒有圖的請求。
+- **`--json-schema FILE`（v2.25.0+，#92；不可重複，同步模式與 `--detach` 皆可）**：把回覆格式鎖在 API 層。
+  請求的 `text` 變成 `{"verbosity":"medium","format":{"type":"json_schema","name":"codex_call_output",
+  "schema":<檔案原文>,"strict":true}}`。**schema 以原文嵌入**：驗證過的檔案文字（去掉開頭 BOM 與前後空白）
+  直接放進請求，property 順序與數值寫法都不變——strict 輸出依 schema 順序生成欄位，順序屬於 caller 的要求。
+  `name` 固定、`strict` 固定開啟，沒有關閉的旗標（非 strict 只是提示，等於沒鎖）。送出前驗證，任一項不符
+  exit `1`、**在讀 auth 之前**、`--detach` 下也不建立 run：檔案不存在／不可讀／是目錄；不是合法 JSON（含空檔與尾逗號——
+  Foundation 的 `JSONSerialization` 接受尾逗號，原文又是原樣送出，所以另外掃描字串外的尾逗號）；頂層不是 object（陣列或純量）；旗標給了兩次。schema 是否符合 strict 模式的規則由後端判定，錯誤經既有的
+  HTTP 錯誤路徑轉出（截至 500 字；實測 `code: invalid_json_schema`，訊息指出違反哪一條）。
+  回覆端**只接受狀態為 `completed` 的回覆**：拒答（`response.refusal.delta`）、狀態 `incomplete`、沒收到完成事件
+  或其他狀態、輸出不是合法 JSON（含尾逗號）、或不是 JSON object → exit 非零、**不寫檔**。`response.completed` 的
+  `status` 欄位缺少或不是字串時，依事件類型視為 completed（`response.incomplete` 同理視為 incomplete）。
+  重複的 key（例如兩個同名 property）在 JSON 語法上合法，本地不擋；以哪一個為準由後端決定。訊息引用的拒答原文、reason 與輸出
+  片段經 `sanitizeBackendText`、`stripInvisibleUnicode`、`clampToBudget`，與背景模式的 status 行同一套。
+  「不寫檔」指本次不寫；`--output` 若已有舊檔，本工具不去刪它，與其他失敗路徑一致。
+  **已知限制（#28）**：UTF-8 chunk 丟失仍在——丟在 JSON 字串值中間時，剩下的文字仍是合法 JSON、會被接受；
+  丟掉完成事件時則因收不到 `completed` 而失敗。最後一個 SSE 事件若沒有結尾空行也會被丟掉，丟的是完成事件時
+  同樣是誤拒（失敗方向，不會誤收）。與 `--poll`／`--abort`／`--force-reap` 並用 → exit `1`。
+  **不帶此旗標時**，請求的 `text` 仍是 `{"verbosity":"medium"}`，回覆端的行為也不變（拒答仍落到空輸出規則，
+  見 #93）。
 - **不帶 `--image` 時請求結構不變**：仍是一則 user message、裡面恰好一個 `input_text`。「不變」指 JSON
   結構，不是位元組——request body 是 Swift `Dictionary` 經 `JSONSerialization` 序列化，key 順序本來就
   每次執行不同（實測同一份 body 連跑五次得到五種順序），所以位元組在 #87 之前就不是固定的。
@@ -31,8 +51,8 @@ codex-call --output FILE [--model M] [--effort E] [--service-tier T] [--max-time
   `unknown option: <flag>`，在讀 prompt、讀 auth、建立任何 run 之前。以 `-` 開頭的 PROMPT 放在 `--` 之後。
   PROMPT 引數與 `--prompt-file` 同時給 → exit `1`（以前 `--prompt-file` 默默勝出）。修之前不認得的旗標
   會變成 PROMPT：搭配 stdin 時旗標字串**取代**整份 stdin prompt、rc=0，模型沒看到 caller 送的內容。
-- **下游偵測方式**：`codex-call --help` 的輸出含 `--image FILE` 即支援。舊版會把不認得的旗標當成 PROMPT
-  吞掉且 rc=0（#80），所以不能「傳了再看有沒有報錯」。
+- **下游偵測方式**：`codex-call --help` 的輸出含 `--image FILE` 即支援圖片、含 `--json-schema FILE` 即支援
+  結構化輸出。舊版會把不認得的旗標當成 PROMPT 吞掉且 rc=0（#80），所以不能「傳了再看有沒有報錯」。
 
 ## 2. 背景模式（v2.23.0+，#37）
 
@@ -51,6 +71,9 @@ codex-call --detach [--output FILE] [同步模式的其餘旗標] [--prompt-file
 - **readiness handshake**：`--detach` 只在 worker **已持鎖、或已寫出 `status`** 之後才印出 id（上限 20 s；逾時 → **先 SIGTERM／SIGKILL worker 並等它退出、確認無人持鎖**，再清 run（清除失敗印 warning）；worker 殺不死 → run 原地保留、exit 1 並說明；worker 先退出且無 status → 同步 exit 1、不印 id、run 已清。stderr 一律附 `worker.log` 尾段——**真的是尾段**：從檔尾有界讀取最後 12 行（`O_NOFOLLOW`＋一般檔案檢查＋`O_NONBLOCK`，FIFO／symlink 到裝置不會讓 poll 阻塞或無界成長，round 5 S5），經 sanitizer 並剝除 bidi／Tags／BOM（S10）；worker 的每一條提早退出都會先寫一行原因，所以尾段不會是空的（round 4 R4-3b、Codex #3／#14）。「還沒開始」與「已經跑完」是**兩個不同的答案**（round 3 的第一版 handshake 把它們壓成同一個，DA 實測 11/12 把瞬間完成的 run 判成沒啟動並刪掉結果）。
 - 因此 caller 拿到 id 之後看得到的 run 狀態是**封閉列舉的兩種：持鎖中／已結束**。「正在啟動」對 caller 不可見。**不得依性質相似類推第三種**——round 3 的 L1（abort 在啟動視窗漏殺）正是從沒列出的那一種掉出去的。
 - `--output` **選填**。省略時輸出寫到 `<base>/<id>.out.md`（見 §3），**該檔由本工具擁有**：任何非 `DONE` 的 terminal 狀態（FAILED / TIMEOUT / ABORTED）都會把它清掉。給定時 worker 直接寫該路徑，**不經任何中介或搬移**，且本工具**永不**刪除 caller 給的檔案（半截輸出留給 caller 處置）。**`DONE <path>` 印出之後，該檔（不論預設或 caller 給定）轉為 caller 所有**：本工具不再碰它，也沒有任何回收機制——caller 讀完必須自己刪（engine 的 prompt 明寫）。唯一例外是 §4 的 24 h GC：落在 base 且命名為 `<id>.out.md` 形狀的檔案（含 caller 刻意把 `--output` 指到那裡的情況）會被當最後防線回收——那不是 caller 可以依賴的回收（round 4 S8）。
+- `--json-schema FILE`（#92）可與 `--detach` 並用：schema 原文寫進 `meta.json` 的 `json_schema`（字串），worker
+  重建請求時原樣帶上。該欄位存在但不是合法 JSON object → worker 以 `1 meta.json json_schema is not a JSON object` 結束，
+  **不會**改送一個沒有 schema 的請求。`--image` 不支援背景模式，因為圖片不進 `meta.json`；schema 是小型 JSON，可以。
 - `--max-time` 在 `--detach` 下必須是**正整數**（垃圾值 / `0` / 負數 → exit 1、不建 run）。同步路徑維持歷史行為（§1 逐 byte 不變），不加驗證。
 - worker 是**單一程序**（本 script 以 `--_worker <id>` 重新執行自己，路徑為 `argv[0]` 的 realpath，不依賴 cwd / PATH），Foundation 的 `Process` 讓 worker 成為**自己的 process-group leader**，終端 SIGHUP 只送前景 process group，所以 launcher 的終端斷線不會殺到 worker；**不做 `setsid()`**——對 group leader 呼叫 `setsid(2)` 依定義必失敗 EPERM（round 5 L8 實測 100%），「自成 session」從未成立也不承諾；stdio 全部導向 run 目錄內的檔案，**不繼承** caller 的 pipe（否則 `$(codex-call --detach …)` 會阻塞到 run 結束）。
 
@@ -195,6 +218,9 @@ run 狀態（**封閉列舉，五種**，round 9 Stage B 之後只有一個目�
 - `--_selftest-payload`（#87）：同步模式專用。跑完參數解析、prompt 讀取與圖片驗證，把**將要送出**的
   request body 以 sorted-key JSON 印到 stdout、exit `0`；不讀 auth、不發 HTTP。與背景模式旗標並用 → exit `1`。
   它的位置就在圖片驗證之後、讀 auth 之前，所以「壞圖被拒時沒印出 payload」同時證明驗證先於送出。
+- `--_selftest-stream FILE`（#92）：同步模式專用。把一份 SSE 事件檔餵進與真實串流相同的 `feed()` 與
+  `finalizeOutput()`（含 `--json-schema` 的回覆端檢查），照常寫 `--output` 或 exit 非零；不讀 auth、不發 HTTP。
+  與背景模式旗標並用 → exit `1`。
 
 ## 8. 穩定性承諾
 
