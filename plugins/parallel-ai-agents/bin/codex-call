@@ -292,6 +292,10 @@ final class StreamCollector: NSObject, URLSessionDataDelegate {
     var streamError: Error?
     let done = DispatchSemaphore(value: 0)
     var firstBytes: Data?
+    // #92: recorded for --json-schema callers only. The default path does not act on them (that is #93).
+    var refusal = ""
+    var terminalStatus: String?
+    var incompleteReason: String?
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask,
                     didReceive response: URLResponse,
@@ -313,6 +317,12 @@ final class StreamCollector: NSObject, URLSessionDataDelegate {
         // plugin defaulting to CJK output that is routine, not a corner case. Fixing
         // it needs byte-level buffering; tracked in #28 with the rest of the framing.
         guard let chunk = String(data: data, encoding: .utf8) else { return }
+        feed(chunk)
+    }
+
+    // Split the buffered text into SSE events. Separate from `didReceive` so `--_selftest-stream` (#92)
+    // replays a capture through exactly the code a live stream goes through.
+    func feed(_ chunk: String) {
         buffer += chunk
         while let range = buffer.range(of: "\n\n") {
             let event = String(buffer[buffer.startIndex..<range.lowerBound])
@@ -353,6 +363,12 @@ final class StreamCollector: NSObject, URLSessionDataDelegate {
         switch type {
         case "response.output_text.delta":
             if let delta = json["delta"] as? String { accumulated += delta }
+        case "response.refusal.delta":
+            if let delta = json["delta"] as? String { refusal += delta }
+        case "response.completed", "response.incomplete":
+            let r = json["response"] as? [String: Any]
+            terminalStatus = (r?["status"] as? String) ?? (type == "response.incomplete" ? "incomplete" : nil)
+            incompleteReason = (r?["incomplete_details"] as? [String: Any])?["reason"] as? String
         case "error", "response.failed":
             // Unconditional assignment — same as before #25. Which terminal event should
             // win when several arrive is a policy question that two attempts (#25 R1
@@ -426,9 +442,52 @@ func loadImageInput(_ path: String) -> [String: Any] {
     return ["type": "input_image", "image_url": "data:\(outMime);base64,\((out as Data).base64EncodedString())"]
 }
 
-// The request body. With no images the user message is exactly one input_text item, as before #87.
+// MARK: - Structured output (#92)
+
+// The schema goes into `text.format` as a strict json_schema, so the backend — not the caller — enforces
+// the shape. `name` is required by the API (a-z A-Z 0-9 _ -, at most 64) and means nothing to the caller,
+// so it is fixed; the codex CLI's `--output-schema` does the same. `strict` is always on: a non-strict
+// schema is only a hint, which is what callers already had by asking for JSON in the prompt.
+let JSON_SCHEMA_NAME = "codex_call_output"
+
+// Read and check the schema file before anything is sent (and before --detach creates a run). Only the
+// file's own shape is checked here; whether it satisfies strict mode is the backend's call, and its
+// error (`invalid_json_schema`, naming the rule) reaches the caller unchanged.
+func loadJsonSchema(_ path: String) -> [String: Any] {
+    let fm = FileManager.default
+    var isDir: ObjCBool = false
+    guard fm.fileExists(atPath: path, isDirectory: &isDir), !isDir.boolValue, fm.isReadableFile(atPath: path),
+          let data = fm.contents(atPath: path)
+    else { die("--json-schema \(path): cannot read schema (missing, unreadable, or a directory)") }
+    guard let obj = try? JSONSerialization.jsonObject(with: data) else {
+        die("--json-schema \(path): not valid JSON")
+    }
+    guard let schema = obj as? [String: Any] else {
+        die("--json-schema \(path): the schema must be a JSON object (the top level is \(obj is [Any] ? "an array" : "not an object"))")
+    }
+    return schema
+}
+
+// Why a structured result must not be written, or nil when it may be. A refusal or a truncated response
+// is reported as such; an empty result is left to the general empty-output rule; anything else must parse.
+func structuredOutputProblem(text: String, refusal: String, terminalStatus: String?, incompleteReason: String?) -> String? {
+    let said = refusal.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !said.isEmpty { return "Codex refused to answer: \(said.prefix(500))" }
+    if terminalStatus == "incomplete" {
+        return "Codex response ended incomplete (reason: \(incompleteReason ?? "not given")) — the structured output is cut short; refusing to write it"
+    }
+    if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return nil }
+    guard let data = text.data(using: .utf8), (try? JSONSerialization.jsonObject(with: data)) != nil else {
+        return "Codex output is not valid JSON despite --json-schema — refusing to write it (it begins: \(text.prefix(200)))"
+    }
+    return nil
+}
+
+// The request body. With no images the user message is exactly one input_text item, as before #87;
+// with no schema `text` is exactly {verbosity: medium}, as before #92.
 func buildRequestBody(prompt: String, model: String, effort: String, serviceTier: String,
-                      instructions: String, images: [[String: Any]]) -> [String: Any] {
+                      instructions: String, images: [[String: Any]],
+                      jsonSchema: [String: Any]? = nil) -> [String: Any] {
     var body: [String: Any] = [
         "model": model,
         "store": false,
@@ -441,6 +500,10 @@ func buildRequestBody(prompt: String, model: String, effort: String, serviceTier
         "parallel_tool_calls": true,
         "reasoning": ["effort": effort, "summary": "auto"],
     ]
+    if let schema = jsonSchema {
+        body["text"] = ["verbosity": "medium",
+                        "format": ["type": "json_schema", "name": JSON_SCHEMA_NAME, "schema": schema, "strict": true]]
+    }
     // Translate legacy/friendly names to backend wire values.
     // Mirrors codex-rs ServiceTier::request_value(): Fast→priority, Flex→flex.
     // Backend rejects "fast" with HTTP 400; codex CLI does this translation internally.
@@ -458,7 +521,7 @@ func buildRequestBody(prompt: String, model: String, effort: String, serviceTier
 
 func streamCodex(prompt: String, outputFile: String, model: String, effort: String,
                  serviceTier: String, maxTime: Int, instructions: String,
-                 images: [[String: Any]] = []) throws {
+                 images: [[String: Any]] = [], jsonSchema: [String: Any]? = nil) throws {
     var auth = try loadAuthRaw()
     try refreshIfNeeded(&auth)
     guard let tokens = auth["tokens"] as? [String: Any],
@@ -468,7 +531,7 @@ func streamCodex(prompt: String, outputFile: String, model: String, effort: Stri
     let accountId = (tokens["account_id"] as? String) ?? ""
 
     let body = buildRequestBody(prompt: prompt, model: model, effort: effort, serviceTier: serviceTier,
-                                instructions: instructions, images: images)
+                                instructions: instructions, images: images, jsonSchema: jsonSchema)
 
     var req = URLRequest(url: CODEX_URL, timeoutInterval: TimeInterval(maxTime))
     req.httpMethod = "POST"
@@ -495,6 +558,18 @@ func streamCodex(prompt: String, outputFile: String, model: String, effort: Stri
                       userInfo: [NSLocalizedDescriptionKey: "Hard timeout after \(maxTime)s"])
     }
     if let err = collector.streamError { throw err }
+    try finalizeOutput(collector, outputFile: outputFile, structured: jsonSchema != nil)
+}
+
+// What happens after the stream ends, shared by a live call and `--_selftest-stream` (#92).
+func finalizeOutput(_ collector: StreamCollector, outputFile: String, structured: Bool) throws {
+    // #92: a --json-schema caller is about to parse the file as JSON, so a refusal, a truncated
+    // response or text that does not parse must fail here instead of being written.
+    if structured, let why = structuredOutputProblem(text: collector.accumulated, refusal: collector.refusal,
+                                                     terminalStatus: collector.terminalStatus,
+                                                     incompleteReason: collector.incompleteReason) {
+        throw NSError(domain: "codex-call", code: 422, userInfo: [NSLocalizedDescriptionKey: why])
+    }
 
     // Fail-closed on empty output: a 200 stream with no text deltas (model emitted only reasoning,
     // an aborted stream before the first delta, etc.) would otherwise write an empty file and exit 0.
@@ -976,6 +1051,13 @@ func runWorker(id: String) -> Never {
         catch { log("worker: could not write status: \(error.localizedDescription)") }   // R4-3b
         exit(0)
     }
+    // #92: a schema the worker cannot read must not turn into a request without one — the caller would
+    // get free text back and parse it as JSON. Checked before the selftest branch so bats can reach it.
+    var jsonSchema: [String: Any]? = nil
+    if let raw = meta["json_schema"] {
+        guard let s = raw as? [String: Any] else { finish("1 meta.json json_schema is not an object") }
+        jsonSchema = s
+    }
     if let s = meta["selftest_sleep"] as? Int {   // test hook: same path, no HTTP
         if meta["selftest_ignore_term"] as? Bool == true {
             // round 7 R7-M05 hook: outlive SIGTERM. Round 10 L9-1: instead of SIG_IGN, leave a
@@ -1006,7 +1088,8 @@ func runWorker(id: String) -> Never {
                         effort: meta["effort"] as? String ?? "xhigh",
                         serviceTier: meta["service_tier"] as? String ?? "",
                         maxTime: meta["max_time"] as? Int ?? 600,
-                        instructions: meta["instructions"] as? String ?? "")
+                        instructions: meta["instructions"] as? String ?? "",
+                        jsonSchema: jsonSchema)
         finish("0")
     } catch let e as NSError {
         finish(statusToken(for: e))   // R3-L3 / R4-L1: token by (domain, code), see statusToken
@@ -1276,7 +1359,7 @@ func gcStaleRuns(olderThan: TimeInterval = GC_AGE_SECONDS) {
     }
 }
 
-func doDetach(_ a: Args, prompt: String) -> Never {
+func doDetach(_ a: Args, prompt: String, jsonSchema: [String: Any]? = nil) -> Never {
     let id = newRunId()
     let dir = runDir(id)
     do {
@@ -1294,6 +1377,9 @@ func doDetach(_ a: Args, prompt: String) -> Never {
             "model": a.model, "effort": a.effort, "service_tier": a.serviceTier,
             "instructions": a.instructions,
         ]
+        // #92: unlike images, the parsed schema is small enough to travel in meta.json, so --detach
+        // supports it; the worker rebuilds the same request.
+        if let s = jsonSchema { meta["json_schema"] = s }
         if let s = a.selftestSleep {
             meta["selftest_sleep"] = s; meta["selftest_fail"] = a.selftestFail
             meta["selftest_ignore_term"] = a.selftestIgnoreTerm
@@ -1397,7 +1483,9 @@ struct Args {
     var promptFile: String?
     var prompt: String?
     var images: [String] = []             // --image FILE, repeatable (#87); synchronous mode only
+    var jsonSchema: String?               // --json-schema FILE (#92); synchronous or --detach
     var selftestPayload = false           // hidden test hook (#87): print the request body, send nothing
+    var selftestStream: String?           // hidden test hook (#92): replay an SSE capture, send nothing
     var selftestErrorExtract: String?   // hidden test hook (#25); see --selftest-error-extract
     var selftestClassify: (String, Int)?  // hidden test hook (R4-L1): --_selftest-classify DOMAIN CODE
     var selftestPrelockSleep: Int?        // hidden test hook (Codex R4 #3): worker sleeps BEFORE locking
@@ -1424,9 +1512,17 @@ func parseArgs() -> Args {
         case "--instructions": a.instructions = next()
         case "--prompt-file": a.promptFile = next()
         case "--image": a.images.append(next())
+        case "--json-schema":
+            // Not repeatable: one response has one shape. Keeping the last one silently is the #80 kind of bug.
+            if a.jsonSchema != nil { die("--json-schema given more than once — give it once") }
+            a.jsonSchema = next()
         // Hidden test hook (#87): prints the request body that would be sent (sorted-key JSON) and
         // exits 0 — no auth read, no HTTP. Same reason as --selftest-error-extract below.
         case "--_selftest-payload": a.selftestPayload = true
+        // Hidden test hook (#92): replays an SSE capture through the same feed() / finalizeOutput() as a
+        // live stream and exits — no auth read, no HTTP. The post-stream checks are otherwise unreachable
+        // from bats for the same reason as above.
+        case "--_selftest-stream": a.selftestStream = next()
         // Hidden test hook (#25) — deliberately absent from --help. Feeds one SSE
         // event payload through extractErrorMessage and prints the result; sends no
         // HTTP. Exists because CODEX_URL is a hardcoded constant with no injection
@@ -1453,13 +1549,20 @@ func parseArgs() -> Args {
             Usage:
               codex-call --output FILE [--model gpt-5.6-sol] [--effort xhigh]
                          [--service-tier ""] [--max-time 600]
-                         [--instructions TEXT] [--image FILE]...
+                         [--instructions TEXT] [--image FILE]... [--json-schema FILE]
                          [--prompt-file FILE | PROMPT]
 
             --image FILE   attach an image (repeatable; synchronous mode only). PNG, JPEG, WebP
                            or GIF judged by the file header; over 20 MB is refused; a longer
                            side over 2048 px is downscaled to 2048. Any bad image fails the
                            whole call before anything is sent.
+
+            --json-schema FILE
+                           constrain the reply to this JSON Schema (strict structured output;
+                           also with --detach). The file must be a JSON object; the backend
+                           rejects schemas that break strict-mode rules. A refusal, a truncated
+                           reply or a reply that is not valid JSON exits non-zero and writes
+                           nothing.
 
             Background mode (#37 — contract: references/codex-call-contract.md):
               codex-call --detach [--output FILE] [same flags] [--prompt-file FILE | PROMPT]
@@ -1523,7 +1626,12 @@ if modes > 1 { die("choose exactly one of --detach / --poll / --abort / --force-
 if !a.images.isEmpty && modes > 0 {
     die("--image is only supported in synchronous mode (not with --detach / --poll / --abort / --force-reap)")
 }
+// #92: a schema belongs to a request. --poll / --abort / --force-reap send none, so it would be ignored.
+if a.jsonSchema != nil && (a.workerId != nil || a.pollId != nil || a.abortId != nil || a.forceReapId != nil) {
+    die("--json-schema is only supported for a new request (synchronous or --detach), not with --poll / --abort / --force-reap")
+}
 if a.selftestPayload && modes > 0 { die("--_selftest-payload is only supported in synchronous mode") }
+if a.selftestStream != nil && modes > 0 { die("--_selftest-stream is only supported in synchronous mode") }
 if a.selftestSleep != nil && !a.detach { die("--_selftest-sleep requires --detach") }
 // R3-L9: the test-only grace override must not be reachable from a production detach.
 if a.selftestGrace != nil && a.selftestSleep == nil { die("--_selftest-grace requires --_selftest-sleep") }
@@ -1575,7 +1683,11 @@ if prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
     die("empty prompt")
 }
 
-if a.detach { doDetach(a, prompt: prompt) }   // validated synchronously above; never returns
+// #92: read and check the schema here — before --detach creates a run and before auth is read — so a bad
+// file fails synchronously with nothing created and nothing sent.
+let jsonSchema = a.jsonSchema.map(loadJsonSchema)
+
+if a.detach { doDetach(a, prompt: prompt, jsonSchema: jsonSchema) }   // validated synchronously above; never returns
 
 let output = a.output!   // guaranteed above for the synchronous path
 
@@ -1584,7 +1696,7 @@ let imageInputs = a.images.map(loadImageInput)
 
 if a.selftestPayload {
     let body = buildRequestBody(prompt: prompt, model: a.model, effort: a.effort, serviceTier: a.serviceTier,
-                                instructions: a.instructions, images: imageInputs)
+                                instructions: a.instructions, images: imageInputs, jsonSchema: jsonSchema)
     guard let json = try? JSONSerialization.data(withJSONObject: body, options: [.sortedKeys]) else {
         die("--_selftest-payload: cannot serialize the request body")
     }
@@ -1592,10 +1704,22 @@ if a.selftestPayload {
     exit(0)
 }
 
+if let capture = a.selftestStream {
+    guard let raw = try? String(contentsOfFile: capture, encoding: .utf8) else {
+        die("--_selftest-stream: cannot read \(capture)")
+    }
+    let collector = StreamCollector()
+    collector.feed(raw)
+    if let err = collector.streamError { die(err.localizedDescription) }
+    do { try finalizeOutput(collector, outputFile: output, structured: jsonSchema != nil) }
+    catch { die(error.localizedDescription) }
+    exit(0)
+}
+
 do {
     try streamCodex(prompt: prompt, outputFile: output, model: a.model, effort: a.effort,
                     serviceTier: a.serviceTier, maxTime: a.maxTime, instructions: a.instructions,
-                    images: imageInputs)
+                    images: imageInputs, jsonSchema: jsonSchema)
 } catch {
     die(error.localizedDescription)
 }

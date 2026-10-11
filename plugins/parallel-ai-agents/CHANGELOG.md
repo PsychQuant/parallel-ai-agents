@@ -11,6 +11,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`codex-call --json-schema FILE`（#92，同步模式與 `--detach` 皆可）**：把回覆格式鎖在 API 層。schema 原樣放進
+  `text.format`（`type: json_schema`，`name` 固定 `codex_call_output`，`strict` 固定開啟），既有的
+  `text.verbosity` 保留。對本後端實測：合法 strict schema 照格式回覆；與 `--image` 並用可行；不合 strict 規則的
+  schema 由後端回 `invalid_json_schema`，錯誤原樣轉出。
+  - 送出前驗證，任一項不符 exit 1、不讀 auth、`--detach` 下也不建立 run：檔案不存在／不可讀／是目錄、
+    不是合法 JSON（含空檔）、頂層不是 object、旗標給了兩次。與 `--poll`／`--abort`／`--force-reap` 並用被拒絕。
+  - 回覆端（只在帶旗標時）：拒答、狀態 `incomplete`、輸出不是合法 JSON → exit 非零、不寫檔，訊息附拒答原文或
+    reason。不帶旗標時行為不變；一般模式的拒答與截斷處理另見 #93。
+  - `--detach`：schema 寫進 `meta.json` 的 `json_schema`；該欄位不是 object 時 worker 失敗結束，不會改送沒有
+    schema 的請求。
+  - 串流收尾抽成 `finalizeOutput()`、切事件抽成 `StreamCollector.feed()`，真實串流與測試共用同一段程式。
+  - 隱藏旗標 `--_selftest-stream FILE`：把 SSE 事件檔餵進上述收尾邏輯，不發 HTTP，供 bats 測回覆端。
+  - 下游以 `codex-call --help` 是否含 `--json-schema FILE` 判斷支援與否。契約 §1、§2、§7 已更新。
+  - 測試：`test/codex-call-json-schema.bats`，26 個 case（`grep -c "^@test" test/codex-call-json-schema.bats`）。
+    對修改前的 `codex-call` 跑同一份檔，23 個失敗；其餘 3 個是確認既有行為不變的回歸守門
+    （不帶旗標時的 `text`、頂層欄位、detach 的 meta 不含 `json_schema`）。
+
 ## [2.24.0] - 2026-10-07
 
 ### Added
