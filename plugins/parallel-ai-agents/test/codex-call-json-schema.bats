@@ -23,6 +23,9 @@ setup() {
   BASE="$HOME/.cache/codex-call/runs"
   printf '%s\n' '{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"],"additionalProperties":false}' >"$T/schema.json"
   printf '[1, 2]\n' >"$T/array.json"
+  printf '5\n' >"$T/scalar.json"
+  # property 順序刻意不是字母序：結構化輸出依 schema 順序生成欄位，順序必須原樣送出
+  printf '%s\n' '{"type":"object","properties":{"zeta":{"type":"string"},"alpha":{"type":"integer"}},"required":["zeta","alpha"],"additionalProperties":false}' >"$T/ordered.json"
   printf '{"type": \n' >"$T/broken.json"
   : >"$T/empty.json"
   mkdir -p "$T/adir"
@@ -102,6 +105,25 @@ print("ok")' <<<"$output"
   [ "$status" -eq 0 ]
 }
 
+@test "--json-schema: the schema text is sent unchanged, property order included" {
+  run --separate-stderr payload --json-schema "$T/ordered.json" "hello"
+  [ "$status" -eq 0 ]
+  raw="$(tr -d '\n' <"$T/ordered.json")"
+  [[ "$output" == *"$raw"* ]]
+}
+
+@test "--json-schema with --prompt-file and --instructions (synchronous)" {
+  printf 'score this clip\n' >"$T/prompt.txt"
+  run --separate-stderr payload --json-schema "$T/schema.json" --instructions "be terse" --prompt-file "$T/prompt.txt"
+  [ "$status" -eq 0 ]
+  run pyjson '
+assert d["instructions"]=="be terse", d["instructions"]
+assert d["input"][0]["content"][0]["text"]=="score this clip\n", d["input"]
+assert d["text"]["format"]["type"]=="json_schema", d["text"]
+print("ok")' <<<"$output"
+  [ "$status" -eq 0 ]
+}
+
 # ── 請求端：送出前的驗證（沒印出 payload ＝ 驗證先於送出）────────────────────────
 
 @test "--json-schema: a missing file is refused before anything is sent" {
@@ -139,6 +161,13 @@ print("ok")' <<<"$output"
   [[ "$stderr" == *"must be a JSON object"* ]]
 }
 
+@test "--json-schema: a scalar is refused as not an object, not as invalid JSON" {
+  run --separate-stderr payload --json-schema "$T/scalar.json" "hello"
+  [ "$status" -eq 1 ]
+  [ -z "$output" ]
+  [[ "$stderr" == *"must be a JSON object"* ]]
+}
+
 @test "--json-schema given twice is refused instead of silently keeping one" {
   run --separate-stderr payload --json-schema "$T/schema.json" --json-schema "$T/schema.json" "hello"
   [ "$status" -eq 1 ]
@@ -160,12 +189,12 @@ print("ok")' <<<"$output"
 
 # ── 背景模式：schema 經 meta.json 交給 worker ──────────────────────────────────
 
-@test "--detach writes the parsed schema into meta.json" {
+@test "--detach writes the schema text, unchanged, into meta.json" {
   run --separate-stderr "$BIN" --detach --_selftest-sleep 1 --json-schema "$T/schema.json" --instructions i "prompt"
   [ "$status" -eq 0 ]
   id="$output"
   run pyjson '
-s=json.load(open(sys.argv[1]))
+s=open(sys.argv[1]).read().strip()
 assert d["json_schema"]==s, d.get("json_schema")
 print("ok")' "$T/schema.json" <"$BASE/$id/meta.json"
   [ "$status" -eq 0 ]
@@ -187,17 +216,20 @@ print("ok")' "$T/schema.json" <"$BASE/$id/meta.json"
   run --separate-stderr "$BIN" --detach --_selftest-sleep 1 --json-schema "$T/broken.json" --instructions i "prompt"
   [ "$status" -eq 1 ]
   [ -z "$output" ]
+  [[ "$stderr" == *"not valid JSON"* ]]
   # run base 可能根本還不存在；存在的話裡面不得有 run 目錄
   [ ! -d "$BASE" ] || [ -z "$(find "$BASE" -mindepth 1 -maxdepth 1 -type d)" ]
 }
 
-@test "worker refuses a meta.json whose json_schema is not an object (no silent schema-less request)" {
+@test "worker refuses a meta.json whose json_schema is not a JSON object (no silent schema-less request)" {
   # prelock 視窗內把 json_schema 換成字串（同 detach.bats R5-F2d 的手法）
   ( for _ in $(seq 1 60); do
       for d in "$BASE"/*/; do
         [ -f "$d/meta.json" ] && python3 -c '
 import json,sys
-p=sys.argv[1]; m=json.load(open(p)); m["json_schema"]="oops"; open(p,"w").write(json.dumps(m))' "$d/meta.json" 2>/dev/null
+import os
+p=sys.argv[1]; m=json.load(open(p)); m["json_schema"]="oops"
+open(p+".tmp","w").write(json.dumps(m)); os.replace(p+".tmp",p)' "$d/meta.json" 2>/dev/null
       done
       sleep 0.1
     done ) &
@@ -238,6 +270,39 @@ p=sys.argv[1]; m=json.load(open(p)); m["json_schema"]="oops"; open(p,"w").write(
   [ "$status" -ne 0 ]
   [[ "$stderr" == *"incomplete"*"max_output_tokens"* ]]
   [ ! -e "$T/out.md" ]
+}
+
+@test "with --json-schema: valid JSON without a completion event is refused and no file is written" {
+  sse "$T/nocomplete.sse" "$DELTA_OPEN" "$DELTA_CLOSE"
+  run --separate-stderr stream "$T/nocomplete.sse" --json-schema "$T/schema.json" "p"
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"completion"* ]]
+  [ ! -e "$T/out.md" ]
+}
+
+@test "with --json-schema: a terminal status other than completed is refused" {
+  sse "$T/cancelled.sse" "$DELTA_OPEN" "$DELTA_CLOSE" '{"type":"response.completed","response":{"status":"cancelled","incomplete_details":null}}'
+  run --separate-stderr stream "$T/cancelled.sse" --json-schema "$T/schema.json" "p"
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"cancelled"* ]]
+  [ ! -e "$T/out.md" ]
+}
+
+@test "with --json-schema: valid JSON that is not an object is refused" {
+  sse "$T/array.sse" '{"type":"response.output_text.delta","delta":"[1, 2]"}' "$COMPLETED"
+  run --separate-stderr stream "$T/array.sse" --json-schema "$T/schema.json" "p"
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"not a JSON object"* ]]
+  [ ! -e "$T/out.md" ]
+}
+
+@test "with --json-schema: control sequences in a refusal never reach stderr raw" {
+  sse "$T/esc.sse" '{"type":"response.refusal.delta","delta":"No.\u001b]0;PWNED\u0007\u001b[2J done"}' "$COMPLETED"
+  run --separate-stderr stream "$T/esc.sse" --json-schema "$T/schema.json" "p"
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"refused"* ]]
+  [[ "$stderr" != *$'\e'* ]]
+  [[ "$stderr" != *$'\a'* ]]
 }
 
 @test "without --json-schema: non-JSON text is written exactly as before" {

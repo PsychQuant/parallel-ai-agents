@@ -450,35 +450,81 @@ func loadImageInput(_ path: String) -> [String: Any] {
 // schema is only a hint, which is what callers already had by asking for JSON in the prompt.
 let JSON_SCHEMA_NAME = "codex_call_output"
 
+// The schema travels as its original TEXT, never as a parsed dictionary. Strict structured output fills
+// fields in the schema's property order, so order is part of what the caller asked for — a schema that
+// puts `reasoning` before `score` means it. Swift's Dictionary is randomly seeded per process, so
+// re-serialising a parsed schema shuffled that order on every call (and normalised numbers); verify
+// round 1 of #92. The text is spliced into the serialised request at this slot instead. The slot is
+// random per process, so nothing in a prompt can collide with it.
+let JSON_SCHEMA_SLOT = "codex-call-json-schema-slot-\(UUID().uuidString)"
+
+// The text of `data` if it is exactly one JSON object, else why not. A leading UTF-8 BOM and surrounding
+// whitespace lie outside the value and are dropped; everything else is kept byte for byte.
+func jsonObjectText(_ data: Data) -> (text: String?, why: String) {
+    var d = data
+    if d.starts(with: [0xEF, 0xBB, 0xBF]) { d = d.dropFirst(3) }
+    guard let s = String(data: d, encoding: .utf8),
+          let obj = try? JSONSerialization.jsonObject(with: d, options: [.fragmentsAllowed])
+    else { return (nil, "not valid JSON") }
+    guard obj is [String: Any] else {
+        return (nil, "the schema must be a JSON object (the top level is \(obj is [Any] ? "an array" : "a scalar"))")
+    }
+    return (s.trimmingCharacters(in: .whitespacesAndNewlines), "")
+}
+
 // Read and check the schema file before anything is sent (and before --detach creates a run). Only the
 // file's own shape is checked here; whether it satisfies strict mode is the backend's call, and its
-// error (`invalid_json_schema`, naming the rule) reaches the caller unchanged.
-func loadJsonSchema(_ path: String) -> [String: Any] {
+// error (`invalid_json_schema`, naming the rule) reaches the caller.
+func loadJsonSchema(_ path: String) -> String {
     let fm = FileManager.default
     var isDir: ObjCBool = false
     guard fm.fileExists(atPath: path, isDirectory: &isDir), !isDir.boolValue, fm.isReadableFile(atPath: path),
           let data = fm.contents(atPath: path)
     else { die("--json-schema \(path): cannot read schema (missing, unreadable, or a directory)") }
-    guard let obj = try? JSONSerialization.jsonObject(with: data) else {
-        die("--json-schema \(path): not valid JSON")
-    }
-    guard let schema = obj as? [String: Any] else {
-        die("--json-schema \(path): the schema must be a JSON object (the top level is \(obj is [Any] ? "an array" : "not an object"))")
-    }
+    let (text, why) = jsonObjectText(data)
+    guard let schema = text else { die("--json-schema \(path): \(why)") }
     return schema
 }
 
-// Why a structured result must not be written, or nil when it may be. A refusal or a truncated response
-// is reported as such; an empty result is left to the general empty-output rule; anything else must parse.
+// The request body as bytes, with the schema text (if any) spliced into its slot.
+func serializeRequestBody(_ body: [String: Any], jsonSchema: String?, sortedKeys: Bool = false) throws -> Data {
+    let data = try JSONSerialization.data(withJSONObject: body, options: sortedKeys ? [.sortedKeys] : [])
+    guard let schema = jsonSchema else { return data }
+    let slot = "\"\(JSON_SCHEMA_SLOT)\""
+    guard let parts = String(data: data, encoding: .utf8)?.components(separatedBy: slot), parts.count == 2 else {
+        throw NSError(domain: "codex-call", code: 74,
+                      userInfo: [NSLocalizedDescriptionKey: "internal: the schema slot is not exactly once in the request body"])
+    }
+    return Data((parts[0] + schema + parts[1]).utf8)
+}
+
+// Why a structured result must not be written, or nil when it may be. Backend text quoted in the message
+// goes through the same sanitizer as the background path's status line: it reaches the caller's terminal,
+// and agents read this stderr.
 func structuredOutputProblem(text: String, refusal: String, terminalStatus: String?, incompleteReason: String?) -> String? {
+    func shown(_ s: String, _ bytes: Int) -> String {
+        clampToBudget(stripInvisibleUnicode(sanitizeBackendText(s)), maxBytes: bytes, maxLines: 3)
+    }
     let said = refusal.trimmingCharacters(in: .whitespacesAndNewlines)
-    if !said.isEmpty { return "Codex refused to answer: \(said.prefix(500))" }
-    if terminalStatus == "incomplete" {
-        return "Codex response ended incomplete (reason: \(incompleteReason ?? "not given")) — the structured output is cut short; refusing to write it"
+    if !said.isEmpty { return "Codex refused to answer: \(shown(said, 500))" }
+    switch terminalStatus {
+    case "completed":
+        break
+    case "incomplete":
+        return "Codex response ended incomplete (reason: \(shown(incompleteReason ?? "not given", 80))) — the structured output is cut short; refusing to write it"
+    default:
+        // Only a completed response is accepted. Syntactically complete JSON does not prove the stream
+        // finished, and a chunk lost to #28 can be the very event that would have said it did not.
+        return "Codex stream ended without a completion event (status: \(shown(terminalStatus ?? "none", 80))) — refusing to write a structured result that may be cut short"
     }
     if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return nil }
-    guard let data = text.data(using: .utf8), (try? JSONSerialization.jsonObject(with: data)) != nil else {
-        return "Codex output is not valid JSON despite --json-schema — refusing to write it (it begins: \(text.prefix(200)))"
+    guard let data = text.data(using: .utf8),
+          let obj = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
+    else {
+        return "Codex output is not valid JSON despite --json-schema — refusing to write it (it begins: \(shown(String(text.prefix(200)), 200)))"
+    }
+    guard obj is [String: Any] else {
+        return "Codex output is valid JSON but not a JSON object despite --json-schema — refusing to write it"
     }
     return nil
 }
@@ -487,7 +533,7 @@ func structuredOutputProblem(text: String, refusal: String, terminalStatus: Stri
 // with no schema `text` is exactly {verbosity: medium}, as before #92.
 func buildRequestBody(prompt: String, model: String, effort: String, serviceTier: String,
                       instructions: String, images: [[String: Any]],
-                      jsonSchema: [String: Any]? = nil) -> [String: Any] {
+                      jsonSchema: String? = nil) -> [String: Any] {
     var body: [String: Any] = [
         "model": model,
         "store": false,
@@ -500,9 +546,9 @@ func buildRequestBody(prompt: String, model: String, effort: String, serviceTier
         "parallel_tool_calls": true,
         "reasoning": ["effort": effort, "summary": "auto"],
     ]
-    if let schema = jsonSchema {
+    if jsonSchema != nil {   // the schema text itself is spliced in by serializeRequestBody()
         body["text"] = ["verbosity": "medium",
-                        "format": ["type": "json_schema", "name": JSON_SCHEMA_NAME, "schema": schema, "strict": true]]
+                        "format": ["type": "json_schema", "name": JSON_SCHEMA_NAME, "schema": JSON_SCHEMA_SLOT, "strict": true]]
     }
     // Translate legacy/friendly names to backend wire values.
     // Mirrors codex-rs ServiceTier::request_value(): Fast→priority, Flex→flex.
@@ -521,7 +567,7 @@ func buildRequestBody(prompt: String, model: String, effort: String, serviceTier
 
 func streamCodex(prompt: String, outputFile: String, model: String, effort: String,
                  serviceTier: String, maxTime: Int, instructions: String,
-                 images: [[String: Any]] = [], jsonSchema: [String: Any]? = nil) throws {
+                 images: [[String: Any]] = [], jsonSchema: String? = nil) throws {
     var auth = try loadAuthRaw()
     try refreshIfNeeded(&auth)
     guard let tokens = auth["tokens"] as? [String: Any],
@@ -541,7 +587,7 @@ func streamCodex(prompt: String, outputFile: String, model: String, effort: Stri
     req.setValue("codex_cli_rs", forHTTPHeaderField: "originator")
     req.setValue(accountId, forHTTPHeaderField: "chatgpt-account-id")
     req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-    req.httpBody = try JSONSerialization.data(withJSONObject: body)
+    req.httpBody = try serializeRequestBody(body, jsonSchema: jsonSchema)
 
     let collector = StreamCollector()
     let config = URLSessionConfiguration.default
@@ -1053,9 +1099,10 @@ func runWorker(id: String) -> Never {
     }
     // #92: a schema the worker cannot read must not turn into a request without one — the caller would
     // get free text back and parse it as JSON. Checked before the selftest branch so bats can reach it.
-    var jsonSchema: [String: Any]? = nil
+    var jsonSchema: String? = nil
     if let raw = meta["json_schema"] {
-        guard let s = raw as? [String: Any] else { finish("1 meta.json json_schema is not an object") }
+        guard let s = raw as? String, jsonObjectText(Data(s.utf8)).text != nil
+        else { finish("1 meta.json json_schema is not a JSON object") }
         jsonSchema = s
     }
     if let s = meta["selftest_sleep"] as? Int {   // test hook: same path, no HTTP
@@ -1359,7 +1406,7 @@ func gcStaleRuns(olderThan: TimeInterval = GC_AGE_SECONDS) {
     }
 }
 
-func doDetach(_ a: Args, prompt: String, jsonSchema: [String: Any]? = nil) -> Never {
+func doDetach(_ a: Args, prompt: String, jsonSchema: String? = nil) -> Never {
     let id = newRunId()
     let dir = runDir(id)
     do {
@@ -1377,8 +1424,8 @@ func doDetach(_ a: Args, prompt: String, jsonSchema: [String: Any]? = nil) -> Ne
             "model": a.model, "effort": a.effort, "service_tier": a.serviceTier,
             "instructions": a.instructions,
         ]
-        // #92: unlike images, the parsed schema is small enough to travel in meta.json, so --detach
-        // supports it; the worker rebuilds the same request.
+        // #92: unlike images, the schema is small enough to travel in meta.json, so --detach supports it.
+        // It travels as TEXT, so the worker sends the same property order the caller wrote.
         if let s = jsonSchema { meta["json_schema"] = s }
         if let s = a.selftestSleep {
             meta["selftest_sleep"] = s; meta["selftest_fail"] = a.selftestFail
@@ -1559,10 +1606,11 @@ func parseArgs() -> Args {
 
             --json-schema FILE
                            constrain the reply to this JSON Schema (strict structured output;
-                           also with --detach). The file must be a JSON object; the backend
-                           rejects schemas that break strict-mode rules. A refusal, a truncated
-                           reply or a reply that is not valid JSON exits non-zero and writes
-                           nothing.
+                           also with --detach). The file must be a JSON object and is sent as
+                           written, property order included; the backend rejects schemas that
+                           break strict-mode rules. Only a completed reply that is a JSON object
+                           is written: a refusal, a truncated or unfinished reply, or anything
+                           else exits non-zero and writes nothing.
 
             Background mode (#37 — contract: references/codex-call-contract.md):
               codex-call --detach [--output FILE] [same flags] [--prompt-file FILE | PROMPT]
@@ -1697,7 +1745,7 @@ let imageInputs = a.images.map(loadImageInput)
 if a.selftestPayload {
     let body = buildRequestBody(prompt: prompt, model: a.model, effort: a.effort, serviceTier: a.serviceTier,
                                 instructions: a.instructions, images: imageInputs, jsonSchema: jsonSchema)
-    guard let json = try? JSONSerialization.data(withJSONObject: body, options: [.sortedKeys]) else {
+    guard let json = try? serializeRequestBody(body, jsonSchema: jsonSchema, sortedKeys: true) else {
         die("--_selftest-payload: cannot serialize the request body")
     }
     FileHandle.standardOutput.write(json + Data("\n".utf8))
