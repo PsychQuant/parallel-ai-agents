@@ -27,8 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `JSONSerialization` 接受尾逗號，而 schema 以原文送出，所以另外掃描字串外的尾逗號（verify round 2 抓到）。與 `--poll`／`--abort`／`--force-reap`
     並用被拒絕。
   - 回覆端（只在帶旗標時）：**只接受狀態為 `completed` 的回覆**；拒答、`incomplete`、沒收到完成事件或其他狀態、
-    輸出不是合法 JSON（含尾逗號）、或不是 JSON object → exit 非零、不寫檔。`response.completed` 沒有 `status`
-    欄位時視為 completed。訊息裡引用的後端文字經過與背景模式相同的
+    輸出不是合法 JSON（含尾逗號）、或不是 JSON object → exit 非零、不寫檔。`response.completed` 的 `status`
+    欄位缺少或不是字串時視為 completed。重複的 key 語法合法、本地不擋，以哪一個為準由後端決定。訊息裡引用的後端文字經過與背景模式相同的
     sanitizer（去控制字元、不可見字元，限長）。不帶旗標時行為不變；一般模式的拒答與截斷另見 #93。
   - 已知限制（#28）：UTF-8 chunk 丟失仍在，丟在 JSON 字串值中間時，剩下的仍是合法 JSON，會被接受；最後一個 SSE
     事件若沒有結尾空行會被丟掉，丟的是完成事件時會誤拒（失敗方向，不會誤收）。

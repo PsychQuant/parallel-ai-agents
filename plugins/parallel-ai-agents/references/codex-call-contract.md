@@ -34,8 +34,9 @@ codex-call --output FILE [--model M] [--effort E] [--service-tier T] [--max-time
   Foundation 的 `JSONSerialization` 接受尾逗號，原文又是原樣送出，所以另外掃描字串外的尾逗號）；頂層不是 object（陣列或純量）；旗標給了兩次。schema 是否符合 strict 模式的規則由後端判定，錯誤經既有的
   HTTP 錯誤路徑轉出（截至 500 字；實測 `code: invalid_json_schema`，訊息指出違反哪一條）。
   回覆端**只接受狀態為 `completed` 的回覆**：拒答（`response.refusal.delta`）、狀態 `incomplete`、沒收到完成事件
-  或其他狀態、輸出不是合法 JSON（含尾逗號）、或不是 JSON object → exit 非零、**不寫檔**。`response.completed` 沒有
-  `status` 欄位時視為 completed（`response.incomplete` 同理視為 incomplete）。訊息引用的拒答原文、reason 與輸出
+  或其他狀態、輸出不是合法 JSON（含尾逗號）、或不是 JSON object → exit 非零、**不寫檔**。`response.completed` 的
+  `status` 欄位缺少或不是字串時，依事件類型視為 completed（`response.incomplete` 同理視為 incomplete）。
+  重複的 key（例如兩個同名 property）在 JSON 語法上合法，本地不擋；以哪一個為準由後端決定。訊息引用的拒答原文、reason 與輸出
   片段經 `sanitizeBackendText`、`stripInvisibleUnicode`、`clampToBudget`，與背景模式的 status 行同一套。
   「不寫檔」指本次不寫；`--output` 若已有舊檔，本工具不去刪它，與其他失敗路徑一致。
   **已知限制（#28）**：UTF-8 chunk 丟失仍在——丟在 JSON 字串值中間時，剩下的文字仍是合法 JSON、會被接受；
