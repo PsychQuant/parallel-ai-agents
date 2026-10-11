@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.25.0] - 2026-10-11
+
 ### Added
 
 - **`codex-call --json-schema FILE`（#92，同步模式與 `--detach` 皆可）**：把回覆格式鎖在 API 層。schema 原樣放進
