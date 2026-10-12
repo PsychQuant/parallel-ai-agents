@@ -5,12 +5,13 @@
 #
 # 不打真後端、不讀 auth：每一則都帶 `--_selftest-stream`（契約 §7）。
 #
-# 突變紀錄（2026-10-12，在本檔 23 則上手動跑過；括號是轉紅的測試編號，日後增刪測試會對不上）：
-#   1. ingest 改回「解不開的 chunk 整塊丟掉」（1 2 3 4 5 8 9 10 11 12 13）。
-#   2. 拿掉 `complete()` 裡 `finishStream()` 的呼叫（7 11 12 13 14 18）。
-#   3. 拿掉 `complete()` 的 `error == nil`，有傳輸錯誤也 flush（17）。
-#   4. 拿掉 `finishStream()` 開頭的 `streamError == nil`（15 16）。
-#   5. `finishStream()` 改成嚴格解碼 `String(data:encoding:) ?? ""`（11）。
+# 突變紀錄（2026-10-12，在本檔 24 則上手動跑過；括號是轉紅的測試編號，日後增刪測試會對不上）：
+#   1. ingest 改回「解不開的 chunk 整塊丟掉」（1 2 3 4 5 8 9 10 11 12 13 14）。
+#   2. 拿掉 `complete()` 裡 `finishStream()` 的呼叫（7 12 13 14 15 19）。13 是逐位元組重播：它先斷言基準
+#      成功，少了 flush 時 trailing capture 的基準失敗，由那道斷言抓到。
+#   3. 拿掉 `complete()` 的 `error == nil`，有傳輸錯誤也 flush（18）。
+#   4. 拿掉 `finishStream()` 開頭的 `streamError == nil`（16 17）。
+#   5. `finishStream()` 改成嚴格解碼 `String(data:encoding:) ?? ""`（12）。
 #   拿掉 `complete()` 的 `statusCode == 200`：沒有一則轉紅，這是預期的——非 200 時資料不進 buffer，那道條件是
 #   縱深防禦。verify 第 1 輪時 `finishStream()` 另有一次 drain() 與第二道條件，那段多餘，已刪除。
 
@@ -75,6 +76,10 @@ elif kind == "broken-byte":
 elif kind == "truncated-cjk":
     # 一個 3 位元組中文字只剩前 2 個位元組：是「一段」不合法序列，只換成 1 個 U+FFFD（不是 2 個）
     bad = b'event: x\ndata: {"type":"response.output_text.delta","delta":"\xe4\xb8"}\n\n'
+    parts = [ev(delta("前面的字")), bad, ev(delta("後面的字"))]
+elif kind == "stray-continuation":
+    # 兩個沒有起始位元組的延續位元組：各自一段，換成兩個 U+FFFD（不會合併成一個）
+    bad = b'event: x\ndata: {"type":"response.output_text.delta","delta":"\x80\x80"}\n\n'
     parts = [ev(delta("前面的字")), bad, ev(delta("後面的字"))]
 elif kind == "trailing-broken":
     # 最後一個事件沒有結尾空行，而且含壞位元組：走 finishStream() 的 lossy 解碼
@@ -177,12 +182,20 @@ stream() { "$BIN" --output "$T/out.md" --_selftest-stream "$@"; }
   [ "$(cat "$T/out.md")" = "$(printf '前面的字\xef\xbf\xbd\xef\xbf\xbd後面的字')" ]
 }
 
-@test "framing: a truncated CJK character becomes ONE U+FFFD (one per ill-formed sequence, not per byte)" {
+@test "framing: a truncated CJK character becomes ONE U+FFFD (a truncated prefix counts once)" {
   # 繁中輸出最常見的壞資料：一個字被截斷。兩個位元組只換成一個 U+FFFD
   capture "$T/c.sse" truncated-cjk >/dev/null
   run stream "$T/c.sse" -- hi
   [ "$status" -eq 0 ]
   [ "$(cat "$T/out.md")" = "$(printf '前面的字\xef\xbf\xbd後面的字')" ]
+}
+
+@test "framing: stray continuation bytes are NOT merged — two bytes, two U+FFFD" {
+  # 只有「合法起始位元組後被截斷的前綴」合成一個；其餘每個不合法的位元組各一個
+  capture "$T/c.sse" stray-continuation >/dev/null
+  run stream "$T/c.sse" -- hi
+  [ "$status" -eq 0 ]
+  [ "$(cat "$T/out.md")" = "$(printf '前面的字\xef\xbf\xbd\xef\xbf\xbd後面的字')" ]
 }
 
 @test "framing: a broken byte in the unterminated last event is decoded lossily too, not dropped" {
@@ -196,15 +209,19 @@ stream() { "$BIN" --output "$T/out.md" --_selftest-stream "$@"; }
 @test "framing: replaying byte by byte (a cut at every offset at once) gives the uncut result" {
   # 窮舉單一切點只切成兩段；這一則把每個位元組都切開，五份 capture 各比一次。
   # two-errors-closed 不在這裡：逐位元組送達時勝出的錯誤會變（#100 的 early bail），那不是分幀的問題
-  for spec in "plain:" "trailing:--json-schema" "broken-byte:" "truncated-cjk:" "trailing-broken:"; do
+  # 這一則是相對比對（切與不切的結果相同），所以先斷言基準本身成功、有輸出，才不會兩邊一起失敗而空過。
+  for spec in "plain:" "trailing:--json-schema" "broken-byte:" "truncated-cjk:" "stray-continuation:" "trailing-broken:"; do
     kind=${spec%%:*}; extra=${spec#*:}
     m=$(capture "$T/c.sse" "$kind")
     every=$(python3 -c 'import sys; print(",".join(str(i) for i in range(1, int(sys.argv[1]))))' "$(mark "$m" size)")
     run stream "$T/c.sse" ${extra:+$extra "$T/schema.json"} -- hi
-    base_status=$status; base_out=$(cat "$T/out.md" 2>/dev/null); rm -f "$T/out.md"
+    [ "$status" -eq 0 ]
+    [ -s "$T/out.md" ]
+    base_status=$status; base_out=$(cat "$T/out.md"); rm -f "$T/out.md"
     run stream "$T/c.sse" ${extra:+$extra "$T/schema.json"} --_selftest-cuts "$every" -- hi
     [ "$status" -eq "$base_status" ]
-    [ "$(cat "$T/out.md" 2>/dev/null)" = "$base_out" ]
+    [ -s "$T/out.md" ]
+    [ "$(cat "$T/out.md")" = "$base_out" ]
     rm -f "$T/out.md"
   done
 }
@@ -225,8 +242,9 @@ stream() { "$BIN" --output "$T/out.md" --_selftest-stream "$@"; }
   [[ "$output" == *"backend error at the end"* ]]
 }
 
-@test "policy unchanged: with an error already recorded, a trailing error event is not processed" {
-  # 終端事件政策（誰勝出）不在 #28 的範圍：flush 只在還沒有錯誤時做，回報的仍是第一個錯誤
+@test "finishStream guard: with an error already recorded, an unterminated trailing error is not processed" {
+  # 釘的是 finishStream() 的「還沒有錯誤」條件：已有錯誤時，不處理沒有結尾的殘留事件。
+  # 不規定多個終端事件誰勝出（#100）；第二個 error 沒有結尾空行，所以不論怎麼切都不會在收尾前完整。
   capture "$T/c.sse" two-errors >/dev/null
   run stream "$T/c.sse" -- hi
   [ "$status" -ne 0 ]

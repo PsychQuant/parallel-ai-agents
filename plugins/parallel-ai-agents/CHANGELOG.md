@@ -19,8 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `didReceive` 交付的 chunk 與 UTF-8 字元邊界無關，舊程式逐 chunk 解碼，切點落在多位元組字中間時整個
     chunk（含其中完整的事件）被丟掉。繁中輸出時這是常態：長篇的結構化回答會丟掉 `response.completed`、
     以 `stream ended without a completion event` 失敗；丟掉的若是中間的 delta，剩下的仍是合法 JSON
-    而被接受。現在 bytes 先累積、以位元組 `\n\n` 切事件，只解碼完整的事件（lossy：每一段不合法的位元組序列
-    變成一個 U+FFFD，被截斷的中文字算一段；不再丟整塊；呼叫端不會收到提示，契約 §2 已寫明）。
+    而被接受。現在 bytes 先累積、以位元組 `\n\n` 切事件，只解碼完整的事件（lossy：被截斷的字整段換成
+    一個 U+FFFD，其餘每個不合法的位元組各一個；不再丟整塊；呼叫端不會收到提示，契約 §2 已寫明）。
   - 最後一個事件沒有結尾空行時，串流正常結束（200、沒有傳輸錯誤）後仍會處理它。只在還沒有錯誤時處理：
     終端事件誰勝出的政策（待 trace，#100）不變；有傳輸錯誤時不處理，逾時等錯誤分類不受影響。
   - 仍未處理（寫在程式註解的 KNOWN GAP）：同一個 callback 內的 early bail、CRLF 分隔的事件，改由 #100 追蹤。
@@ -33,7 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   超出範圍一律拒絕，不夾到範圍內。契約 §7 已更新。
 - 新隱藏旗標 `--_selftest-end clean|timeout`（只能與 `--_selftest-stream` 並用）：`timeout` 以真實串流逾時時的
   同一個 `NSURLErrorTimedOut` 結束重播，讓「有傳輸錯誤時不處理殘留的事件」可以測。其他值一律拒絕。
-- 測試：`test/codex-call-stream-framing.bats`，23 個 case（`grep -c "^@test" test/codex-call-stream-framing.bats`）。
+- 測試：`test/codex-call-stream-framing.bats`，24 個 case（`grep -c "^@test" test/codex-call-stream-framing.bats`）。
   - 最初 12 個：在加上重播鉤子、尚未改分幀的程式上跑，7 個失敗；其餘 5 個守既有行為（一個 chunk 多個事件、
     終端事件政策不變）與鉤子本身。
   - verify 第 1 輪後加 8 個：issue 第 2 點本身的情境（單獨一個沒有結尾空行的 error 事件）、bail 之後留在
@@ -42,6 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     原本的 glob 讓「整個事件被丟掉」也會過關。
   - verify 第 2 輪後加 3 個：被截斷的中文字只換成一個 U+FFFD、沒有結尾的最後一個事件也做 lossy 解碼、
     五份 capture 逐位元組切開重播與不切相同。
+  - verify 第 3 輪後加 1 個：連續的延續位元組（`80 80`）不合併、各換一個 U+FFFD。逐位元組重播改成先斷言
+    基準本身成功、有輸出（相對比對不能讓兩邊一起失敗而空過）。
   - 突變（記在測試檔開頭）：改回「解不開的 chunk 整塊丟掉」、拿掉結束時的 flush、拿掉 `complete()` 的「沒有傳輸
     錯誤」條件、拿掉 `finishStream()` 的「還沒有錯誤」條件、`finishStream()` 改成嚴格解碼，各自讓對應的測試轉紅。
   - 測不到、刻意保留的：`complete()` 的 `statusCode == 200` 是縱深防禦——非 200 時資料進 `firstBytes`、不進 buffer，
