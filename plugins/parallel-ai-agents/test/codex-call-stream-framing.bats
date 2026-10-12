@@ -5,11 +5,14 @@
 #
 # 不打真後端、不讀 auth：每一則都帶 `--_selftest-stream`（契約 §7）。
 #
-# 突變紀錄（2026-10-12，實作時手動跑過；改回去之後這幾則轉紅）：
-#   1. ingest 改回逐 chunk `String(data:encoding:)` 解碼 → 字中間切一刀、completed 裡切一刀、
-#      結構化路徑的靜默截斷、窮舉切點，這四則轉紅。
-#   2. 拿掉 `finishStream()` 的呼叫 → 「最後一個事件沒有結尾的空行」轉紅。
-#   3. 拿掉 finishStream 裡 `streamError == nil` 的條件 → 「已有錯誤時不處理殘留的錯誤事件」轉紅。
+# 突變紀錄（2026-10-12，在本檔 20 則上手動跑過；括號是轉紅的測試編號）：
+#   1. ingest 改回「解不開的 chunk 整塊丟掉」→ 字中間切一刀、completed 裡切一刀、結構化路徑的靜默截斷、
+#      兩則窮舉、壞位元組的確切輸出與它的窮舉、沒有結尾的最後一個事件的窮舉（1 2 3 4 5 8 9 10）。
+#   2. 拿掉 `complete()` 裡 `finishStream()` 的呼叫 → 最後一個事件沒有結尾的空行、它的窮舉、
+#      單獨一個沒有結尾空行的 error 事件、`--_selftest-end clean`（7 10 11 15）。
+#   3. 拿掉 `complete()` 的 `error == nil`（有傳輸錯誤也 flush）→ `--_selftest-end timeout`（14）。
+#   4. 拿掉 `finishStream()` 開頭的 `streamError == nil` → 兩則「政策不變」（12 13）。
+#      verify 第 1 輪時，同一位置原本還有一次 drain() 與第二道條件；那段到不了、突變測不出來，已刪除。
 
 bats_require_minimum_version 1.5.0
 
@@ -58,6 +61,13 @@ elif kind == "trailing":
 elif kind == "two-errors":
     parts = [ev({"type": "error", "error": {"message": "first error"}}),
              ev({"type": "error", "error": {"message": "second error"}}, end=b"")]
+elif kind == "two-errors-closed":
+    # 兩個都有結尾空行：drain() 處理完第一個就停，第二個是 buffer 裡完整的事件
+    parts = [ev({"type": "error", "error": {"message": "first error"}}),
+             ev({"type": "error", "error": {"message": "second error"}})]
+elif kind == "trailing-error":
+    # issue #28 第 2 點的情境：之前沒有錯誤，最後一個 error 事件沒有結尾空行
+    parts = [ev(delta(A)), ev({"type": "error", "error": {"message": "backend error at the end"}}, end=b"")]
 elif kind == "broken-byte":
     good = ev(delta("前面的字"))
     bad = b'event: x\ndata: {"type":"response.output_text.delta","delta":"\xff\xfe"}\n\n'
@@ -144,11 +154,35 @@ stream() { "$BIN" --output "$T/out.md" --_selftest-stream "$@"; }
   [ "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["answer"])' "$T/out.md")" = "最後一個事件沒有結尾的空行" ]
 }
 
-@test "framing: a broken byte costs one character, not the whole chunk" {
+@test "framing: each broken byte becomes one U+FFFD; the rest of the chunk survives" {
+  # \xff\xfe 是兩個不合法的位元組 → 兩個 U+FFFD。斷言確切輸出：glob 的 * 會讓「整個事件被丟掉」也過關
   capture "$T/c.sse" broken-byte >/dev/null
   run stream "$T/c.sse" -- hi
   [ "$status" -eq 0 ]
-  [[ "$(cat "$T/out.md")" == 前面的字*後面的字 ]]
+  [ "$(cat "$T/out.md")" = "$(printf '前面的字\xef\xbf\xbd\xef\xbf\xbd後面的字')" ]
+}
+
+@test "framing: the broken-byte capture survives every single cut position" {
+  capture "$T/c.sse" broken-byte >/dev/null
+  run stream "$T/c.sse" --_selftest-cuts all -- hi
+  [ "$status" -eq 0 ]
+  [ "$(cat "$T/out.md")" = "$(printf '前面的字\xef\xbf\xbd\xef\xbf\xbd後面的字')" ]
+}
+
+@test "framing: the unterminated-last-event capture survives every single cut position" {
+  # 走 finishStream() flush 的那份 capture 也要窮舉：切點落在沒有結尾的最後一個事件裡
+  capture "$T/c.sse" trailing >/dev/null
+  run stream "$T/c.sse" --json-schema "$T/schema.json" --_selftest-cuts all -- hi
+  [ "$status" -eq 0 ]
+  [ "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["answer"])' "$T/out.md")" = "最後一個事件沒有結尾的空行" ]
+}
+
+@test "framing: a lone error event without a trailing blank line fails the call with its message" {
+  # issue #28 第 2 點本身的情境：以前少一段、exit 0；現在要回報後端的訊息並失敗
+  capture "$T/c.sse" trailing-error >/dev/null
+  run stream "$T/c.sse" -- hi
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"backend error at the end"* ]]
 }
 
 @test "policy unchanged: with an error already recorded, a trailing error event is not processed" {
@@ -158,6 +192,47 @@ stream() { "$BIN" --output "$T/out.md" --_selftest-stream "$@"; }
   [ "$status" -ne 0 ]
   [[ "$output" == *"first error"* ]]
   [[ "$output" != *"second error"* ]]
+}
+
+@test "policy unchanged: a complete error event left in the buffer after the bail is not processed" {
+  # 兩個 error 都有結尾空行、同一個 chunk：drain() 停在第一個，第二個留在 buffer。
+  # finishStream() 開頭那道「還沒有錯誤」的條件擋住它；拿掉那道條件，勝出的會變成第二個
+  capture "$T/c.sse" two-errors-closed >/dev/null
+  run stream "$T/c.sse" -- hi
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"first error"* ]]
+  [[ "$output" != *"second error"* ]]
+}
+
+@test "--_selftest-end timeout: a residual error event does not replace the timeout" {
+  # 有傳輸錯誤時不 flush：殘留的 error 事件若先被處理，會蓋掉逾時的分類
+  capture "$T/c.sse" trailing-error >/dev/null
+  run stream "$T/c.sse" --_selftest-end timeout -- hi
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"timed out"* ]]
+  [[ "$output" != *"backend error at the end"* ]]
+}
+
+@test "--_selftest-end clean: same as no flag" {
+  capture "$T/c.sse" trailing-error >/dev/null
+  run stream "$T/c.sse" --_selftest-end clean -- hi
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"backend error at the end"* ]]
+}
+
+@test "--_selftest-end: requires --_selftest-stream" {
+  run "$BIN" --output "$T/out.md" --_selftest-end timeout -- hi
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--_selftest-end requires --_selftest-stream"* ]]
+}
+
+@test "--_selftest-end: unknown values are refused" {
+  capture "$T/c.sse" plain >/dev/null
+  for bad in "" "Timeout" "error" "timeout,clean"; do
+    run stream "$T/c.sse" --_selftest-end "$bad" -- hi
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"--_selftest-end"* ]]
+  done
 }
 
 @test "--_selftest-cuts: requires --_selftest-stream" {
@@ -175,7 +250,8 @@ stream() { "$BIN" --output "$T/out.md" --_selftest-stream "$@"; }
   done
 }
 
-@test "--_selftest-cuts: is not listed in --help" {
+@test "--_selftest-cuts / --_selftest-end: not listed in --help" {
   run "$BIN" --help
   [[ "$output" != *"_selftest-cuts"* ]]
+  [[ "$output" != *"_selftest-end"* ]]
 }

@@ -39,9 +39,12 @@ codex-call --output FILE [--model M] [--effort E] [--service-tier T] [--max-time
   重複的 key（例如兩個同名 property）在 JSON 語法上合法，本地不擋；以哪一個為準由後端決定。訊息引用的拒答原文、reason 與輸出
   片段經 `sanitizeBackendText`、`stripInvisibleUnicode`、`clampToBudget`，與背景模式的 status 行同一套。
   「不寫檔」指本次不寫；`--output` 若已有舊檔，本工具不去刪它，與其他失敗路徑一致。
-  **已知限制（#28）**：UTF-8 chunk 丟失仍在——丟在 JSON 字串值中間時，剩下的文字仍是合法 JSON、會被接受；
-  丟掉完成事件時則因收不到 `completed` 而失敗。最後一個 SSE 事件若沒有結尾空行也會被丟掉，丟的是完成事件時
-  同樣是誤拒（失敗方向，不會誤收）。與 `--poll`／`--abort`／`--force-reap` 並用 → exit `1`。
+  **分幀（#28，2.25.1 起）**：收到的位元組先累積，以位元組 `\n\n` 切事件，只解碼完整的事件。chunk 切在多位元組字
+  中間不再丟資料；最後一個沒有結尾空行的事件，在正常結束（200、沒有傳輸錯誤、尚未記錄錯誤）時也會處理。
+  解碼是 lossy 的：真的不合法的位元組各變成一個 U+FFFD，**呼叫端不會收到任何提示**，含有替換字元的回覆在
+  `--json-schema` 下仍可能通過驗證。這是刻意的取捨：以前同一情況是整個 chunk 被丟掉。仍未處理：同一個
+  callback 內的 early bail、CRLF 分隔、多個終端事件時誰勝出（#100）。與 `--poll`／`--abort`／`--force-reap`
+  並用 → exit `1`。
   **不帶此旗標時**，請求的 `text` 仍是 `{"verbosity":"medium"}`，回覆端的行為也不變（拒答仍落到空輸出規則，
   見 #93）。
 - **不帶 `--image` 時請求結構不變**：仍是一則 user message、裡面恰好一個 `input_text`。「不變」指 JSON
@@ -219,13 +222,16 @@ run 狀態（**封閉列舉，五種**，round 9 Stage B 之後只有一個目�
   request body 以 sorted-key JSON 印到 stdout、exit `0`；不讀 auth、不發 HTTP。與背景模式旗標並用 → exit `1`。
   它的位置就在圖片驗證之後、讀 auth 之前，所以「壞圖被拒時沒印出 payload」同時證明驗證先於送出。
 - `--_selftest-stream FILE`（#92）：同步模式專用。把一份 SSE 事件檔（以位元組讀入）餵進與真實串流相同的
-  `ingest()`、`complete(transportError:)`（以一個正常結束的 200 串流重播：最後一個沒有結尾空行的事件也會
-  處理，#28）與 `finalizeOutput()`（含 `--json-schema` 的回覆端檢查），照常寫 `--output` 或 exit 非零；
+  `ingest()`、`complete(transportError:)`（預設以一個正常結束的 200 串流重播：最後一個沒有結尾空行的事件也會
+  處理，#28；`--_selftest-end` 可改成逾時結束）與 `finalizeOutput()`（含 `--json-schema` 的回覆端檢查），照常寫 `--output` 或 exit 非零；
   不讀 auth、不發 HTTP。與背景模式旗標並用 → exit `1`。
 - `--_selftest-cuts N,N,…|all`（#28）：只能與 `--_selftest-stream` 並用（否則 exit `1`）。`N,N,…` 依位元組
   位移把事件檔切段，依序餵進 `ingest()`，重現 TCP 切在字元或事件中間；位移必須是 `1..<檔案大小` 的整數、
   嚴格遞增，否則 exit `1`（不夾到範圍內）。`all` 在同一個程序內對每個單一切點各重播一次，結果
   （累積文字、拒答、終端狀態、錯誤）與不切時不同就 exit `1` 並印出位移；全部相同就照不切的結果繼續。
+- `--_selftest-end clean|timeout`（#28）：只能與 `--_selftest-stream` 並用（否則 exit `1`）。決定重播的 200 串流
+  怎麼結束：`clean`（預設）是正常結束；`timeout` 以真實串流在 `--max-time` 到期時收到的同一個
+  `NSURLErrorTimedOut` 結束，用來測「有傳輸錯誤時不處理殘留的事件，逾時分類不被蓋掉」。其他值一律 exit `1`。
 
 ## 8. 穩定性承諾
 

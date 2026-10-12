@@ -3,7 +3,7 @@
 #
 # 不打真後端：CODEX_URL 是 hardcoded 常數、無法注入 mock server。請求這一端用 `--_selftest-payload`
 # （#87）檢查將要送出的 body；回覆這一端用 `--_selftest-stream FILE`（#92）：把一份 SSE 事件檔餵進
-# 與真實串流相同的 `feed()` 與 `finalizeOutput()`，不讀 auth、不發 HTTP（契約 §7）。
+# 與真實串流相同的 `ingest()`、`complete(transportError:)` 與 `finalizeOutput()`，不讀 auth、不發 HTTP（契約 §7）。
 #
 # **每一則都必須帶 selftest 鉤子（`--_selftest-payload`／`--_selftest-stream`／`--_selftest-sleep`），
 # 或在送出前就被拒絕**：HOME 只隔離 run base，不隔離憑證——AUTH_FILE 走 passwd db（detach.bats 的
@@ -384,7 +384,7 @@ open(p+".tmp","w").write(json.dumps(m)); os.replace(p+".tmp",p)' "$d/meta.json" 
   [ ! -e "$T/out.md" ]
 }
 
-@test "an error event in the stream is still reported (feed() keeps the existing path)" {
+@test "an error event in the stream is still reported (the replay keeps the existing error path)" {
   sse "$T/err.sse" '{"type":"error","error":{"code":"server_is_overloaded","message":"Backend overloaded for the test"}}'
   run --separate-stderr stream "$T/err.sse" --json-schema "$T/schema.json" "p"
   [ "$status" -ne 0 ]

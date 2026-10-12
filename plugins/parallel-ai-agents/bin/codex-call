@@ -197,7 +197,7 @@ func refreshIfNeeded(_ auth: inout [String: Any]) throws {
 
 // MARK: - SSE error message extraction
 
-/// The information-free fallback, named rather than inlined so #28 can key off it.
+/// The information-free fallback, named rather than inlined so the terminal-event work (#100) can key off it.
 let CODEX_FALLBACK_MESSAGE = "Codex error"
 
 /// Pull the human-readable message out of an SSE `error` / `response.failed` event.
@@ -213,10 +213,10 @@ let CODEX_FALLBACK_MESSAGE = "Codex error"
 /// making "retry now vs stop" undecidable. Order matters: the top-level path stays
 /// first so the new one cannot shadow it.
 ///
-/// KNOWN GAP (#28): each path accepts any String, including "" — an empty top-level
+/// KNOWN GAP (#100): each path accepts any String, including "" — an empty top-level
 /// `message` therefore shadows a real nested one. Fixing that needs an informativeness
 /// predicate rather than a presence check, which is tracked with the rest of the SSE
-/// terminal-event semantics in #28. Deliberately NOT fixed here: #25 is scoped to the
+/// terminal-event semantics in #100. Deliberately NOT fixed here: #25 is scoped to the
 /// missing path, which has a reproducible payload.
 func extractErrorMessage(_ json: [String: Any]) -> String {
     let raw = (json["message"] as? String)
@@ -252,7 +252,7 @@ func extractErrorMessage(_ json: [String: Any]) -> String {
 /// Remaining sanitization gaps — bidi overrides (U+202A–U+202E, U+2066–U+2069), the
 /// Unicode Tags block, U+FEFF, U+2028/U+2029, the two sibling `body.prefix(500)` sites
 /// that share the Character-counting flaw, and the forgeable in-band marker — are tracked
-/// in #28. They need one coherent pass over every backend-text sink, not a fourth
+/// in #101. They need one coherent pass over every backend-text sink, not a fourth
 /// piecemeal edit here.
 func sanitizeBackendText(_ raw: String) -> String {
     let stripped = String(String.UnicodeScalarView(raw.unicodeScalars.filter { s in
@@ -336,10 +336,10 @@ final class StreamCollector: NSObject, URLSessionDataDelegate {
             let event = buffer.subdata(in: buffer.startIndex..<range.lowerBound)
             buffer.removeSubrange(buffer.startIndex..<range.upperBound)
             // Lossy on purpose: the separator is ASCII, so a complete event is complete UTF-8 unless its
-            // bytes really are broken — and then a broken byte costs one U+FFFD, not the whole event. Do
+            // bytes really are broken — and then each invalid byte costs a U+FFFD, not the whole event. Do
             // not read this as "no encoding errors can happen here".
             processEvent(String(decoding: event, as: UTF8.self))
-            // KNOWN GAP (#28, not fixed by the framing change): this bail aborts the drain within a
+            // KNOWN GAP (#100, not fixed by the framing change in #28): this bail aborts the drain within a
             // single callback, so sibling events already in `buffer` go unprocessed. Left as-is
             // deliberately — changing it only pays off together with the terminal-event policy, and
             // that policy still lacks the backend trace it depends on. CRLF-separated events
@@ -350,10 +350,11 @@ final class StreamCollector: NSObject, URLSessionDataDelegate {
 
     // End of a successful stream: a last event the server closed without a trailing blank line is
     // still an event. Only while no error is recorded — processing a trailing error/failed event after
-    // the bail would silently change which terminal event wins, which is the open policy question.
+    // the bail would silently change which terminal event wins, which is the open policy question (#100).
+    //
+    // No drain() here: every ingest() already drained, and drain() stops early only once an error is
+    // recorded. So past the guard the buffer holds no complete event — at most an unterminated last one.
     func finishStream() {
-        guard streamError == nil else { return }
-        drain()
         guard streamError == nil else { return }
         let rest = String(decoding: buffer, as: UTF8.self)
         buffer.removeAll()
@@ -408,7 +409,7 @@ final class StreamCollector: NSObject, URLSessionDataDelegate {
             // Unconditional assignment — same as before #25. Which terminal event should
             // win when several arrive is a policy question that two attempts (#25 R1
             // first-wins latch, R2 informativeness bit) both got wrong, because nobody
-            // has yet observed how the backend actually tears down. Tracked in #28,
+            // has yet observed how the backend actually tears down. Tracked in #100,
             // where the trace comes first and the policy second. #25 only fixes the
             // missing extraction path, which has a reproducible payload.
             streamError = NSError(domain: "codex-call", code: -1,
@@ -575,7 +576,7 @@ func structuredOutputProblem(text: String, refusal: String, terminalStatus: Stri
         return "Codex response ended incomplete (reason: \(shown(incompleteReason ?? "not given", 80))) — the structured output is cut short; refusing to write it"
     default:
         // Only a completed response is accepted. Syntactically complete JSON does not prove the stream
-        // finished, and a chunk lost to #28 can be the very event that would have said it did not.
+        // finished, and an event the stream never delivered can be the very one that would have said it did not.
         return "Codex stream ended without a completion event (status: \(shown(terminalStatus ?? "none", 80))) — refusing to write a structured result that may be cut short"
     }
     if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return nil }
@@ -1596,6 +1597,7 @@ struct Args {
     var selftestPayload = false           // hidden test hook (#87): print the request body, send nothing
     var selftestStream: String?           // hidden test hook (#92): replay an SSE capture, send nothing
     var selftestCuts: String?             // hidden test hook (#28): split the replayed capture at byte offsets
+    var selftestEnd: String?              // hidden test hook (#28): how the replayed stream ends — clean | timeout
     var selftestErrorExtract: String?   // hidden test hook (#25); see --selftest-error-extract
     var selftestClassify: (String, Int)?  // hidden test hook (R4-L1): --_selftest-classify DOMAIN CODE
     var selftestPrelockSleep: Int?        // hidden test hook (Codex R4 #3): worker sleeps BEFORE locking
@@ -1637,6 +1639,9 @@ func parseArgs() -> Args {
         // offsets before replaying it; "all" replays it once per possible single cut, in-process, and
         // dies naming the first offset whose result differs from the uncut replay.
         case "--_selftest-cuts": a.selftestCuts = next()
+        // Hidden test hook (#28), only with --_selftest-stream: "timeout" ends the replay with the same
+        // NSURLErrorTimedOut a live stream gets, so the "no flush on a transport error" rule is testable.
+        case "--_selftest-end": a.selftestEnd = next()
         // Hidden test hook (#25) — deliberately absent from --help. Feeds one SSE
         // event payload through extractErrorMessage and prints the result; sends no
         // HTTP. Exists because CODEX_URL is a hardcoded constant with no injection
@@ -1748,6 +1753,7 @@ if a.jsonSchema != nil && (a.workerId != nil || a.pollId != nil || a.abortId != 
 if a.selftestPayload && modes > 0 { die("--_selftest-payload is only supported in synchronous mode") }
 if a.selftestStream != nil && modes > 0 { die("--_selftest-stream is only supported in synchronous mode") }
 if a.selftestCuts != nil && a.selftestStream == nil { die("--_selftest-cuts requires --_selftest-stream") }
+if a.selftestEnd != nil && a.selftestStream == nil { die("--_selftest-end requires --_selftest-stream") }
 if a.selftestSleep != nil && !a.detach { die("--_selftest-sleep requires --detach") }
 // R3-L9: the test-only grace override must not be reachable from a production detach.
 if a.selftestGrace != nil && a.selftestSleep == nil { die("--_selftest-grace requires --_selftest-sleep") }
@@ -1826,12 +1832,21 @@ if let capture = a.selftestStream {
     guard let raw = FileManager.default.contents(atPath: capture) else {
         die("--_selftest-stream: cannot read \(capture)")
     }
+    // How the replayed 200 stream ends. "timeout" is the error URLSession hands a live stream when
+    // --max-time expires; anything else is refused rather than read as "clean".
+    let transportError: Error?
+    switch a.selftestEnd ?? "clean" {
+    case "clean": transportError = nil
+    case "timeout": transportError = NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut,
+                                             userInfo: [NSLocalizedDescriptionKey: "The request timed out."])
+    case let other: die("--_selftest-end: '\(other)' is not one of clean, timeout")
+    }
     func replay(_ cuts: [Int]) -> StreamCollector {
         let c = StreamCollector()
         c.statusCode = 200                       // a capture replays as a 200 stream
         var start = 0
         for end in cuts + [raw.count] { c.ingest(raw.subdata(in: start..<end)); start = end }
-        c.complete(transportError: nil)          // ...that finished cleanly, through the live completion path
+        c.complete(transportError: transportError)   // ...ending through the live completion path
         return c
     }
     // What a replay produced, for comparing a cut replay with the uncut one.

@@ -19,21 +19,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `didReceive` 交付的 chunk 與 UTF-8 字元邊界無關，舊程式逐 chunk 解碼，切點落在多位元組字中間時整個
     chunk（含其中完整的事件）被丟掉。繁中輸出時這是常態：長篇的結構化回答會丟掉 `response.completed`、
     以 `stream ended without a completion event` 失敗；丟掉的若是中間的 delta，剩下的仍是合法 JSON
-    而被接受。現在 bytes 先累積、以位元組 `\n\n` 切事件，只解碼完整的事件（lossy：壞位元組變成一個
-    U+FFFD，不再丟整塊）。
+    而被接受。現在 bytes 先累積、以位元組 `\n\n` 切事件，只解碼完整的事件（lossy：每個不合法的位元組變成
+    一個 U+FFFD，不再丟整塊；呼叫端不會收到提示，契約 §2 已寫明）。
   - 最後一個事件沒有結尾空行時，串流正常結束（200、沒有傳輸錯誤）後仍會處理它。只在還沒有錯誤時處理：
-    終端事件誰勝出的政策（#28 的另一半，待 trace）不變；有傳輸錯誤時不處理，逾時等錯誤分類不受影響。
-  - 仍未處理（寫在程式註解的 KNOWN GAP）：同一個 callback 內的 early bail、CRLF 分隔的事件。
+    終端事件誰勝出的政策（待 trace，#100）不變；有傳輸錯誤時不處理，逾時等錯誤分類不受影響。
+  - 仍未處理（寫在程式註解的 KNOWN GAP）：同一個 callback 內的 early bail、CRLF 分隔的事件，改由 #100 追蹤。
+    `sanitizeBackendText` 註解列的清理缺口原本也寫「tracked in #28」，但從不在 #28 的範圍內，改由 #101 追蹤。
 - 結束處理抽成 `StreamCollector.complete(transportError:)`、收到的 bytes 一律經 `ingest()`，真實串流與
   `--_selftest-stream` 的重播走同一段程式。`--_selftest-stream` 改讀位元組（以前讀成字串，不合法的 UTF-8
   直接被拒，壞位元組的處理無從測起）。
 - 新隱藏旗標 `--_selftest-cuts N,N,…|all`（只能與 `--_selftest-stream` 並用）：依位元組位移切段重播；
   `all` 在同一個程序內窮舉每個單一切點，結果與不切時不同就失敗並印出位移。格式不對、不嚴格遞增、
   超出範圍一律拒絕，不夾到範圍內。契約 §7 已更新。
-- 測試：`test/codex-call-stream-framing.bats`，12 個 case（`grep -c "^@test" test/codex-call-stream-framing.bats`）。
-  在加上重播鉤子、尚未改分幀的程式上跑同一份檔，7 個失敗；其餘 5 個是既有行為的守門（一個 chunk 多個事件、
-  終端事件政策不變）與鉤子本身的檢查。三種突變（改回逐 chunk 解碼、拿掉結束時的 flush、拿掉
-  「還沒有錯誤」的條件）各自讓對應的測試轉紅，記在測試檔開頭。
+- 新隱藏旗標 `--_selftest-end clean|timeout`（只能與 `--_selftest-stream` 並用）：`timeout` 以真實串流逾時時的
+  同一個 `NSURLErrorTimedOut` 結束重播，讓「有傳輸錯誤時不處理殘留的事件」可以測。其他值一律拒絕。
+- 測試：`test/codex-call-stream-framing.bats`，20 個 case（`grep -c "^@test" test/codex-call-stream-framing.bats`）。
+  - 最初 12 個：在加上重播鉤子、尚未改分幀的程式上跑，7 個失敗；其餘 5 個守既有行為（一個 chunk 多個事件、
+    終端事件政策不變）與鉤子本身。
+  - verify 第 1 輪後加 8 個：issue 第 2 點本身的情境（單獨一個沒有結尾空行的 error 事件）、bail 之後留在
+    buffer 的完整 error 事件不處理、`trailing` 與 `broken-byte` 兩份 capture 的窮舉切點，以及 `--_selftest-end`
+    的四則。壞位元組那則改成斷言確切輸出（兩個 U+FFFD），原本的 glob 讓「整個事件被丟掉」也會過關。
+  - 突變（記在測試檔開頭）：改回逐 chunk 解碼、拿掉結束時的 flush、拿掉 `complete()` 的「沒有傳輸錯誤」條件、
+    拿掉 `finishStream()` 的「還沒有錯誤」條件，各自讓對應的測試轉紅。`finishStream()` 原本另有一次 `drain()`
+    與第二道條件：`ingest()` 每次都已 drain，那段到不了，突變也測不出來，已刪除。
 - **下游 vendor 的副本要重新 vendor**：codex-pro 以 SHA 釘住 `codex-call`（codex-pro#29）。
 
 ## [2.25.0] - 2026-10-11
