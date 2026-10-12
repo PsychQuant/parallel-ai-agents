@@ -336,8 +336,9 @@ final class StreamCollector: NSObject, URLSessionDataDelegate {
             let event = buffer.subdata(in: buffer.startIndex..<range.lowerBound)
             buffer.removeSubrange(buffer.startIndex..<range.upperBound)
             // Lossy on purpose: the separator is ASCII, so a complete event is complete UTF-8 unless its
-            // bytes really are broken — and then each invalid byte costs a U+FFFD, not the whole event. Do
-            // not read this as "no encoding errors can happen here".
+            // bytes really are broken — and then each ill-formed byte sequence costs one U+FFFD, not the whole
+            // event (a truncated 3-byte character costs one; two stray bytes cost two). Do not read this as
+            // "no encoding errors can happen here".
             processEvent(String(decoding: event, as: UTF8.self))
             // KNOWN GAP (#100, not fixed by the framing change in #28): this bail aborts the drain within a
             // single callback, so sibling events already in `buffer` go unprocessed. Left as-is
@@ -352,8 +353,9 @@ final class StreamCollector: NSObject, URLSessionDataDelegate {
     // still an event. Only while no error is recorded — processing a trailing error/failed event after
     // the bail would silently change which terminal event wins, which is the open policy question (#100).
     //
-    // No drain() here: every ingest() already drained, and drain() stops early only once an error is
-    // recorded. So past the guard the buffer holds no complete event — at most an unterminated last one.
+    // No drain() here, because it would never do anything: every ingest() already drained, drain() stops
+    // early only once an error is recorded, and streamError is never cleared once set. So past the guard
+    // the buffer holds no complete event — at most an unterminated last one.
     func finishStream() {
         guard streamError == nil else { return }
         let rest = String(decoding: buffer, as: UTF8.self)
@@ -371,7 +373,8 @@ final class StreamCollector: NSObject, URLSessionDataDelegate {
     func complete(transportError error: Error?) {
         // Flush the last event only for a clean 200 finish. With a transport error the call fails anyway,
         // and processing a residual error event first would replace that error — losing, for example,
-        // the NSURLErrorTimedOut classification.
+        // the NSURLErrorTimedOut classification. `statusCode == 200` is defense in depth: a non-200 body goes
+        // to firstBytes and never into the buffer, so no test can tell this condition apart from its absence.
         if statusCode == 200 && error == nil { finishStream() }
         if statusCode != 200 {
             let body = firstBytes.flatMap { String(data: $0, encoding: .utf8) } ?? "(no body)"
