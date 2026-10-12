@@ -207,7 +207,7 @@ stream() { "$BIN" --output "$T/out.md" --_selftest-stream "$@"; }
 }
 
 @test "framing: replaying byte by byte (a cut at every offset at once) gives the uncut result" {
-  # 窮舉單一切點只切成兩段；這一則把每個位元組都切開，五份 capture 各比一次。
+  # 窮舉單一切點只切成兩段；這一則把每個位元組都切開，六份 capture 各比一次。
   # two-errors-closed 不在這裡：逐位元組送達時勝出的錯誤會變（#100 的 early bail），那不是分幀的問題
   # 這一則是相對比對（切與不切的結果相同），所以先斷言基準本身成功、有輸出，才不會兩邊一起失敗而空過。
   for spec in "plain:" "trailing:--json-schema" "broken-byte:" "truncated-cjk:" "stray-continuation:" "trailing-broken:"; do

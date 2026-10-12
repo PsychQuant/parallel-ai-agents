@@ -337,8 +337,8 @@ final class StreamCollector: NSObject, URLSessionDataDelegate {
             buffer.removeSubrange(buffer.startIndex..<range.upperBound)
             // Lossy on purpose: the separator is ASCII, so a complete event is complete UTF-8 unless its
             // bytes really are broken — and then the broken bytes cost U+FFFDs, not the whole event. Exactly two
-            // cases: a valid lead byte followed by a truncated prefix of its character costs ONE U+FFFD for the
-            // whole prefix; every other invalid byte costs one each (so 80 80 80 costs three). Do not read this as
+            // cases: a truncated prefix of a WELL-FORMED character (lead byte plus valid continuation bytes, e.g.
+            // E4 B8) costs ONE U+FFFD; every other invalid byte costs one each — 80 80 80 and E0 80 80 cost three. Do not read this as
             // "no encoding errors can happen here".
             processEvent(String(decoding: event, as: UTF8.self))
             // KNOWN GAP (#100, not fixed by the framing change in #28): this bail aborts the drain within a
