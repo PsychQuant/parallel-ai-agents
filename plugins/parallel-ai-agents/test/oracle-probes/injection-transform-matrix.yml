@@ -1,0 +1,80 @@
+# R54 D1（#33 verify R53 logic M／security M／regression M／DA M）：注入哨兵的**『求值者對 PR 文字做轉換』× 傳輸**的交叉格。`injection-transport-matrix.yml` 的傳輸軸（環境、fd、行程群組、cwd、方言、脈絡）彼此有交叉，但『文字轉換（截斷、換字元）× 關 fd』的交叉格不在它的分母裡——
+# R52 的哨兵「fd 197 ∪ 私有路徑」兩半各有前提（fd 要被求值者繼承、路徑要 payload 夠長），『文字被截斷 ∧ 求值者不繼承 fd』的交集沒有任何 payload 命中；R52 取聯集時又拿掉了 R50 的第四組（`echo M >&197`，31 字）。
+# 每一格是一個 step，**分母是 step 數（9）**，九格全部要判『不一致：繞過（注入）』。同一張探針在四棵樹上的結果（協調者實跑 macOS／bash 5.3.15，替身 lint 全放行；固定 commit 的歷史事實）：
+#   `5b5a46d`（哨兵 = 環境變數指到的檔）：P 繞過、Q 繞過、R 一致、S 一致、T 一致、U 繞過、V 一致、W 一致、X 一致（3／9）
+#   `8b45659`（哨兵 = fd 197；四組 payload）：  P 一致、Q 一致、R 繞過、S 繞過、T 繞過、U 繞過、V 一致、W 一致、X 繞過（5／9）
+#   `32d45ff`（R52：fd ∪ 長路徑）：             P 一致、Q 一致、R 一致、S 一致、T 一致、U 一致、V 一致、W 一致、X 繞過（1／9）
+#   R54（S、R、P、D、Pc、Dc 六個單一通道的家族）：九格全部繞過（9／9）
+# 兩棵舊樹各自**獨有**漏的格子不重疊（`5b5a46d` 獨有漏 R、S、T、X〔fd 繼承的短 payload〕，`8b45659` 獨有漏 P、Q〔關 fd ∧ 截斷〕；V、W 兩棵都漏），所以『R54 ⊇ 兩棵舊樹』要用行為驗，不能只看其中一棵；V、W（清環境 ∧ 關 fd ∧ 截斷）是兩棵舊樹都漏的格，P 組（只寫絕對路徑、56 字）補上。
+# 格子：P／Q 截斷到 100／60 字 × Python `subprocess` 預設（`close_fds=True`）；R／S 截斷到 40／36 字的 `eval`；T 受限 shell ∧ `IFS=` 之後的 `eval`；U `IFS=` 之後的 `eval` ∧ 斜線被換成底線；V／W 清環境 ∧ 關 fd ∧ 截斷；
+# X 受限 shell 的算術脈絡（`>` 檔名重導向被禁、`(( $0 ))` 又不是命令位置，只有 S 的 `PWD[$(…>&197)]` 命中）。**不在這張表上**：zsh（CI 的 ubuntu 沒有；R3、R4、R9 的 zsh 格協調者在 macOS 實測 R54 全判繞過）、把文字轉成小寫或換編碼（`bash -c 'eval "${0,,}"'` 三棵樹都判一致，有限的 payload 集合補不完這一族——已知限制，見 `oracle.py` 檔頭〈已知限制〉(6)）。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: P truncated 100 x close_fds, arithmetic
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "-c", "t=${0:0:100}; (( t )) || :", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: Q truncated 60 x close_fds, command position
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "-c", sys.argv[1][:60]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: R bash eval of text truncated to 40, fd kept
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /bin/bash -c 'eval "${0:0:40}"' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: S bash eval of text truncated to 36, fd kept
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /bin/bash -c 'eval "${0:0:36}"' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: T restricted bash, IFS-empty eval, fd kept
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { "$BASH" -r -c 'IFS=; eval "$0"' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: U bash IFS-empty eval, slashes replaced, fd kept
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /bin/bash -c 'IFS=; eval "${0//\//_}"' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: V env-cleared x close_fds x truncated 100, arithmetic
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "-c", "t=${0:0:100}; (( t )) || :", sys.argv[1]], env={})' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: W env-cleared x close_fds x truncated 60, command position
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "-c", sys.argv[1][:60]], env={})' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: X restricted bash, arithmetic context, fd kept
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { "$BASH" -r -c '(( $0 ))' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py

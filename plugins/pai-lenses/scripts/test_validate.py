@@ -2487,10 +2487,10 @@ class ValidateTest(unittest.TestCase):
     def test_mutation_cache_fingerprint_follows_every_oracle_env_var(self):
         """R51 DA（R52 C5）：神諭讀的每一個 `ORACLE_*` 環境變數都會改變判定，指紋就得記它——R50 新增的 `ORACLE_STREAM_CAP` 沒進指紋，
         在 export 了它的 shell 裡跑 `mutation_check.py`，`oracle-inverted` 的突變體會因儀器不可信 rc=1 被記成假「殺掉」，快取檔又進了版控。
-        變數清單從 `oracle.py` 的原始碼讀（`mutation_check.oracle_env_names` 用 AST 掃所有 `ORACLE_*` 形狀的字串常數，不管怎麼讀它），不是這裡再寫一份；名字被拼出來的（`\"ORACLE_\" + \"X\"`）仍然看不到——那一類測試擋不了。另外 `TMPDIR` 也改變神諭的結果（私有路徑含不安全字元時神諭具名退出），一併記進指紋。"""
+        變數清單從 `oracle.py` 的原始碼讀（`mutation_check.oracle_env_names` 用 AST 掃所有 `ORACLE_*` 形狀的字串常數，不管怎麼讀它），不是這裡再寫一份；名字被拼出來的（`\"ORACLE_\" + \"X\"`）仍然看不到——那一類測試擋不了。另外 `TMPDIR` 也記進指紋：步驟的 cwd 與 stub 目錄仍在它底下（私有目錄只在 `/tmp` 不可寫而退回預設暫存目錄時才受它影響，那時路徑含不安全字元會讓神諭具名退出）。"""
         sys.path.insert(0, str(HERE)); import mutation_check as M
         # 名單的取法本身要涵蓋 `oracle.py` 讀環境變數的各種寫法（R52 宣稱查核 B、D 組：只認一種正規式時，`os.getenv(`／`os.environ[`／單引號／帶數字的名稱讀的變數兩邊都看不到）——
-        # 改用 AST 掃**所有**長得像 `ORACLE_*` 的字串常數（不管怎麼讀它）；唯一抓不到的是名字被拼出來的（`"ORACLE_" + "X"`）。
+        # 改用 AST 掃**所有**長得像 `ORACLE_*` 的字串常數（不管怎麼讀它）；抓不到的是名字被拼出來的（`"ORACLE_" + "X"`）與不以字串常數出現的讀法（迭代 `os.environ.items()`）〔R54 更正：前一版寫『唯一』〕。
         synthetic = ('import os\nfrom os import environ\n'
                      'a = os.environ.get("ORACLE_FOO")\nb = os.getenv("ORACLE_BAR", "x")\nc = os.environ["ORACLE_B4Z"]\n'
                      'd = os.environ.get( \'ORACLE_SQ\')\ne = environ.get("ORACLE_FROM")\nf = "ORACLE_" + "SPLIT"\ng = "not ORACLE_PROSE here"\n')
@@ -2514,7 +2514,7 @@ class ValidateTest(unittest.TestCase):
         finally:
             if keep is None: os.environ.pop("TMPDIR", None)
             else: os.environ["TMPDIR"] = keep
-        self.assertNotEqual(a, b, "TMPDIR 不同，key 必須不同（私有路徑含不安全字元時神諭具名退出）")
+        self.assertNotEqual(a, b, "TMPDIR 不同，key 必須不同（步驟的 cwd 與 stub 目錄在它底下）")
 
     def test_mutation_cache_fingerprint_follows_the_oracles_bash_and_sh(self):
         """R41 verify 第 16 列：指紋記的是 PATH 上的 bash，神諭卻優先用 `/opt/homebrew/bin/bash`（`pick_bash`）；`/bin/sh` 記的是

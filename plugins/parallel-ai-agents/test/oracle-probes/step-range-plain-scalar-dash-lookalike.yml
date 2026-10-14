@@ -1,0 +1,22 @@
+# R54 D2（#33 verify R53 logic M／DA）：前一個 step 的 `with:` 值是**多行 plain scalar**，續行到單獨一行 `-`（欄位比 step 的 dash 深），接著是一行更深的 `# LOG-FILTER:` 註解。PyYAML 把值解成 `first line -`，所以那行註解是真的註解、
+# `-` 是 scalar 的內容，不是 dash（PyYAML 解成字串；GitHub 的剖析器未驗證）。step 範圍往上走時至少要有其中一道：以欄位錨定（內容行不在 dash 欄）、或在『鍵已在 dash 行』時跳過；R52 的 `EXPECTED_SURVIVE` 說兩道防線互為冗餘、同時拿掉也看不出差別（第三道縮排條件會擋住）——
+# 這個形狀的註解比 dash 深，第三道失效，所以那句話在這裡不成立：兩道都拿掉，下一個 step b 真實的外流（管線外的 `echo "$PR_TITLE"`；lint 因 `if false` 裡有接 neutralise 的管線而放行）被前面的註解當成它的宣告而判『一致』；單獨拿掉任何一道仍判『繞過』（實測）。
+# `8b45659` 在這個形狀判『一致』（R51 時的回歸）；`32d45ff` 與 R54 判『不一致：繞過』。
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: comment
+        uses: some/action@v1
+        with:
+          body: first line
+            -
+              # LOG-FILTER: none — the next step prints only a constant
+      - name: b
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          if false; then echo x | python3 scripts/neutralise.py; fi
+          echo "$PR_TITLE"

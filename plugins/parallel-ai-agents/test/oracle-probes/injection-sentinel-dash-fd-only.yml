@@ -1,0 +1,28 @@
+# R54 D2（#33 verify R53 Codex 1／logic）：`/dev/fd/197` 家族（D：`PWD[$(echo${IFS}M>/dev/fd/197||:)]`、Dc：`echo M >/dev/fd/197 || :`）是**唯一**能在這個脈絡留下哨兵的 payload。步驟先刪掉私有目錄（路徑那一半失效），再讓 dash
+# （Ubuntu 的 `/bin/sh`）求值 PR 文字：S 與 R50 的程式碼行 R 都用 `>&197`，dash 把兩位數的 fd 重導向當語法錯誤（`Bad fd number`），整個 `eval` 不執行；P、Pc 只寫路徑，目錄已被刪掉。
+# 第一個 step：文字被放進雙引號裡求值（`eval "x=\"$0\""`），命令替換在雙引號裡照樣求值——只有 D 命中。第二個 step：`IFS=` 之後的 `eval`（`${IFS}` 是空字串，只有字面空白的程式碼行能求值）——只有 Dc 命中。
+# R52 的 `EXPECTED_SURVIVE` 曾寫『長寫法的 fd 那一半冗餘於短寫法與程式碼行』，這個形狀（刪目錄 ∧ dash ∧ 雙引號）是反例；R54 把 R52 的長寫法拆成單一通道的家族，這張探針釘住 D、Dc（selfcheck 98；`mutation_check.py` 的 D、Dc 兩個靶由它殺）。
+# （刪私有目錄屬性質聲明的 (i) 面：步驟對儀器動手。這張探針釘的是『動手之後 fd 那一半仍在』。）
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: deleted private dir, dash evaluates the text inside double quotes
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          rm -rf "$ORACLE_PRIV"
+          { /bin/dash -c 'eval "x=\"$0\""' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: deleted private dir, dash evaluates the text after IFS= (literal-space code line)
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          rm -rf "$ORACLE_PRIV"
+          { /bin/dash -c 'IFS=; eval "$0"' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py

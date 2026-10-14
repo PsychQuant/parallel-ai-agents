@@ -1,5 +1,5 @@
 # R52 網（#33 verify R51 DA，C1/C3）：這張釘住 **路徑那一半的 `-n -o -v PWD[…]` 形狀**：孫行程關掉 fd（Python `subprocess` 預設），PR 文字只在 `[ -n $0 ]` 的 `-v` 下標算術裡被求值——
-# 只有長寫法（`_INJECT_L`）的 `-n -o -v PWD[…]` 命中（短寫法要 fd，這裡 fd 已關）（求值者用 `"$BASH"`，跟步驟同一支 bash——macOS 的 `/bin/bash` 是 3.2，`[` 沒有 `-v`，經 `[ -v` 的那一型在那裡不會被求值）；`_INJECT_SUB` 若不寫私有路徑，這一格就看不到。
+# 只有路徑家族（P）的 `-n -o -v PWD[…]` 命中——payload #7（短寫法 S 要 fd，這裡 fd 已關；R54 起『寫路徑』與『寫 fd』分成不同的 payload，不再綁在同一個字串）（求值者用 `"$BASH"`，跟步驟同一支 bash——macOS 的 `/bin/bash` 是 3.2，`[` 沒有 `-v`，經 `[ -v` 的那一型在那裡不會被求值）；路徑家族（`_INJECT_P`）若不寫私有路徑，這一格就看不到（`mutation_check.py` 的 P 靶由它殺）。
 # LINT-ARGS: --strict
 name: t
 on: pull_request

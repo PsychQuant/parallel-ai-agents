@@ -93,6 +93,8 @@ PyYAML 拒絕、GitHub 照樣執行；R29 探針實測整份縮排的文件 PyYA
 **它會真的執行 fixture 裡的 shell**（R30 M-16）：PATH 只有 stub 與 `/usr/bin:/bin`、cwd 與 HOME 都是臨時目錄、
 stdin `/dev/null`、逾時 5 秒。但那不是沙箱——fixture 寫絕對路徑就寫得出去、背景程序活得過逾時。
 **加 fixture 等於加一段會被執行的 shell**，review 時請當成程式碼看。
+**因為 PATH 只有 stub 與 `/usr/bin:/bin`，神諭判『一致』不保證命令被執行**（R54，#33 verify R53）：`/usr/bin:/bin` 以外的工具（Homebrew 的、runner 的 `/usr/local/bin`；例如 `node`）找不到，命令沒跑就判『一致』；
+stub 的 `python3` 對 `-c`／`-m` 一律吞 stdin、不執行程式碼（`python3 -c '…subprocess.run(["/bin/bash", "-c", sys.argv[1]])…' "$PR_TITLE"` 判『一致』，寫成 `/usr/bin/python3` 才判『繞過』）；注入 payload 只會被 shell 求值，`node -e "$PR_TITLE"`、`perl -e`、`awk` 等把文字當**自己的程式**執行的求值者一律判『一致』。
 **`env:` 會帶進去**（R37，R36 第 8 列）：workflow／job／step 三層的純量值依序覆蓋（step 最後），`SHELLOPTS: xtrace`、
 `BASHOPTS`、`BASH_XTRACEFD` 因此量得到；含 `${{` 的值照 run 區塊的規則代換（R42：字面常數換成值、GH_SAFE 換成數字、其餘換成
 PR 標記——前一版不設，`PR_BODY` 寫到哪裡都量不到）。PATH、HOME、`PR_TITLE` 永遠用神諭自己的值；`RUNNER_TEMP`、`GITHUB_WORKSPACE`
@@ -129,7 +131,7 @@ PR 文字固定是 `ORACLE-PR-TITLE-MARKER`：算術展開（`$(( PR_TITLE ))` �
       test/oracle.py --selftest-severity         `select_most_severe` 的單元測試
       test/oracle.py --selftest-aud              `aud_violations` 的單元測試（記錄編碼、init／fin、損毀記錄；R48）
       環境變數 `ORACLE_LINT=<path>` 換掉被對帳的 lint（只給突變測試用：量「神諭抓不抓得到某個 lint 突變」）。
-**已知限制（R50 第五輪 L 組；都是『量不到』或誤報，不是安全缺口）**：(1) 宣告 step 的差分比的是兩次執行的可觀察結果，所以宣告 step 的輸出必須是確定的——輸出含 `$$`、`$RANDOM`、`$(date +%s%N)`、`$(mktemp -u)` 的宣告 step 會被判『不一致：繞過』（rc=1，誤報；K4 只正規化了路徑）；(2) 儀器的每命令開銷（DEBUG trap）讓約一萬個以上的迴圈命令在 5 秒內跑不完，判『量不到（逾時 5s）』、rc=0（步驟本身 0.1 秒內可完成；負載高時門檻更低）；(3) `yaml_declaration` 的正規式與 `_heredoc_delim_at` 對極端輸入（3 萬個空白、2 萬個運算式的 heredoc）是二次方（幾秒到幾十秒），沒有修；(4) fixture 層的輸入錯誤（YAML 損毀編碼、孤立代理字元、1.5 MB 的環境變數值、不存在的檔）fail-loud 地以 traceback 結束，不是判定。
+**已知限制（R50 第五輪 L 組；(1) 是誤報、(2) 是『量不到』、(3) 是效能、(4) 是 fail-loud 地當掉，(5)(6) 是**漏報**——神諭判『一致』而 lint 放行的 step 真的會外流）**：(1) 宣告 step 的差分比的是兩次執行的可觀察結果，所以宣告 step 的輸出必須是確定的——輸出含 `$$`、`$RANDOM`、`$(date +%s%N)`、`$(mktemp -u)` 的宣告 step 會被判『不一致：繞過』（rc=1，誤報；K4 只正規化了路徑；macOS 上自 R54 起私有目錄在 `/tmp`，宣告 step 印 `ls /tmp` 的裸名也不確定，判『量不到』，`32d45ff` 判『一致』）；(2) 儀器的每命令開銷（DEBUG trap）讓約一萬個以上的迴圈命令在 5 秒內跑不完，判『量不到（逾時 5s）』、rc=0（步驟本身 0.1 秒內可完成；負載高時門檻更低）；(3) `yaml_declaration` 的正規式與 `_heredoc_delim_at` 對極端輸入（3 萬個空白、2 萬個運算式的 heredoc）是二次方（幾秒到幾十秒），沒有修；(4) fixture 層的輸入錯誤（YAML 損毀編碼、孤立代理字元、1.5 MB 的環境變數值、不存在的檔）fail-loud 地以 traceback 結束，不是判定；(5) **`yaml_declaration` 的範圍歸屬（R54 起列入；三棵樹判定相同，只在預設模式有實例，#96）**：step 範圍尾端、`env:` 值的行尾、job 層最後一個鍵（`timeout-minutes: 5  # LOG-FILTER: …`）、下一個 job 的鍵行尾的 `# LOG-FILTER:` 註解，神諭算成這個 step 的宣告、lint 不算，**真外流因此被判『一致』（漏報）**——縮排比 dash 深只是『尾端註解不屬於 step』的代理；(6) **神諭的 runner 模型比真 runner 窄（#97）**：見上面 PATH 那一段——裸 `python3 -c` 的 stub、`PATH` 以外的工具、非 shell 求值者、在程式內轉換 PR 文字的求值者（關 fd 時截到 43 字以下〔命令位置〕或 55 字以下〔算術下標〕、保留 fd 時截到 30 字以下、換掉斜線又關 fd、大小寫）——這些讓每組 payload 都不命中，判『一致』，是漏報；相對 `5b5a46d` 另有一個 2 字的窗：算術下標 ∧ 關 fd ∧ 保留環境 ∧ 文字被截到 54–55 字時，`5b5a46d` 的 `$ORACLE_INJECT` 版（54 字）命中、R54 的 P（56 字）不中（R54 宣稱查核 A 組實測；`-v`、`-n -o -v` 前綴同理差 2 字，未驗）。
 退出碼：神諭用的 bash 不在 lint 檔頭 `# ORACLE-BASH-SUPPORTED:` 的集合裡 → 1（`bash_supported`，第 13 列）；神諭與 lint 的
 `GH_SAFE_EXPRS` 不同步 → 載入時具名退出；有 `KNOWN_DISAGREE` 之外的不一致（含方向或雜湊不符的條目）→ 1；`KNOWN_DISAGREE` 裡的項目變成一致（理由不再成立）→ 1；
 已知類別的歸類數與檔頭宣告數不相等（任一方向）→ 1；must-fail 探針沒有以宣告的理由失敗 → 1；不給檔案參數執行整個 fixture 集時，已知類別總數／must-fail 探針總數與寫死常數 `FIXTURE_CLASS_TOTALS`／`FIXTURE_MUSTFAIL_TOTAL` 不符 → 1；否則 0。
@@ -312,23 +314,39 @@ PR_MARKER = "ORACLE-PR-TITLE-MARKER"
 # （trap 動作）。把 PR 相關的環境變數（PR_TITLE、PR_BODY 與 step `env:` 裡值是運算式的鍵）設成 payload 再跑一次：哨兵（fd 197 或私有路徑，見下）有東西 = 被當成程式碼執行了。
 INJECT_MARKER = "ORACLE-INJECT-MARKER"
 # **哨兵有兩條路，任一處有東西就算被當成程式碼執行**（R52，#33 verify R51 regression M2／DA）：fd 197（求值者必須繼承 fd）與 payload 裡的**私有字面路徑**（`INJECT_PATH_TOKEN` 在 `run_script`
-# 換成每次執行不同的絕對路徑；PR 文字本身就是 argv，會被原樣帶進任何孫行程，所以不依賴環境也不依賴 fd）。兩種繼承互不包含：R49 的『環境變數指到的檔』看不到清掉環境的求值者（`env -i`），
+# 換成每次執行不同的絕對路徑 `/tmp/oXXXXXXXX/i`；PR 文字本身就是 argv，會被原樣帶進任何孫行程，所以不依賴環境也不依賴 fd）。兩種繼承互不包含：R49 的『環境變數指到的檔』看不到清掉環境的求值者（`env -i`），
 # R50 的 fd 看不到會關掉 0–2 以外 fd 的啟動方式（Python `subprocess` 預設 `close_fds=True`、Node `spawnSync`）——R50 只量了『相同』，語料裡沒有這兩個形狀，所以兩個方向都沒看到。
-# 每一條**先寫路徑、再** `>/dev/fd/197 || :`（R52 宣稱查核 E 組）：不用 `>&197`——dash（Ubuntu 的 `/bin/sh`）把兩位數的 fd 重導向當**語法錯誤**（`Bad fd number`），整段 payload 一行都不執行，路徑那一半也沒寫；
-# `/dev/fd/N` 開不了（求值者沒有 fd 197）只是執行期錯誤，`|| :` 之後繼續。`${IFS}` 的版本（短寫法、長寫法）在 zsh（不做字詞拆分）與 `IFS=` 之後的 `eval` 裡不成立，程式碼行（字面空白）才是那兩種脈絡裡留下哨兵的一組（`injection-transport-matrix.yml` 的 J 格）；`IFS=` 之後的**算術**求值（`IFS=; (( $0 ))`）三種寫法都不成立，是已知限制（A 組 M2）。
+# **每一組 payload 的存在理由與它的前提**（R54 重寫；R53 逼出來的：R52 第一版取聯集時拿掉了 R50 的第四組，又沒有任何一組同時不要 fd、也夠短；R52 的長寫法把『寫路徑』與『寫 fd』綁在同一個字串，
+# 兩半各自冗餘於別組，網就釘不住）。**每一組只走一條通道、只有一個理由**；逐組試、命中就停；**相對 R50（`8b45659`）的四個字串只增不減**（R52 的長寫法 L 與程式碼行 C 拆成現在的 P、D、Pc、Dc，沒有字面對應）——
+#   S  `$(echo${IFS}M>&197)`（三個前綴；最短 43 字）：fd 197，`>&N` 的 dup。R50 的短寫法。前提：求值者繼承 fd、`${IFS}` 可用、shell 認得兩位數的 `>&N`（dash 不認，語法錯誤）。獨有的脈絡：**受限 shell 的算術脈絡**
+#     （`bash -r` 禁止 `>` 檔名重導向、只允許 `>&N`；`(( $0 ))` 又不是命令位置，R 那組程式碼行用不上；`injection-transform-matrix.yml` 的 X 格）。
+#   R  `echo M >&197`（31 字，字面空白）：R50 的第四組。前提同 S，但不要 `${IFS}`、不是下標脈絡。最短的一組：被截到 31–42 字（43 字起 S 也命中；`eval "${0:0:36}"`）、`IFS=` 之後的 `eval`、把 `/` 換成 `_`、受限 shell 的命令位置都還能命中。
+#   P  `$(echo${IFS}M>>PATH)`（三個前綴；最短 56 字）：只寫路徑，不要 fd、不要環境。前提：文字沒有被截到 56 字以下（`5b5a46d` 的 `$ORACLE_INJECT` 版是 54 字，算術下標 ∧ 關 fd ∧ 保留環境而截到 54–55 字的那一格 `5b5a46d` 命中、R54 不中，見已知限制 (6)）、`/` 沒被改寫、`${IFS}` 可用。R54 加的：Python `subprocess` 預設（`close_fds=True`）× 文字被截斷到 60～100 字，
+#     S、R 沒有 fd，R52 的長寫法（路徑與 fd 綁在同一個字串）又超過 100 字。路徑是 `/tmp/oXXXXXXXX/i`（16 字，見 `_short_tmp`）。
+#   D  `$(echo${IFS}M>/dev/fd/197||:)`（三個前綴；約 53 字）：fd 197，走 `/dev/fd/197`。dash 安全（`>/dev/fd/197` 不是兩位數 fd 的重導向）；開不了只是執行期錯誤，`|| :` 之後繼續。獨有的脈絡：**dash ∧ 步驟刪掉了私有目錄**
+#     （S、R 在 dash 是語法錯誤，P 的目錄沒了；`injection-sentinel-dash-fd-only.yml`）。
+#   Pc `echo M >>PATH`（字面空白）、Dc `echo M >/dev/fd/197 || :`：程式碼行版的 P、D。`${IFS}` 在 zsh（不做字詞拆分）與 `IFS=` 之後的 `eval` 裡不成立，字面空白的程式碼行才是那兩種脈絡裡留下哨兵的
+#     （Pc：`IFS=` 之後的 eval ∧ 關 fd，矩陣的 J 格；Dc：dash ∧ `IFS=` 之後的 eval ∧ 刪目錄）；`IFS=` 之後的**算術**求值（`IFS=; (( $0 ))`）每一組都不成立，是已知限制（A 組 M2）。
+# 對 `5b5a46d`（哨兵是環境變數指到的檔）的單調性是**行為上**的、不是字面的：那一棵樹的 payload 靠 `$ORACLE_INJECT`，R50 為了不讓步驟用名字摸到儀器而拿掉；P、Pc 在『環境被清掉、fd 被關』的格子裡取代它（`injection-transform-matrix.yml`）；**例外是一個 2 字的窗**：P 的最短前綴 56 字比 `$ORACLE_INJECT` 版（54 字）長 2 字，算術下標 ∧ 關 fd ∧ 保留環境 ∧ 文字被截到 54–55 字時，`5b5a46d` 判繞過、R54 判一致（R54 宣稱查核 A 組實測），沒有機械守衛。
+# 對 `8b45659`（R50）是**字面**的：它的四個字串（S 三個前綴與 R）都在表裡，`--selftest-aud` 守住（R54 D1）。
+# **不在這張表上的**（已知限制，L1 求值者，lint 檔頭明文不保證）：求值者在程式內對 PR 文字做**轉換**讓每一組都不命中——換掉斜線又關 fd、大小寫轉換（`${0,,}`）、編碼、關 fd 而截到 43 字以下（命令位置）或 55 字以下（算術下標；保留 fd 時是 30 字以下）。有限的 payload 集合補不完這一族
+# （`bash -c 'eval "${0,,}"'` 三棵樹都判一致），所以只量代表形狀。
 INJECT_PATH_TOKEN = "@@ORACLE-INJECT-PATH@@"
-# **payload 的三種寫法取聯集**（R52 宣稱查核 A 組）：(S) R50 的短寫法 `$(echo${IFS}M>&197)`——PR 文字被截斷（`${title:0:100}` 是 CI 腳本常見的寫法）時，路徑那麼長的長寫法會被截在 `$(` 中間而整段沒有被求值，
-# 短寫法 44 字；受限 shell（`bash -r`）禁止 `>` 檔名重導向、只允許 `>&197` 的 dup。(L) R52 的長寫法：路徑先寫、fd 用 `>/dev/fd/197`，dash 安全、不依賴 fd 繼承。(C) 一行程式碼（字面空白，不依賴 `${IFS}`）。
-# 逐組試、命中就停——多一種寫法只會多命中、不會少命中；S 在 dash 是語法錯誤（`>&197`），那一組沒命中就換下一組。
 _INJECT_S = "$(echo${IFS}" + INJECT_MARKER + ">&197)"
-_INJECT_L = "$(echo${IFS}" + INJECT_MARKER + ">>" + INJECT_PATH_TOKEN + ";echo${IFS}" + INJECT_MARKER + ">/dev/fd/197||:)"
+_INJECT_P = "$(echo${IFS}" + INJECT_MARKER + ">>" + INJECT_PATH_TOKEN + ")"
+_INJECT_D = "$(echo${IFS}" + INJECT_MARKER + ">/dev/fd/197||:)"
 INJECT_PAYLOADS = ("PWD[" + _INJECT_S + "]",
                    "-v PWD[" + _INJECT_S + "]",
                    "-n -o -v PWD[" + _INJECT_S + "]",
-                   "PWD[" + _INJECT_L + "]",
-                   "-v PWD[" + _INJECT_L + "]",
-                   "-n -o -v PWD[" + _INJECT_L + "]",
-                   "echo " + INJECT_MARKER + " >>" + INJECT_PATH_TOKEN + "; echo " + INJECT_MARKER + " >/dev/fd/197 || :")
+                   "echo " + INJECT_MARKER + " >&197",
+                   "PWD[" + _INJECT_P + "]",
+                   "-v PWD[" + _INJECT_P + "]",
+                   "-n -o -v PWD[" + _INJECT_P + "]",
+                   "PWD[" + _INJECT_D + "]",
+                   "-v PWD[" + _INJECT_D + "]",
+                   "-n -o -v PWD[" + _INJECT_D + "]",
+                   "echo " + INJECT_MARKER + " >>" + INJECT_PATH_TOKEN,
+                   "echo " + INJECT_MARKER + " >/dev/fd/197 || :")
 
 
 # ── runner 運算式的代換（R40，#33 verify R39 第 1 列、DA N3）─────────────────────────────────────────────────────────────
@@ -521,17 +539,17 @@ elif _m is None and LINT == (HERE / "lint-ci-log-filter.sh").resolve():
 
 AUD_INTEGRITY = "儀器："
 # R50（#33 verify R49）：儀器的三條資料流走**繼承的 pipe**（不是 cwd 底下的檔案）：注入哨兵 fd 197、事件（mark／pipefail 探針）fd 198、稽核記錄（二進位）fd 199。
-# 三條資料流本身是 pipe，沒有檔案可以截斷、覆寫或換成 FIFO，也沒有環境變數或 cwd 底下的名稱指到它們（注入哨兵另外有一個私有檔 `$ORACLE_PRIV/inject`，見下）——R49 找到的、針對稽核檔的路徑式失明法（截到 init、經導出的路徑存檔還原、萬用字元覆寫）不再有對象。
+# 三條資料流本身是 pipe，沒有檔案可以截斷、覆寫或換成 FIFO，也沒有環境變數或 cwd 底下的名稱指到它們（注入哨兵另外有一個私有檔 `$ORACLE_PRIV/i`，見下）——R49 找到的、針對稽核檔的路徑式失明法（截到 init、經導出的路徑存檔還原、萬用字元覆寫）不再有對象。
 # **傳輸是交換，不是單純的改進**（R52，#33 verify R51）：『靠環境變數指到的檔』換成『靠 fd 繼承』，是把『求值者必須繼承什麼』換掉了，兩種繼承互不包含——啟動子行程時關掉 0–2 以外 fd 的程式（Python `subprocess` 預設
 # `close_fds=True`、Node `spawnSync`）不繼承 fd，清掉環境的求值者（`env -i`）不繼承環境。R50 只量了『逐 step 相同』，語料裡沒有這兩個形狀，所以兩個方向都沒看到。因此**注入哨兵有兩條路，任一處有東西就算被當成程式碼執行**：fd 197，
 # 與 payload 裡每次執行不同的私有字面路徑（PR 文字本身是 argv，會被原樣帶進任何孫行程；刪掉私有目錄只弄瞎路徑那一半，fd 那一半仍在）。稽核記錄與 pipefail 事件仍只走 fd，由 PRELUDE 在步驟自己的 shell 裡寫；事件流裡的 `M called …` 行是 stub `python3`（外部子行程）寫的，孫行程關掉 fd 時寫不出去，只影響差分用的 `M` 行、不影響 `piped` 判定（R52 宣稱查核 C 組實測）。
-# 注入哨兵的私有檔 `$ORACLE_PRIV/inject` 是步驟拿得到路徑的檔案：步驟刪掉或清空它，只剩 fd 那一半（`injection-sentinel-fd-half.yml`）；求值者不繼承 fd 時就看不到——屬 (i) 面的文件化限制。
+# 注入哨兵的私有檔 `$ORACLE_PRIV/i`（`/tmp/oXXXXXXXX/i`）是步驟拿得到路徑的檔案：步驟刪掉或清空它，只剩 fd 那一半（`injection-sentinel-fd-half.yml`）；求值者不繼承 fd 時就看不到——屬 (i) 面的文件化限制。
 # **儀器完整性剩下的限制是兩面的性質，不是清單**（R50 起寫成性質；R52 補上第二面）。神諭的方法假設與剖析缺陷（宣告 step 的輸出須確定、DEBUG trap 的開銷、`yaml_declaration` 的範圍歸屬……）不在這兩面裡，見檔頭 docstring 的〈已知限制〉。
-# (ii) 面已修的形狀有探針（`injection-*.yml`、`channel-*.yml`、`injection-transport-matrix.yml`）；未修的成員（bash 3.2 的 `[`、stub、每 step 一個 `RUNNER_TEMP`）沒有探針：
+# (ii) 面已修的形狀有探針（`injection-*.yml`、`channel-*.yml`、`injection-transport-matrix.yml`）；未修的成員（bash 3.2 的 `[`、每 step 一個 `RUNNER_TEMP`）沒有探針（stub 的盲點由 `stub-python-no-exec-known-blind-spot.yml` 釘住）：
 #   (i) **步驟或它啟動的任何程式對儀器做的事**：步驟與儀器在同一個使用者、同一棵行程樹、共用暫存狀態（同一個信任域），神諭是 lint 放行步驟的差分測試器，不是 sandbox（fixture 受信）。步驟能對它所在的 shell 做的事，幾乎都能對儀器做；
 #       已經寫進 pipe 的記錄無法撤回（selfcheck 的 `audit-evidence-then-fd-closed`）。這不是防竄改。
 #   (ii) **神諭的 runner 模型與真 runner 不同的地方**（不需要步驟動儀器）：fd 與環境的繼承（上一段）、通道檔的讀法（真 runner 讀這五個檔：`set_env`／`set_output`／`save_state` 用 `File.ReadAllText`、`add_path` 用 `File.ReadAllLines`、`step_summary` 用 `StreamReader` 且超過 1 MiB 直接報錯；跟隨符號連結是 .NET 檔案 API 的預設——依 actions/runner 原始碼，未在 runner 上實測；神諭跟隨符號連結、有 8 MiB 上限，超量時上限之內讀到的 PR 文字照樣算證據，超量另外判儀器不可信——**只對文法內、lint 放行的 step**；宣告 step 與 lint 擋下的 step 沒有這一層（宣告 step 的 PR 文字在上限之外時判一致，A 組實測，`5b5a46d` 就有）；神諭沒有模擬 `step_summary` 的 1 MiB 上限，1–8 MiB 的摘要神諭判繞過而 runner 不會發布，是 fail-loud 的誤報）、
-#       每個 step 一個 `RUNNER_TEMP`、stub 的 `python3`、bash 版本（macOS 的 `/bin/bash` 是 3.2，`[` 沒有 `-v`，經 `[ -v` 的那一型在那裡不會被求值；`(( ))`、`$(( ))`、`let`、`[[ … -eq … ]]` 照樣求值）。(ii) 造成的是量不到、誤報或——如 R51 找到的兩個形狀——漏報。
+#       每個 step 一個 `RUNNER_TEMP`、stub 的 `python3`（`-c`／`-m` 不執行程式碼）、`PATH`（只有 stub 與 `/usr/bin:/bin`，其餘工具找不到＝命令沒跑＝判『一致』）、bash 版本（macOS 的 `/bin/bash` 是 3.2，`[` 沒有 `-v`，經 `[ -v` 的那一型在那裡不會被求值；`(( ))`、`$(( ))`、`let`、`[[ … -eq … ]]` 照樣求值）。(ii) 造成的是量不到、誤報或——如 R51 找到的兩個形狀——漏報。
 # 兩面的例子都**不是封閉列舉**，下面是 (i) 的例子：
 #   · 用編號指到儀器的 fd：單一命令重導向（`printf '%n' Z 199>/dev/null`）、關掉或改指別處、先存再還原、經 `/dev/fd/N`（這條 pipe 在檔案系統裡有路徑；macOS 實測，Linux 由 CI 的 selfcheck 驗〔ubuntu job 跑過 `instrument-fd-known-blind-spots.yml`〕）寫入偽造記錄（欄位數可吞掉其後的違規記錄；`fin` 也能偽造）、
 #     `exec 198>/dev/null`（pipefail 觀測量不到）；`exec 197>/dev/null` 在 R52 前是注入探針的盲點，R52 起被私有路徑那一半抓到（`injection-sentinel-fd-closed.yml`）；
@@ -541,7 +559,7 @@ AUD_INTEGRITY = "儀器："
 #     而握著過濾管線的背景工作在真 runner 上也會讓這個 step 卡住（R51 Codex 2、DA 降為 LOW）；把背景工作的輸出重導向才走 rc=1 的「儀器不可信」；
 #   · 背景行程離開步驟的行程群組（`set -m`、`setsid`）並關掉繼承的儀器 fd：`leaked` 與 `_reap_group` 都偵測不到，它會活到之後的 step 與檔案裡（R51 security）；在 Linux 上同 uid 的行程還可能經 procfs 開到別的行程的 pipe 端（推論，未實測），
 #     「已經寫進 pipe 的記錄無法撤回」因此可能只在 macOS 成立；
-#   · 注入哨兵的路徑那一半要求 TMPDIR 只含 `[A-Za-z0-9_./+=-]`，否則 `run_script` 具名退出（整輪沒有判定表）；求值者在別的 uid 或 mount namespace 時路徑那一半看不到（未實跑，沒有 sudo）；
+#   · 注入哨兵的私有目錄放 `/tmp/oXXXXXXXX`（`_short_tmp`），`TMPDIR` 不影響它；只有 `/tmp` 不可寫而退回 `TMPDIR` 時，才要求 `TMPDIR` 只含 `[A-Za-z0-9_./+=-]`，否則 `run_script` 具名退出（整輪沒有判定表；退回時截斷格 Q、W 也不再命中，沒有警告——用 `runpy` 改 `os.access` 模擬，沒有用真的唯讀 `/tmp` 驗）；求值者在別的 uid 或 mount namespace 時路徑那一半看不到（未實跑，沒有 sudo）；
 #   · （同一類；這裡列得最多，README 與 CHANGELOG 的清單較短，都不是封閉列舉）動神諭行程自己：`/bin/kill -9 "$PPID"`（步驟的 bash 是神諭的子行程，真 lint 放行這種外部命令）殺掉神諭，rc=137、沒有判定表；`stub_bin`（`$TMPDIR/oracle-*/bin/python3`）是整個行程共用的，
 #     一個 step 改寫它會污染之後的 step 與檔案（R50 第四輪 K 組：`cp /usr/bin/true …/python3` 之後，用 `-Xneutralise.py` 呼叫過濾器的 step 從『一致』變『不一致：誤擋』）；
 #   · 輸出洪水與偽造記錄：步驟自己的 stdout／stderr 沒有位元組上限（76 MB 輸出佔 602 MB 的 RSS，約 8 倍）；偽造的 `trusted` 記錄欄位帶換行與『（已知』，會讓輸出表多出假的『N 個 step：一致 …』行並抬高以子字串計的『（已知』數（rc 不受影響）。
@@ -632,11 +650,11 @@ for a in "$@"; do case "$a" in *neutralise.py) echo "M called $a" 2>/dev/null >&
 mode=stdin
 # R52（#33 verify R51 → R52 宣稱查核 D 組）：選項逐字掃描，取代前一版的 case 樣式——旗標群（`-Vu`、`-uX`、`-u?`）裡的每個字元各自判：V／h／? 印版本或說明就 exit 0，c／m 是『其後都是值』並進 drain，
 # W／X 吃值（群裡還有字就是行內的值，否則吃下一個 argv——`-uX scripts/neutralise.py` 的 `scripts/neutralise.py` 是 `-X` 的值，CPython 因此把 stdin 當程式讀，SyntaxError 把第一行印到 stderr），
-# b B d E i I O P q R s S u v x 是無參數旗標，其他字元（含 Python 2 的 -Q／-J）是 CPython 3 的無效選項：rc=2、不讀 stdin。長選項：版本／說明類 exit 0（模擬 CPython ≥ 3.11；3.9 對 --help-* 回 2），
-# --check-hash-based-pycs 吃下一個 argv，其餘不存在的長選項 rc=2。stub 不是 CPython：-c／-m 的程式碼寫什麼它不知道，一律當成會吃 stdin（真 CPython 的 -c 不讀 stdin，除非程式碼自己讀；R52 宣稱查核 D 組列為已知限制）。
+# b B d E i I O P q R s S t u v x 是無參數旗標，其他字元（含 Python 2 的 -Q／-J）是 CPython 3 的無效選項：rc=2、不讀 stdin。長選項：版本／說明類 exit 0（模擬 CPython ≥ 3.11；3.9 對 --help-* 回 2），
+# --check-hash-based-pycs 吃下一個 argv，其餘不存在的長選項 rc=2。stub 不是 CPython：-c／-m 的程式碼寫什麼它不知道，一律當成會吃 stdin（真 CPython 的 -c 不讀 stdin，除非程式碼自己讀；R52 宣稱查核 D 組列為已知限制）。與 CPython 3.9／3.13／3.14 逐一比對 66 個 argv（R54 宣稱查核 A 組），不同的只有：缺值的 -c／-m／-W／-X／--check-hash-based-pycs（stub 回 0 或 1，真 CPython 回 2）、3.9 的 -P（3.11 起才有）、-i 搭配不讀 stdin 的腳本（真 CPython 進 REPL 讀 stdin）；都不是常見寫法，沒有探針。
 while [ $# -gt 0 ]; do
   case "$1" in
-    --) shift; [ $# -gt 0 ] && mode=drain; break;;
+    --) shift; if [ $# -gt 0 ] && [ "$1" != - ]; then mode=drain; fi; break;;   # `-- -`：腳本位置的 `-` 還是『把 stdin 當程式』（R54，Codex 3；R52 新增的這個分支原本把它當腳本吞掉）
     --version|--help|--help-all|--help-env|--help-xoptions) exit 0;;
     --check-hash-based-pycs) shift;;
     --*) exit 2;;
@@ -649,7 +667,7 @@ while [ $# -gt 0 ]; do
           V|h|'?') exit 0;;
           c|m) mode=drain; break 2;;
           W|X) [ -n "$a" ] || shift; break;;
-          b|B|d|E|i|I|O|P|q|R|s|S|u|v|x) :;;
+          b|B|d|E|i|I|O|P|q|R|s|S|t|u|v|x) :;;   # `-t` 是過時但仍被 CPython 3.9–3.13 接受的旗標（R54，R53 regression M2：R52 的逐字掃描漏了它，rc=2 讓 errexit 的 step 在這裡被截斷）
           *) exit 2;;
         esac
       done;;
@@ -808,14 +826,27 @@ def pf_observation(recs):
     return "on" if pipes else "no-pipeline"
 
 
+def _short_tmp():
+    """私有目錄的上層：`/tmp`（可寫的話）。R54（#33 verify R53 logic M／security M）：路徑那一半的哨兵寫進 payload 裡的**字面路徑**，路徑愈長 payload 愈長，文字被截斷（`${title:0:100}`、`sys.argv[1][:60]`）時 payload 被截在
+    `$(` 中間而整段沒有被求值。放在預設的 `TMPDIR` 底下（macOS 約 48 字、私有路徑約 60 字）使 `PWD[…]` 形的路徑 payload（P）達 100 字、程式碼行 Pc 達 88 字；放在 `/tmp` 底下（`/tmp/oXXXXXXXX/i`，16 字）分別是 56 字與 44 字。順帶：`/tmp` 可寫時，判定不再隨 `TMPDIR` 的長度與字元而變。
+    `/tmp` 不可寫（罕見）就回 `None`，退回預設的 `TMPDIR`。文字被截斷在路徑中間時，被截斷的 `echo M >>/tmp/oab1` 會在 `/tmp` 留下一個前綴名的殘檔，內容是一行 `ORACLE-INJECT-MARKER`（不改判定；R53 security LOW）。`/tmp` 是共用目錄：殘檔由神諭自己留下，`mutation_check.py` 跑到『拿掉 R』『拿掉 P』這類靶時也會留下，會累積在本機；前綴愈短愈好猜（`/tmp/o` 是固定名、`/tmp/o?` 只有約 37 個名字），名字後半隨機只對較長的前綴成立。"""
+    return "/tmp" if os.path.isdir("/tmp") and os.access("/tmp", os.W_OK | os.X_OK) else None
+
+
+def _inject_path_ok(path):
+    """哨兵路徑會原樣（不加引號）放進 payload：只收不需要加引號的字元。不符就由 `run_script` 具名退出，不靜默地判一致。"""
+    return re.fullmatch(r"[A-Za-z0-9_./+=-]+", path) is not None
+
+
 class _Scratch:
     """暫存目錄的 context manager（取代 `tempfile.TemporaryDirectory(ignore_cleanup_errors=True)`，不要求 Python 3.10+）：離開時 `shutil.rmtree(ignore_errors=True)`（遇到 `RecursionError` 改用 `rm -rf`）。
     R50 起步驟的行程群組**內**的行程在清理之前就已收乾淨（`_reap_group`）；逃出群組的行程（`set -m`、`setsid`）仍可能與清理競賽，`ignore_errors` 是最後一層保險（清不乾淨只留下一個殘留暫存目錄，不改變任何判定）。"""
-    def __init__(self, prefix=None):
+    def __init__(self, prefix=None, dir=None):
         self.prefix = prefix
+        self.dir = dir
 
     def __enter__(self):
-        self.path = tempfile.mkdtemp(prefix=self.prefix) if self.prefix else tempfile.mkdtemp()
+        self.path = tempfile.mkdtemp(prefix=self.prefix, dir=self.dir)
         return self.path
 
     def __exit__(self, *exc):
@@ -869,7 +900,7 @@ class _Streams:
             if x not in self.FDS:
                 return x
             try:
-                y = fcntl.fcntl(x, fcntl.F_DUPFD, max(self.FDS) + 1)
+                y = fcntl.fcntl(x, fcntl.F_DUPFD_CLOEXEC, max(self.FDS) + 1)   # CLOEXEC：搬開的讀端不該被步驟繼承（R54，R53 logic LOW；`Popen(close_fds=True)` 本來就會關，這裡不依賴它）
             except OSError as e:
                 raise SystemExit("✗ 儀器的資料流用固定的 fd 197／198／199——程序的 fd 上限（RLIMIT_NOFILE）要大於 200：%s" % e)
             os.close(x)
@@ -986,11 +1017,11 @@ def run_script(run, bash, stub_bin, yaml_env=None, extra=False, inject=None):
       已知類別 G 的差分比的是它（`classify_piped_leak`）：兩次執行的臨時目錄不同，bash 的錯誤訊息又帶腳本路徑。
     yaml_env: 從 YAML `env:` 收來的變數（R37，R36 第 8 列）；神諭自己的 PATH／HOME／PR_TITLE／ORACLE_PRIV 一律蓋過它。
     extra=True 時另外回傳第五項 dict：`pf`（`pf_observation`）與 `chan`（帶 PR 文字的通道名，見 `CHANNELS`）、`inject`（fd 197 或私有路徑的哨兵有沒有東西）、`aud`（儀器問題〔`AUD_INTEGRITY` 開頭〕加 `aud_violations` 的觀察）。
-    inject：`INJECT_PAYLOADS` 的一組——PR 相關的環境變數設成它（不是 PR_MARKER），payload 把哨兵寫進 fd 197 與 `<priv>/inject`（R44 第 1–3 列；R50 起不再是 `$ORACLE_INJECT` 指到的檔案；R52 起兩條路）。"""
+    inject：`INJECT_PAYLOADS` 的一組——PR 相關的環境變數設成它（不是 PR_MARKER），payload 把哨兵寫進 fd 197 或 `<priv>/i`（`/tmp/oXXXXXXXX/i`；R44 第 1–3 列；R50 起不再是 `$ORACLE_INJECT` 指到的檔案；R52 起兩條路；R54 起每組 payload 只走一條通道，見 `INJECT_PAYLOADS` 上方的表）。"""
     # R50（#33 verify R49）：儀器不再是步驟 cwd 底下的檔案——見 `FD_INJECT` 一帶的說明與 `_Streams`。跨 step 通道檔是 runner 自己的介面（步驟本來就拿 `$GITHUB_ENV` 去寫、讀、清），
     # 放在 `$RUNNER_TEMP/_runner_file_commands/` 底下、檔名帶隨機 uuid（目錄與前綴同真的 runner；runner 的五個檔共用同一個 GUID 後綴，神諭各用一個 uuid4）；步驟把它清掉＝清掉那個效果（真的 runner 也是），所以不做完整性保護，
     # 只要求「讀它不會卡住」（`_read_regular`）；刪除、換成非一般檔案或超量會判「量不到（儀器不可信）」，清空（`: >`）則判一致。pipefail 探針自己用的暫存檔（`want`／`t<pid>`）放在步驟 cwd 之外的私有目錄 `priv`。
-    with _Scratch() as d, _Scratch() as priv:
+    with _Scratch() as d, _Scratch(prefix="o", dir=_short_tmp()) as priv:
         runner_temp = os.path.join(d, "runner_temp")
         cmds = os.path.join(runner_temp, "_runner_file_commands")
         os.makedirs(cmds)
@@ -1002,9 +1033,9 @@ def run_script(run, bash, stub_bin, yaml_env=None, extra=False, inject=None):
             # 收尾命令由 PRELUDE 的 EXIT trap（`__orc_fin`；使用者的 `trap <動作> EXIT` 經 `trap` 函式接在它後面）提供——**不要**在這裡再補文字，
             # 那正是 R32 DA-6 抓到的缺陷（heredoc 會吞掉它）。
             fh.write(PRELUDE); fh.write(run); fh.write("\n")
-        sent = os.path.join(priv, "inject")
+        sent = os.path.join(priv, "i")
         if inject is not None:
-            if not re.fullmatch(r"[A-Za-z0-9_./+=-]+", sent):
+            if not _inject_path_ok(sent):
                 sys.exit("✗ 神諭的私有目錄路徑含 payload 不能不加引號放進去的字元：%r（換一個 TMPDIR）" % sent)
             open(sent, "w").close()
             inject = inject.replace(INJECT_PATH_TOKEN, sent)
@@ -1725,11 +1756,15 @@ def selftest_aud():
                     os.write(FD_EVENTS, b"x\n")
                 except OSError:
                     return False          # 讀端被蓋掉：寫入端的對面沒有人
-                time.sleep(0.3)
-                return ok and bytes(s.buf[FD_EVENTS]) == b"x\n"
-            finally:
+                # 以 EOF 為準，不靠睡眠（R54，R53 logic LOW：原本固定 `time.sleep(0.3)`，讀取執行緒 0.3 秒內沒被排上 CPU 就假紅）：寫入端全關之後 `finish()` 等到執行緒讀完。
                 s.close_parent_ends()
-                s.finish()
+                got = bytes(s.finish()[FD_EVENTS])
+                s = None
+                return ok and got == b"x\n"
+            finally:
+                if s is not None:
+                    s.close_parent_ends()
+                    s.finish()
         finally:
             for fd in held:
                 try:
@@ -1820,7 +1855,22 @@ def selftest_aud():
         ("**stub `python3 -Q`／`--bogus` 是 CPython 3 的無效選項**：rc=2、不讀 stdin（`-Q` 是 Python 2 的選項）", [run_stub(["-Q"], b"x\n")[0], run_stub(["--bogus"], b"x\n")[0]], lambda L: L == [2, 2]),
         ("**stub `python3 -u` 遇到空 stdin 也 exit 0**（真 CPython 讀到空程式就結束；R50 第五輪 L3）", run_stub(["-u"], b"")[0], lambda rc: rc == 0),
         ("**stub `python3 -u` 遇到非空 stdin 仍 exit 1、並把 stdin 印到 stderr**（R44 模擬的那件事沒有被破壞）", run_stub(["-u"], b"hello PR text\n"), lambda r: r[0] == 1 and b"hello PR text" in r[1]),
+        ("**stub `python3 -t`／`-tt` 是被接受的過時旗標**：有腳本就 drain exit 0、沒有腳本就把 stdin 當程式（rc=1、來源行印到 stderr），不是 rc=2（R54，R53 regression M2；`8b45659` 的 case 樣式接受 `-t`，R52 的逐字掃描漏了它）",
+         [run_stub(["-t", "x.py"], b"leak\n")[0], run_stub(["-tt", "x.py"], b"leak\n")[0], run_stub(["-t"], b"leak\n")], lambda L: L[0] == 0 and L[1] == 0 and L[2][0] == 1 and b"leak" in L[2][1]),
+        ("**stub `python3 -- -` 與單獨的 `-` 一樣把 stdin 當程式**（真 CPython：`--` 之後腳本位置的 `-` 仍是『從 stdin 執行』；rc=1、來源行印到 stderr）；`-- script.py` 才是 drain exit 0；`--` 單獨出現（沒有腳本）也把 stdin 當程式（R54，Codex 3；R52 新增的 `--` 分支把 `-- -` 當腳本吞掉）",
+         [run_stub(["--", "-"], b"leak\n"), run_stub(["-"], b"leak\n"), run_stub(["--", "x.py"], b"leak\n")[0], run_stub(["--"], b"leak\n")],
+         lambda L: L[0][0] == 1 and b"leak" in L[0][1] and L[1][0] == 1 and b"leak" in L[1][1] and L[2] == 0 and L[3][0] == 1 and b"leak" in L[3][1]),
         ("**`neutralise_spans` 對 40 條續行只呼叫 O(N) 次 `bash -n`**（R50 第五輪 L4；二次方版本約 3200 次）", neutralise_spans_calls(40), lambda r: r[0] <= 2 * 45 and r[1] == [(0, 40)]),
+        # R54（#33 verify R53）：payload 的單調性與短路徑。R52 取聯集時拿掉 R50 的第四組（`echo M >&197`，31 字、不含 `/`、受限 shell 允許 dup），真 lint 放行的 7 格相對 `8b45659` 退步；這一項把 R50 的四個字串照字面守住。
+        ("**`INJECT_PAYLOADS` 包含 R50（`8b45659`）的每一組**（取聯集不得拿掉舊樹看得到的寫法；R53 regression M／DA M）",
+         [p % INJECT_MARKER for p in ("PWD[$(echo${IFS}%s>&197)]", "-v PWD[$(echo${IFS}%s>&197)]", "-n -o -v PWD[$(echo${IFS}%s>&197)]", "echo %s >&197")],
+         lambda L: all(p in INJECT_PAYLOADS for p in L)),
+        ("**最短的不依賴 fd 的路徑 payload（Pc，程式碼行）代入私有路徑之後不超過 60 字**（文字被截斷到 60 字、求值者又不繼承 fd 時才抓得到；`PWD[…]` 形 P 的長度只由 `injection-transform-matrix.yml` 的 P、V 格〔截到 100 字〕守著；R53 logic M／security M）",
+         min(len(p.replace(INJECT_PATH_TOKEN, "/tmp/oab12cd3/i")) for p in INJECT_PAYLOADS if INJECT_PATH_TOKEN in p and "197" not in p), lambda n: n <= 60),
+        ("**哨兵路徑的字元守衛**：不能不加引號放進 payload 的字元（空白、引號、非 ASCII）一律不過；普通的短路徑過",
+         [_inject_path_ok(p) for p in ("/tmp/oab12cd3/i", "/tmp/a b/i", "/tmp/a'b/i", "/tmp/日本/i")], lambda L: L == [True, False, False, False]),
+        ("**`_short_tmp()` 回 `/tmp`**（`/tmp/oXXXXXXXX`）：只檢查回傳值算出的路徑長度，不檢查 `run_script` 實際用的目錄——那一半要靠 selfcheck 96 在 `TMPDIR` 夠長時才守得住；`/tmp` 不可寫時 `_short_tmp()` 回 `None`、這項算出 26 字而紅（前提不成立，不是別的錯）（R53 security LOW／regression LOW）",
+         len(os.path.join(_short_tmp() or "/tmp/oXXXXXXXX", "oXXXXXXXX", "i")), lambda n: n <= 24),
         # 平台無關的靜態檢查：stub 寫 `>&198`，dash（Ubuntu 的 /bin/sh）不支援兩位數的 fd 重導向；macOS 的 /bin/sh 是 bash，本機看不出來（R50 Linux 預跑抓到）。
         ("stub python3 含兩位數 fd 的重導向時，shebang 必須是 bash（不是 /bin/sh）", STUB, lambda s: s.startswith("#!/bin/bash\n") or not re.search(r">&\d\d", s)),
     ]
@@ -2092,7 +2142,7 @@ def check_file(f, text, bash, stub_bin):
             timed = o == "timeout" and unm
             dist = verdict.startswith("量不到（儀器不可信")   # 哨兵與稽核無關：儀器不可信不關掉獨立的注入探針（R49 security／logic／Codex 同報）
             # pipefail 探針被換掉（`__orc_want=x`、`$ORACLE_PRIV` 被動過）也與注入無關，同一個原則（R52，#33 verify R51 logic LOW：R50 只對 `dist` 開門，文法內的
-            # `__orc_want=x` 因此把注入繞過從 rc=1 降成 rc=0）。注入哨兵的 fd 那一半不經 `$ORACLE_PRIV`；路徑那一半是 `$ORACLE_PRIV/inject`，目錄被動過就只剩 fd 那一半（`injection-sentinel-fd-half.yml`）。
+            # `__orc_want=x` 因此把注入繞過從 rc=1 降成 rc=0）。注入哨兵的 fd 那一半不經 `$ORACLE_PRIV`；路徑那一半是 `$ORACLE_PRIV/i`，目錄被動過就只剩 fd 那一半（`injection-sentinel-fd-half.yml`）。
             pfu = verdict.startswith("量不到（pipefail 探針被換掉")
             if ("--strict" in largs and "$" in run0 and in_grammar(run, yaml_decl_step)
                     and ((lint == "pass" and (verdict.startswith("一致") or timed or dist or pfu))

@@ -69,7 +69,7 @@ LINT = PAI / "test" / "lint-ci-log-filter.sh"
 ORACLE = PAI / "test" / "oracle.py"
 def oracle_env_names(src):
     """`oracle.py` 原始碼裡所有長得像 `ORACLE_*` 的字串常數（R52，#33 verify R51 宣稱查核 B、D 組）——不管它怎麼被讀（`os.environ.get`／`os.getenv`／`os.environ[…]`／單引號／帶數字的名稱／`from os import environ`）。
-    只認 `os.environ.get(` 這一種時，用別種寫法新增的變數指紋與測試會一起漏掉；AST 掃字串常數唯一抓不到的是名字被拼出來的（`"ORACLE_" + "X"`）。
+    只認 `os.environ.get(` 這一種時，用別種寫法新增的變數指紋與測試會一起漏掉；AST 掃字串常數抓不到的是：名字被拼出來的（`"ORACLE_" + "X"`），不以字串常數出現的讀法（例如迭代 `os.environ.items()` 再過濾前綴），以及大小寫混合或含 `-` 的字串（正規式只收 `ORACLE_[A-Z0-9_]+`）〔R54 更正：前一版寫成『唯一抓不到的是名字被拼出來的』，R53 requirements LOW〕。
     連神諭自己替 step 設的 `ORACLE_PRIV` 也記進去（環境裡沒設，值是空的，無害）。"""
     import ast
     return sorted({n.value for n in ast.walk(ast.parse(src)) if isinstance(n, ast.Constant) and isinstance(n.value, str)
@@ -195,7 +195,8 @@ def tool_versions():
     # 改變判定（儀器不可信 rc=1）卻沒進指紋，export 了它的 shell 會把 `oracle-inverted` 的突變體記成假「殺掉」，快取檔又進了版控。
     for name in oracle_env_names(ORACLE.read_text(encoding="utf-8")):
         v.append("%s=%s" % (name, os.environ.get(name, "")))
-    # `TMPDIR` 也改變神諭的結果：注入探針的私有路徑含 payload 不能不加引號放進去的字元時，`run_script` 具名退出，整輪沒有判定（R52 宣稱查核 D 組）
+    # `TMPDIR` 記著：R54 起私有目錄放 `/tmp/oXXXXXXXX`，`TMPDIR` 不再改變注入探針的路徑；只剩 `/tmp` 不可寫而退回預設暫存目錄時，路徑含 payload 不能不加引號放進去的字元，`run_script` 具名退出、整輪沒有判定（R52 宣稱查核 D 組）。
+    # 步驟的 cwd 與 stub 目錄仍在 `TMPDIR` 底下，所以保留它在指紋裡（便宜、方向安全）；`TMP`／`TEMP` 同理，不另記。
     v.append("TMPDIR=%s" % os.environ.get("TMPDIR", ""))
     return "\n".join(v)
 
@@ -1688,13 +1689,14 @@ MUTATIONS += [
      ' or INJECT_MARKER.encode() in inj_file,', ',', 'oracle-inverted'),
     ('oracle: payload 裡的私有路徑 token 不換成路徑（R51 regression M2 → selfcheck 73）',
      'inject = inject.replace(INJECT_PATH_TOKEN, sent)', 'inject = inject', 'oracle-inverted'),
-    ('oracle: 長寫法 payload（`_INJECT_L`）不寫私有路徑（只有 `-n -o -v PWD[…]` 的算術脈絡、關 fd；R51 DA → selfcheck 82）',
-     'INJECT_MARKER + ">>" + INJECT_PATH_TOKEN + ";echo${IFS}"', 'INJECT_MARKER + ";echo${IFS}"', 'oracle-inverted'),
-    ('oracle: 第 4 組 payload 不寫私有路徑（只有 `IFS=` 之後的 `eval`、關 fd 的求值者；R51 E 組 → selfcheck 89 的 J 格）',
-     '" >>" + INJECT_PATH_TOKEN + "; echo "', '"; echo "', 'oracle-inverted'),
-    ('oracle: 第 4 組 payload 不寫 fd 197（只有刪目錄、保留 fd、`IFS=` 之後的 `eval`；R51 E 組 → selfcheck 91 的 L 格）',
-     '"; echo " + INJECT_MARKER + " >/dev/fd/197 || :"', '""', 'oracle-inverted'),
-    ('oracle: payload 又用 `>&197`（dash 把兩位數的 fd 重導向當語法錯誤，整段 payload 不執行；R51 E 組 → selfcheck 89 的 H、I 格）',
+    # ── R54（#33 verify R53）：payload 拆成單一通道的家族（S／R：fd 的 dup；P／Pc：路徑；D／Dc：`/dev/fd/197`），每一組有自己的殺手探針；R52 的長寫法把路徑與 fd 綁在同一個字串，兩半各自冗餘於別組，網釘不住 ──
+    ('oracle: 路徑 payload（`_INJECT_P`）不寫私有路徑（只有 `[ -n $0 ]` 算術脈絡 ∧ 關 fd；文字被截斷 ∧ 關 fd；R53 D1 → selfcheck 82、96 的 P、V 格〔Q、W 另被 Pc 命中〕）',
+     '_INJECT_P = "$(echo${IFS}" + INJECT_MARKER + ">>" + INJECT_PATH_TOKEN + ")"', '_INJECT_P = "$(echo${IFS}" + INJECT_MARKER + ">/dev/null)"', 'oracle-inverted'),
+    ('oracle: 程式碼行 Pc 不寫私有路徑（只有 `IFS=` 之後的 `eval` ∧ 關 fd 的求值者；R53 D1 → selfcheck 89 的 J 格）',
+     '"echo " + INJECT_MARKER + " >>" + INJECT_PATH_TOKEN,\n', '"echo " + INJECT_MARKER + " >/dev/null",\n', 'oracle-inverted'),
+    ('oracle: 程式碼行 Dc 不寫 fd 197（只有 dash ∧ `IFS=` 之後的 `eval` ∧ 刪目錄；R53 Codex 1 → selfcheck 98 的第二個 step）',
+     '"echo " + INJECT_MARKER + " >/dev/fd/197 || :")', '"echo " + INJECT_MARKER + " >/dev/null || :")', 'oracle-inverted'),
+    ('oracle: payload D 又用 `>&197`（dash 把兩位數的 fd 重導向當語法錯誤，整段 payload 不執行；R51 E 組 → selfcheck 98 的第一個 step）',
      '">/dev/fd/197||:)"', '">&197||:)"', 'oracle-inverted'),
     ('oracle: 注入哨兵不收 fd 197（刪掉私有目錄就把哨兵弄瞎；R51 DA → selfcheck 81）',
      'INJECT_MARKER.encode() in data[FD_INJECT] or', 'False or', 'oracle-inverted'),
@@ -1708,7 +1710,7 @@ MUTATIONS += [
      '                            st0 = j - 1\n', '                            pass\n', 'oracle-inverted'),
     ('oracle: bare `-` 的 dash 行不認行尾註解（R51 DA → selfcheck 87、85）',
      'if j > 0 and re.match(r"^ {%d}-\\s*(#.*)?$" % dash_col, all_lines[j - 1]):', 'if j > 0 and re.match(r"^ {%d}-\\s*$" % dash_col, all_lines[j - 1]):', 'oracle-inverted'),
-    ('oracle: 往上走既不用欄位錨定、也不在鍵已在 dash 行時跳過（R52 第一版的回歸：內容行長得像 dash 被當成下一個 step 的 dash；宣稱查核 D 組 → selfcheck 92、93。兩道防線各自單獨拿掉都不會變：它們互相冗餘，只有同時拿掉才回到第一版）',
+    ('oracle: 往上走既不用欄位錨定、也不在鍵已在 dash 行時跳過（R52 第一版的回歸：內容行長得像 dash 被當成下一個 step 的 dash；宣稱查核 D 組 → selfcheck 97（R54 實測：兩道同時拿掉時 92、93、94 都不變，只有 plain scalar 探針翻色）。兩道防線各自單獨拿掉都不會變，只有同時拿掉才回到第一版——那個形狀的註解比 dash 深，第三道縮排條件失效）',
      '                    if not re.match(r"^ {%d}-(\\s|$)" % dash_col, all_lines[st0]):\n                        j = st0\n                        while j > 0 and re.match(r"^\\s*(#.*)?$", all_lines[j - 1]):\n                            j -= 1\n                        if j > 0 and re.match(r"^ {%d}-\\s*(#.*)?$" % dash_col, all_lines[j - 1]):\n                            st0 = j - 1\n', '                    j = st0\n                    while j > 0 and re.match(r"^\\s*(#.*)?$", all_lines[j - 1]):\n                        j -= 1\n                    if j > 0 and re.match(r"^\\s*-\\s*(#.*)?$", all_lines[j - 1]):\n                        st0 = j - 1\n', 'oracle-inverted'),
     ('oracle: `yaml_declaration` 不要求註解行縮排比 dash 更深（同欄的註解被算成前一個 step 的宣告；宣稱查核 D 組 → selfcheck 94）',
      'if LOGFILTER_RE.match(l) and (dash_col is None or len(l) - len(l.lstrip()) > dash_col):', 'if LOGFILTER_RE.match(l):', 'oracle-inverted'),
@@ -1724,14 +1726,29 @@ MUTATIONS += [
      '    --*) exit 2;;', '    --*) :;;', 'oracle-inverted'),
     ('oracle: stub python3 的 `--check-hash-based-pycs` 不吃下一個 argv（宣稱查核 D 組 → --selftest-aud）',
      '    --check-hash-based-pycs) shift;;', '    --check-hash-based-pycs) :;;', 'oracle-inverted'),
-    ('oracle: 短寫法 payload（`_INJECT_S`）不寫 fd 197（只有刪目錄、保留 fd、算術脈絡的求值者；R51 DA → selfcheck 91 的 K 格）',
+    ('oracle: 短寫法 payload（`_INJECT_S`）不寫 fd 197（只有受限 shell 的算術脈絡——`>` 檔名重導向被禁、`(( $0 ))` 又不是命令位置；R53 D1 → selfcheck 96 的 X 格）',
      '_INJECT_S = "$(echo${IFS}" + INJECT_MARKER + ">&197)"', '_INJECT_S = "$(echo${IFS}" + INJECT_MARKER + ">/dev/null)"', 'oracle-inverted'),
-    ('oracle: 拿掉三組短寫法 payload（R50 的 `>&197`；PR 文字被截斷、受限 shell 只允許 `>&` 的 dup；宣稱查核 A 組 → selfcheck 89 的 M、N 格）',
-     'INJECT_PAYLOADS = ("PWD[" + _INJECT_S + "]",\n                   "-v PWD[" + _INJECT_S + "]",\n                   "-n -o -v PWD[" + _INJECT_S + "]",\n                   "PWD[" + _INJECT_L + "]",', 'INJECT_PAYLOADS = ("PWD[" + _INJECT_L + "]",', 'oracle-inverted'),
+    ('oracle: 拿掉三組短寫法 payload S（R50 的 `PWD[$(…>&197)]`；只有受限 shell 的算術脈絡抓得到；R53 D1 → selfcheck 96 的 X 格）',
+     'INJECT_PAYLOADS = ("PWD[" + _INJECT_S + "]",\n                   "-v PWD[" + _INJECT_S + "]",\n                   "-n -o -v PWD[" + _INJECT_S + "]",\n                   "echo " + INJECT_MARKER + " >&197",', 'INJECT_PAYLOADS = ("echo " + INJECT_MARKER + " >&197",', 'oracle-inverted'),
+    ('oracle: 拿掉 R50 的第四組程式碼行 R（`echo M >&197`，31 字；截到 31–42 字、受限 shell 命令位置、換掉斜線；R53 D1 → selfcheck 96 的 R、S、T、U 格）',
+     '"-n -o -v PWD[" + _INJECT_S + "]",\n                   "echo " + INJECT_MARKER + " >&197",\n', '"-n -o -v PWD[" + _INJECT_S + "]",\n', 'oracle-inverted'),
+    ('oracle: 拿掉三組路徑 payload P（文字被截斷 ∧ 關 fd；清環境 ∧ 關 fd；R53 D1 → selfcheck 96 的 P、V 格〔Q、W 另被 Pc 命中〕）',
+     '                   "PWD[" + _INJECT_P + "]",\n                   "-v PWD[" + _INJECT_P + "]",\n                   "-n -o -v PWD[" + _INJECT_P + "]",\n', '', 'oracle-inverted'),
+    ('oracle: 拿掉三組 `/dev/fd/197` payload D（dash ∧ 刪目錄；R53 Codex 1 → selfcheck 98 的第一個 step）',
+     '                   "PWD[" + _INJECT_D + "]",\n                   "-v PWD[" + _INJECT_D + "]",\n                   "-n -o -v PWD[" + _INJECT_D + "]",\n', '', 'oracle-inverted'),
     ('oracle: `pfu` 閘門在 lint 擋下（RULE-red）那一側不開（宣稱查核 A 組 → selfcheck 95）',
      '(verdict.startswith("不一致：誤擋") or timed or pfu)))', '(verdict.startswith("不一致：誤擋") or timed)))', 'oracle-inverted'),
-    ('oracle: 長寫法 payload（`_INJECT_L`）不寫 fd 197（冗餘於短寫法與程式碼行；宣稱查核 A、E 組）',
-     '+ ";echo${IFS}" + INJECT_MARKER + ">/dev/fd/197||:)"', '+ ")"', 'oracle-inverted'),
+    ('oracle: `/dev/fd/197` payload（`_INJECT_D`）不寫 fd 197（dash ∧ 刪目錄 ∧ 雙引號裡的命令替換；R53 Codex 1 → selfcheck 98 的第一個 step）',
+     '_INJECT_D = "$(echo${IFS}" + INJECT_MARKER + ">/dev/fd/197||:)"', '_INJECT_D = "$(echo${IFS}" + INJECT_MARKER + ">/dev/null||:)"', 'oracle-inverted'),
+    # ── R54 D3：stub 的 `-t`、`--` 分支、`--version`／`--help`（R53 regression M2、Codex 3、regression LOW）──
+    ('oracle: stub python3 的 `-t` 不在無參數旗標清單（CPython 3.9–3.13 都接受；R53 regression M2 → --selftest-aud）',
+     'b|B|d|E|i|I|O|P|q|R|s|S|t|u|v|x) :;;', 'b|B|d|E|i|I|O|P|q|R|s|S|u|v|x) :;;', 'oracle-inverted'),
+    ('oracle: stub python3 的 `--` 之後不 drain（`-- script.py` 要 drain exit 0；R53 Codex 3 → --selftest-aud）',
+     '--) shift; if [ $# -gt 0 ] && [ "$1" != - ]; then mode=drain; fi; break;;', '--) shift; break;;', 'oracle-inverted'),
+    ('oracle: stub python3 的 `--` 把腳本位置的 `-` 也當腳本 drain（真 CPython 把 stdin 當程式；R53 Codex 3 → --selftest-aud）',
+     '[ $# -gt 0 ] && [ "$1" != - ]; then mode=drain', '[ $# -gt 0 ]; then mode=drain', 'oracle-inverted'),
+    ('oracle: stub python3 的 `--version`／`--help` 不 exit 0（R50 第五輪 L3；R53 regression LOW：R52 刪掉的靶只剩短選項那一個 → --selftest-aud）',
+     '    --version|--help|--help-all|--help-env|--help-xoptions) exit 0;;', '    --help-all|--help-env|--help-xoptions) exit 0;;', 'oracle-inverted'),
     ('oracle: pipefail 探針被換掉就不跑獨立的注入探針——判定列（R51 logic LOW → selfcheck 90）',
      'timed or dist or pfu))\n                         or (lint == "RULE-red"', 'timed or dist))\n                         or (lint == "RULE-red"', 'oracle-inverted'),
     ('oracle: pipefail 探針被換掉就不跑獨立的注入探針——unm 閘門（R51 logic LOW → selfcheck 90）',
@@ -1741,17 +1758,6 @@ MUTATIONS += [
 ]
 
 EXPECTED_SURVIVE = {
-    # R52（#33 verify R51 → R52 宣稱查核 A、E 組）：長寫法 payload（`_INJECT_L`）的 fd 那一半（`>/dev/fd/197`）拿掉。**關掉它，哪一行輸出會變：沒有**——fd 197 這條路另有兩個寫入點：短寫法（`>&197`，bash／zsh／ksh）與程式碼行
-    # （`>/dev/fd/197`，dash 安全）；長寫法能求值的每個脈絡，短寫法或程式碼行至少有一個同樣求值並寫進 fd 197（十二格矩陣與 fd 脈絡探針實測）。保留這個靶是為了釘住『長寫法不得只剩路徑』的設計意圖。
-    "oracle: 長寫法 payload（`_INJECT_L`）不寫 fd 197（冗餘於短寫法與程式碼行；宣稱查核 A、E 組）",
-    # R52（#33 verify R51 → R52 宣稱查核 D 組）：`steps_with_lines` 往上走的兩道防線（欄位錨定的 dash 正規式、鍵已在 dash 行時不往上走）同時拿掉＝R52 第一版的寫法。**關掉它，哪一行輸出會變：沒有**——
-    # 第三道防線是 `yaml_declaration` 的縮排條件（註解行要比範圍第一行〔dash 行〕更深才算宣告）：範圍被誤吞到內容裡長得像 dash 的行（縮排 12）之後，同欄（縮排 6）的 `# LOG-FILTER:` 不比它深，不再被當成宣告，
-    # V1／V2 因此仍判『繞過』（實測，變異跑存活）。三道防線互相冗餘；其中一道單獨拿掉由別的靶／案例各自釘（縮排條件→selfcheck 94 的靶）。selfcheck 92、93 保留為回歸測試：三道同時沒有時才會紅，單一變異打不到。
-    'oracle: 往上走既不用欄位錨定、也不在鍵已在 dash 行時跳過（R52 第一版的回歸：內容行長得像 dash 被當成下一個 step 的 dash；宣稱查核 D 組 → selfcheck 92、93。兩道防線各自單獨拿掉都不會變：它們互相冗餘，只有同時拿掉才回到第一版）',
-    # R52（#33 verify R51 E 組）：`_INJECT_SUB` 的 fd 那一半改回 `>&197`（dash 把兩位數的 fd 重導向當語法錯誤，整段 payload 1–3 不執行）。**關掉它，哪一行輸出會變：沒有**——
-    # dash 沒有 bash 的算術下標脈絡；payload 1–3 在 dash 裡能求值的脈絡（命令字、`eval`），第 4 組（一行程式碼，dash 安全）同樣求值並留下哨兵，十格矩陣的 H、I 格兩種寫法判定相同（實測，變異跑 546 靶中的這一個存活）。
-    # 保留這個靶是為了釘住『payload 1–3 不得用兩位數 fd 重導向』的設計意圖。
-    "oracle: payload 又用 `>&197`（dash 把兩位數的 fd 重導向當語法錯誤，整段 payload 不執行；R51 E 組 → selfcheck 89 的 H、I 格）",
     "pack 內部改名不投票（依構造不可達，保留為防禦）",
     "純改名偵測 git 分支（依構造不可達，保留為防禦）",
     # R12 修法後 LineSanitiser 對**每一段**獨立判 `lstrip().startswith("::")`、不再靠行首旗標——

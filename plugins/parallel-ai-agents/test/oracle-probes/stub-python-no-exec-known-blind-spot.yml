@@ -1,0 +1,33 @@
+# R54 D3（#33 verify R53 DA M；既有缺陷，三棵樹判定相同）：**已知盲點，文件化、不是保證**。神諭給 step 的 `PATH` 是 `stub_bin:/usr/bin:/bin`，PATH 上第一個 `python3` 是 stub；stub 遇到 `-c`／`-m` 一律吞 stdin 後 exit 0——
+# **程式碼從來沒有跑**，PR 文字也從來沒有被求值。所以下面兩個 step（lint 放行的真注入：Python `subprocess` 預設起 bash、`os.system` 保留 fd）判『一致』，**這個『一致』的意思是『命令沒有被執行』，不是『被偵測到安全』**；
+# 寫成 `/usr/bin/python3`（第三個 step，對照組）才判『不一致：繞過（注入）』。真 runner 上裸 `python3` 就是系統的 `python3`，會執行。
+# 為什麼不修（D3 的兩個選項之一）：讓 stub 對沒有 `neutralise.py` 的呼叫 `exec` 真直譯器，會改變整個語料裡所有 `python3 - <<EOF`／`python3 -c` 的行為（整個 fixture 語料與產生語料），要整輪重新對帳；這一輪選擇把盲點釘成探針、
+# 寫進 `oracle.py` 檔頭〈已知限制〉(6) 與 `test/README.md`（#97）。同一類的還有 `PATH` 以外的工具找不到（裸 `node`）、非 shell 求值者（`node -e "$PR_TITLE"`、`perl -e`、`awk`）——不一一釘。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: B1 bare python3 subprocess default (stub does not execute)
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "-c", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: B2 bare python3 os.system keeps fds (stub does not execute)
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { python3 -c 'import os, sys; os.system(sys.argv[1])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: B3 control - absolute python3 os.system
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import os, sys; os.system(sys.argv[1])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
