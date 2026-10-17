@@ -1,5 +1,6 @@
 # R52 網（#33 verify R51 DA，C1/C3）：注入哨兵 = fd 197 ∪ payload 裡的私有路徑。這張釘住 **fd 那一半**：步驟刪掉私有目錄（路徑那一半隨之失效；pipefail 探針的暫存檔也沒了，step 判『量不到（儀器不可信：…沒有 fin）』，注入探針照跑），
 # 再讓一個**繼承 fd** 的 shell 把 PR 文字當程式碼執行——fd 197 仍收得到。沒有這一半，路徑式的失明法（刪目錄）會把哨兵弄瞎（R49 對稽核檔做過的事）。
+# R58 宣稱查核 C 組（第 3 列）：求值者經 `env -i` 清掉環境，E 組（`$ORACLE_INJECT`）因此不成立，只剩 fd 197 這一半（S、R、D、Dc）命中。環境保留時 R58 的 cwd 哨兵也會命中，這一格就不再單獨釘住 fd 那一半（突變靶 522、528 的殺手也跟著失效）。
 # LINT-ARGS: --strict
 name: t
 on: pull_request
@@ -14,4 +15,4 @@ jobs:
         run: |
           set -o pipefail
           rm -rf "$ORACLE_PRIV"
-          { /bin/bash -c "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+          { /usr/bin/env -i /bin/bash -c "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py

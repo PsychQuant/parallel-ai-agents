@@ -1,6 +1,8 @@
 # R52（#33 verify R51 regression M2／DA）：PR 文字由一個**不繼承 fd** 的孫行程當程式碼執行（Python `subprocess` 預設 `close_fds=True`；Node 的 `spawnSync` 只傳 0–2，同理）——
 # R50 把注入哨兵從「環境變數指到的檔」換成「fd 197」之後，這個形狀的哨兵寫不進去，神諭判「一致」（`5b5a46d` 判『繞過（注入）』）。真 `--strict` lint 放行這個寫法（外部命令，L1）。
 # 這張探針用替身 lint（一律放行）跑；R52 起哨兵同時走 fd 197 與一個嵌在 payload 裡的私有字面路徑，任一處有東西就算繞過。
+# R58 宣稱查核 C 組（第 3 列）：孫行程經 `env -i` 清掉環境。原本的形狀（環境保留）R58 起也被 cwd 哨兵（E 組）看到，這一格就不再單獨釘住『嵌在 payload 裡的私有字面路徑』（突變靶 522 的殺手失效）；
+# 清環境加關 fd 之後，只有 P、Pc（私有字面路徑）命中。環境保留的版本由 `injection-5b5a46d-wins.yml`、`injection-transport-matrix.yml` 涵蓋。
 # LINT-ARGS: --strict
 name: t
 on: pull_request
@@ -14,4 +16,4 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           set -o pipefail
-          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "-c", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/usr/bin/env", "-i", "/bin/bash", "-c", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py

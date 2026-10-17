@@ -1,0 +1,75 @@
+# R58 F1（#33 verify R57 logic M／regression M／DA M，第 12 格）：**兩個哨兵位置只有一個寫得進去（私有哨兵 `<priv>/i` 唯讀 ∧ cwd 可寫，或反過來）**——這一格的可攜版本。
+# 真實的形狀是「求值者在只准寫 cwd，或寫不到 `/tmp` 的沙箱裡」（macOS 的 `sandbox-exec`，或 Linux 上只掛載工作區的 `bwrap` 這類；Linux 的 `PrivateTmp` 在 cwd 也位於 `/tmp` 底下時連 cwd 哨兵一起藏掉，不是這個形狀；真沙箱版見 `injection-fs-restricted.yml`，只在 macOS 跑）；
+# 這裡用 `chmod 0444 "$ORACLE_PRIV/i"` 模擬「私有哨兵寫不進去」，非 root 的環境（CI runner、開發機）都成立，所以 Linux 上也跑得了。
+# **這是用步驟自己動儀器的手法去模擬一個沙箱的效果**：它不是在測「步驟弄瞎儀器」（那是停止規則的 PASS 類），而是在測『哨兵不能只有一個位置』——`5b5a46d` 的哨兵在步驟 cwd 底下；R50 改成只走 fd、R52 加上 `TMPDIR` 底下的私有路徑、R54 搬到 `/tmp/oXXXXXXXX/i`，
+# 搬家之後寫不到 `/tmp` 的求值者就看不到（R57 第 12 格）；R58 讓 E 組的 `$ORACLE_INJECT` 對 cwd 底下預先建好的哨兵與 `<priv>/i` 各試一次，`more()` 與 fd 197、`<priv>/i` 取 OR。第一版只指 cwd 是『搬走』不是『加上』（R5、R6）。
+# 以 root 執行時 `chmod` 擋不住寫入，各格因此仍判『繞過』而通過、但沒有量到東西（推論，沒有以 root 實跑）。
+# （一般那次跑 `$ORACLE_PRIV/i` 還不存在——只有注入那一次神諭才建它——所以 `chmod` 後面接 `|| :`：失敗不能讓 errexit 的 step 中止，否則整格判『量不到』。）
+# 七格（分母 7，`ORACLE_LINT` 指到一律放行的替身 lint，全部要判『不一致：繞過（注入）』）：
+#   R1  命令位置：Python `subprocess` 預設關掉 0–2 以外的 fd，環境保留，私有哨兵唯讀。S／R／D／Dc 要 fd（關了）、P／Pc 寫唯讀的私有哨兵（失敗）、E 組寫 `$ORACLE_INJECT`（cwd 的哨兵）才命中。
+#   R2  算術脈絡：同上，`t=$0; (( t ))`。
+#   R3  `IFS=` 之後的 `eval`：`echo${IFS}…` 形的 #13–#15 不成立，只有字面空白的程式碼行 #16 命中。
+#   R4  私有哨兵唯讀**且 cwd 唯讀**（`chmod 0555 .`：不能建新檔、既有的檔照樣能 append）：E 組的 `>>$ORACLE_INJECT` 只有在 cwd 哨兵**預先存在**時才寫得進去——R58 第一版不預先建檔，這一格判『一致』（R58 宣稱查核 B 組；`5b5a46d` 預先建檔、判繞過）。step 結尾把 cwd 權限還原，神諭的清理才刪得掉暫存目錄。
+#   R5  **反方向**：cwd 底下的哨兵唯讀（`chmod 0444 .orc-*/inject`）、私有哨兵可寫，關 fd、保留環境、把 `/` 換成 `_`（P、Pc、D、Dc 含 `/`，只剩不含 `/` 的 E 組）：`$ORACLE_INJECT` 指到 cwd 哨兵時寫不進去，只有指到 `<priv>/i` 的那一次命中。
+#   R6  同 R5，算術脈絡 `t=${0:0:54}; (( t )) || :`（文字截到 54 字）。
+#   R7  **cwd 底下有沒有點檔**：步驟先看 cwd 有沒有點檔（`shopt -s nullglob; set -- .[!.]*`），有就提早結束（`ls -A`、`git status --porcelain`、`find . -mindepth 1` 這類檢查的縮影）。保留 fd、環境保留，plain `bash -c "$PR_TITLE"`：#1 的 `PWD[$(echo M>&197)]` 命中——前提是非 E 組的那幾次注入執行**沒有**多建 cwd 哨兵；A2 抓到的回歸（M15）：每一次注入都預先建 `.orc-XXXX/`，這一格就判『一致』（`6490b57` 判繞過）。
+# **負對照**：R57 的 `6490b57`（`$ORACLE_INJECT` 指到 `<priv>/i`）R1–R4 判『一致』、R5～R7 判繞過；R58 第一版：cwd 哨兵不預先建檔時 R4 判『一致』，`$ORACLE_INJECT` 只指 cwd 時 R5、R6 判『一致』。
+# 清環境（`env -i`）再加私有哨兵唯讀：E 組也看不到，沒有任何一組命中——那是步驟同時動儀器與環境，停止規則的 PASS 類，不在這張探針上。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: R1 command position, close_fds, env kept, private sentinel read-only
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          chmod 0444 "$ORACLE_PRIV/i" 2>/dev/null || :
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "-c", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: R2 arithmetic, close_fds, env kept, private sentinel read-only
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          chmod 0444 "$ORACLE_PRIV/i" 2>/dev/null || :
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "-c", "t=$0; (( t )) || :", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: R3 IFS-empty eval, close_fds, env kept, private sentinel read-only
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          chmod 0444 "$ORACLE_PRIV/i" 2>/dev/null || :
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "-c", "IFS=; eval \"$0\"", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: R4 private sentinel read-only and cwd read-only (no new files), close_fds, env kept
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          chmod 0444 "$ORACLE_PRIV/i" 2>/dev/null || :
+          chmod 0555 . 2>/dev/null || :
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "-c", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+          chmod 0755 . 2>/dev/null || :
+      - name: R5 cwd sentinel read-only (private sentinel writable), close_fds, env kept, slashes replaced, command position
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          chmod 0444 .orc-*/inject 2>/dev/null || :
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "-c", sys.argv[1].replace("/", "_")])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: R6 cwd sentinel read-only (private sentinel writable), close_fds, env kept, arithmetic truncated to 54
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          chmod 0444 .orc-*/inject 2>/dev/null || :
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "-c", "t=${0:0:54}; (( t )) || :", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: R7 step bails out if cwd has any hidden file (fd kept, env kept)
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          shopt -s nullglob; set -- .[!.]*; [ $# -eq 0 ] || exit 0
+          { /bin/bash -c "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py

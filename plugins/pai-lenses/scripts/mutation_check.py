@@ -68,6 +68,7 @@ NEUTRALISE = PACK / "scripts" / "neutralise.py"
 PAI = PACK.parent / "parallel-ai-agents"
 LINT = PAI / "test" / "lint-ci-log-filter.sh"
 ORACLE = PAI / "test" / "oracle.py"
+SELFCHECK = PAI / "test" / "oracle_selfcheck.py"
 def oracle_env_names(src):
     """`oracle.py` 原始碼的 AST 裡**任何 str／bytes 常數節點（含 f-string 的字面片段、隱式串接後的整串、跳脫解開後的值）、而且完全符合 `ORACLE_[A-Z0-9_]+`** 的名字（R52，#33 verify R51 宣稱查核 B、D 組；bytes 常數 R56 起收）——不管它怎麼被讀（`os.environ.get`／`os.getenv`／`os.environ[…]`／單引號／帶數字的名稱／`from os import environ`／`os.environb`）。
     這是**以性質定義**的，不是列舉：parser 會把隱式串接（`"ORACLE_" "X"`，含跨行）摺成一個常數，所以那種寫法抓得到；**不符合這個性質的都抓不到**。已知抓不到的例子（**不是完整列舉**；R56 第一版寫成『封閉列舉四類』，C 組找到七個反例而推翻）：
@@ -110,10 +111,16 @@ SUITES = {
     # RULE 字面耦合），寫成「期待失敗」的斷言放在 `test/oracle_selfcheck.py`——未突變時它 rc=0，滿足
     # `precheck_suites` 的「未突變＝綠」前提；拿掉任一道檢查它就紅。被突變的檔仍是 `test/oracle.py`。
     "oracle-inverted": (ORACLE, lambda: [sys.executable, "test/oracle_selfcheck.py"], PAI),
+    # R58 F3（#33 verify R57 Codex 1）：`oracle_selfcheck.py` 的比對器 `text_ok`（R56 起負責『原因比對』）自己的單元測試。其他守備單位的靶動的是 `oracle.py`、lint、`validate.py`、`neutralise.py`，沒有一個動 `oracle_selfcheck.py`，正向的 selfcheck 在比對器被改成永遠接受時
+    # 不可能變紅——只有這個 suite 會。被突變的檔是 `oracle_selfcheck.py`，驗證指令是它的 `--selftest-matcher`（不跑神諭，秒級）。
+    "selfcheck-matcher": (SELFCHECK, lambda: [sys.executable, "test/oracle_selfcheck.py", "--selftest-matcher"], PAI),
+    # R58 F3（#33 verify R57 regression LOW）：`oracle.py` 第 2 行的 coding cookie 在 Python 3.9 上是承重的（R55 的 `SyntaxError`）；守住它的是 `test_validate` 的 `test_non_ascii_test_scripts_declare_utf8`，
+    # 這個 suite 讓『拿掉 cookie』變成一個會被殺的靶（被突變的檔是 `oracle.py`，驗證指令只跑那一條測試）。
+    "oracle-cookie": (ORACLE, lambda: [sys.executable, str(TESTS), "-k", "test_non_ascii_test_scripts_declare_utf8"], PACK),
 }
 
 # ── 結果快取（R39，使用者提議：沒改變就沿用 JSON 記錄）──────────────────────────────────
-# 每個守備單位的驗證指令讀得到的**輸入檔**（被突變的那個檔另外以正規化內容計入 key）。封閉列舉，只有這五組：
+# 每個守備單位的驗證指令讀得到的**輸入檔**（被突變的那個檔另外以正規化內容計入 key）。封閉列舉，只有這七組（`selfcheck-matcher` 只讀 `oracle_selfcheck.py`；`oracle-cookie` 同 `validate`，整個 repo）：
 #   · `lint`：selftest 只讀 fixture。
 #   · `oracle`／`oracle-inverted`：神諭讀 fixture、反向探針與假 lint，並執行 lint 本身（lint 以原文計入，見 `source_for_key`）。
 #   · `validate`／`neutralise`：`test_validate.py` 讀的範圍很廣（整個 `plugins/`、`.github/workflows/test.yml`、skills、bin
@@ -128,12 +135,14 @@ _PAI_TEST = PAI.relative_to(REPO_ROOT) / "test"
 _NOT_READ = frozenset({str(_PAI_TEST.parent / "CHANGELOG.md")})
 SUITE_INPUTS = {
     "lint": [(REPO_ROOT, [str(_PAI_TEST / "fixtures" / "*")])],
-    "oracle": [(REPO_ROOT, [str(_PAI_TEST / "fixtures" / "*"), str(_PAI_TEST / "oracle-probes" / "*"),
+    "oracle": [(REPO_ROOT, [str(_PAI_TEST / "fixtures" / "*"), str(_PAI_TEST / "oracle-probes" / "**" / "*"),
                             str(_PAI_TEST / "oracle_selfcheck.py"), str(_PAI_TEST / "lint-ci-log-filter.sh")])],
     "validate": [(REPO_ROOT, ["**/*"], _NOT_READ)],
     "neutralise": [(REPO_ROOT, ["**/*"], _NOT_READ)],
 }
 SUITE_INPUTS["oracle-inverted"] = SUITE_INPUTS["oracle"]
+SUITE_INPUTS["selfcheck-matcher"] = [(REPO_ROOT, [str(_PAI_TEST / "oracle_selfcheck.py")])]
+SUITE_INPUTS["oracle-cookie"] = SUITE_INPUTS["validate"]
 
 
 def source_for_key(path, text):
@@ -203,11 +212,12 @@ def tool_versions():
     # 改變判定（儀器不可信 rc=1）卻沒進指紋，export 了它的 shell 會把 `oracle-inverted` 的突變體記成假「殺掉」，快取檔又進了版控。
     for name in oracle_env_names(ORACLE.read_text(encoding="utf-8")):
         v.append("%s=%s" % (name, os.environ.get(name, "")))
-    # `TMPDIR` 記著：R54 起私有目錄放 `/tmp/oXXXXXXXX`，`TMPDIR` 不再改變注入探針的路徑；只剩 `/tmp` 不可寫而退回預設暫存目錄時，路徑含 payload 不能不加引號放進去的字元，`run_script` 具名退出、整輪沒有判定（R52 宣稱查核 D 組）。
-    # 步驟的 cwd 與 stub 目錄仍在 `TMPDIR` 底下，所以保留它在指紋裡（便宜、方向安全）。**`TMP`／`TEMP` 不記**（R56 補寫理由；R55 requirements LOW：R54 只寫「同理，不另記」）：Python 的 `tempfile.gettempdir()` 依序看 `TMPDIR`、`TEMP`、`TMP`，
-    # `TMPDIR` 非空而且可用，就不看另外兩個；否則（沒設、空字串、不存在、不可寫）才依序看 `TEMP`、`TMP`；POSIX 上它們很少設，記了只讓指紋隨無關的環境變數變動（快取命中率下降）。代價：在 `TMPDIR` 未設或不可用、而 `TEMP`／`TMP` 被設的環境，指紋看不出差別，
-    # 而且那時又碰上 `/tmp` 不可寫的罕見退路，才會改變判定。
+    # `TMPDIR`、`TEMP`、`TMP` 都記（R58；R57 logic LOW／Codex 3：R56 寫『`TMP`／`TEMP` 不記，只在 `/tmp` 不可寫時才影響判定』，這句話不成立）。步驟的 cwd 與 stub 目錄（`_Scratch()`，`dir=None`）走 Python 的
+    # `tempfile.gettempdir()`，它依序看 `TMPDIR`、`TEMP`、`TMP`（前一個非空而且可用就不看後面）：`TMPDIR` 未設或不可用時，cwd 與 stub 目錄由 `TEMP`／`TMP` 決定，與 `/tmp` 寫不寫得進去無關；
+    # 路徑含 payload 不能不加引號放進去的字元時，私有目錄在 `/tmp` 不可寫的退路上會讓神諭具名退出、cwd 哨兵（R58）則退回 `<priv>/i` 並警告。能讓判定翻轉的實例沒有實測；記下它們的代價只是環境變數不同時快取不被沿用（方向安全）。
     v.append("TMPDIR=%s" % os.environ.get("TMPDIR", ""))
+    v.append("TEMP=%s" % os.environ.get("TEMP", ""))
+    v.append("TMP=%s" % os.environ.get("TMP", ""))
     return "\n".join(v)
 
 
@@ -1696,11 +1706,11 @@ MUTATIONS += [
     ('oracle: 逾時路徑的第二次 `communicate` 沒有時限（逃脫行程握著 stdout 就卡到它結束；R51 logic G3 → selfcheck 80）',
      'out, err = p.communicate(timeout=5)', 'out, err = p.communicate()', 'oracle-inverted'),
     ('oracle: 注入哨兵檔不讀（不繼承 fd 的孫行程看不到；R51 regression M2 → selfcheck 73）',
-     ' or INJECT_MARKER.encode() in inj_file,', ',', 'oracle-inverted'),
+     ' or INJECT_MARKER.encode() in inj_file or INJECT_MARKER.encode() in inj_cwd,', ' or INJECT_MARKER.encode() in inj_cwd,', 'oracle-inverted'),
     ('oracle: payload 裡的私有路徑 token 不換成路徑（R51 regression M2 → selfcheck 73 原本是殺手；R56 加入 E 組後 73 的格子改由 #13 命中，現在由 selfcheck 101 殺〔宣稱查核 A 組實測〕）',
      'inject = inject.replace(INJECT_PATH_TOKEN, sent)', 'inject = inject', 'oracle-inverted'),
     # ── R54（#33 verify R53）：payload 拆成單一通道的家族（S／R：fd 的 dup；P／Pc：路徑；D／Dc：`/dev/fd/197`），每一組有自己的殺手探針；R52 的長寫法把路徑與 fd 綁在同一個字串，兩半各自冗餘於別組，網釘不住 ──
-    ('oracle: 路徑 payload（`_INJECT_P`）不寫私有路徑（只有 `[ -n $0 ]` 算術脈絡 ∧ 關 fd；文字被截斷 ∧ 關 fd；R53 D1 → selfcheck 82、96 的 P、V 格〔Q、W 另被 Pc 命中〕）',
+    ('oracle: 路徑 payload（`_INJECT_P`）不寫私有路徑（只有 `[ -n $0 ]` 算術脈絡 ∧ 關 fd；文字被截斷 ∧ 關 fd；R53 D1 → R56 起 selfcheck 82 與 96 的 P 格被 E 組遮住〔82 的 #7 同時有 #15；96 的 P 格 [5,6,7,13,14,15]〕，實際殺手是 96 的 V 格〔清環境 ∧ 關 fd〕與 101 的 P56 格；Q、W 另被 Pc 命中，R57 logic／regression LOW）',
      '_INJECT_P = "$(echo${IFS}" + INJECT_MARKER + ">>" + INJECT_PATH_TOKEN + ")"', '_INJECT_P = "$(echo${IFS}" + INJECT_MARKER + ">/dev/null)"', 'oracle-inverted'),
     ('oracle: 程式碼行 Pc 不寫私有路徑（Pc 獨有的只剩『清環境 ∧ 關 fd』的格子——J 格〔`IFS=` 之後的 `eval` ∧ 關 fd〕現在由 #11、#16 命中；R53 D1 → selfcheck 89 的 J 格原本是殺手；R56 加入 E 組後 J 格改由 #16 命中，現在由 selfcheck 101 的 Pc44 格殺〔宣稱查核 A 組實測〕）',
      '"echo " + INJECT_MARKER + " >>" + INJECT_PATH_TOKEN,\n', '"echo " + INJECT_MARKER + " >/dev/null",\n', 'oracle-inverted'),
@@ -1740,9 +1750,9 @@ MUTATIONS += [
      '_INJECT_S = "$(echo${IFS}" + INJECT_MARKER + ">&197)"', '_INJECT_S = "$(echo${IFS}" + INJECT_MARKER + ">/dev/null)"', 'oracle-inverted'),
     ('oracle: 拿掉三組短寫法 payload S（R50 的 `PWD[$(…>&197)]`；只有受限 shell 的算術脈絡抓得到；R53 D1 → selfcheck 96 的 X 格）',
      'INJECT_PAYLOADS = ("PWD[" + _INJECT_S + "]",\n                   "-v PWD[" + _INJECT_S + "]",\n                   "-n -o -v PWD[" + _INJECT_S + "]",\n                   "echo " + INJECT_MARKER + " >&197",', 'INJECT_PAYLOADS = ("echo " + INJECT_MARKER + " >&197",', 'oracle-inverted'),
-    ('oracle: 拿掉 R50 的第四組程式碼行 R（`echo M >&197`，31 字；截到 31–42 字、受限 shell 命令位置、換掉斜線；R53 D1 → selfcheck 96 的 R、S、T、U 格）',
+    ('oracle: 拿掉 R50 的第四組程式碼行 R（`echo M >&197`，31 字；截到 31–42 字、受限 shell 命令位置、換掉斜線；R53 D1 → selfcheck 96 的 R、S、T 格〔U 格 R56 起另被 #16 命中〕，R57 logic LOW）',
      '"-n -o -v PWD[" + _INJECT_S + "]",\n                   "echo " + INJECT_MARKER + " >&197",\n', '"-n -o -v PWD[" + _INJECT_S + "]",\n', 'oracle-inverted'),
-    ('oracle: 拿掉三組路徑 payload P（文字被截斷 ∧ 關 fd；清環境 ∧ 關 fd；R53 D1 → selfcheck 96 的 P、V 格〔Q、W 另被 Pc 命中〕）',
+    ('oracle: 拿掉三組路徑 payload P（文字被截斷 ∧ 關 fd；清環境 ∧ 關 fd；R53 D1 → R56 起 selfcheck 96 的 P 格被 E 組遮住，實際殺手是 96 的 V 格與 101 的 P56 格；Q、W 另被 Pc 命中，R57 logic LOW）',
      '                   "PWD[" + _INJECT_P + "]",\n                   "-v PWD[" + _INJECT_P + "]",\n                   "-n -o -v PWD[" + _INJECT_P + "]",\n', '', 'oracle-inverted'),
     ('oracle: 拿掉三組 `/dev/fd/197` payload D（dash ∧ 刪目錄；R53 Codex 1 → selfcheck 98 的第一個 step）',
      '                   "PWD[" + _INJECT_D + "]",\n                   "-v PWD[" + _INJECT_D + "]",\n                   "-n -o -v PWD[" + _INJECT_D + "]",\n', '', 'oracle-inverted'),
@@ -1773,17 +1783,60 @@ MUTATIONS += [
     ('oracle: 拿掉 `5b5a46d` 的程式碼行 `echo M >> "$ORACLE_INJECT"`（`IFS=` 之後的 `eval` ∧ 換斜線 ∧ 關 fd ∧ 保留環境，只有字面空白的 #16 命中；R55 requirements M → selfcheck 100 的 U2 格、--selftest-aud 的字面守衛；A1／A3／SL 由 #13 先命中，不靠它）',
      '                   "echo " + INJECT_MARKER + \' >> "$ORACLE_INJECT"\')', '                   "echo " + INJECT_MARKER + " >/dev/null")', 'oracle-inverted'),
     ('oracle: 注入探針那一次不導出 `ORACLE_INJECT`（四組 E payload 都寫不到哨兵；R55 requirements M → selfcheck 100）',
-     '            env["ORACLE_INJECT"] = sent\n', '', 'oracle-inverted'),
+     '            env["ORACLE_INJECT"] = cwd_sent if cwd_sent_on else sent\n', '', 'oracle-inverted'),
     # ── R56 E4：私有路徑的長度旋鈕（`prefix` 與 `dir=_short_tmp()`）。R54 的守衛量寫死的假路徑，這兩個旋鈕沒有網（R55 logic M）；現在 `--selftest-aud` 量 `_priv_scratch()` 實際建出的路徑，selfcheck 101 在邊界截斷處量行為 ──
     ('oracle: 私有目錄的前綴變長（`prefix="o"` → 12 字；P 與 Pc 各多 11 字，剛好截在 56／44 字的求值者就看不到；R55 logic M → --selftest-aud、selfcheck 101）',
      'return _Scratch(prefix="o", dir=_short_tmp())', 'return _Scratch(prefix="oracle-priv-", dir=_short_tmp())', 'oracle-inverted'),
     # ── R56 LOW 處置（R55 logic／Codex）──
     ('oracle: stub python3 不認旗標群結尾的 `-`（`-u- x.py` 在真 CPython 是選項結束、rc=0；stub 回 rc=2，errexit 的 step 在這裡被截斷；R55 logic LOW → --selftest-aud）',
-     '          -) if [ -z "$a" ]; then shift; if [ $# -gt 0 ] && [ "$1" != - ]; then mode=drain; fi; break 2; else exit 2; fi;;\n', '', 'oracle-inverted'),
+     '          -) if [ -z "$a" ]; then shift; if [ $# -gt 0 ]; then case "$1" in -) :;; -*) exit 2;; *) mode=drain;; esac; fi; break 2; else exit 2; fi;;   # R58：下一個 argv 一律是檔名——單獨的 `-` 讀 stdin、以 `-` 開頭的（`--`、`-c`、`-m`）是不存在的檔，rc=2，其餘當腳本\n', '', 'oracle-inverted'),
     ('oracle: `/tmp` 不可寫時不說一聲（靜默降低覆蓋；R55 Codex 3 → --selftest-aud）',
      '    _warn_short_tmp_unavailable()\n    return None\n', '    return None\n', 'oracle-inverted'),
     ('oracle: 私有目錄不放 `/tmp`（`dir=_short_tmp()` → 預設 `TMPDIR`；macOS 約 49 字，Linux 的 `TMPDIR` 未設時等價——守衛把 `TMPDIR` 設成長目錄，所以兩個平台都殺；R55 logic M → --selftest-aud、selfcheck 101〔macOS〕）',
      'return _Scratch(prefix="o", dir=_short_tmp())', 'return _Scratch(prefix="o", dir=None)', 'oracle-inverted'),
+    # ── R58 F1（#33 verify R57 第 12 格）：`$ORACLE_INJECT` 指到步驟 cwd 底下另建的哨兵（`5b5a46d` 的位置），`more()` 與 fd 197、`<priv>/i` 取 OR。字串補回來了、位置沒有——求值者寫不到 `/tmp` 或只准寫 cwd 時 R54～R57 看不到 ──
+    ('oracle: `ORACLE_INJECT` 不指到 cwd 哨兵（退回 R56 的 `<priv>/i`；寫不到 `/tmp` 的求值者看不到 E 組；R57 第 12 格 → selfcheck 103、105〔macOS〕）',
+     'env["ORACLE_INJECT"] = cwd_sent if cwd_sent_on else sent', 'env["ORACLE_INJECT"] = sent', 'oracle-inverted'),
+    ('oracle: E 組只試 cwd 目標、不再試 `<priv>/i`（求值者寫不進 cwd、寫得進 `/tmp` 時比 `6490b57` 還弱；R58 宣稱查核 C 組第 1 列 → selfcheck 103 的 R5、R6、105 的 SB7、SB8〔macOS〕）',
+     '        for to in (("cwd", "priv") if "$ORACLE_INJECT" in pl else ("priv",)):', '        for to in ("cwd",):', 'oracle-inverted'),
+    ('oracle: `inject_to` 被忽略（每一次注入都建 cwd 哨兵並導出指到它；E 組的 priv 那一次沒有 priv 可指，R5、R6、SB7、SB8 判一致，非 E 組的注入執行也多出 `.orc-XXXX/`，R7 判一致；A2 的 M15 → selfcheck 103 的 R5～R7、105 的 SB7、SB8〔macOS〕）',
+     '_cwd_sentinel(d) if inject_to == "cwd" else (cwd_sent, False)', '_cwd_sentinel(d)', 'oracle-inverted'),
+    ('oracle: 非 E 組的注入執行也試 cwd 目標（多建一個 `.orc-XXXX/`，檢查 cwd 有沒有點檔的步驟提早結束；A2 的 M15 → selfcheck 103 的 R7〔釘 payload #1：不然 E 組的 priv 那一次救回判定，只剩編號不同〕）',
+     'else ("priv",)):', 'else ("cwd",)):', 'oracle-inverted'),
+    ('oracle: `more()` 不讀 cwd 哨兵（E 組寫進去的標記沒人看；R57 第 12 格 → selfcheck 103）',
+     'inj_cwd, _why = _read_regular(cwd_sent, label="注入哨兵檔（cwd）")', 'inj_cwd = b""', 'oracle-inverted'),
+    ('oracle: 判定不看 cwd 哨兵的內容（`or INJECT_MARKER.encode() in inj_cwd` 拿掉；R57 第 12 格 → selfcheck 103）',
+     ' or INJECT_MARKER.encode() in inj_cwd,', ',', 'oracle-inverted'),
+    ('oracle: cwd 哨兵不預先建檔（求值者只准改既有的檔、不准建新檔時，E 組的 `>>` 建不出來；`5b5a46d` 預先建檔；R58 宣稱查核 B 組 → selfcheck 103 的 R4、105 的 SB5／SB6〔macOS〕）',
+     '                open(cwd_sent, "w").close()', '                pass', 'oracle-inverted'),
+    ('oracle: cwd 哨兵路徑不檢查字元（`TMPDIR` 含空白時 `>>$ORACLE_INJECT` 變成 ambiguous redirect；R58 F1 → --selftest-aud）',
+     '    if _inject_path_ok(path):\n        return path, True\n    _warn_cwd_sentinel_unavailable()', '    if True:\n        return path, True\n    _warn_cwd_sentinel_unavailable()', 'oracle-inverted'),
+    ('oracle: cwd 哨兵不能用時不說一聲（靜默降低覆蓋；R58 F1 → --selftest-aud）',
+     '    _warn_cwd_sentinel_unavailable()\n    return path, False', '    return path, False', 'oracle-inverted'),
+    # ── R58 F2（#33 verify R57 security M／DA M）：注入範圍。原本的第二個集合看 `${{`，`_env_of` 早已代換掉，永遠是空的 ──
+    ('oracle: 注入只送 `PR_TITLE`、`PR_BODY`（R44 起的死碼；`env: TITLE: ${{ …title }}` 判一致；R57 security M → selfcheck 104）',
+     'env.update(_inject_env_values(yaml_env, inject, chan))', 'env.update(_inject_env_values({}, inject, chan))', 'oracle-inverted'),
+    ('oracle: 注入不看值裡有沒有標記（每個 YAML env 鍵都被換掉，連字面常數也是；R58 F2 → --selftest-aud）',
+     ' and k not in skip and PR_MARKER in str(v):', ' and k not in skip:', 'oracle-inverted'),
+    ('oracle: 注入把整個值換掉、不保留前後綴（`pre-<標記>-post` → `payload`；R58 F2 → --selftest-aud）',
+     'out[k] = str(v).replace(PR_MARKER, inject)', 'out[k] = inject', 'oracle-inverted'),
+    ('oracle: 注入連神諭自己擁有的名字也換（`PATH` 被換成 payload，stub 目錄就沒了；R58 F2 → --selftest-aud）',
+     'if k not in out and k not in _OWN_ENV and k not in skip', 'if k not in out and k not in skip', 'oracle-inverted'),
+    ('oracle: 注入連通道檔的變數名也換（`GITHUB_ENV` 被換掉；R58 F2 → --selftest-aud）',
+     ' and k not in skip and PR_MARKER', ' and PR_MARKER', 'oracle-inverted'),
+    # ── R58 F3（#33 verify R57 Codex 1／Codex 2／logic LOW／regression LOW）：網的網 ──
+    ('selfcheck: 比對器對 `(字串, n)` 不要求恰好 n 次（`!= n` → `< n`：原因多出來也過；R57 Codex 1 → `--selftest-matcher`）',
+     'if (out.count(text) != n) if n is not None else (text not in out):', 'if (out.count(text) < n) if n is not None else (text not in out):', 'selfcheck-matcher'),
+    ('selfcheck: 比對器永遠接受字串與 `(字串, n)`（`INJ(n)` 的原因比對整段失效，正向 selfcheck 全部仍綠；R57 Codex 1 → `--selftest-matcher`）',
+     'if (out.count(text) != n) if n is not None else (text not in out):\n            return False', 'if False:\n            return False', 'selfcheck-matcher'),
+    ('selfcheck: 比對器永遠接受正規式（逐 step 方向的比對失效；R57 Codex 2 → `--selftest-matcher`）',
+     'if not w.search(out):', 'if False:', 'selfcheck-matcher'),
+    ('oracle: 拿掉 `oracle.py` 的 coding cookie（Python 3.9 上 `SyntaxError: Non-UTF-8 code`；R55 Python 3.9 → test_validate 的 `test_non_ascii_test_scripts_declare_utf8`）',
+     '#!/usr/bin/env python3\n# -*- coding: utf-8 -*-\n', '#!/usr/bin/env python3\n', 'oracle-cookie'),
+    ('oracle: stub 對旗標群結尾 `-` 之後以 `-` 開頭的 argv 不回 2（`-u- --`／`-u- -c x`／`-u- -m x` 在真 CPython 都是 rc=2；R57 regression LOW → --selftest-aud）',
+     '-*) exit 2;; *) mode=drain;; esac; fi; break 2;', '*) mode=drain;; esac; fi; break 2;', 'oracle-inverted'),
+    ('oracle: stub 對旗標群結尾 `-` 之後的單獨 `-` 不讀 stdin（`-u- -` 在真 CPython 把 stdin 當程式、rc=1，PR 文字印到 stderr；R57 logic LOW → --selftest-aud）',
+     'case "$1" in -) :;; -*)', 'case "$1" in -*)', 'oracle-inverted'),
 ]
 
 EXPECTED_SURVIVE = {

@@ -1,4 +1,4 @@
-# 已知盲點類（R50，**文件化，不是保證**）：步驟與儀器在同一個信任域，**步驟能對它所在的 shell 做的事幾乎都能對儀器做**（已經寫進 pipe 的記錄無法撤回）；神諭是 lint 放行步驟的差分測試器，不是 sandbox。限制有兩面：這張探針釘第 (i) 面（步驟或它啟動的程式對儀器做的事）；第 (ii) 面（神諭的 runner 模型與真 runner 不同，如 fd 繼承）見 `oracle.py` 的 `FD_INJECT` 一帶與 `injection-grandchild-closes-fds.yml`。
+# 已知盲點類（R50，**文件化，不是保證**）：步驟與儀器在同一個信任域，**步驟能對它所在的 shell 做的事幾乎都能對儀器做**（已經寫進 pipe 的記錄無法撤回）；神諭是 lint 放行步驟的差分測試器，不是 sandbox。限制有三面：這張探針釘第 (i) 面（步驟或它啟動的程式對儀器做的事）；第 (ii) 面（神諭的 runner 模型與真 runner 不同，如 fd 繼承）見 `oracle.py` 的 `FD_INJECT` 一帶與 `injection-grandchild-closes-fds.yml`；第 (iii) 面（同一台主機上的其他人或行程經共用 `/tmp`，R58 補上）沒有探針。
 # 這張探針釘「用編號指到儀器的 fd」（197 注入哨兵、198 事件、199 稽核記錄）這一種。四個 step，各是不同的到達方式（**代表形狀，不是窮舉**）；替身 lint（`lint-pass-all.sh`）全放行，神諭都判「一致」
 # （對照：同樣的違規不動 fd 時判「不一致：繞過」，見 `instrument-fd-blind-spots-control.yml`）：
 #   cmd-redirect             單一命令的重導向 `printf '%n' Z 199>/dev/null`——那一筆違規記錄寫進 /dev/null（不需要子殼層）

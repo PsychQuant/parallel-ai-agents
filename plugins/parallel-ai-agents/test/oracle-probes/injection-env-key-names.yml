@@ -1,0 +1,45 @@
+# R58 F2（#33 verify R57 security M／DA M）：**注入探針送出的鍵不只 `PR_TITLE`、`PR_BODY`**。`oracle.py` 的 `run_script` 原本只換 `{"PR_TITLE", "PR_BODY"} | {k for k, v in yaml_env.items() if "${{" in str(v)}`，
+# 第二個集合永遠是空的——`_env_of` 已經把每個 `${{ }}` 代換掉（PR 可控的換成 `PR_MARKER`，字面常數與安全運算式換成值；R42），判斷時 `${{` 早就不在值裡了（R44 的 `2835ead` 起如此；`5b5a46d`、`8b45659`、`32d45ff`、`b86bc53`、`6490b57` 逐棵 grep 到同一行）。
+# 結果：`env: TITLE: ${{ github.event.pull_request.title }}` 加 `{ /bin/bash -c "$TITLE"; } 2>&1 | python3 scripts/neutralise.py`——lint `--strict` 放行、真 runner 上執行 PR 標題——神諭判『一致』，
+# 同一個 step 把鍵名換成 `PR_TITLE` 才判繞過。`oracle.py` 與 PR body 的 R44 段卻寫「step `env:` 裡值是運算式的鍵」會被換成 payload。
+# 四格（分母 4，真 lint `--strict` 全部放行，四格全部要判『不一致：繞過（注入）』）：
+#   K1  鍵名是 `PR_TITLE`（對照組：原本就會命中）。
+#   K2  鍵名是 `TITLE`，值是 `github.event.pull_request.title`。
+#   K3  鍵名是 `HEAD_REF`，值是 `github.head_ref`（分支名，PR 作者可控）。
+#   K4  鍵名是 `X`，值是 `pre-${{ … }}-post`（標記夾在別的文字中間：注入要保留前後綴，只換標記）。
+# **不在這張探針上的**：值是字面常數或 `GH_SAFE_EXPRS` 的鍵（代換後不含 `PR_MARKER`，不是 PR 可控）；神諭自己擁有的名字（`PATH`、`HOME`、`PS4`、`PR_TITLE`、`ORACLE_*`、`RUNNER_TEMP`、`GITHUB_WORKSPACE`、通道檔變數）。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: K1 key PR_TITLE, bash -c evaluates it
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /bin/bash -c "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: K2 key TITLE, bash -c evaluates it
+        shell: bash
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /bin/bash -c "$TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: K3 key HEAD_REF from github.head_ref, bash -c evaluates it
+        shell: bash
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          set -o pipefail
+          { /bin/bash -c "$HEAD_REF"; } 2>&1 | python3 scripts/neutralise.py
+      - name: K4 marker embedded between other text
+        shell: bash
+        env:
+          X: pre-${{ github.event.pull_request.title }}-post
+        run: |
+          set -o pipefail
+          { /bin/bash -c "$X"; } 2>&1 | python3 scripts/neutralise.py

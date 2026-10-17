@@ -3,6 +3,8 @@
 # 第一個 step：文字被放進雙引號裡求值（`eval "x=\"$0\""`），命令替換在雙引號裡照樣求值——只有 D 命中。第二個 step：`IFS=` 之後的 `eval`（`${IFS}` 是空字串，只有字面空白的程式碼行能求值）——只有 Dc 命中。
 # R52 的 `EXPECTED_SURVIVE` 曾寫『長寫法的 fd 那一半冗餘於短寫法與程式碼行』，這個形狀（刪目錄 ∧ dash ∧ 雙引號）是反例；R54 把 R52 的長寫法拆成單一通道的家族，這張探針釘住 D、Dc（selfcheck 98；`mutation_check.py` 的 D、Dc 兩個靶由它殺）。
 # （刪私有目錄屬性質聲明的 (i) 面：步驟對儀器動手。這張探針釘的是『動手之後 fd 那一半仍在』。）
+# R58 宣稱查核 C 組（第 3 列）：求值者經 `env -i` 清掉環境。R58 起 E 組（`>>$ORACLE_INJECT`）寫的是步驟 cwd 底下預先建好的哨兵，環境保留時它也命中，這兩格就不再只有 D、Dc 命中，`mutation_check.py` 的 D、Dc 靶（546、548、526）因此找不到殺手；
+# 清環境之後 `$ORACLE_INJECT` 沒有了，E 組不成立，D、Dc 重新是唯一命中者。（`5b5a46d` 的 `$ORACLE_INJECT` 式哨兵對清環境的求值者看不到，這一點本來就是 R50 的收穫，見 `injection-env-cleared.yml`。）
 # LINT-ARGS: --strict
 name: t
 on: pull_request
@@ -17,7 +19,7 @@ jobs:
         run: |
           set -o pipefail
           rm -rf "$ORACLE_PRIV"
-          { /bin/dash -c 'eval "x=\"$0\""' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+          { /usr/bin/env -i /bin/dash -c 'eval "x=\"$0\""' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
       - name: deleted private dir, dash evaluates the text after IFS= (literal-space code line)
         shell: bash
         env:
@@ -25,4 +27,4 @@ jobs:
         run: |
           set -o pipefail
           rm -rf "$ORACLE_PRIV"
-          { /bin/dash -c 'IFS=; eval "$0"' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+          { /usr/bin/env -i /bin/dash -c 'IFS=; eval "$0"' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
