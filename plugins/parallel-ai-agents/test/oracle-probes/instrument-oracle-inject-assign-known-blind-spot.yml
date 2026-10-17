@@ -1,0 +1,42 @@
+# R56（#33 verify R55，宣稱查核 A 組）：**已知盲點，文件化、不是保證**。R56 起 `ORACLE_INJECT` 在注入那一次重新導出（指到 `$ORACLE_PRIV/i`），E 組 payload（#13–#16）靠它寫哨兵。
+# 文法內的純量指派 `ORACLE_INJECT=/dev/null`（`--strict` 當普通指派放行）會讓 E 組寫不到哨兵：後面接一個「保留環境、關 fd、把 `/` 換成 `_`」的求值者，S／R／D／Dc 要 fd、P／Pc 含 `/`，沒有任何一組命中，判『一致』。
+# 這是〈步驟對儀器做的事〉(i) 面的實例（步驟與儀器同一個 shell、同一個信任域），不是新機制；但 R50 之後的說明寫過『改 `ORACLE_*` 環境變數沒有任何作用』——R56 之前那是真的，之後有這一個例外，所以釘成探針。
+# 指派要放在**群組裡**（`{ ORACLE_INJECT=/dev/null; …; } 2>&1 | …`）：獨立的一行指派不在 `--strict` 的正面文法裡，lint 會擋下（我第一版寫成獨立一行，判『誤擋』）。
+# 對照組 T2 沒有指派，判『不一致：繞過（注入…payload #13）』；T3 指派 `ORACLE_PRIV=/dev/null` 仍判『繞過』（#13）——這只說明這個指派弄不瞎 E 組（E 組不讀 `ORACLE_PRIV`、指派又在管線群組的子殼層裡）；它**不是**『`__orc_priv` 在開頭複製過』的證據（D 組：把 PRELUDE 改成每次讀 `$ORACLE_PRIV` 的突變體，T3 照樣判繞過）。
+# 期待：一致 1（T1，盲點）、不一致 2（T2、T3）。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: T1 assigns ORACLE_INJECT then evaluates (blind spot)
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            ORACLE_INJECT=/dev/null
+            /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "-c", sys.argv[1].replace("/", "_")])' "$PR_TITLE"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: T2 control, no assignment
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "-c", sys.argv[1].replace("/", "_")])' "$PR_TITLE"
+          } 2>&1 | python3 scripts/neutralise.py
+      - name: T3 assigns ORACLE_PRIV then evaluates (no effect)
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          {
+            ORACLE_PRIV=/dev/null
+            /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "-c", sys.argv[1].replace("/", "_")])' "$PR_TITLE"
+          } 2>&1 | python3 scripts/neutralise.py

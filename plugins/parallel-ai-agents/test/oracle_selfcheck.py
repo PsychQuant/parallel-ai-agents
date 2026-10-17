@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """神諭的反向探針：只有神諭**失敗**時才成立的檢查（#33 verify R37）。
 
 fixture 集裡的 must-fail 探針（`# ORACLE-MUST-FAIL:`）驗的是「神諭對某張 fixture 以宣告的理由失敗」。
@@ -14,8 +15,8 @@ R37 時有兩件事它驗不到——要驗它們，未突變的神諭在 fixtur
 
 批次與編號（編號＝下面 `CHECKS` 的順序；每一項的內容在它自己的說明欄，這裡不再複述一份會過期的描述——R43 第 21 列：
 前一版的 docstring 逐批列舉、數字加起來少一項，而且寫著「二十六項」「三十項」卻沒有一個地方真的數過）：
-  R37 1–2；R39 3–8；R40 9–10；R42 11–15；R42 WP7 16–19；R42 WP8 20–26；R44 27–31；R46 32–38；R48 39–45；R50 46–72；R52 73–95；R54 96–99。
-共 99 項。守衛：`main()` 開頭比對這一行的總數與批次區間的終點是否等於 `len(CHECKS)`，不等就 rc=1——數字與清單不是兩份各自維護的東西。
+  R37 1–2；R39 3–8；R40 9–10；R42 11–15；R42 WP7 16–19；R42 WP8 20–26；R44 27–31；R46 32–38；R48 39–45；R50 46–72；R52 73–95；R54 96–99；R56 100–102。
+共 102 項。守衛：`main()` 開頭比對這一行的總數與批次區間的終點是否等於 `len(CHECKS)`，不等就 rc=1——數字與清單不是兩份各自維護的東西。
 
 用法：test/oracle_selfcheck.py      rc=0：每一項都照預期；rc=1：至少一項沒有（或上面的數字與 `CHECKS` 不符）。
 """
@@ -31,7 +32,14 @@ ORACLE = HERE / "oracle.py"
 PROBES = HERE / "oracle-probes"
 LINT = HERE / "lint-ci-log-filter.sh"
 
+def INJ(n):
+    """注入探針的期待輸出：總數『一致 0、不一致 n』**加上**每一格的原因都是『繞過（注入』（恰好 n 次）。R56（R55 Codex 4）：前一版只比總數——
+    某一格改由別的路徑判成『不一致』（例如『誤擋』、『primitive 稽核』）、總數不變，這些項目仍然綠，注入探針的網因此沒有被驗到。"""
+    return ["一致 0、不一致 %d" % n, ("不一致：繞過（注入", n)]
+
+
 # (說明, 額外環境變數, 神諭的檔案參數, 期待的 rc, 輸出裡必須出現的字串[, 突變])
+# 「輸出裡必須出現的字串」可以是一個字串，或一個 list：每個元素是字串（要出現）或 (字串, n)（要恰好出現 n 次）。
 # 突變：{"lint": (錨點, 替換)} 或 {"oracle": (錨點, 替換)}——在暫存目錄產生那一份再跑（見 `run_check`）。
 CHECKS = [
     ("must-fail 探針的理由比對",
@@ -135,7 +143,7 @@ CHECKS = [
      [PROBES / "audit-declared-step-or-only-not-in-grammar.yml"], 0, "一致 1"),
     ("稽核與探針的範圍：宣告寫在 YAML 層（step 的註解行）而沒有觸發的 step 同樣不進文法（R48，R47 logic）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
      [PROBES / "audit-declared-step-yaml-level-not-in-grammar.yml"], 0, "一致 1"),
-    ("儀器完整性：改 `ORACLE_*` 環境變數沒有任何作用（`ORACLE_AUD`／`ORACLE_INJECT` 等已不存在；僅剩的 `ORACLE_PRIV` 在開頭被複製進 `__orc_priv`，改 `ORACLE_PRIV` 環境變數沒有作用；對 `__orc_priv` 本身的指派屬於 PRELUDE 變數那一類，見第 86 項）——稽核走繼承的 fd，違規照樣被看到（R50 取代 R48 的文字守衛；R49 requirements／logic／security／DA 與 Codex 同報守衛是吸收器）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
+    ("儀器完整性：改 `ORACLE_*` 環境變數沒有任何作用（`ORACLE_AUD` 等已不存在；僅剩的 `ORACLE_PRIV` 在開頭被複製進 `__orc_priv`，改 `ORACLE_PRIV` 環境變數沒有作用；對 `__orc_priv` 本身的指派屬於 PRELUDE 變數那一類，見第 86 項）——稽核走繼承的 fd，違規照樣被看到（**R56 起有一個例外**：`ORACLE_INJECT` 在注入那一次重新導出，文法內的 `ORACLE_INJECT=/dev/null` 會讓 E 組 payload 寫不到哨兵，見第 102 項；R50 取代 R48 的文字守衛；R49 requirements／logic／security／DA 與 Codex 同報守衛是吸收器）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
      [PROBES / "audit-tamper-instrument-var.yml"], 1, "primitive 稽核"),
     ("儀器完整性：相對路徑重導向截斷不到儀器檔（R48，R47 security）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
      [PROBES / "audit-tamper-relative-truncate.yml"], 1, "primitive 稽核"),
@@ -247,11 +255,11 @@ CHECKS = [
     ("`exec 197>/dev/null` 關掉注入哨兵的 fd：R50 的已知盲點，R52 起注入哨兵另外走私有字面路徑，判『繞過（注入）』——盲點被補上（R52 收穫；原在 `instrument-fd-known-blind-spots.yml` 的第五個 step）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
      [PROBES / "injection-sentinel-fd-closed.yml"], 1, "注入"),
     ("**注入哨兵的傳輸矩陣**（R52 C6，R51 DA）：求值者繼承什麼——環境 × fd × 行程群組 × cwd × shell 方言 × 剖析脈絡 × 文字被截斷 × 受限 shell 共十二格，分母 12，十二格全判『繞過（注入）』；`5b5a46d` 8／12、`8b45659` 5／12（探針檔頭有逐格結果）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
-     [PROBES / "injection-transport-matrix.yml"], 1, "一致 0、不一致 12"),
+     [PROBES / "injection-transport-matrix.yml"], 1, INJ(12)),
     ("pipefail 探針被換掉（文法內的 `__orc_want=x`）不關掉獨立的注入探針：同一群組的 `[ -n $PR_TITLE ]` 注入照樣判『繞過（注入）』（R52 `pfu` 閘門；`8b45659` 判『量不到』rc=0；R51 logic LOW）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
      [PROBES / "injection-with-pipefail-unmeasured.yml"], 1, "注入"),
     ("注入 payload 的 fd 那一半在兩個寫入點各自有網：刪掉私有目錄、保留 fd 的求值者，在 `[ -n $0 ]` 的算術脈絡（S 的 `-n -o -v PWD[$(…>&197)]`〔payload #3〕與 D 的同前綴版〔#10〕命中）與 `IFS=` 之後的 `eval`（程式碼行 R〔#4〕與 Dc〔#12〕命中）各被抓到（R52 網，R51 DA／E 組；R54 改以 S、R 的名字描述）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
-     [PROBES / "injection-sentinel-fd-half-contexts.yml"], 1, "一致 0、不一致 2"),
+     [PROBES / "injection-sentinel-fd-half-contexts.yml"], 1, INJ(2)),
     # R52 宣稱查核 D 組：step 範圍的欄位錨定。92、93 是 R52 第一版放寬 dash 正規式引進的回歸（內容行長得像 dash）；94 是 `5b5a46d` 就有的缺陷（註解在下一個 step 的 dash 上方被算成前一個 step 的宣告）。
     ("step 範圍的欄位錨定：前一個 step 的 block scalar 內容有一行 `- #123`（markdown 清單），下一個 step 上方有同欄的 `# LOG-FILTER:` 註解——內容行不是 dash，b 真實的外流照樣被判『繞過』（R52 宣稱查核 D 組；R52 第一版的回歸）", {},
      [PROBES / "step-range-block-scalar-dash-lookalike.yml"], 1, "不一致：繞過"),
@@ -263,13 +271,20 @@ CHECKS = [
      [PROBES / "injection-with-pipefail-unmeasured-lint-blocked.yml"], 0, "一致 2"),
     # R54（#33 verify R53）：R52 的哨兵「fd ∪ 私有路徑」兩半各有前提（fd 要被求值者繼承、路徑要 payload 夠長），文字被截斷 ∧ 求值者不繼承 fd 的交集沒有任何 payload 命中；R52 取聯集時又拿掉了 R50 的第四組。
     ("**注入哨兵的『文字轉換 × 傳輸』交叉格**（R54 D1，R53 logic M／security M／regression M／DA M）：截斷 100／60 字 × 關 fd〔V、W 再加清環境〕、截斷 40／36 字的 `eval`〔保留 fd〕、`IFS=` 之後的 `eval`、受限 shell〔命令位置與算術脈絡〕、換掉斜線共九格，分母 9，九格全判『繞過（注入）』（用替身 lint 全放行量測；真 lint 下 T、X 兩格由 lint 自己擋下，R54 為 7 格繞過＋2 格一致；探針檔頭有三棵舊樹與 R54 的逐格結果）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
-     [PROBES / "injection-transform-matrix.yml"], 1, "一致 0、不一致 9"),
+     [PROBES / "injection-transform-matrix.yml"], 1, INJ(9)),
     ("step 範圍的兩道防線（欄位錨定的 dash 正規式、鍵已在 dash 行時不往上走）**同時**拿掉就會判錯：前一個 step 的 `with:` 值是多行 plain scalar、續行到單獨一行 `-` 再接更深的 `# LOG-FILTER:` 註解——`-` 是內容、註解是真註解，下一個 step 真實的外流判『繞過』（R54 D2，R53 logic M；R52 的 `EXPECTED_SURVIVE` 說同時拿掉兩道也看不出差別（第三道縮排條件會擋住），這個形狀的註解比 dash 深、第三道失效，是反例；單獨拿掉任何一道仍判繞過（實測）；`8b45659` 判『一致』）", {},
      [PROBES / "step-range-plain-scalar-dash-lookalike.yml"], 1, "不一致：繞過"),
     ("注入哨兵的 fd 那一半，dash 版：步驟刪掉私有目錄、dash 求值——短寫法與 R50 的程式碼行（`>&197`）在 dash 是語法錯誤、路徑那一半的目錄沒了，只有 `/dev/fd/197` 的寫法命中（雙引號裡的命令替換 D、`IFS=` 之後的 `eval` 的程式碼行 Dc）（R54 D2，R53 Codex 1；取代 R52 的『長寫法的 fd 那一半冗餘』）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
-     [PROBES / "injection-sentinel-dash-fd-only.yml"], 1, "一致 0、不一致 2"),
+     [PROBES / "injection-sentinel-dash-fd-only.yml"], 1, INJ(2)),
     ("**已知盲點，文件化、不是保證**：裸 `python3 -c` 的 stub 不執行程式碼——lint 放行的真注入（Python `subprocess` 預設、`os.system`）判『一致』，意思是『命令沒有被執行』；寫成 `/usr/bin/python3` 的對照組才判『繞過（注入）』（R54 D3，R53 DA M；既有缺陷，三棵樹判定相同；#97）", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh")},
      [PROBES / "stub-python-no-exec-known-blind-spot.yml"], 1, "一致 2、不一致 1"),
+    # R56（#33 verify R55）：R53 的放行條件 D1(a) 要求新樹的 payload 是 `8b45659` 與 `5b5a46d` 的超集；R54 只做了前半。
+    ("**`5b5a46d` 抓得到、R54 抓不到的 11 格**（R56 E1／E2，R55 requirements M／regression M／DA M）：求值者把斜線換成底線 ∧ 關 fd ∧ 保留環境（命令位置、算術、dash、`eval`、`IFS=` 之後的 `eval`〔U2，只有 #16 命中〕），以及算術 `(( t ))`、`[ $t ]` 的 `-v`、`[ -n $t ]` 的 `-n -o -v` 脈絡把文字截到 54–55／57–58／63–64 字——這些格子的哨兵只剩環境變數指到的檔，`5b5a46d` 的四個 `$ORACLE_INJECT` payload 全部命中。**真 lint**（不設 `ORACLE_LINT`；探針檔頭有各棵樹的結果）下 11 格全判『繞過（注入）』；`b86bc53`、`32d45ff`、`8b45659` 都是 0／11，`5b5a46d` 是 11／11", {},
+     [PROBES / "injection-5b5a46d-wins.yml"], 1, INJ(11)),
+    ("**私有路徑長度的邊界**（R56 E4，R55 logic M）：環境清空 ∧ 關 fd 的求值者，文字剛好截在 56 字（算術脈絡）與 44 字（命令位置）——`$ORACLE_INJECT` 與 fd 那幾組都不命中，只有路徑 payload P（56 字）與 Pc（44 字）命中，兩格都判『繞過（注入）』。`/tmp/oXXXXXXXX/i` 是 16 字；路徑多 1 字（`prefix` 變長、`dir=_short_tmp()` 被拿掉而落在 macOS 的長 `TMPDIR`），兩格都判『一致』", {},
+     [PROBES / "injection-private-path-length.yml"], 1, INJ(2)),
+    ("**已知盲點，文件化、不是保證**：R56 起 `ORACLE_INJECT` 在注入那一次重新導出；文法內的純量指派 `ORACLE_INJECT=/dev/null`（`--strict` 放行）讓 E 組 payload（#13–#16）寫不到哨兵，後面接『保留環境、關 fd、換斜線』的求值者時，沒有任何一組命中，判『一致』（T1）——意思是『儀器被步驟弄瞎』，不是『偵測到安全』；對照組 T2（沒有指派）與 T3（指派 `ORACLE_PRIV=/dev/null`）都判『繞過（注入）』——T3 只說明這個指派弄不瞎 E 組，不是『`__orc_priv` 複製過』的證據（R56，宣稱查核 A、C 組；屬〈步驟對儀器做的事〉(i)）", {},
+     [PROBES / "instrument-oracle-inject-assign-known-blind-spot.yml"], 1, ["一致 1、不一致 2", ("不一致：繞過（注入", 2)]),
 ]
 
 
@@ -302,6 +317,19 @@ def run_check(extra, files, mut):
         return r.returncode, r.stdout + r.stderr
 
 
+def text_ok(want, out):
+    """`want` 是字串或 list；list 的每個元素是字串（要出現）或 (字串, n)（要恰好出現 n 次）。"""
+    for w in (want if isinstance(want, list) else [want]):
+        text, n = w if isinstance(w, tuple) else (w, None)
+        if (out.count(text) != n) if n is not None else (text not in out):
+            return False
+    return True
+
+
+def text_label(want):
+    return "、".join(("「%s」" % w) if isinstance(w, str) else ("「%s」×%d" % w) for w in (want if isinstance(want, list) else [want]))
+
+
 def doc_count_mismatch():
     """docstring 的「共 N 項」與最後一個批次區間的終點必須等於 `len(CHECKS)`。"""
     m = re.search(r"共 (\d+) 項", __doc__)
@@ -325,9 +353,9 @@ def main():
             print("✗ %s：%s" % (what, out))
             bad += 1
             continue
-        ok = rc == want_rc and want_text in out
-        print("%s %s：rc=%d（期待 %d）、「%s」%s" % ("✓" if ok else "✗", what, rc, want_rc, want_text,
-                                             "出現" if want_text in out else "沒有出現"))
+        ok = rc == want_rc and text_ok(want_text, out)
+        print("%s %s：rc=%d（期待 %d）、%s%s" % ("✓" if ok else "✗", what, rc, want_rc, text_label(want_text),
+                                             "出現" if text_ok(want_text, out) else "沒有出現"))
         bad += not ok
     return 1 if bad else 0
 

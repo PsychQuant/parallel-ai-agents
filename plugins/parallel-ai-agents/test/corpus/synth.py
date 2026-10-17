@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """合成 base-綠語料（#33 verify R28 regression lens 的三種變體；R29 進 repo）。
 
 為什麼要合成（R26 M7）：真實語料裡含 heredoc 的檔在舊版 lint 下**全部是紅的**（heredoc 終止分支不可達），

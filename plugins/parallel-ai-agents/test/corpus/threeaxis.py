@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """三軸量測：對一份語料清單，逐檔比對 base 與 head 兩版 lint 的 RULE 行／PARSE 行／rc。
 
 為什麼是三軸不是一軸（#33 verify R26 M7）：只數 `RULE:` 看不到誤擋方向——一個修法可以讓 RULE 少一條、PARSE

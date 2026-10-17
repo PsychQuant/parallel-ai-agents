@@ -7,7 +7,7 @@
 #   R54（S、R、P、D、Pc、Dc 六個單一通道的家族）：九格全部繞過（9／9）
 # 兩棵舊樹各自**獨有**漏的格子不重疊（`5b5a46d` 獨有漏 R、S、T、X〔fd 繼承的短 payload〕，`8b45659` 獨有漏 P、Q〔關 fd ∧ 截斷〕；V、W 兩棵都漏），所以『R54 ⊇ 兩棵舊樹』要用行為驗，不能只看其中一棵；V、W（清環境 ∧ 關 fd ∧ 截斷）是兩棵舊樹都漏的格，P 組（只寫絕對路徑、56 字）補上。
 # 格子：P／Q 截斷到 100／60 字 × Python `subprocess` 預設（`close_fds=True`）；R／S 截斷到 40／36 字的 `eval`；T 受限 shell ∧ `IFS=` 之後的 `eval`；U `IFS=` 之後的 `eval` ∧ 斜線被換成底線；V／W 清環境 ∧ 關 fd ∧ 截斷；
-# X 受限 shell 的算術脈絡（`>` 檔名重導向被禁、`(( $0 ))` 又不是命令位置，只有 S 的 `PWD[$(…>&197)]` 命中）。**不在這張表上**：zsh（CI 的 ubuntu 沒有；R3、R4、R9 的 zsh 格協調者在 macOS 實測 R54 全判繞過）、把文字轉成小寫或換編碼（`bash -c 'eval "${0,,}"'` 三棵樹都判一致，有限的 payload 集合補不完這一族——已知限制，見 `oracle.py` 檔頭〈已知限制〉(6)）。
+# X 受限 shell 的算術脈絡（`>` 檔名重導向被禁、`(( $0 ))` 又不是命令位置，只有 S 的 `PWD[$(…>&197)]` 命中）。**不在這張表上**：zsh（CI 的 ubuntu 沒有；R3、R4、R9 的 zsh 格協調者在 macOS 實測 R54 全判繞過）、把文字轉成小寫或換編碼（`"$BASH" -c 'eval "${0,,}"'` 在 bash ≥ 4 是每一組 payload 都不命中——有限的 payload 集合補不完這一族，已知限制，見 `oracle.py` 檔頭〈已知限制〉(6)；macOS 的 `/bin/bash` 3.2 沒有 `${0,,}`〔`bad substitution`〕，那裡判一致是因為命令沒有執行，不是被偵測到安全）。
 # LINT-ARGS: --strict
 name: t
 on: pull_request

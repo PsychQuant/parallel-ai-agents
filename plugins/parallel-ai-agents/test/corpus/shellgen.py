@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """詞法對帳產生器：按**封閉的構造維度**取笛卡兒積產生 workflow，交給 `test/oracle.py` 與 runner 對帳。
 
 為什麼（#33 verify R30 §六「第 14 類：網的投餵」）：R29 把兩個作者無關的網交進 repo（`opsweep.py`、

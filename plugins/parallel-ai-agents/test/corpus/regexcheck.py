@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 r"""`FL_REDIR_BAD_RE` 與 `FL_REDIR_DUP_OK_RE` 是否互斥的檢查（#33 verify R42，opsweep 的 EXPECTED_SURVIVE 依據；R44 更正範圍的說法）。
 
 為什麼進 repo：`fl_tokens` 的 `if m and FL_REDIR_BAD_RE.match(s, i) and not FL_REDIR_DUP_OK_RE.match(s, i):` 拿掉 `not DUP_OK`

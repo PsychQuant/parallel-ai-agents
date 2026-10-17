@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """量測 `test_validate.py` 的鑑別力：逐一關掉 `validate.py` 的判定條件，看測試抓不抓得到。
 
 **存活（survived）= 那道閘門沒有測試網。**
@@ -68,12 +69,19 @@ PAI = PACK.parent / "parallel-ai-agents"
 LINT = PAI / "test" / "lint-ci-log-filter.sh"
 ORACLE = PAI / "test" / "oracle.py"
 def oracle_env_names(src):
-    """`oracle.py` 原始碼裡所有長得像 `ORACLE_*` 的字串常數（R52，#33 verify R51 宣稱查核 B、D 組）——不管它怎麼被讀（`os.environ.get`／`os.getenv`／`os.environ[…]`／單引號／帶數字的名稱／`from os import environ`）。
-    只認 `os.environ.get(` 這一種時，用別種寫法新增的變數指紋與測試會一起漏掉；AST 掃字串常數抓不到的是：名字被拼出來的（`"ORACLE_" + "X"`），不以字串常數出現的讀法（例如迭代 `os.environ.items()` 再過濾前綴），以及大小寫混合或含 `-` 的字串（正規式只收 `ORACLE_[A-Z0-9_]+`）〔R54 更正：前一版寫成『唯一抓不到的是名字被拼出來的』，R53 requirements LOW〕。
+    """`oracle.py` 原始碼的 AST 裡**任何 str／bytes 常數節點（含 f-string 的字面片段、隱式串接後的整串、跳脫解開後的值）、而且完全符合 `ORACLE_[A-Z0-9_]+`** 的名字（R52，#33 verify R51 宣稱查核 B、D 組；bytes 常數 R56 起收）——不管它怎麼被讀（`os.environ.get`／`os.getenv`／`os.environ[…]`／單引號／帶數字的名稱／`from os import environ`／`os.environb`）。
+    這是**以性質定義**的，不是列舉：parser 會把隱式串接（`"ORACLE_" "X"`，含跨行）摺成一個常數，所以那種寫法抓得到；**不符合這個性質的都抓不到**。已知抓不到的例子（**不是完整列舉**；R56 第一版寫成『封閉列舉四類』，C 組找到七個反例而推翻）：
+    名字被拼出來的（`"ORACLE_" + "X"`）、格式化出來的（`"ORACLE_%s" % x`、`.format()`；有替換欄位、名字字面不完整的 f-string〔`f"ORACLE_{x}"`〕——AST 裡只有 `"ORACLE_"` 片段，而 `f"ORACLE_X{y}"` 會被記成 `ORACLE_X`，名字記錯、真名漏掉）、字串常數經轉換才成為名字（`.upper()`、切片、`.strip()`、`.split()`）、不完全符合正規式的字串
+    （小寫、含 `-`／`.`／空白、只有前綴 `ORACLE_`、bytes 裡有非 ASCII）、不以字串常數出現的讀法（迭代 `os.environ.items()` 再過濾前綴）〔R54 更正：前一版寫成『唯一抓不到的是名字被拼出來的』〕。
     連神諭自己替 step 設的 `ORACLE_PRIV` 也記進去（環境裡沒設，值是空的，無害）。"""
     import ast
-    return sorted({n.value for n in ast.walk(ast.parse(src)) if isinstance(n, ast.Constant) and isinstance(n.value, str)
-                   and re.fullmatch(r"ORACLE_[A-Z0-9_]+", n.value)})
+    names = set()
+    for n in ast.walk(ast.parse(src)):
+        if isinstance(n, ast.Constant) and isinstance(n.value, (str, bytes)):
+            v = n.value.decode("ascii", "replace") if isinstance(n.value, bytes) else n.value
+            if re.fullmatch(r"ORACLE_[A-Z0-9_]+", v):
+                names.add(v)
+    return sorted(names)
 
 # ── 守備範圍（#33 verify R26 M6 / G-R27-6）───────────────────────────────────────────
 # 「新機制沒有 RED 驗證」在這個 PR **發作了七次**，而 R26 的 DA 把它診斷到方法層：
@@ -196,7 +204,9 @@ def tool_versions():
     for name in oracle_env_names(ORACLE.read_text(encoding="utf-8")):
         v.append("%s=%s" % (name, os.environ.get(name, "")))
     # `TMPDIR` 記著：R54 起私有目錄放 `/tmp/oXXXXXXXX`，`TMPDIR` 不再改變注入探針的路徑；只剩 `/tmp` 不可寫而退回預設暫存目錄時，路徑含 payload 不能不加引號放進去的字元，`run_script` 具名退出、整輪沒有判定（R52 宣稱查核 D 組）。
-    # 步驟的 cwd 與 stub 目錄仍在 `TMPDIR` 底下，所以保留它在指紋裡（便宜、方向安全）；`TMP`／`TEMP` 同理，不另記。
+    # 步驟的 cwd 與 stub 目錄仍在 `TMPDIR` 底下，所以保留它在指紋裡（便宜、方向安全）。**`TMP`／`TEMP` 不記**（R56 補寫理由；R55 requirements LOW：R54 只寫「同理，不另記」）：Python 的 `tempfile.gettempdir()` 依序看 `TMPDIR`、`TEMP`、`TMP`，
+    # `TMPDIR` 非空而且可用，就不看另外兩個；否則（沒設、空字串、不存在、不可寫）才依序看 `TEMP`、`TMP`；POSIX 上它們很少設，記了只讓指紋隨無關的環境變數變動（快取命中率下降）。代價：在 `TMPDIR` 未設或不可用、而 `TEMP`／`TMP` 被設的環境，指紋看不出差別，
+    # 而且那時又碰上 `/tmp` 不可寫的罕見退路，才會改變判定。
     v.append("TMPDIR=%s" % os.environ.get("TMPDIR", ""))
     return "\n".join(v)
 
@@ -1687,15 +1697,15 @@ MUTATIONS += [
      'out, err = p.communicate(timeout=5)', 'out, err = p.communicate()', 'oracle-inverted'),
     ('oracle: 注入哨兵檔不讀（不繼承 fd 的孫行程看不到；R51 regression M2 → selfcheck 73）',
      ' or INJECT_MARKER.encode() in inj_file,', ',', 'oracle-inverted'),
-    ('oracle: payload 裡的私有路徑 token 不換成路徑（R51 regression M2 → selfcheck 73）',
+    ('oracle: payload 裡的私有路徑 token 不換成路徑（R51 regression M2 → selfcheck 73 原本是殺手；R56 加入 E 組後 73 的格子改由 #13 命中，現在由 selfcheck 101 殺〔宣稱查核 A 組實測〕）',
      'inject = inject.replace(INJECT_PATH_TOKEN, sent)', 'inject = inject', 'oracle-inverted'),
     # ── R54（#33 verify R53）：payload 拆成單一通道的家族（S／R：fd 的 dup；P／Pc：路徑；D／Dc：`/dev/fd/197`），每一組有自己的殺手探針；R52 的長寫法把路徑與 fd 綁在同一個字串，兩半各自冗餘於別組，網釘不住 ──
     ('oracle: 路徑 payload（`_INJECT_P`）不寫私有路徑（只有 `[ -n $0 ]` 算術脈絡 ∧ 關 fd；文字被截斷 ∧ 關 fd；R53 D1 → selfcheck 82、96 的 P、V 格〔Q、W 另被 Pc 命中〕）',
      '_INJECT_P = "$(echo${IFS}" + INJECT_MARKER + ">>" + INJECT_PATH_TOKEN + ")"', '_INJECT_P = "$(echo${IFS}" + INJECT_MARKER + ">/dev/null)"', 'oracle-inverted'),
-    ('oracle: 程式碼行 Pc 不寫私有路徑（只有 `IFS=` 之後的 `eval` ∧ 關 fd 的求值者；R53 D1 → selfcheck 89 的 J 格）',
+    ('oracle: 程式碼行 Pc 不寫私有路徑（Pc 獨有的只剩『清環境 ∧ 關 fd』的格子——J 格〔`IFS=` 之後的 `eval` ∧ 關 fd〕現在由 #11、#16 命中；R53 D1 → selfcheck 89 的 J 格原本是殺手；R56 加入 E 組後 J 格改由 #16 命中，現在由 selfcheck 101 的 Pc44 格殺〔宣稱查核 A 組實測〕）',
      '"echo " + INJECT_MARKER + " >>" + INJECT_PATH_TOKEN,\n', '"echo " + INJECT_MARKER + " >/dev/null",\n', 'oracle-inverted'),
     ('oracle: 程式碼行 Dc 不寫 fd 197（只有 dash ∧ `IFS=` 之後的 `eval` ∧ 刪目錄；R53 Codex 1 → selfcheck 98 的第二個 step）',
-     '"echo " + INJECT_MARKER + " >/dev/fd/197 || :")', '"echo " + INJECT_MARKER + " >/dev/null || :")', 'oracle-inverted'),
+     '"echo " + INJECT_MARKER + " >/dev/fd/197 || :",\n', '"echo " + INJECT_MARKER + " >/dev/null || :",\n', 'oracle-inverted'),
     ('oracle: payload D 又用 `>&197`（dash 把兩位數的 fd 重導向當語法錯誤，整段 payload 不執行；R51 E 組 → selfcheck 98 的第一個 step）',
      '">/dev/fd/197||:)"', '">&197||:)"', 'oracle-inverted'),
     ('oracle: 注入哨兵不收 fd 197（刪掉私有目錄就把哨兵弄瞎；R51 DA → selfcheck 81）',
@@ -1746,7 +1756,7 @@ MUTATIONS += [
     ('oracle: stub python3 的 `--` 之後不 drain（`-- script.py` 要 drain exit 0；R53 Codex 3 → --selftest-aud）',
      '--) shift; if [ $# -gt 0 ] && [ "$1" != - ]; then mode=drain; fi; break;;', '--) shift; break;;', 'oracle-inverted'),
     ('oracle: stub python3 的 `--` 把腳本位置的 `-` 也當腳本 drain（真 CPython 把 stdin 當程式；R53 Codex 3 → --selftest-aud）',
-     '[ $# -gt 0 ] && [ "$1" != - ]; then mode=drain', '[ $# -gt 0 ]; then mode=drain', 'oracle-inverted'),
+     '--) shift; if [ $# -gt 0 ] && [ "$1" != - ]; then mode=drain', '--) shift; if [ $# -gt 0 ]; then mode=drain', 'oracle-inverted'),
     ('oracle: stub python3 的 `--version`／`--help` 不 exit 0（R50 第五輪 L3；R53 regression LOW：R52 刪掉的靶只剩短選項那一個 → --selftest-aud）',
      '    --version|--help|--help-all|--help-env|--help-xoptions) exit 0;;', '    --help-all|--help-env|--help-xoptions) exit 0;;', 'oracle-inverted'),
     ('oracle: pipefail 探針被換掉就不跑獨立的注入探針——判定列（R51 logic LOW → selfcheck 90）',
@@ -1755,6 +1765,25 @@ MUTATIONS += [
      'and (not unm or timed or dist or pfu)):', 'and (not unm or timed or dist)):', 'oracle-inverted'),
     ('oracle: `pfu` 恆為 False（R51 logic LOW → selfcheck 90）',
      'pfu = verdict.startswith("量不到（pipefail 探針被換掉")', 'pfu = False', 'oracle-inverted'),
+    # ── R56 E1（#33 verify R55）：`5b5a46d` 的四個 `$ORACLE_INJECT` payload 與導出該變數。真 lint 放行的 11 格只有它們命中（selfcheck 100）；字面守衛在 `--selftest-aud` ──
+    ('oracle: `_INJECT_E`（`5b5a46d` 的 `$ORACLE_INJECT` payload）不寫哨兵檔（算術／`-v`／`-n -o -v` 的三組 `PWD[…]` 版；R55 requirements M → selfcheck 100 的 A54／V57／N63、--selftest-aud）',
+     '_INJECT_E = "$(echo${IFS}" + INJECT_MARKER + ">>$ORACLE_INJECT)"', '_INJECT_E = "$(echo${IFS}" + INJECT_MARKER + ">/dev/null)"', 'oracle-inverted'),
+    ('oracle: 拿掉三組 `PWD[…$ORACLE_INJECT…]` payload E（算術脈絡截到 54–55／`-v` 57–58／`-n -o -v` 63–64 字、換斜線的算術；R55 requirements M → selfcheck 100、--selftest-aud）',
+     '                   "PWD[" + _INJECT_E + "]",\n                   "-v PWD[" + _INJECT_E + "]",\n                   "-n -o -v PWD[" + _INJECT_E + "]",\n', '', 'oracle-inverted'),
+    ('oracle: 拿掉 `5b5a46d` 的程式碼行 `echo M >> "$ORACLE_INJECT"`（`IFS=` 之後的 `eval` ∧ 換斜線 ∧ 關 fd ∧ 保留環境，只有字面空白的 #16 命中；R55 requirements M → selfcheck 100 的 U2 格、--selftest-aud 的字面守衛；A1／A3／SL 由 #13 先命中，不靠它）',
+     '                   "echo " + INJECT_MARKER + \' >> "$ORACLE_INJECT"\')', '                   "echo " + INJECT_MARKER + " >/dev/null")', 'oracle-inverted'),
+    ('oracle: 注入探針那一次不導出 `ORACLE_INJECT`（四組 E payload 都寫不到哨兵；R55 requirements M → selfcheck 100）',
+     '            env["ORACLE_INJECT"] = sent\n', '', 'oracle-inverted'),
+    # ── R56 E4：私有路徑的長度旋鈕（`prefix` 與 `dir=_short_tmp()`）。R54 的守衛量寫死的假路徑，這兩個旋鈕沒有網（R55 logic M）；現在 `--selftest-aud` 量 `_priv_scratch()` 實際建出的路徑，selfcheck 101 在邊界截斷處量行為 ──
+    ('oracle: 私有目錄的前綴變長（`prefix="o"` → 12 字；P 與 Pc 各多 11 字，剛好截在 56／44 字的求值者就看不到；R55 logic M → --selftest-aud、selfcheck 101）',
+     'return _Scratch(prefix="o", dir=_short_tmp())', 'return _Scratch(prefix="oracle-priv-", dir=_short_tmp())', 'oracle-inverted'),
+    # ── R56 LOW 處置（R55 logic／Codex）──
+    ('oracle: stub python3 不認旗標群結尾的 `-`（`-u- x.py` 在真 CPython 是選項結束、rc=0；stub 回 rc=2，errexit 的 step 在這裡被截斷；R55 logic LOW → --selftest-aud）',
+     '          -) if [ -z "$a" ]; then shift; if [ $# -gt 0 ] && [ "$1" != - ]; then mode=drain; fi; break 2; else exit 2; fi;;\n', '', 'oracle-inverted'),
+    ('oracle: `/tmp` 不可寫時不說一聲（靜默降低覆蓋；R55 Codex 3 → --selftest-aud）',
+     '    _warn_short_tmp_unavailable()\n    return None\n', '    return None\n', 'oracle-inverted'),
+    ('oracle: 私有目錄不放 `/tmp`（`dir=_short_tmp()` → 預設 `TMPDIR`；macOS 約 49 字，Linux 的 `TMPDIR` 未設時等價——守衛把 `TMPDIR` 設成長目錄，所以兩個平台都殺；R55 logic M → --selftest-aud、selfcheck 101〔macOS〕）',
+     'return _Scratch(prefix="o", dir=_short_tmp())', 'return _Scratch(prefix="o", dir=None)', 'oracle-inverted'),
 ]
 
 EXPECTED_SURVIVE = {

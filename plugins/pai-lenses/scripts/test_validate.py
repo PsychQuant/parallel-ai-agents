@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """`validate.py` 的回歸測試（stdlib unittest —— CI 沒有裝 pytest，也不該為此加依賴）。
 
 **為什麼需要這個檔**（#33 verify R7）：`validate.py` 有十餘道閘門，出貨時零測試覆蓋 ——
@@ -2487,14 +2488,16 @@ class ValidateTest(unittest.TestCase):
     def test_mutation_cache_fingerprint_follows_every_oracle_env_var(self):
         """R51 DA（R52 C5）：神諭讀的每一個 `ORACLE_*` 環境變數都會改變判定，指紋就得記它——R50 新增的 `ORACLE_STREAM_CAP` 沒進指紋，
         在 export 了它的 shell 裡跑 `mutation_check.py`，`oracle-inverted` 的突變體會因儀器不可信 rc=1 被記成假「殺掉」，快取檔又進了版控。
-        變數清單從 `oracle.py` 的原始碼讀（`mutation_check.oracle_env_names` 用 AST 掃所有 `ORACLE_*` 形狀的字串常數，不管怎麼讀它），不是這裡再寫一份；名字被拼出來的（`\"ORACLE_\" + \"X\"`）仍然看不到——那一類測試擋不了。另外 `TMPDIR` 也記進指紋：步驟的 cwd 與 stub 目錄仍在它底下（私有目錄只在 `/tmp` 不可寫而退回預設暫存目錄時才受它影響，那時路徑含不安全字元會讓神諭具名退出）。"""
+        變數清單從 `oracle.py` 的原始碼讀（`mutation_check.oracle_env_names` 用 AST 掃所有 `ORACLE_*` 形狀的字串常數，不管怎麼讀它），不是這裡再寫一份；不符合『完整字串／bytes 常數且完全符合 `ORACLE_[A-Z0-9_]+`』的寫法（拼出來的、格式化出來的、經轉換的、小寫或含 `-`／`.` 的……）仍然看不到，測試擋不了（見 `oracle_env_names` 的 docstring；那裡的例子不是完整列舉；bytes 常數 R56 起收）。另外 `TMPDIR` 也記進指紋：步驟的 cwd 與 stub 目錄仍在它底下（私有目錄只在 `/tmp` 不可寫而退回預設暫存目錄時才受它影響，那時路徑含不安全字元會讓神諭具名退出）。"""
         sys.path.insert(0, str(HERE)); import mutation_check as M
         # 名單的取法本身要涵蓋 `oracle.py` 讀環境變數的各種寫法（R52 宣稱查核 B、D 組：只認一種正規式時，`os.getenv(`／`os.environ[`／單引號／帶數字的名稱讀的變數兩邊都看不到）——
-        # 改用 AST 掃**所有**長得像 `ORACLE_*` 的字串常數（不管怎麼讀它）；抓不到的是名字被拼出來的（`"ORACLE_" + "X"`）與不以字串常數出現的讀法（迭代 `os.environ.items()`）〔R54 更正：前一版寫『唯一』〕。
+        # 改用 AST 掃**所有**長得像 `ORACLE_*` 的字串常數（不管怎麼讀它）；抓不到的是不符合『完整常數且完全符合 `ORACLE_[A-Z0-9_]+`』的寫法（見 `oracle_env_names` 的 docstring；例子不是完整列舉）〔R54 更正：前一版寫『唯一』〕。
         synthetic = ('import os\nfrom os import environ\n'
                      'a = os.environ.get("ORACLE_FOO")\nb = os.getenv("ORACLE_BAR", "x")\nc = os.environ["ORACLE_B4Z"]\n'
-                     'd = os.environ.get( \'ORACLE_SQ\')\ne = environ.get("ORACLE_FROM")\nf = "ORACLE_" + "SPLIT"\ng = "not ORACLE_PROSE here"\n')
-        self.assertEqual(M.oracle_env_names(synthetic), ["ORACLE_B4Z", "ORACLE_BAR", "ORACLE_FOO", "ORACLE_FROM", "ORACLE_SQ"])
+                     'd = os.environ.get( \'ORACLE_SQ\')\ne = environ.get("ORACLE_FROM")\nf = "ORACLE_" + "SPLIT"\ng = "not ORACLE_PROSE here"\n'
+                     # R56（R55 logic LOW）：bytes 常數收；格式化出來的名字（f-string、`%`、`.format()`）AST 裡只有 `"ORACLE_"` 這個片段，抓不到（見 `oracle_env_names` 的 docstring；例子不是完整列舉）
+                     'h = os.environb.get(b"ORACLE_BYTES")\ni = f"ORACLE_{x}"\nj = "ORACLE_%s" % x\nk = "ORACLE_{}".format(x)\n')
+        self.assertEqual(M.oracle_env_names(synthetic), ["ORACLE_B4Z", "ORACLE_BAR", "ORACLE_BYTES", "ORACLE_FOO", "ORACLE_FROM", "ORACLE_SQ"])
         names = M.oracle_env_names(M.ORACLE.read_text(encoding="utf-8"))
         self.assertIn("ORACLE_LINT", names, "讀不到 oracle.py 的環境變數清單——這條測試的前提壞了")
         self.assertIn("ORACLE_STREAM_CAP", names, "讀不到 oracle.py 的環境變數清單——這條測試的前提壞了")
@@ -2713,6 +2716,32 @@ class ValidateTest(unittest.TestCase):
                 elif l.strip() and not l.startswith("        "):   # 非 bullet 續行 → 清單結束
                     break
             self.assertEqual(bullets, n, "%s：標題說 %d 件，底下列了 %d 個 `*`" % (tag, n, bullets))
+
+    def test_non_ascii_test_scripts_declare_utf8(self):
+        """R56 E3（#33 verify R55 regression M；requirements／logic／DA 各自獨立發現）：含非 ASCII 的測試端腳本必須在前兩行宣告 `coding: utf-8`。
+        R54 只把 `oracle.py` 第 134 行加長，Python 3.9 就起不來（`SyntaxError: Non-UTF-8 code starting with '\\xe7'`）。**機制（C 組與協調者在 macOS 的 /usr/bin/python3 3.9.6 實測）**：3.9 以檔案方式（以及從 stdin）讀腳本、沒有編碼宣告時，用 fgets 逐行讀，
+        一行比緩衝長就分段讀（macOS 上每段 1023 位元組，從該行行首起算；其他平台的段長沒有實測），每段各自驗 UTF-8，多位元組字剛好跨在段界就噴錯。所以**只有超過 1023 位元組、又含非 ASCII 的行**會出事（docstring 內一行 `a`×n 加兩個三位元組字，
+        n=1018、1019、1021、1022（段界 1023）與 2041、2042、2044、2045（段界 2046）失敗，以此類推每 1023 位元組一組；前面加行不改變失敗位置；3.13 不失敗），只有把含非 ASCII 的那一行本身加長（或讓它超過 1023 位元組）才可能壞，它前面的行多長都不影響。有 `utf-8`（含 `UTF_8`）宣告時 3.9 不再逐段驗 UTF-8；`latin-1`、`utf8` 這類拼法改走編碼器的 readline，同樣不切段（audit hook 與無效位元組實測）。
+        同位移對照：把 `b86bc53` 的 `oracle.py` 第 1 行換成等長的 `# coding: utf-8 ###…`，剖析成功；換成等長但不是宣告的 `# codinx: utf-8 ###…`，仍是同一個 SyntaxError；另外，R56 推送時 `oracle.py:859`（`_short_tmp` 的 docstring，1892 位元組）有一個字跨過第 1023 位元組，宣告拿掉 3.9 就 SyntaxError，所以那時在 3.9 上 `--selftest-aud` rc=0 本身就證明宣告有效（前面插行不改變行內位移）。
+        CI 用 3.12 看不到；R53 驗證 3.9 時是通過的，R54 沒有在 3.9 上跑過任何東西。這一條不需要 3.9 就能檢查：有宣告就不受段界影響。範圍是 `test/**/*.py`、`mutation_check.py`、`test_validate.py`（宣告在第 2 行時，第 1 行必須是註解或空白，PEP 263）。
+        **未涵蓋、同樣暴露**（今天在 3.9 都剖析得過，也都沒有超過 1023 位元組的非 ASCII 行）：`test/` 底下以 `python3 - <<'PY'` 執行的內嵌 Python（`lint-ci-log-filter.sh`——閘門本身——、`lint-changelog-counts.sh`、`lint-contract-enumerations.sh`；stdin 與檔案走同一條 tokenizer 路徑）、
+        `bin/pai-collect-lens-layers`、`bin/pai-parse-lens-csv`（python shebang，含非 ASCII，沒有宣告）；`validate.py`、`neutralise.py` 是 PR 作者的 workflow 會跑的腳本，今天在 3.9 起得來，不動它們是 R50 起『閘門本身沒有變』這句話的根據。
+        `ORACLE_PY_SRC_DIR` 環境變數可指向別的 `test/` 目錄（RED 驗證用）。"""
+        base = pathlib.Path(os.environ.get("ORACLE_PY_SRC_DIR") or REPO / "plugins" / "parallel-ai-agents" / "test")
+        scripts = sorted(base.rglob("*.py")) + [HERE / "mutation_check.py", HERE / "test_validate.py"]
+        self.assertGreaterEqual(len(scripts), 10, "找不到測試端腳本——測試空轉：%r" % (base,))
+        cookie = re.compile(rb"^[ \t\f]*#.*?coding[:=][ \t]*([-\w.]+)")
+        bad = []
+        for f in scripts:
+            data = f.read_bytes()
+            if not any(b >= 0x80 for b in data):
+                continue
+            ls = data.split(b"\n")[:2]
+            # PEP 263：宣告在第 2 行時，第 1 行必須只有註解或空白，否則第 2 行的宣告不生效
+            decl = [m.group(1) for k, m in ((k, cookie.match(l)) for k, l in enumerate(ls)) if m and (k == 0 or re.match(rb"^[ \t\f]*(#.*)?$", ls[0]))]
+            if not decl or decl[0].lower().replace(b"_", b"-") not in (b"utf-8", b"utf8"):
+                bad.append(str(f.relative_to(REPO)) if REPO in f.parents else str(f))
+        self.assertEqual(bad, [], "含非 ASCII 卻沒有在前兩行宣告 `# -*- coding: utf-8 -*-` 的測試端腳本（Python 3.9 的 tokenizer 切片邊界會讓它們起不來）：%s" % bad)
 
     def test_parse_messages_claiming_pyyaml_failure_are_true(self):
         """R30 MB-1（假診斷第三次）：lint 的 `PARSE:` 訊息裡若斷言「PyYAML 會拒絕」，那句話必須是真的。

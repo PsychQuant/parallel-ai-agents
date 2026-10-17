@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """作者無關的運算子突變掃描：對 `lint-ci-log-filter.sh` 內嵌的 Python 逐一套用**固定的**運算子，看 `--selftest` 抓不抓得到。
 
 為什麼還要這一支（#33 verify R28 DA 的中心診斷）：`mutation_check.py` 的具名靶是**作者挑的**——RED 驗證的對象、

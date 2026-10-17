@@ -1,0 +1,29 @@
+# R56 E4（#33 verify R55 logic M／Codex 3）：**私有路徑的長度邊界**。R54 把神諭的私有目錄放進 `/tmp/oXXXXXXXX`（`_short_tmp()`＋`prefix="o"`）使路徑 payload 夠短：`/tmp/oXXXXXXXX/i` 是 16 字，
+# 算術脈絡的 P（`PWD[$(echo${IFS}M>>PATH)]`）是 56 字，命令位置的程式碼行 Pc（`echo M >>PATH`）是 44 字。這兩個長度是**邊界**——路徑多 1 字，被截到 56／44 字的求值者就只拿到不完整的 payload：P 被截掉結尾的 `]`（算術求值器拒絕不完整的下標，`$(…)` 不執行；bash 3.2 與 5.3 都是 bad array subscript），Pc 的重導向目標少最後一個字（多 1 字時目標變成私有目錄本身，bash 3.2 與 5.3 都報 `Is a directory`、什麼都沒寫；多 2 字以上才會寫到 `/tmp` 底下的前綴名殘檔——兩種情況哨兵都沒有東西）。
+# R54 的守衛量的是寫死的 15 字假路徑，量不到 `run_script` 實際建出的目錄：把 `prefix="o"` 改成 12 字的前綴，`oracle_selfcheck` 與 `--selftest-aud` 全綠（R55 logic M）。這一張探針是行為上的網：
+# **環境清空 ∧ 關 fd**（Python `subprocess` 預設 `close_fds=True`、`env={}`），所以 fd 那幾組（S、R、D、Dc）與 `$ORACLE_INJECT` 那幾組（`5b5a46d`）都不命中，只有路徑 payload 能命中；文字**剛好**截在邊界。
+#   P56  算術脈絡，文字截到 56 字：只有 P 的第一個前綴（56 字）整段留下。
+#   Pc44 命令位置，文字截到 44 字：只有 Pc（44 字）整段留下。
+# 兩格都要判『不一致：繞過（注入）』（分母 2）。路徑變長的突變體（`prefix="oracle-priv-"`；不放 `/tmp`——macOS，Linux 的 `TMPDIR` 未設時預設暫存目錄就是 `/tmp`，那個突變體等價）讓兩格都判『一致』。
+# **不在這張探針上的**：截到邊界以下（55、43 字）——那是 L1 轉換族的已知限制（`oracle.py` 檔頭〈已知限制〉(6)），不是網。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: P56 arithmetic truncated exactly 56, env cleared, close_fds
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "-c", "t=${0:0:56}; (( t )) || :", sys.argv[1]], env={})' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: Pc44 command position truncated exactly 44, env cleared, close_fds
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "-c", sys.argv[1][:44]], env={})' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py

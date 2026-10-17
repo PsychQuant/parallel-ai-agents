@@ -1,0 +1,99 @@
+# R56 E1／E2（#33 verify R55 requirements M／regression M／DA M）：**`5b5a46d` 抓得到、R54（`b86bc53`）抓不到的 11 格**。R53 的放行條件 D1(a) 要求新樹的 payload 是 `8b45659` 與 `5b5a46d` 兩棵舊樹的超集；R54 只做了前半——`5b5a46d` 的四個字串（哨兵是 `$ORACLE_INJECT` 指到的檔，
+# 不含 `/`，45–63 字）一個都不在表裡，決策留言卻只揭露「一個 2 字的窗」。R54 的 `injection-transform-matrix.yml` 九格全落在新樹會贏的方向，所以這 11 格沒有任何一格在它的分母裡。
+# 這一張探針是那 11 格：每格一個 step，**分母是 11**，真 lint（`--strict`，不設 `ORACLE_LINT`）全部放行，11 格全部要判『不一致：繞過（注入）』。同一張探針在各棵樹上的結果（協調者與宣稱查核 A、C 組實跑，macOS、bash 5.3；固定 commit 的歷史事實；每一棵都是 11 格全繞過或全一致）：`8b45659` 0／11、`32d45ff` 0／11、`b86bc53` 0／11、`5b5a46d` 11／11、R56 11／11；R56 裡命中的 payload：A54／A55 為 #13、V57／V58 為 #14、N63／N64 為 #15、A1／A2／A3／SL 為 #13（A1／A3／SL 另有 #16 也命中，A2 另有 #14、#15 也命中，報出來的都是先試到的 #13）、U2 只有 #16。
+# 格子（每一格都是『求值者在程式內對 PR 文字做轉換或只取一段』× 『Python `subprocess` 預設關掉 0–2 以外的 fd（`close_fds=True`）』× 『環境保留』——哨兵的 fd 那一半看不到，只剩環境變數指到的檔或私有字面路徑）：
+#   A54／A55  算術脈絡 `(( t ))`，文字截到 54／55 字。`5b5a46d` 的算術 payload 是 54 字，R54 的最短路徑 payload（P）是 56 字，差 2 字的窗。
+#   V57／V58  `[ $t ]` 的 `-v` 脈絡（需要 bash ≥ 4.2，所以用 `"$BASH"`，不是 `/bin/bash`），文字截到 57／58 字（`-v ` 加 54 字 = 57）。
+#   N63／N64  `[ -n $t ]` 的 `-n -o -v` 脈絡（同上；`-n -n -o -v NAME` 讓 `-v` 的下標被算術求值），文字截到 63／64 字（`-n -o -v ` 加 54 字 = 63）。
+#   A1       命令位置，文字把 `/` 換成 `_`（不截斷）：E 的四個字串都不含 `/`——#13（`PWD[$(…)]` 放在命令位置，詞裡的命令替換照樣執行）與程式碼行 `echo M >> "$ORACLE_INJECT"`（#16）都命中；R54 的 Pc（`>>/tmp/oXXXXXXXX/i`）與 Dc（`/dev/fd/197`）都含 `/`。
+#   A2       算術脈絡，文字把 `/` 換成 `_`：同上，`PWD[…$ORACLE_INJECT…]` 對 P。
+#   A3       `/bin/dash` 的命令位置，文字把 `/` 換成 `_`：同 A1，另一個方言（用 `/bin/dash` 而不是 `/bin/sh`：macOS 的 `/bin/sh` 是 bash 3.2 的 POSIX 模式，量不到 dash；C 組宣稱查核發現）。
+#   SL       `eval "${0//\//_}"`：換斜線的 eval。
+#   U2       `IFS=; eval "${0//\//_}"`：`IFS=` 之後 `${IFS}` 是空字串，`echo${IFS}…` 形的 #13–#15 不成立（`echoORACLE-…` 不是命令），只有字面空白的程式碼行 #16 命中——**這是 #16 在 repo 裡唯一的行為網**
+#            （A1／A3／SL 由 #13 先命中；R56 第一版的探針沒有這一格，拿掉 #16 的突變體在探針上仍是 11／11，只有 `--selftest-aud` 的字面守衛殺得了它；宣稱查核 A 組發現）。
+#            （R56 第一版有一格 SLA〔`t=${0//\//_}; (( t ))`〕，與 A2 的 run 行逐位元組相同——R55 時兩者只差 bash 版本，進 repo 時都寫成 `/bin/bash`，實際只有 10 種形狀；已換成 U2。）
+# **不在這張探針上的**：文字被截到 54 字以下（A53 之類）、把文字轉成小寫或換編碼——那是 L1 轉換族的已知限制，所有 payload 都不命中（`oracle.py` 檔頭〈已知限制〉(6)）。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: A54 arithmetic, truncated 54, close_fds, env kept
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "-c", "t=${0:0:54}; (( t )) || :", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: A55 arithmetic, truncated 55, close_fds, env kept
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "-c", "t=${0:0:55}; (( t )) || :", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: V57 test -v context, truncated 57, close_fds, env kept
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run([sys.argv[2], "-c", "t=${0:0:57}; [ $t ] || :", sys.argv[1]])' "$PR_TITLE" "$BASH"; } 2>&1 | python3 scripts/neutralise.py
+      - name: V58 test -v context, truncated 58, close_fds, env kept
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run([sys.argv[2], "-c", "t=${0:0:58}; [ $t ] || :", sys.argv[1]])' "$PR_TITLE" "$BASH"; } 2>&1 | python3 scripts/neutralise.py
+      - name: N63 test -n -o -v context, truncated 63, close_fds, env kept
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run([sys.argv[2], "-c", "t=${0:0:63}; [ -n $t ] || :", sys.argv[1]])' "$PR_TITLE" "$BASH"; } 2>&1 | python3 scripts/neutralise.py
+      - name: N64 test -n -o -v context, truncated 64, close_fds, env kept
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run([sys.argv[2], "-c", "t=${0:0:64}; [ -n $t ] || :", sys.argv[1]])' "$PR_TITLE" "$BASH"; } 2>&1 | python3 scripts/neutralise.py
+      - name: A1 command position, slashes replaced, close_fds, env kept
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "-c", sys.argv[1].replace("/", "_")])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: A2 arithmetic, slashes replaced, close_fds, env kept
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "-c", "t=${0//\\//_}; (( t )) || :", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: A3 dash command position, slashes replaced, close_fds, env kept
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/dash", "-c", sys.argv[1].replace("/", "_")])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: SL eval, slashes replaced, close_fds, env kept
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "-c", "eval \"${0//\\//_}\"", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: U2 IFS-empty eval, slashes replaced, close_fds, env kept
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "-c", "IFS=; eval \"${0//\\//_}\"", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py

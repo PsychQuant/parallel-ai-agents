@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """lint 的 `dedent_block` ＋ `fold_block` 對 PyYAML 的窮舉對帳（#33 verify R37）。
 
 為什麼進 repo（#33 verify R37 合併時協調者發現）：R37 在 `opsweep.py` 寫下「窮舉 5,838 組合法 YAML、修完後
