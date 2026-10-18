@@ -11,7 +11,7 @@
 #   SB6  同 SB5，算術脈絡 `t=$0; (( t ))`。
 #   SB7  沙箱拒寫 cwd 底下的所有路徑、`/tmp` 可寫，關 fd、保留環境、把 `/` 換成 `_`（P、Pc、D、Dc 的路徑都含 `/`，只有不含 `/` 的 E 組命中）：`$ORACLE_INJECT` 指到 cwd 底下的哨兵時寫不進去，只有指到 `<priv>/i` 的那一次命中。R58 第一版只指 cwd（『搬走』不是『加上』），這一格判『一致』，`6490b57` 判繞過（R58 宣稱查核 C 組）。
 #   SB8  同 SB7，算術脈絡 `t=${0:0:54}; (( t )) || :`（文字截到 54 字）。
-# **負對照**：`6490b57` 的 SB1、SB2、SB3 判『一致』，SB4 判繞過，SB7、SB8 判繞過。**平台範圍**：步驟 cwd 在 `/tmp` 底下（`TMPDIR=/tmp`，或 `TMPDIR` 未設的 Linux）時，SB1、SB3 判『一致』（cwd 哨兵也在被拒寫的 `/tmp` 底下；`5b5a46d` 也一樣）——這張探針是在 macOS 預設的 `TMPDIR`（`/var/folders/…`）下跑的。
+# **負對照**：`6490b57` 的 SB1、SB2、SB3 判『一致』，SB4 判繞過，SB7、SB8 判繞過。**`TMPDIR` 含空白**：8/8（不加引號的 E 組 payload 的 `ORACLE_INJECT` 改用相對於步驟 cwd 的路徑、加引號的一律用絕對路徑；R58 張貼前查核：`ecb77d9` 退回 `<priv>/i`，`5b5a46d` 的 SB1、SB2、SB5 判繞過、`ecb77d9` 判『一致』；求值者先 `cd` 再求值的格子由 `--selftest-aud` 守住，這張探針沒有）。**平台範圍**：步驟 cwd 在 `/tmp` 底下（`TMPDIR=/tmp`，或 `TMPDIR` 未設的 Linux）時，SB1、SB3、SB5、SB6 判『一致』（cwd 哨兵也在被拒寫的 `/tmp` 底下；`5b5a46d` 也一樣）——這張探針是在 macOS 預設的 `TMPDIR`（`/var/folders/…`）下跑的。
 # LINT-ARGS: --strict
 name: t
 on: pull_request

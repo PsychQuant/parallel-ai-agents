@@ -214,7 +214,7 @@ def tool_versions():
         v.append("%s=%s" % (name, os.environ.get(name, "")))
     # `TMPDIR`、`TEMP`、`TMP` 都記（R58；R57 logic LOW／Codex 3：R56 寫『`TMP`／`TEMP` 不記，只在 `/tmp` 不可寫時才影響判定』，這句話不成立）。步驟的 cwd 與 stub 目錄（`_Scratch()`，`dir=None`）走 Python 的
     # `tempfile.gettempdir()`，它依序看 `TMPDIR`、`TEMP`、`TMP`（前一個非空而且可用就不看後面）：`TMPDIR` 未設或不可用時，cwd 與 stub 目錄由 `TEMP`／`TMP` 決定，與 `/tmp` 寫不寫得進去無關；
-    # 路徑含 payload 不能不加引號放進去的字元時，私有目錄在 `/tmp` 不可寫的退路上會讓神諭具名退出、cwd 哨兵（R58）則退回 `<priv>/i` 並警告。能讓判定翻轉的實例沒有實測；記下它們的代價只是環境變數不同時快取不被沿用（方向安全）。
+    # 路徑含 payload 不能不加引號放進去的字元時，私有目錄在 `/tmp` 不可寫的退路上會讓神諭具名退出、cwd 哨兵（R58）則在含空白、tab、換行時，讓不加引號的 E 組改用相對於步驟 cwd 的路徑並警告（加引號的一律用絕對路徑）。`TMPDIR` 含空白會翻轉判定，已實測（ecb77d9 的 `injection-fs-restricted.yml` SB1、SB2、SB5 在預設 `TMPDIR` 判繞過、含空白判『一致』）；`TEMP`／`TMP` 的實例沒有實測；記下它們的代價只是環境變數不同時快取不被沿用（方向安全）。
     v.append("TMPDIR=%s" % os.environ.get("TMPDIR", ""))
     v.append("TEMP=%s" % os.environ.get("TEMP", ""))
     v.append("TMP=%s" % os.environ.get("TMP", ""))
@@ -1783,7 +1783,7 @@ MUTATIONS += [
     ('oracle: 拿掉 `5b5a46d` 的程式碼行 `echo M >> "$ORACLE_INJECT"`（`IFS=` 之後的 `eval` ∧ 換斜線 ∧ 關 fd ∧ 保留環境，只有字面空白的 #16 命中；R55 requirements M → selfcheck 100 的 U2 格、--selftest-aud 的字面守衛；A1／A3／SL 由 #13 先命中，不靠它）',
      '                   "echo " + INJECT_MARKER + \' >> "$ORACLE_INJECT"\')', '                   "echo " + INJECT_MARKER + " >/dev/null")', 'oracle-inverted'),
     ('oracle: 注入探針那一次不導出 `ORACLE_INJECT`（四組 E payload 都寫不到哨兵；R55 requirements M → selfcheck 100）',
-     '            env["ORACLE_INJECT"] = cwd_sent if cwd_sent_on else sent\n', '', 'oracle-inverted'),
+     '            env["ORACLE_INJECT"] = cwd_env if cwd_sent_on else sent\n', '', 'oracle-inverted'),
     # ── R56 E4：私有路徑的長度旋鈕（`prefix` 與 `dir=_short_tmp()`）。R54 的守衛量寫死的假路徑，這兩個旋鈕沒有網（R55 logic M）；現在 `--selftest-aud` 量 `_priv_scratch()` 實際建出的路徑，selfcheck 101 在邊界截斷處量行為 ──
     ('oracle: 私有目錄的前綴變長（`prefix="o"` → 12 字；P 與 Pc 各多 11 字，剛好截在 56／44 字的求值者就看不到；R55 logic M → --selftest-aud、selfcheck 101）',
      'return _Scratch(prefix="o", dir=_short_tmp())', 'return _Scratch(prefix="oracle-priv-", dir=_short_tmp())', 'oracle-inverted'),
@@ -1796,11 +1796,15 @@ MUTATIONS += [
      'return _Scratch(prefix="o", dir=_short_tmp())', 'return _Scratch(prefix="o", dir=None)', 'oracle-inverted'),
     # ── R58 F1（#33 verify R57 第 12 格）：`$ORACLE_INJECT` 指到步驟 cwd 底下另建的哨兵（`5b5a46d` 的位置），`more()` 與 fd 197、`<priv>/i` 取 OR。字串補回來了、位置沒有——求值者寫不到 `/tmp` 或只准寫 cwd 時 R54～R57 看不到 ──
     ('oracle: `ORACLE_INJECT` 不指到 cwd 哨兵（退回 R56 的 `<priv>/i`；寫不到 `/tmp` 的求值者看不到 E 組；R57 第 12 格 → selfcheck 103、105〔macOS〕）',
-     'env["ORACLE_INJECT"] = cwd_sent if cwd_sent_on else sent', 'env["ORACLE_INJECT"] = sent', 'oracle-inverted'),
+     'env["ORACLE_INJECT"] = cwd_env if cwd_sent_on else sent', 'env["ORACLE_INJECT"] = sent', 'oracle-inverted'),
     ('oracle: E 組只試 cwd 目標、不再試 `<priv>/i`（求值者寫不進 cwd、寫得進 `/tmp` 時比 `6490b57` 還弱；R58 宣稱查核 C 組第 1 列 → selfcheck 103 的 R5、R6、105 的 SB7、SB8〔macOS〕）',
      '        for to in (("cwd", "priv") if "$ORACLE_INJECT" in pl else ("priv",)):', '        for to in ("cwd",):', 'oracle-inverted'),
     ('oracle: `inject_to` 被忽略（每一次注入都建 cwd 哨兵並導出指到它；E 組的 priv 那一次沒有 priv 可指，R5、R6、SB7、SB8 判一致，非 E 組的注入執行也多出 `.orc-XXXX/`，R7 判一致；A2 的 M15 → selfcheck 103 的 R5～R7、105 的 SB7、SB8〔macOS〕）',
-     '_cwd_sentinel(d) if inject_to == "cwd" else (cwd_sent, False)', '_cwd_sentinel(d)', 'oracle-inverted'),
+     '            if inject_to == "cwd":\n                _ph, abs_ok = _cwd_sentinel(d)', '            if True:\n                _ph, abs_ok = _cwd_sentinel(d)', 'oracle-inverted'),
+    ('oracle: `TMPDIR` 含空白時 cwd 哨兵一律用絕對路徑（不加引號的 `$ORACLE_INJECT` 變成 ambiguous redirect，算術脈絡的 E 組寫不進去；R58 張貼前查核 → --selftest-aud）',
+     'cwd_env = _cwd_env_value(cwd_sent, abs_ok, inject, os.path.join(os.path.basename(cwd_dir), "inject"))', 'cwd_env = cwd_sent', 'oracle-inverted'),
+    ('oracle: 加引號的 E 組也改用相對路徑（`_cwd_env_value` 的引號分支拿掉；求值者先 `cd` 到別處再求值時相對路徑 ENOENT，`5b5a46d` 的 `echo M >> "$ORACLE_INJECT"` 用絕對路徑寫得進去；R58 張貼前的第二次查核 → --selftest-aud）',
+     "    if '\"$ORACLE_INJECT\"' in payload:", '    if False:', 'oracle-inverted'),
     ('oracle: 非 E 組的注入執行也試 cwd 目標（多建一個 `.orc-XXXX/`，檢查 cwd 有沒有點檔的步驟提早結束；A2 的 M15 → selfcheck 103 的 R7〔釘 payload #1：不然 E 組的 priv 那一次救回判定，只剩編號不同〕）',
      'else ("priv",)):', 'else ("cwd",)):', 'oracle-inverted'),
     ('oracle: `more()` 不讀 cwd 哨兵（E 組寫進去的標記沒人看；R57 第 12 格 → selfcheck 103）',
@@ -1810,7 +1814,9 @@ MUTATIONS += [
     ('oracle: cwd 哨兵不預先建檔（求值者只准改既有的檔、不准建新檔時，E 組的 `>>` 建不出來；`5b5a46d` 預先建檔；R58 宣稱查核 B 組 → selfcheck 103 的 R4、105 的 SB5／SB6〔macOS〕）',
      '                open(cwd_sent, "w").close()', '                pass', 'oracle-inverted'),
     ('oracle: cwd 哨兵路徑不檢查字元（`TMPDIR` 含空白時 `>>$ORACLE_INJECT` 變成 ambiguous redirect；R58 F1 → --selftest-aud）',
-     '    if _inject_path_ok(path):\n        return path, True\n    _warn_cwd_sentinel_unavailable()', '    if True:\n        return path, True\n    _warn_cwd_sentinel_unavailable()', 'oracle-inverted'),
+     '    if _env_expansion_ok(path):\n        return path, True\n    _warn_cwd_sentinel_unavailable()', '    if True:\n        return path, True\n    _warn_cwd_sentinel_unavailable()', 'oracle-inverted'),
+    ('oracle: `_env_expansion_ok` 不擋空白、tab、換行（含空白的絕對路徑不加引號展開會 `ambiguous redirect`，卻被當成可用；R58 張貼前的第二次查核 → --selftest-aud）',
+     'not any(c in " \\t\\n" for c in path)', 'True', 'oracle-inverted'),
     ('oracle: cwd 哨兵不能用時不說一聲（靜默降低覆蓋；R58 F1 → --selftest-aud）',
      '    _warn_cwd_sentinel_unavailable()\n    return path, False', '    return path, False', 'oracle-inverted'),
     # ── R58 F2（#33 verify R57 security M／DA M）：注入範圍。原本的第二個集合看 `${{`，`_env_of` 早已代換掉，永遠是空的 ──

@@ -343,7 +343,7 @@ INJECT_MARKER = "ORACLE-INJECT-MARKER"
 #   · 求值者可寫的範圍（`/tmp`、cwd）                  ：injection-fs-restricted.yml（macOS 真沙箱：拒寫 `/private/tmp`、只准寫 cwd、連新檔都不准建、拒寫 cwd 而 `/tmp` 可寫）、injection-priv-sentinel-readonly.yml（可攜，`chmod 0444` 模擬：私有哨兵唯讀、cwd 哨兵唯讀、cwd 也唯讀）
 #   · 被注入的環境變數鍵（不只 `PR_TITLE`、`PR_BODY`）  ：injection-env-key-names.yml
 #   · shell 方言與脈絡（dash、bash 3.2、受限 shell；命令位置、算術、`-v`）：injection-transport-matrix.yml、injection-transform-matrix.yml、injection-sentinel-dash-fd-only.yml
-# **沒有探針的維度**（未實跑或不在神諭的模型裡）：求值者的 uid 或 mount namespace（沒有 sudo）、`/tmp` 之外的其他唯讀掛載、非 shell 求值者（#97）、step 的 `with:` 輸入（`run:` step 沒有）。**三個哨兵位置同時看不到的格子**（R58 宣稱查核 B、C 組以 `TMPDIR=/tmp` 等實測；不修，列為已知限制）：(a) 步驟 cwd 在 `/tmp` 底下（`TMPDIR=/tmp`，或 `TMPDIR` 未設的 Linux）而求值者寫不到 `/tmp`——SB1、SB3 判『一致』，`5b5a46d` 也一樣；(b) `TMPDIR` 含空白等 payload 不能不加引號放進去的字元：cwd 哨兵退回、只剩 `<priv>/i`（stderr 警告一行），SB1～SB3 判『一致』；(c) cwd 與 `/tmp` 都寫不到而 fd 又關了；(d) 寫不進 cwd 底下的隱藏目錄（沙箱 `(deny file-write* (regex #"/[.][^/]+/"))`）又寫不到 `/tmp`、fd 關了，或求值者設了 `ulimit -f 0`（每個檔案哨兵都寫不進去）——R58 A2 的 N5、N6，四棵樹（`8b45659`、`5b5a46d`、`6490b57`、R58）都判『一致』。`steps.*.outputs` 等其他非字面運算式經 `env:` 進來時與 `github.event.*` 同樣被換成標記並注入（R58 F2），沒有專屬探針。
+# **沒有探針的維度**（未實跑或不在神諭的模型裡）：求值者的 uid 或 mount namespace（沒有 sudo）、`/tmp` 之外的其他唯讀掛載、非 shell 求值者（#97）、step 的 `with:` 輸入（`run:` step 沒有）。**三個哨兵位置同時看不到的格子**（R58 宣稱查核 B、C 組以 `TMPDIR=/tmp` 等實測；不修，列為已知限制）：(a) 步驟 cwd 在 `/tmp` 底下（`TMPDIR=/tmp`，或 `TMPDIR` 未設的 Linux）而求值者寫不到 `/tmp`——SB1、SB3、SB5、SB6 判『一致』，`5b5a46d` 也一樣；(b)〔**已補，不再是盲格**〕`TMPDIR` 含空白（絕對路徑不加引號展開會被切開，`_env_expansion_ok`；`ecb77d9` 的 (b) 把它列在這裡，是錯的：`ecb77d9` 退回 `<priv>/i`，`5b5a46d` 在 SB1、SB2、SB5 判繞過、`ecb77d9` 判『一致』；對外文字的查核逐格重跑才抓到）——加引號的 E 組 payload（`5b5a46d` 的 `echo M >> "$ORACLE_INJECT"`）一律用絕對路徑，不加引號的改用相對於步驟 cwd 的路徑（stderr 警告一行），SB1～SB8 在含空白的 `TMPDIR` 下 8/8；殘餘：求值者先 `cd` 到別處再求值 ∧ 不加引號的 payload ∧ 含空白的 `TMPDIR` 時，相對路徑 ENOENT 寫不進去（`5b5a46d` 的不加引號 E 組同樣寫不進去，不是退步）；(c) cwd 與 `/tmp` 都寫不到而 fd 又關了；(d) 寫不進 cwd 底下的隱藏目錄（沙箱 `(deny file-write* (regex #"/[.][^/]+/"))`）又寫不到 `/tmp`、fd 關了，或求值者設了 `ulimit -f 0`（每個檔案哨兵都寫不進去）——R58 A2 的 N5、N6，四棵樹（`8b45659`、`5b5a46d`、`6490b57`、R58）都判『一致』。`steps.*.outputs` 等其他非字面運算式經 `env:` 進來時與 `github.event.*` 同樣被換成標記並注入（R58 F2），沒有專屬探針。
 # **不在這張表上的**（已知限制，L1 求值者，lint 檔頭明文不保證）：求值者在程式內對 PR 文字做**轉換**讓每一組都不命中——換掉斜線 ∧ 關 fd ∧ 清環境、大小寫轉換（`${0,,}`）、編碼、把文字截短。有限的 payload 集合補不完這一族，所以只量代表形狀。
 # **量過的邊界**（最短 payload 的字數；文字被截到比它少就漏。私有路徑 `/tmp/oXXXXXXXX/i` 是 16 字，由 `--selftest-aud` 量實際建出的目錄）：
 #   · 保留 fd                          ：命令位置 31（R）、算術下標 43（S）；
@@ -867,16 +867,18 @@ def _warn_short_tmp_unavailable():
 
 @functools.lru_cache(maxsize=None)
 def _warn_cwd_sentinel_unavailable():
-    """步驟 cwd 底下的哨兵路徑含 payload 不能不加引號放進去的字元時只說一次（R58 F1）：`ORACLE_INJECT` 退回指到 `<priv>/i`（R56 的行為），
-    求值者寫不到 `/tmp` 的格子（`injection-fs-restricted.yml`）因此看不到。判定不變、rc 不變；「一次」是每個神諭行程一次（`lru_cache`），不是整個平行批次一次。"""
-    print("⚠ 神諭：步驟 cwd 的路徑含需要加引號的字元，`ORACLE_INJECT` 退回指到私有目錄（/tmp 底下）——求值者寫不到 /tmp 時，經 `$ORACLE_INJECT` 的注入格可能漏報而判『一致』", file=sys.stderr)
+    """步驟 cwd 底下的哨兵絕對路徑含空白、tab 或換行（`TMPDIR` 含空白，`_env_expansion_ok`）時只說一次（R58 F1）：不加引號的 E 組 payload（`>>$ORACLE_INJECT`）的 `ORACLE_INJECT` 改成**相對於步驟 cwd** 的路徑（`.orc-XXXXXXXX/inject`），
+    加引號的那一組（`5b5a46d` 的 `echo M >> "$ORACLE_INJECT"`）一律用絕對路徑（`_cwd_env_value`），不退回 `<priv>/i`。R58 宣稱查核（張貼前）抓到：`ecb77d9` 在這種 `TMPDIR` 下停用 cwd 哨兵、退回 `<priv>/i`，少了 cwd 這個位置，`5b5a46d`（絕對路徑，帶引號的 E 組寫得進去）
+    在 `injection-fs-restricted.yml` 的 SB1、SB2、SB5 判繞過、`ecb77d9` 判『一致』；第二次查核又抓到：第一個修法草稿一律改相對路徑，求值者先 `cd` 到別處再求值時（相對路徑 ENOENT）仍比 `5b5a46d` 退步。
+    殘餘：先 `cd` 再求值的**不加引號**payload 在含空白的 `TMPDIR` 下寫不進去（`5b5a46d` 的不加引號 E 組同樣寫不進去，不是退步）。判定不變、rc 不變；「一次」是每個神諭行程一次（`lru_cache`），不是整個平行批次一次。"""
+    print("⚠ 神諭：步驟 cwd 的路徑含空白、tab 或換行，不加引號的 E 組 payload 的 `ORACLE_INJECT` 改用相對於步驟 cwd 的路徑（加引號的一律用絕對路徑）", file=sys.stderr)
 
 
 def _cwd_sentinel(d):
-    """步驟 cwd（`d`）底下的第三個哨兵 `<cwd>/.orc-XXXXXXXX/inject`（`5b5a46d` 的版面：隨機名子目錄裡的檔，不是頂層的點檔）：回傳 (同形的佔位路徑, 能不能用)。路徑含 payload 不能不加引號放進去的字元（`TMPDIR` 含空白、引號）就不能用——警告一次，`ORACLE_INJECT` 退回指到 `<priv>/i`
-    （R56 的行為）。**不**像私有目錄那樣具名退出：R54 把私有目錄搬到 `/tmp` 的原因之一，就是 `TMPDIR` 含空白時 `32d45ff` 整輪沒有判定表。"""
+    """步驟 cwd（`d`）底下的第三個哨兵 `<cwd>/.orc-XXXXXXXX/inject`（`5b5a46d` 的版面：隨機名子目錄裡的檔，不是頂層的點檔）：回傳 (同形的佔位絕對路徑, 絕對路徑當成環境變數的值不加引號展開時會不會被切開〔`_env_expansion_ok`〕)。會（`TMPDIR` 含空白、tab 或換行）——警告一次，`run_script` 依 payload 有沒有加引號決定 `ORACLE_INJECT` 用絕對路徑或相對於步驟 cwd 的路徑（`_cwd_env_value`），哨兵照建、照讀。
+    **不**像私有目錄那樣具名退出：R54 把私有目錄搬到 `/tmp` 的原因之一，就是 `TMPDIR` 含空白時 `32d45ff` 整輪沒有判定表。"""
     path = os.path.join(d, ".orc-xxxxxxxx", "inject")   # 實際的目錄由 `run_script` 用 `tempfile.mkdtemp(prefix=".orc-", dir=d)` 建（後綴只含 [a-z0-9_]），字元檢查看這個同形的路徑
-    if _inject_path_ok(path):
+    if _env_expansion_ok(path):
         return path, True
     _warn_cwd_sentinel_unavailable()
     return path, False
@@ -914,6 +916,25 @@ def _short_tmp():
 def _inject_path_ok(path):
     """哨兵路徑會原樣（不加引號）放進 payload：只收不需要加引號的字元。不符就由 `run_script` 具名退出，不靜默地判一致。"""
     return re.fullmatch(r"[A-Za-z0-9_./+=-]+", path) is not None
+
+
+def _env_expansion_ok(path):
+    """路徑當成**環境變數的值**不加引號展開（`>>$ORACLE_INJECT`）時會不會被切開：bash 對展開的結果做字詞拆分——預設的 IFS 只有空白、tab、換行——所以只有這三個字元會讓展開變成多個字詞（`ambiguous redirect`，R58 張貼前的查核）。
+    `$`、引號、反引號、反斜線、非 ASCII 空白（U+3000、NBSP）、`[` 在展開裡都無害（環境變數的值不會被再剖析），這與 `_inject_path_ok`（路徑**逐字**放進 payload 的文字，所以連 `$`、引號都要擋）不同；
+    萬用字元 `*`、`?` 也不擋：哨兵檔預先建好、路徑含隨機的目錄名，展開只會比對到它自己（實測 bash 3.2 與 5.3；`TMPDIR` 裡真有同形的兄弟目錄時才會多比對到，這裡不處理）。
+    求值者若改了 `IFS`（例如 `IFS=/`）不在這個判斷裡；`5b5a46d` 的不加引號 E 組用絕對路徑，同樣受影響。"""
+    return bool(path) and not any(c in " \t\n" for c in path)
+
+
+def _cwd_env_value(path, abs_ok, payload, rel):
+    """cwd 哨兵的 `ORACLE_INJECT` 要設成什麼（R58 張貼前的兩次查核）：哨兵的**絕對路徑** `path`，或相對於步驟 cwd 的 `rel`（`.orc-XXXXXXXX/inject`）。
+    · payload 加引號（`>> "$ORACLE_INJECT"`，`5b5a46d` 的第四個字串）：任何路徑都照樣寫得進去（引號內的展開不再剖析），所以**一律用絕對路徑**——求值者先 `cd` 到別處再求值時，相對路徑 ENOENT、寫不進去；
+      第一個修法草稿（一律改相對路徑，未 commit）在這一格比 `5b5a46d` 退步；第二個草稿又多擋了 `"`、`$`、反引號、反斜線、換行，理由不成立（環境變數的值不會被再剖析），同樣退步；
+    · payload 不加引號（`>>$ORACLE_INJECT`，E 組的前三個）：絕對路徑要 `abs_ok`（`_env_expansion_ok`：不含空白、tab、換行），否則用 `rel`——含空白的絕對路徑會 `ambiguous redirect`。
+    相對路徑的前提是求值者繼承步驟 cwd：先 `cd` 再求值的不加引號 payload 在含空白的 `TMPDIR` 下寫不進去（`5b5a46d` 同樣寫不進去，所以不是退步）。"""
+    if '"$ORACLE_INJECT"' in payload:
+        return path
+    return path if abs_ok else rel
 
 
 def _priv_scratch():
@@ -1118,18 +1139,22 @@ def run_script(run, bash, stub_bin, yaml_env=None, extra=False, inject=None, inj
             # 那正是 R32 DA-6 抓到的缺陷（heredoc 會吞掉它）。
             fh.write(PRELUDE); fh.write(run); fh.write("\n")
         sent = os.path.join(priv, "i")
-        cwd_sent, cwd_sent_on = os.path.join(d, ".orc-xxxxxxxx", "inject"), False      # R58 F1：`5b5a46d` 的哨兵位置（步驟 cwd 底下的 `.orc-XXXXXXXX/inject`）；只在 `inject_to == "cwd"` 的那一次才建並導出，`more()` 與 fd 197、`<priv>/i` 取 OR
+        cwd_sent, cwd_sent_on, cwd_env = os.path.join(d, ".orc-xxxxxxxx", "inject"), False, None      # R58 F1：`5b5a46d` 的哨兵位置（步驟 cwd 底下的 `.orc-XXXXXXXX/inject`）；只在 `inject_to == "cwd"` 的那一次才建並導出，`more()` 與 fd 197、`<priv>/i` 取 OR
         if inject is not None:
             if not _inject_path_ok(sent):
                 sys.exit("✗ 神諭的私有目錄路徑含 payload 不能不加引號放進去的字元：%r（換一個 TMPDIR）" % sent)
             open(sent, "w").close()
             inject = inject.replace(INJECT_PATH_TOKEN, sent)
-            cwd_sent, cwd_sent_on = _cwd_sentinel(d) if inject_to == "cwd" else (cwd_sent, False)
-            if cwd_sent_on:
+            if inject_to == "cwd":
+                _ph, abs_ok = _cwd_sentinel(d)
+                cwd_sent_on = True
                 # 預先建檔（`5b5a46d` 也是）：求值者只准改既有的檔、不准建新檔時（`sandbox-exec` 的 `(deny file-write-create)`、唯讀的 cwd），E 組的 `>>` 建不出來。
                 # R58 第一版寫成『不預先建檔，因為 `>>` 自己建、預先建檔的突變體是等價突變體』——沒有實測，錯的（R58 宣稱查核 B 組；`injection-fs-restricted.yml` 的 SB5、SB6、`injection-priv-sentinel-readonly.yml` 的 R4）。
-                cwd_sent = os.path.join(tempfile.mkdtemp(prefix=".orc-", dir=d), "inject")
+                cwd_dir = tempfile.mkdtemp(prefix=".orc-", dir=d)
+                cwd_sent = os.path.join(cwd_dir, "inject")
                 open(cwd_sent, "w").close()
+                # 絕對路徑不加引號展開會被切開（含空白、tab、換行）時，不加引號的 E 組改用相對路徑（求值者繼承步驟 cwd），加引號的一律用絕對路徑（`_cwd_env_value`）：TMPDIR 含空白時 `5b5a46d` 的帶引號 E 組寫得進去，退回 `<priv>/i` 或一律改相對路徑都會比它退步（R58 張貼前的兩次查核）
+                cwd_env = _cwd_env_value(cwd_sent, abs_ok, inject, os.path.join(os.path.basename(cwd_dir), "inject"))
         env = dict(yaml_env or {})
         # runner 一定會設、lint 的正面文法也信任的兩個變數（R42：`FL_TARGET_VARS`／`FL_GHVALUE_VARS`）。前一版不設，
         # `> "$RUNNER_TEMP/e"` 在神諭裡變成寫 `/e`、失敗，那一步做了什麼就量不到（`bypass-r42-ghenv` 的 ge-alias-var、ge-cat-file）。
@@ -1143,7 +1168,7 @@ def run_script(run, bash, stub_bin, yaml_env=None, extra=False, inject=None, inj
             # 多導出一個指到這兩個檔之一的名字不增加步驟可達的檔案（但多了一個可被文法內的指派弄瞎的名字：`ORACLE_INJECT=/dev/null` 讓 E 組失效，見 `instrument-oracle-inject-assign-known-blind-spot.yml`）。只在注入探針那一次導出（一般執行的環境與 R54 相同）。
             # R58 宣稱查核 C 組（第 1 列）：`$ORACLE_INJECT` 只能指到一個檔，所以『搬走』不等於『加上』——前一版只指 cwd 底下的哨兵，求值者寫不進 cwd、寫得進 `/tmp` 時（`sandbox-exec` 拒寫 cwd，
             # 或 `chmod 0444` 那個檔）比 `6490b57` 還弱。`inject_to` 讓呼叫端對含 `$ORACLE_INJECT` 的 payload 兩個目標各試一次（`_inject_runs`）：`"cwd"` 是 `5b5a46d` 的位置（建 `<cwd>/.orc-XXXXXXXX/inject` 並導出指到它）、`"priv"` 是 R54～R57 的位置（不建 cwd 哨兵）。
-            env["ORACLE_INJECT"] = cwd_sent if cwd_sent_on else sent
+            env["ORACLE_INJECT"] = cwd_env if cwd_sent_on else sent
             # R58 F2（#33 verify R57 security M／DA M）：原本寫成 `{"PR_TITLE", "PR_BODY"} | {k for k, v in yaml_env.items() if "${{" in str(v)}`，第二個集合永遠是空的——
             # `_env_of` 已把每個 `${{ }}` 代換掉（PR 可控的換成 `PR_MARKER`），值裡早就沒有 `${{`（R44 的 `2835ead` 起；`env: TITLE: ${{ …title }}` 加 `bash -c "$TITLE"` 因此判『一致』，
             # 鍵名換成 `PR_TITLE` 才判繞過；`injection-env-key-names.yml`）。現在看**代換之後**的值：含 `PR_MARKER` 的鍵一律當 PR 可控的（保守：非字面、非安全運算式都算，見〈已知限制〉(1) 的誤報），只換掉標記（保留前後綴），神諭自己擁有的名字不動。
@@ -1951,6 +1976,28 @@ def selftest_aud():
         _warn_cwd_sentinel_unavailable.cache_clear()
         return (out[0], out[1], buf.getvalue().count("⚠"))
 
+    def spaced_tmpdir_sentinel(quoted=False):
+        """`TMPDIR` 含空白時 cwd 哨兵照建照讀（R58 張貼前查核：退回 `<priv>/i` 的版本在 `injection-fs-restricted.yml` 的 SB1、SB2、SB5 比 `5b5a46d` 退步）。
+        `quoted=False`：step 是 `t="$PR_TITLE"; (( t ))`（算術脈絡），payload 是第一組不加引號的 E（`$ORACLE_INJECT`）：絕對路徑含空白時它會 `ambiguous redirect`，只有相對路徑寫得進去。
+        `quoted=True`：step 先 `cd /` 再 `bash -c "$PR_TITLE"`（求值者換了 cwd——相對路徑 ENOENT，張貼前的第二次查核重現），payload 是加引號的 E（`"$ORACLE_INJECT"`）：絕對路徑含空白也寫得進去（`5b5a46d` 的情形），所以要用絕對路徑。
+        回傳 (哨兵有沒有標記, 警告行數)；暫存目錄名字含空白，`tempfile.tempdir` 暫時指過去。`/tmp` 不可寫時 `_short_tmp()` 回 `None`、私有目錄落進含空白的暫存目錄，`run_script` 具名退出而整個 `--selftest-aud` 紅——前提不成立，不是這一案的錯（同 `priv_payload_lengths_under_long_tmpdir` 那一組）。"""
+        import io, contextlib
+        _warn_cwd_sentinel_unavailable.cache_clear()
+        base = tempfile.mkdtemp(prefix="orc sp ")
+        old, buf = tempfile.tempdir, io.StringIO()
+        try:
+            tempfile.tempdir = base
+            e1 = next(pl for pl in INJECT_PAYLOADS if "$ORACLE_INJECT" in pl and (('"$ORACLE_INJECT"' in pl) == quoted))
+            step = 'cd /; /bin/bash -c "$PR_TITLE"' if quoted else 't="$PR_TITLE"; (( t )) || :'
+            with _Scratch(prefix="oracle-") as sd, contextlib.redirect_stderr(buf):
+                sb = os.path.join(sd, "bin"); os.mkdir(sb)
+                hit = run_script(step, pick_bash(), sb, None, extra=True, inject=e1, inject_to="cwd")[4]["inject"]
+        finally:
+            tempfile.tempdir = old
+            shutil.rmtree(base, ignore_errors=True)
+            _warn_cwd_sentinel_unavailable.cache_clear()
+        return (bool(hit), buf.getvalue().count("⚠"))
+
     def run_stub(args, stdin=b""):
         """跑 STUB（神諭給步驟的假 `python3`），回傳 (rc, stderr)。"""
         with _Scratch() as d:
@@ -2025,8 +2072,21 @@ def selftest_aud():
          "不含標記的鍵、神諭自己擁有的名字（`PATH`）與通道檔變數不動",
          _inject_env_values({"TITLE": PR_MARKER, "X": "pre-" + PR_MARKER + "-post", "FIXED": "1.2.3", "PATH": PR_MARKER, "GITHUB_ENV": PR_MARKER}, "PAY", skip=("GITHUB_ENV",)),
          lambda r: r == {"PR_TITLE": "PAY", "PR_BODY": "PAY", "TITLE": "PAY", "X": "pre-PAY-post"}),
-        ("**步驟 cwd 底下的第三個哨兵**（R58 F1，R57 第 12 格）：路徑單純時可用、沒有警告；路徑含空白時不能用、警告恰好一次、`ORACLE_INJECT` 退回 `<priv>/i`（這裡只驗回傳值與警告）",
+        ("**步驟 cwd 底下的第三個哨兵**（R58 F1，R57 第 12 格）：路徑單純時可用、沒有警告；路徑含空白時絕對路徑不能用、警告恰好一次、`ORACLE_INJECT` 改用相對於步驟 cwd 的路徑（這裡只驗回傳值與警告；行為在下一組）",
          cwd_sentinel_cases(), lambda r: r == (("/tmp/ab/.orc-xxxxxxxx/inject", True, 0), ("/tmp/a b/.orc-xxxxxxxx/inject", False, 1), 1)),
+        ("**`TMPDIR` 含空白時 cwd 哨兵照建照讀**（R58 張貼前查核：絕對路徑不能不加引號放進 payload 時，`ORACLE_INJECT` 改用相對於步驟 cwd 的路徑；退回 `<priv>/i` 的版本在 `injection-fs-restricted.yml` 的 SB1、SB2、SB5 比 `5b5a46d` 退步；SB3、SB6 兩者含空白時都判一致〔不加引號的 E 組遇到含空白的絕對路徑是 ambiguous redirect〕，相對路徑讓新樹在這兩格判繞過）："
+         "算術脈絡的第一組 E 在含空白的暫存目錄下寫得進 cwd 哨兵、並警告一次",
+         spaced_tmpdir_sentinel(), lambda r: r == (True, 1)),
+        ("**加引號的 E 在含空白的 `TMPDIR` 下用絕對路徑**（R58 張貼前的第二次查核：求值者先 `cd` 到別處再求值〔這裡的 step 是 `cd /` 再 `bash -c \"$PR_TITLE\"`〕時，相對路徑 ENOENT、寫不進去；`5b5a46d` 的 `echo M >> \"$ORACLE_INJECT\"` 用絕對路徑，含空白也寫得進去，所以那一組不能改成相對路徑）",
+         spaced_tmpdir_sentinel(quoted=True), lambda r: r == (True, 1)),
+        ("**`ORACLE_INJECT` 的值依 payload 有沒有加引號決定**（`_cwd_env_value`）：路徑單純 → 絕對；絕對路徑不加引號展開會被切開 → 不加引號的用相對、加引號的一律用絕對（第二個草稿多擋了 `\"`、`$`，理由不成立：環境變數的值不會被再剖析）",
+         [_cwd_env_value("/a/x", True, "echo M >>$ORACLE_INJECT", "r/x"), _cwd_env_value("/a b/x", False, "echo M >>$ORACLE_INJECT", "r/x"),
+          _cwd_env_value("/a b/x", False, 'echo M >> "$ORACLE_INJECT"', "r/x"), _cwd_env_value('/a"b/x', True, 'echo M >> "$ORACLE_INJECT"', "r/x"),
+          _cwd_env_value("/a$b/x", True, 'echo M >> "$ORACLE_INJECT"', "r/x")],
+         lambda L: L == ["/a/x", "r/x", "/a b/x", '/a"b/x', "/a$b/x"]),
+        ("**不加引號展開會被切開的路徑**（`_env_expansion_ok`）：只有空白、tab、換行才算（預設 IFS）；`*`、`?`、`[`、`$`、引號、反引號、反斜線、非 ASCII 空白〔U+3000、NBSP〕都不算（環境變數的值展開時不會被再剖析，哨兵檔預先建好所以萬用字元只比對到自己；這與逐字放進 payload 文字的 `_inject_path_ok` 不同）",
+         [_env_expansion_ok(p) for p in ("/tmp/ab/i", "/tmp/a b/i", "/tmp/a\tb/i", "/tmp/a\nb/i", "/tmp/a*b/i", "/tmp/a?b/i", "/tmp/a[b/i", "/tmp/a$b/i", '/tmp/a"b/i', "/tmp/a`b/i", "/tmp/日本/i", "/tmp/a\u3000b/i", "/tmp/a\u00a0b/i")],
+         lambda L: L == [True, False, False, False, True, True, True, True, True, True, True, True, True]),
         ("**stub `python3` 旗標群結尾的 `-` 之後的下一個 argv 一律是檔名**（真 CPython 3.9.6／3.13.5：`-u- -` 把 stdin 當程式〔rc=1、來源行印到 stderr〕；`-u- --`、`-u- -c x`、`-u- -m x` 試著開一個叫 `--`／`-c`／`-m` 的檔，不存在，rc=2；"
          "`-u- x.py` 是腳本、stub 不知道檔在不在，rc=0）（R58 F3，R57 logic LOW／regression LOW：R56 的 `-)` 分支把以 `-` 開頭的下一個 argv 當腳本吞掉，`b86bc53` 與 CPython 一致〔2〕、R56 回 0；"
          "子條件 `[ \"$1\" != - ]` 拿掉後全部 selfcheck 仍綠，沒有任何案例涵蓋 `-u- -`）",
