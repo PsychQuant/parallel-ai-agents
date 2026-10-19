@@ -789,6 +789,60 @@ test('#103 r3：DA 的鍵隨 contextBlock 變；diffFile 與 file 都進 artifac
   assert.ok(!/still saved/.test(note(err)), 'init 的環境錯誤仍說部分結果有存')
 })
 
+test('#103 r4：沒有 artifact 檔（只有 contextBlock）時，工作目錄也進雜湊', async () => {
+  const home = tmpHome()
+  const r = await promptsFor({ profile: 'code', contextBlock: '只有 context', codexEnabled: false })
+  const reader = readerOf(r.seen.get('review:architecture'))
+  for (const d of ['repoA', 'repoB']) mkdirSync(join(home, d))
+  assert.match(sh(reader, home, { cwd: join(home, 'repoA') }).out, /PAI_CHECKPOINT FRESH/)
+  assert.match(sh(reader, home, { cwd: join(home, 'repoB') }).out, /reason: artifact-changed/, '只有 contextBlock 時換 repo 仍沿用紀錄')
+  rmSync(home, { recursive: true, force: true })
+})
+
+test('#103 r4：checkpoint:false 維持 #103 之前的派發順序（codex 在前）；開啟時 codex 排在 lens 之後', async () => {
+  const order = (args) => { const o = []; return runEnsemble(args, async (_p, x) => { o.push(x.label); return { findings: [], saved: true } }).then(() => o) }
+  const off = await order({ ...BASE, codexEnabled: true, codexCallPath: '/bin/codex-call', checkpoint: false })
+  assert.equal(off[0], 'codex', `關閉時：${off.join(', ')}`)
+  const on = await order({ ...BASE, codexEnabled: true, codexCallPath: '/bin/codex-call' })
+  assert.ok(on.indexOf('codex') > on.indexOf('review:architecture'), `開啟時：${on.join(', ')}`)
+})
+
+test('#103 r4：checkpointDir 是 symlink 時，加了 checkpointRun 也 DISABLED；init 同樣拒絕', async () => {
+  const home = tmpHome()
+  const real = join(home, 'real'); mkdirSync(real)
+  const link = join(home, 'link'); spawnSync('ln', ['-s', real, link])
+  const r = await promptsFor({ ...BASE, checkpointDir: link, checkpointRun: 'round-1' })
+  assert.match(sh(readerOf(r.seen.get('review:architecture')), home).out, /PAI_CHECKPOINT DISABLED .*not a directory/)
+  assert.match(sh(readerOf(r.seen.get('checkpoint-init')), home).out, /PAI_ARGS ERROR .*not a directory/)
+  assert.deepEqual(readdirSync(real), [], 'symlink 指向的目錄裡被寫了東西')
+  rmSync(home, { recursive: true, force: true })
+})
+
+test('#103 r4：init 被略過或出錯時 INFO 不說成環境錯誤；只有 PAI_ARGS ERROR 才是', async () => {
+  const note = async (v) => (await promptsFor(BASE, v)).out.findings.find((f) => /args\.json not saved/.test(f.title)).body
+  assert.match(await note((l) => (l === 'checkpoint-init' ? null : { findings: [] })), /still saved/)
+  assert.match(await note((l) => { if (l === 'checkpoint-init') throw new Error('x'); return { findings: [] } }), /still saved/)
+  assert.ok(!/still saved/.test(await note((l) => (l === 'checkpoint-init' ? { saved: false, detail: 'PAI_ARGS ERROR KeyError: HOME' } : { findings: [] }))))
+})
+
+test('#103 r4：紀錄命令在非 UTF-8 locale 下照樣寫 UTF-8；檔頭壞到 RecursionError 或版本不符時改名重來，不是 DISABLED', async () => {
+  const home = tmpHome()
+  const r = await promptsFor(BASE)
+  const p = r.seen.get('review:architecture')
+  let s = sh(readerOf(p), home)
+  const file = s.out.match(/PAI_CHECKPOINT FILE (.+)/)[1].trim()
+  const rec = fenced(p, "<<'PAI_EOF_").replace(/\n[^\n]*\n(PAI_EOF_[0-9a-f]{12})$/, '\n{"kind":"checked","item":"中文項目"}\n$1')
+  assert.match(sh(rec, home, { env: { LC_ALL: 'en_US.ISO8859-1', LANG: 'en_US.ISO8859-1' } }).out, /recorded/)
+  assert.ok(readFileSync(file, 'utf8').includes('中文項目'), '紀錄不是有效的 UTF-8')
+  writeFileSync(file, '['.repeat(200000) + '\n')
+  s = sh(readerOf(p), home)
+  assert.match(s.out, /reason: no-header/, s.out.slice(0, 200))
+  const head = JSON.parse(readFileSync(file, 'utf8').split('\n')[0])
+  writeFileSync(file, JSON.stringify({ ...head, v: 1 }) + '\n')
+  assert.match(sh(readerOf(p), home).out, /reason: no-header/)
+  rmSync(home, { recursive: true, force: true })
+})
+
 // ── runner ── 新案請加在這條線之上；迴圈之後註冊的 test() 不會執行。
 let pass = 0
 let fail = 0

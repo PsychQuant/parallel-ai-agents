@@ -131,7 +131,7 @@ esac
 
 #### Backend A — Workflow（預設）
 
-> **存檔（#103）**：engine 預設把每個席次的進度存到 `~/.cache/pai-ensemble/`，永久保留、要清就手動刪。中斷後以 `resumeFromRunId` 接回時，沒跑完的席次會從檔案接著做。另外會多派一個 `checkpoint-init` agent 存 args。協定見 `references/checkpoint-protocol.md`；不要存檔就在 args 加 `"checkpoint": false`。
+> **存檔（#103）**：engine 預設把每個席次的進度存到 `~/.cache/pai-ensemble/`，永久保留、要清就手動刪。中斷後以 `resumeFromRunId` 接回時，沒跑完的席次會從檔案接著做。另外會多派一個 `checkpoint-init` agent 存 args。協定見 `references/checkpoint-protocol.md`；不要存檔就在 args 加 `"checkpoint": false`。本 skill 每次把 diff 寫到新的暫存路徑，所以每個 run 都在 `~/.cache/pai-ensemble/` 留一個新目錄；diff 含秘密時，finding 引用的片段也會留在那裡，這種情形請關掉存檔。
 
 1. 解析 harness 絕對路徑：`${CLAUDE_PLUGIN_ROOT}/workflows/ensemble-workflow.js`。
 2. **解析 codex 治理**（#23，codexEnabled=true 必經）：依 [`references/codex-governance.md`](../../references/codex-governance.md) 從 codex-pro 契約解析 `CODEX_MODEL`/`CODEX_EFFORT`（缺席 fail-fast + 安裝指令）。

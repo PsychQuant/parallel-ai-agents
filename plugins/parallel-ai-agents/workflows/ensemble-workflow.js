@@ -528,9 +528,11 @@ function fileTag(label) {
 
 // A seat's checkpoint is keyed on ITS OWN inputs: the prompt it would get with checkpointing off,
 // plus the dispatch model. A change that does not reach a seat (another lens's priors, the codex
-// model, the DA focus) leaves that seat's prompt — and so its journal entry and its partial file —
-// untouched; the devil's-advocate's key covers the reviewer results it is shown, so a new run whose
-// reviewers concluded differently never inherits an earlier DA's rebuttals (#103 verify r1).
+// model, the DA focus) leaves that seat's prompt and its partial file untouched. Its journal entry
+// is a different matter: the journal's key chains over the calls in dispatch order, so every call
+// after the first changed one runs again (references/checkpoint-protocol.md). The DA's key covers
+// the reviewer results it is shown, so a new run whose reviewers concluded differently never
+// inherits an earlier DA's rebuttals (#103 verify r1).
 function seatKey(ck, bodyWithoutCheckpoint) {
   return fnv1a64Hex(ck.model + '\n' + bodyWithoutCheckpoint)
 }
@@ -560,16 +562,16 @@ const CKDIR_PY = [
 //   header matches, no done mark             → RESUME, print the earlier records (bounded)
 //   no/other header, seat inputs or artifact
 //   bytes changed, or a done mark            → keep the old file as .prev-N, FRESH
-// A done mark means the seat FINISHED in an earlier run; a resumed run never re-runs a finished
-// seat (the journal cache answers it), so only a NEW run with the same inputs sees one — and a new
-// run must not inherit an earlier run's conclusions. Any exception → DISABLED, exit 0, and the
+// A done mark means the seat FINISHED in an earlier run. A resume with unchanged args does not
+// re-run a finished seat (the journal answers it), so a done mark is seen by a NEW run with the
+// same inputs — which must not inherit an earlier run's conclusions — and, as a cost, by a finished
+// seat re-dispatched after an args edit or one that was cut off between writing done and the
+// harness journaling its answer (references/checkpoint-protocol.md, known limits). Any exception → DISABLED, exit 0, and the
 // prompt treats "no PAI_CHECKPOINT line at all" (python3 missing) the same way.
 // Records are split on "\n" only: json.dumps leaves U+2028/U+2029/U+0085 raw, and splitlines()
 // would cut a record in two (#103 verify r1).
 const READER_PY = [
   'def sha(paths):',
-  '    if not paths:',
-  '        return None',
   '    h = hashlib.sha256(os.path.realpath(os.getcwd()).encode("utf-8", "surrogateescape") + b"\\0")',
   '    for p in paths:',
   '        p = os.path.abspath(p)',
@@ -583,8 +585,9 @@ const READER_PY = [
   '        else:',
   '            h.update(b"<dir>" if os.path.isdir(p) else b"<missing>")',
   '    return h.hexdigest()',
-  'def main(D, NAME, SEAT, ARTS, LABEL):',
+  'def main(B, D, NAME, SEAT, ARTS, LABEL):',
   '    sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")',
+  '    ckdir(B)',
   '    ckdir(D)',
   '    F = os.path.join(D, NAME)',
   '    art = sha(ARTS)',
@@ -596,9 +599,9 @@ const READER_PY = [
   '            lines = fh.read().decode("utf-8", "replace").split("\\n")',
   '        try:',
   '            head = json.loads(lines[0]) if lines and lines[0].strip() else None',
-  '        except ValueError:',
+  '        except Exception:',
   '            head = None',
-  '        if not isinstance(head, dict) or head.get("kind") != "header":',
+  '        if not isinstance(head, dict) or head.get("kind") != "header" or head.get("v") != 2:',
   '            reason = "no-header"',
   '        elif head.get("seatDigest") != SEAT:',
   '            reason = "inputs-changed"',
@@ -663,13 +666,14 @@ const INIT_PY = [
   '        h ^= x',
   '        h = (h * 0x100000001b3) & 0xffffffffffffffff',
   '    return "%016x" % h',
-  'def main(D, NAME, PAYLOAD, B64):',
+  'def main(B, D, NAME, PAYLOAD, B64):',
   '    raw = base64.b64decode("".join(B64.split()), validate=True)',
   '    got = fnv(raw)',
   '    if got != PAYLOAD:',
   '        print("PAI_ARGS MISMATCH expected %s got %s" % (PAYLOAD, got))',
   '        return',
   '    json.loads(raw.decode("utf-8"))',
+  '    ckdir(B)',
   '    ckdir(D)',
   '    path = os.path.join(D, NAME)',
   '    tmp = path + ".tmp"',
@@ -693,7 +697,7 @@ const INIT_PY = [
 // `codex-run <id>`. `-I`: the seat's cwd is the reviewed repo, and a json.py there must not be
 // imported (#103 verify r1).
 const RECORD_CMD =
-  `python3 -I -c 'import json,os,sys; os.umask(0o077); r=json.loads(sys.stdin.read()); ok=isinstance(r,dict) and r.get("kind") in ("finding","checked"); fd=ok and os.open(sys.argv[1],os.O_RDWR|os.O_APPEND|os.O_CREAT|getattr(os,"O_NOFOLLOW",0),0o600); n=ok and os.fstat(fd).st_size; ok and os.write(fd,(b"\\n" if n and os.pread(fd,1,n-1)!=b"\\n" else b"")+(json.dumps(r,ensure_ascii=False)+"\\n").encode("utf-8")); print("recorded" if ok else "REJECTED: need one JSON object whose kind is finding or checked")'`
+  `python3 -I -c 'import json,os,sys; os.umask(0o077); r=json.loads(sys.stdin.buffer.read()); ok=isinstance(r,dict) and r.get("kind") in ("finding","checked"); fd=ok and os.open(sys.argv[1],os.O_RDWR|os.O_APPEND|os.O_CREAT|getattr(os,"O_NOFOLLOW",0),0o600); n=ok and os.fstat(fd).st_size; ok and os.write(fd,(b"\\n" if n and os.pread(fd,1,n-1)!=b"\\n" else b"")+(json.dumps(r,ensure_ascii=False)+"\\n").encode("utf-8")); print("recorded" if ok else "REJECTED: need one JSON object whose kind is finding or checked")'`
 const MARK_CMD =
   `python3 -I -c 'import json,os,sys; os.umask(0o077); a=sys.argv; r={"kind":a[2]}; r.update({"id":a[3]} if len(a)>3 else {}); fd=os.open(a[1],os.O_RDWR|os.O_APPEND|os.O_CREAT|getattr(os,"O_NOFOLLOW",0),0o600); n=os.fstat(fd).st_size; os.write(fd,(b"\\n" if n and os.pread(fd,1,n-1)!=b"\\n" else b"")+(json.dumps(r)+"\\n").encode("utf-8")); print("recorded")'`
 
@@ -728,7 +732,7 @@ function readerCommand(ck, name, label, artifacts, seat) {
   return pyHeredoc(
     'hashlib, json, os, re, stat, sys',
     READER_PY,
-    `main(${ck.py}, ${pyStr(name)}, ${pyStr(seat)}, ${arts}, ${pyStr(label)})`,
+    `main(${ck.pyBase}, ${ck.py}, ${pyStr(name)}, ${pyStr(seat)}, ${arts}, ${pyStr(label)})`,
     'PAI_CHECKPOINT DISABLED'
   )
 }
@@ -744,7 +748,7 @@ function initPrompt(ck, A) {
     pyHeredoc(
       'base64, json, os, stat',
       INIT_PY + '\nB64 = """\n' + b64.join('\n') + '\n"""',
-      `main(${ck.py}, ${pyStr(ck.argsName)}, ${pyStr(fnv1a64Hex(payload))}, B64)`,
+      `main(${ck.pyBase}, ${ck.py}, ${pyStr(ck.argsName)}, ${pyStr(fnv1a64Hex(payload))}, B64)`,
       'PAI_ARGS ERROR'
     ),
     '```',
@@ -917,8 +921,8 @@ const AGENT_MODEL = A.agentModel || 'opus' // null / undefined / '' ≡ absent �
 // Checkpoint location (#103). Default ON: `$HOME/.cache/pai-ensemble/<dirKey>/`, kept until the
 // user deletes it. dirKey covers only the inputs every seat shares (profile, artifact paths,
 // contextBlock); per-seat inputs are covered by each seat's own key (seatKey), so changing one of
-// them (codexModel, a lens's priors, daFocus) keeps the other seats' prompts and journal entries
-// intact. `checkpointRun` adds a sub-directory: callers that run the SAME inputs as independent
+// them (codexModel, a lens's priors, daFocus) keeps the other seats' prompts and partial files
+// intact (not their journal entries — see seatKey). `checkpointRun` adds a sub-directory: callers that run the SAME inputs as independent
 // rounds (ensemble-academic-review mix, ensemble-eval) give each round its own value, otherwise a
 // round that was cut off before it finished would hand its partial results to the next round.
 // `checkpointDir` (absolute) replaces the base; `checkpoint: false` turns it off. A malformed
@@ -948,13 +952,16 @@ const CKPT = (() => {
   const common = { model: AGENT_MODEL, argsDigest: ARGS_DIGEST, argsName: `args-${ARGS_DIGEST}.json` }
   if (explicit) {
     const dir = run ? `${explicit}/${run}` : explicit
-    return { ...common, display: dir, py: pyStr(dir), file: (n) => shQuote(`${dir}/${n}`) }
+    return { ...common, display: dir, py: pyStr(dir), pyBase: pyStr(explicit), file: (n) => shQuote(`${dir}/${n}`) }
   }
-  const rel = `.cache/pai-ensemble/${DIR_KEY}` + (run ? `/${run}` : '')
+  const base = `.cache/pai-ensemble/${DIR_KEY}`
+  const rel = base + (run ? `/${run}` : '')
+  const pyJoin = (r) => `os.path.join(os.environ["HOME"], ${r.split('/').map(pyStr).join(', ')})`
   return {
     ...common,
     display: `$HOME/${rel}`,
-    py: `os.path.join(os.environ["HOME"], ${rel.split('/').map(pyStr).join(', ')})`,
+    py: pyJoin(rel),
+    pyBase: pyJoin(base),
     file: (n) => `"$HOME/${rel}/${n}"`,
   }
 })()
@@ -1107,7 +1114,11 @@ const initThunk = CKPT
         .catch(() => ({ saved: false, detail: 'errored' }))
   : null
 
-const round1All = await parallel([...reviewThunks, ...(codexThunk ? [codexThunk] : []), ...(initThunk ? [initThunk] : [])])
+const round1All = await parallel(
+  initThunk
+    ? [...reviewThunks, ...(codexThunk ? [codexThunk] : []), initThunk]
+    : [...(codexThunk ? [codexThunk] : []), ...reviewThunks] // checkpoint:false keeps the pre-#103 order
+)
 const initResult = initThunk ? round1All[round1All.length - 1] || { saved: false, detail: 'missing' } : null
 const round1 = (initThunk ? round1All.slice(0, -1) : round1All).filter(Boolean)
 const reviewerResults = round1.filter((r) => r.lens !== 'codex')
@@ -1143,10 +1154,10 @@ if (codexOn && !okLenses.has('codex')) {
 // complete; only the "resume without the caller's own copy of args" convenience is missing.
 const processNotes = []
 if (initResult && !initResult.saved) {
-  // A copy mismatch leaves the seats' own saving intact; an ERROR from the init command usually
-  // has the same cause as the seats' readers failing (unusable directory, no HOME, no python3),
-  // so it must not promise that partial results were saved (#103 verify r2).
-  const envFault = !/^PAI_ARGS MISMATCH/.test(initResult.detail || '')
+  // An ERROR from the init command usually has the same cause as the seats' readers failing
+  // (unusable directory, no HOME), so it must not promise that partial results were saved (#103
+  // verify r2). A copy mismatch, a skipped or failed init agent says nothing about the seats.
+  const envFault = /^PAI_ARGS ERROR/.test(initResult.detail || '')
   processNotes.push({ lens: 'checkpoint', severity: 'INFO', title: 'checkpoint: args.json not saved', file: null, body: `the checkpoint-init seat did not confirm ${CKPT.argsName} (${initResult.detail || 'no detail'}); ` + (envFault ? 'the same fault may have disabled checkpointing for every seat, so do not count on partial results for this run.' : "the seats' partial results are still saved, but resuming this run needs the caller's own copy of the args.") })
 }
 
