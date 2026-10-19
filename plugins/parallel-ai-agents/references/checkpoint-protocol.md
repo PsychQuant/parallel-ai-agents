@@ -16,7 +16,7 @@ pai-ensemble 的每個席次（每個 lens reviewer、codex、devil's-advocate�
 
 目錄裡有：
 
-- `args.json`：這個 run 的完整 args（canonical JSON）。由 `checkpoint-init` 席次寫入，寫完用 python 重算雜湊比對；比對不過時不寫，run 的結果多一則 INFO `checkpoint: args.json not saved`，verdict 不受影響。
+- `args.json`：這個 run 的完整 args（canonical JSON）。由 `checkpoint-init` 席次寫入，寫完用 python 重算雜湊比對；比對不過時不寫，run 的結果多一則 INFO `checkpoint: args.json not saved`，verdict 不受影響。args 以 base64 交給這個席次：`contextBlock` 可能含不受信任的內容，照抄命令的席次不應讀到其中可讀的文字。
 - `<席次>-<8 碼雜湊>.partial.jsonl`：每個席次一個檔。席次名稱裡檔名不安全的字元轉成 `_`，8 碼雜湊避免兩個 key 轉換後撞名。
 - `<上面的檔名>.prev-N`：被留存的舊檔（見下）。
 

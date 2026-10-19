@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **預設開啟**：沒給 `checkpointDir` 就存到 `$HOME/.cache/pai-ensemble/<argsDigest>/`，**永久保留、手動清**（使用者裁決）。`checkpointDir`（絕對路徑）指定位置；`checkpoint: false` 關閉。不合法的 `checkpointDir`（相對路徑、含換行或 NUL）在派發前 throw，比照 `agentModel`。
   - **接回與重跑**：args 雜湊與 artifact 雜湊都相同、而且沒有完成記號，才沿用先前的紀錄；否則舊檔改名為 `.prev-N`、從頭做。完成記號區分「接回」與「同一組輸入的新的一輪」：接回時已完成的席次由 journal 快取回答，不會讀到自己的檔。
   - **codex 席次**：detach 後記下 run id；接回時先 `--poll` 它，worker 還在就不再開新的、不重付額度。
-  - **args 存檔**：新的 `checkpoint-init` 席次把 args 寫成 `args.json`，再以 python 重算雜湊比對；比對不過只多一則 INFO `checkpoint: args.json not saved`，不影響 verdict，也不算進 `stats.integrity`。它不算在 `stats.agents` 與 `maxAgents` 裡。
+  - **args 存檔**：新的 `checkpoint-init` 席次把 args 寫成 `args.json`，再以 python 重算雜湊比對。args 以 base64 放進它的 prompt：contextBlock 可能是不受信任的內容，要照抄命令的席次不應讀到其中可讀的文字（commit 後的自動安全審查指出）；比對不過只多一則 INFO `checkpoint: args.json not saved`，不影響 verdict，也不算進 `stats.integrity`。它不算在 `stats.agents` 與 `maxAgents` 裡。
   - `stats.checkpoint = { enabled, dir, argsDigest, argsSaved }`；開局 `log()` 印出目錄。
   - 協定（檔案格式、接回規則、呼叫端可以拿部分結果做什麼）：`references/checkpoint-protocol.md`。
   - `ensemble-eval` 的 K 次 run 各給自己的 `checkpointDir`，避免第 i+1 次接著第 i 次中斷的部分結果做。
