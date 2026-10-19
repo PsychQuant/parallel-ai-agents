@@ -69,6 +69,8 @@ DA 專門盯三種安靜的偏移：把個別發言寫成全體共識、把條�
 
 ### Phase 2：派發
 
+> **存檔（#103）**：engine 預設把每個席次的進度存到 `~/.cache/pai-ensemble/`，永久保留、要清就手動刪。中斷後以 `resumeFromRunId` 接回時，沒跑完的席次會從檔案接著做。另外會多派一個 `checkpoint-init` agent 存 args。協定見 `references/checkpoint-protocol.md`；不要存檔就在 args 加 `"checkpoint": false`。
+
 ```javascript
 Workflow({ name: "parallel-ai-agents:pai-ensemble", args: {
   profile: "minutes",

@@ -186,6 +186,8 @@ TaskCreate: "Final: merge all rounds"
 
 #### Backend A — Workflow（預設）
 
+> **存檔（#103）**：engine 預設把每個席次的進度存到 `~/.cache/pai-ensemble/`，永久保留、要清就手動刪。中斷後以 `resumeFromRunId` 接回時，沒跑完的席次會從檔案接著做。另外會多派一個 `checkpoint-init` agent 存 args。協定見 `references/checkpoint-protocol.md`；不要存檔就在 args 加 `"checkpoint": false`。
+
 每一輪這樣呼叫：
 
 1. 解析 harness 絕對路徑 `${CLAUDE_PLUGIN_ROOT}/workflows/ensemble-workflow.js`；wrapper 絕對路徑 `${CLAUDE_PLUGIN_ROOT}/bin/codex-call`。並依 [`references/codex-governance.md`](../../references/codex-governance.md) 解析 `CODEX_MODEL`/`CODEX_EFFORT`（#23，codex-pro 契約；缺席 fail-fast）。

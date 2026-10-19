@@ -131,6 +131,8 @@ FILE_OR_DIR      — 審閱對象（缺則問使用者）
    - `--lens-file pack.csv` → **用 python3 csv 模組解析**（見 § CSV lens 包；focus 含逗號/中文標點，**不可** naive split）→ 每列轉 `{key, focus, needsSrt?, override?}` append 到 `customLenses`（與 `--lens` 合併；撞名 first-wins，標 `override` 者取代）
    - `--base <profile>` 帶入時，先跑 `bin/pai-collect-lens-layers "$BASE_PROFILE"`，其 `lenses` 排在 `--lens` / `--lens-file` 之前（見 § 三層 lens 疊加）
    - `--replicas` / `--max-agents` / `--codex` → `replicas` / `maxAgents` / `codexEnabled`（`--codex` 生效時另依 [`references/codex-governance.md`](../../references/codex-governance.md) 解析並傳 `codexModel`/`codexEffort`，#23）
+> **存檔（#103）**：engine 預設把每個席次的進度存到 `~/.cache/pai-ensemble/`，永久保留、要清就手動刪。中斷後以 `resumeFromRunId` 接回時，沒跑完的席次會從檔案接著做。另外會多派一個 `checkpoint-init` agent 存 args。協定見 `references/checkpoint-protocol.md`；不要存檔就在 args 加 `"checkpoint": false`。
+
 3. 解析 dispatch model（#20）：`PAI_AGENT_MODEL` 未設 → `opus`；設了但不在 `sonnet|opus|haiku|fable` → **abort with usage error**（fail-loud，不靜默換模型；engine 對顯式非法值亦會於派發前 throw 作第二層）。解析值經 `args.agentModel` 傳入。接著呼叫 `Workflow` tool，傳 `scriptPath` + `args`：
 
    ```json
