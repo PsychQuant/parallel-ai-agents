@@ -9,10 +9,11 @@
 // orchestration 並斷言。鎖死 fail-closed 不變式（含 null-skip fail-open 的修正）。
 // 載入的是本 repo 自己的 source（被測碼本身），信任等級等同 import 任何模組。
 
-import { readFileSync, writeFileSync, rmSync } from 'node:fs'
+import { readFileSync, writeFileSync, rmSync, mkdtempSync, existsSync, readdirSync, appendFileSync } from 'node:fs'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { spawnSync } from 'node:child_process'
 import assert from 'node:assert/strict'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -396,6 +397,206 @@ test('#48 codexModel / codexEffort args 原樣進 codex-call 命令列，service
     'codex-call 命令列沒有帶 caller 解析的 model/effort，或 service tier 不是 fast')
   assert.ok(!/--model '?gpt-5\.6-sol'?/.test(p) && !/--effort '?xhigh'?/.test(p),
     'engine 用了治理 snapshot 而非 caller 傳入的值（#23：snapshot 只服務不傳參的 legacy caller）')
+})
+
+// ── #103 checkpoint：席次邊做邊寫部分結果，中斷後接回時從檔案接著做 ──────────────
+// workflow script 不能讀寫檔案，所以檔案全由 agent 照 prompt 裡組好的命令寫；這裡把那些
+// 命令從 prompt 抽出來真的執行（HOME 指到暫存目錄），而不是只比對字串。
+
+const captureAll = (reply = () => ({ findings: [], saved: true })) => {
+  const seen = new Map()
+  const opts = new Map()
+  const impl = async (prompt, o) => {
+    const label = o && o.label
+    seen.set(label, String(prompt))
+    opts.set(label, o)
+    return reply(label)
+  }
+  return { seen, opts, impl }
+}
+const promptsFor = async (args, reply) => {
+  const c = captureAll(reply)
+  const out = await runEnsemble(args, c.impl)
+  return { ...c, out }
+}
+const BASE = { profile: 'code', diffFile: '/tmp/d.diff', codexEnabled: false }
+const fenced = (p, needle) => {
+  const blocks = [...p.matchAll(/```bash\n([\s\S]*?)\n```/g)].map((m) => m[1])
+  const hit = blocks.filter((b) => b.includes(needle))
+  assert.ok(hit.length >= 1, `prompt 裡找不到含 ${JSON.stringify(needle)} 的命令區塊`)
+  return hit[0]
+}
+const readerOf = (p) => fenced(p, "python3 - <<'PAI_PY'")
+const sh = (script, home) => {
+  const r = spawnSync('bash', ['-c', script], { env: { ...process.env, HOME: home }, encoding: 'utf8' })
+  return { out: (r.stdout || '') + (r.stderr || ''), code: r.status }
+}
+const tmpHome = () => mkdtempSync(join(tmpdir(), 'pai-ckpt-'))
+
+test('#103 argsDigest 與 key 順序無關、不含 checkpointDir／checkpoint 兩鍵、內容變了才變', async () => {
+  const a = (await promptsFor({ ...BASE, contextBlock: 'c' })).out.stats.checkpoint.argsDigest
+  const b = (await promptsFor({ contextBlock: 'c', codexEnabled: false, diffFile: '/tmp/d.diff', profile: 'code' })).out.stats.checkpoint.argsDigest
+  const c = (await promptsFor({ ...BASE, contextBlock: 'c', checkpointDir: '/tmp/somewhere' })).out.stats.checkpoint.argsDigest
+  const d = (await promptsFor({ ...BASE, contextBlock: 'c2' })).out.stats.checkpoint.argsDigest
+  assert.match(a, /^[0-9a-f]{16}$/)
+  assert.equal(a, b, 'key 順序改變了雜湊')
+  assert.equal(a, c, 'checkpointDir 被算進雜湊（同一組輸入換個存放位置就對不上）')
+  assert.notEqual(a, d, '內容不同卻得到同一個雜湊')
+})
+
+test('#103 相同 args → 每個席次的 prompt 逐字相同（接回時命中快取的前提）', async () => {
+  const args = { ...BASE, codexEnabled: true, codexCallPath: '/bin/codex-call', contextBlock: '同一份' }
+  const x = (await promptsFor(args)).seen
+  const y = (await promptsFor(JSON.parse(JSON.stringify(args)))).seen
+  assert.deepEqual([...x.keys()].sort(), [...y.keys()].sort())
+  for (const [label, p] of x) assert.equal(y.get(label), p, `${label} 的 prompt 兩次不同`)
+})
+
+test('#103 預設目錄是 $HOME/.cache/pai-ensemble/<digest>，明確目錄經 shQuote', async () => {
+  const r = await promptsFor(BASE)
+  const dg = r.out.stats.checkpoint.argsDigest
+  assert.equal(r.out.stats.checkpoint.enabled, true)
+  assert.equal(r.out.stats.checkpoint.dir, `$HOME/.cache/pai-ensemble/${dg}`)
+  assert.ok(r.seen.get('review:architecture').includes(`"$HOME/.cache/pai-ensemble/${dg}/review_architecture-`), '預設路徑沒有以 "$HOME/..." 形式出現')
+  const q = await promptsFor({ ...BASE, checkpointDir: "/tmp/x y'z" })
+  assert.equal(q.out.stats.checkpoint.dir, "/tmp/x y'z")
+  assert.ok(q.seen.get('review:architecture').includes("'/tmp/x y'\\''z/review_architecture-"), '明確目錄沒有被 POSIX 單引號化')
+})
+
+test('#103 不合法的 checkpointDir 在派發前 throw', async () => {
+  for (const bad of ['relative/dir', '/a\nb', '/a\u0000b', 42, ['/x']]) {
+    let calls = 0
+    await assert.rejects(runEnsemble({ ...BASE, checkpointDir: bad }, async () => { calls++; return { findings: [] } }), /invalid checkpointDir/)
+    assert.equal(calls, 0, `checkpointDir=${JSON.stringify(bad)} 在 throw 之前已經派發了 agent`)
+  }
+})
+
+test('#103 checkpoint:false → 沒有 checkpoint 段、不派 init、stats 標 disabled', async () => {
+  const r = await promptsFor({ ...BASE, codexEnabled: true, codexCallPath: '/bin/codex-call', checkpoint: false })
+  assert.ok(!r.seen.has('checkpoint-init'), '關閉時仍派了 checkpoint-init')
+  for (const [label, p] of r.seen) assert.ok(!p.includes('PAI_CHECKPOINT'), `${label} 仍有 checkpoint 段`)
+  assert.equal(r.out.stats.checkpoint.enabled, false)
+})
+
+test('#103 轉換後會撞名的 lens key 仍得到不同的檔名', async () => {
+  const r = await promptsFor({ profile: 'custom', diffFile: '/tmp/d.diff', customLenses: [{ key: 'a:b', focus: 'x' }, { key: 'a_b', focus: 'y' }] })
+  const name = (p) => p.match(/([A-Za-z0-9._-]+)\.partial\.jsonl/)[1]
+  const n1 = name(r.seen.get('review:a:b'))
+  const n2 = name(r.seen.get('review:a_b'))
+  assert.notEqual(n1, n2, `兩個 lens 共用檔名 ${n1}`)
+  assert.match(n1, /^[A-Za-z0-9._-]+$/)
+})
+
+test('#103 init agent 只派一次、用 AGENT_MODEL、effort low；三種失敗都只出 INFO', async () => {
+  const ok = await promptsFor({ ...BASE, agentModel: 'sonnet' })
+  assert.equal(ok.opts.get('checkpoint-init').model, 'sonnet')
+  assert.equal(ok.opts.get('checkpoint-init').effort, 'low')
+  assert.equal(ok.out.stats.checkpoint.argsSaved, true)
+  assert.ok(!ok.out.findings.some((f) => /args\.json not saved/.test(f.title)))
+  const variants = [
+    (l) => (l === 'checkpoint-init' ? { saved: false, detail: 'PAI_ARGS MISMATCH' } : { findings: [] }),
+    (l) => (l === 'checkpoint-init' ? null : { findings: [] }),
+    (l) => { if (l === 'checkpoint-init') throw new Error('boom'); return { findings: [] } },
+  ]
+  for (const v of variants) {
+    const r = await promptsFor(BASE, v)
+    assert.equal(r.out.verdict, 'PASS', 'args 存檔失敗不應影響 verdict')
+    assert.equal(r.out.stats.integrity, 0, 'args 存檔失敗不應算進 integrity')
+    assert.equal(r.out.stats.checkpoint.argsSaved, false)
+    assert.ok(r.out.findings.some((f) => f.severity === 'INFO' && /checkpoint: args\.json not saved/.test(f.title)))
+  }
+})
+
+test('#103 讀檔器：沒有舊檔 → FRESH 並寫檔頭；記一筆 → 接回時 RESUME 印出；done 之後新的一輪改名留存', async () => {
+  const home = tmpHome()
+  const diff = join(home, 'd.diff')
+  writeFileSync(diff, 'diff v1\n')
+  const r = await promptsFor({ ...BASE, diffFile: diff })
+  const p = r.seen.get('review:architecture')
+  const reader = readerOf(p)
+  let s = sh(reader, home)
+  assert.match(s.out, /PAI_CHECKPOINT FRESH/)
+  const file = s.out.match(/PAI_CHECKPOINT FILE (.+)/)[1].trim()
+  assert.ok(existsSync(file))
+  // 照 prompt 給的追加命令（範例 JSON 本身是合法的一行）
+  s = sh(fenced(p, "<<'PAI_EOF'"), home)
+  assert.match(s.out, /recorded/)
+  s = sh(reader, home)
+  assert.match(s.out, /PAI_CHECKPOINT RESUME 1 record/)
+  assert.match(s.out, /"kind": ?"finding"/)
+  // 完成記號
+  const mark = p.match(/`([^`]*) done`/)[1] + ' done'
+  s = sh(mark, home)
+  assert.match(s.out, /recorded/)
+  s = sh(reader, home)
+  assert.match(s.out, /PAI_CHECKPOINT FRESH previous file kept as .*\.prev-1 \(reason: done\)/)
+  // artifact 改了 → 改名為 .prev-2
+  appendFileSync(file, JSON.stringify({ kind: 'checked', item: 'x' }) + '\n')
+  writeFileSync(diff, 'diff v2\n')
+  s = sh(reader, home)
+  assert.match(s.out, /\.prev-2 \(reason: artifact-changed\)/)
+  rmSync(home, { recursive: true, force: true })
+})
+
+test('#103 讀檔器：args 雜湊不符、壞行、codex id 格式、輸出上限、目錄建不起來', async () => {
+  const home = tmpHome()
+  const r = await promptsFor({ ...BASE, codexEnabled: true, codexCallPath: '/bin/codex-call' })
+  const reader = readerOf(r.seen.get('review:architecture'))
+  let s = sh(reader, home)
+  const file = s.out.match(/PAI_CHECKPOINT FILE (.+)/)[1].trim()
+  const head = readFileSync(file, 'utf8').split('\n')[0]
+  // 壞行跳過並計數
+  appendFileSync(file, 'not json\n' + JSON.stringify({ kind: 'finding', severity: 'LOW', title: 't', body: 'b' }) + '\n')
+  s = sh(reader, home)
+  assert.match(s.out, /RESUME 1 record\(s\).*1 unreadable line/)
+  // 輸出上限
+  writeFileSync(file, head + '\n' + Array.from({ length: 250 }, (_, i) => JSON.stringify({ kind: 'checked', item: 'i' + i })).join('\n') + '\n')
+  s = sh(reader, home)
+  assert.match(s.out, /PAI_CHECKPOINT TRUNCATED 50 record/)
+  // args 雜湊不符
+  writeFileSync(file, JSON.stringify({ ...JSON.parse(head), argsDigest: '0000000000000000' }) + '\n')
+  s = sh(reader, home)
+  assert.match(s.out, /reason: args-changed/)
+  // codex：id 格式不符的紀錄不印出來
+  const creader = readerOf(r.seen.get('codex'))
+  s = sh(creader, home)
+  const cfile = s.out.match(/PAI_CHECKPOINT FILE (.+)/)[1].trim()
+  appendFileSync(cfile, JSON.stringify({ kind: 'codex-run', id: "abc'; rm -rf /" }) + '\n' + JSON.stringify({ kind: 'codex-run', id: 'A'.repeat(32) }) + '\n')
+  s = sh(creader, home)
+  assert.match(s.out, /RESUME 1 record\(s\).*1 unreadable/)
+  assert.ok(s.out.includes('A'.repeat(32)) && !s.out.includes('rm -rf'), 'codex id 沒有依格式過濾')
+  // 目錄建不起來 → DISABLED，exit 0
+  const notDir = join(home, 'file-not-dir')
+  writeFileSync(notDir, 'x')
+  s = sh(reader, notDir)
+  assert.match(s.out, /PAI_CHECKPOINT DISABLED/)
+  assert.equal(s.code, 0)
+  rmSync(home, { recursive: true, force: true })
+})
+
+test('#103 init 的比對程式：JS 與 python 算出的雜湊一致，改一個字元就不一致', async () => {
+  const home = tmpHome()
+  const args = { ...BASE, contextBlock: '中文「引號」\n"quote"\t\\ \u0001 \u2028 end', customLenses: [{ key: 'k', focus: 'f' }], replicas: 1 }
+  const r = await promptsFor(args)
+  const init = readerOf(r.seen.get('checkpoint-init'))
+  let s = sh(init, home)
+  assert.match(s.out, /PAI_ARGS SAVED (.+)/, s.out)
+  const saved = JSON.parse(readFileSync(s.out.match(/PAI_ARGS SAVED (.+)/)[1].trim(), 'utf8'))
+  assert.deepEqual(saved, JSON.parse(JSON.stringify(args)))
+  // 抄錯一個字元 → MISMATCH
+  const broken = init.replace('中文', '中丈')
+  assert.notEqual(broken, init)
+  s = sh(broken, home)
+  assert.match(s.out, /PAI_ARGS MISMATCH/)
+  rmSync(home, { recursive: true, force: true })
+})
+
+test('#103 codex：detach 後記 run id、接回時先 poll 讀檔器印出的 id，且仍不叫 agent 組 shell', async () => {
+  const p = await codexPromptFor({ profile: 'code', diffFile: '/tmp/d.diff' })
+  assert.ok(p.includes('PAI_CHECKPOINT'), 'codex 席次沒有 checkpoint 段')
+  assert.ok(/codex-run '<id>'/.test(p), '沒有交代 detach 後記下 run id')
+  assert.ok(/printed by the checkpoint reader/.test(p), '沒有為讀檔器印出的 id 開具名例外')
+  assert.ok(/--poll '<that id>' --wait 30/.test(p), '接回時沒有先 poll 既有的 run')
 })
 
 // ── runner ── 新案請加在這條線之上；迴圈之後註冊的 test() 不會執行。

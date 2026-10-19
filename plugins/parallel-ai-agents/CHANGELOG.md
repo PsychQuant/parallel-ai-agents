@@ -11,6 +11,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.26.0] - 2026-10-20
+
+### Added
+
+- **席次存檔與接續（#103）**。每個席次（lens reviewer、codex、devil's-advocate）邊做邊把進度寫進檔案；session 在 run 跑到一半時中斷，以 `resumeFromRunId` 接回後，沒跑完的席次從檔案接著做。起因：2026-10-19 一組 5 個 ensemble 被 session 重啟打斷兩次，派出的 47 個 agent 只有 7 個留下結果。
+  - **預設開啟**：沒給 `checkpointDir` 就存到 `$HOME/.cache/pai-ensemble/<argsDigest>/`，**永久保留、手動清**（使用者裁決）。`checkpointDir`（絕對路徑）指定位置；`checkpoint: false` 關閉。不合法的 `checkpointDir`（相對路徑、含換行或 NUL）在派發前 throw，比照 `agentModel`。
+  - **接回與重跑**：args 雜湊與 artifact 雜湊都相同、而且沒有完成記號，才沿用先前的紀錄；否則舊檔改名為 `.prev-N`、從頭做。完成記號區分「接回」與「同一組輸入的新的一輪」：接回時已完成的席次由 journal 快取回答，不會讀到自己的檔。
+  - **codex 席次**：detach 後記下 run id；接回時先 `--poll` 它，worker 還在就不再開新的、不重付額度。
+  - **args 存檔**：新的 `checkpoint-init` 席次把 args 寫成 `args.json`，再以 python 重算雜湊比對；比對不過只多一則 INFO `checkpoint: args.json not saved`，不影響 verdict，也不算進 `stats.integrity`。它不算在 `stats.agents` 與 `maxAgents` 裡。
+  - `stats.checkpoint = { enabled, dir, argsDigest, argsSaved }`；開局 `log()` 印出目錄。
+  - 協定（檔案格式、接回規則、呼叫端可以拿部分結果做什麼）：`references/checkpoint-protocol.md`。
+  - `ensemble-eval` 的 K 次 run 各給自己的 `checkpointDir`，避免第 i+1 次接著第 i 次中斷的部分結果做。
+
+### Changed
+
+- **所有席次的 prompt 都多了 checkpoint 段**（`checkpoint: false` 時除外）。升級後第一輪，舊版 run 的 journal 快取一律對不上，接回舊 run 會從頭跑。
+- external-consumer contract 的派發前 throw 從一種（`agentModel`）變成兩種（另加 `checkpointDir`）。
+
+### 依賴
+
+- 讀檔器與紀錄命令用 python3（語法限 3.8）。沒有 python3 時讀檔器回 `DISABLED`，席次照常審閱、不存檔。
+
 ## [2.25.1] - 2026-10-12
 
 ### Fixed
