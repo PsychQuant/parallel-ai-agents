@@ -874,7 +874,7 @@ test('#103 r5：目錄型 artifact 的內容變了就不接回；超過 20000 �
   assert.match(sh(readerOf(p), home).out, /PAI_CHECKPOINT RESUME/, '.git 變動不該讓紀錄失效')
   spawnSync('python3', ['-c', 'import os,sys\nd=sys.argv[1]\nos.makedirs(d)\nfor i in range(20001): open(os.path.join(d,"f%d"%i),"w").close()', join(src, 'big')])
   sh(readerOf(p), home)
-  assert.match(sh(readerOf(p), home).out, /reason: artifact-changed/, '超過上限仍被當成同一份內容')
+  assert.match(sh(readerOf(p), home).out, /reason: artifact-unhashable/, '超過上限仍被當成同一份內容')
   assert.ok(existsSync(file))
   rmSync(home, { recursive: true, force: true })
 })
@@ -902,6 +902,67 @@ test('#103 r5：開不開存檔，stats.reviewers 的順序與並列重複的歸
   assert.deepEqual(on.stats.reviewers.map((x) => x.lens), off.stats.reviewers.map((x) => x.lens))
   const lensOf = (o) => o.findings.find((f) => f.title === 'same').lens
   assert.equal(lensOf(on), lensOf(off))
+})
+
+test('#103 r6：symlink 的目標若有他人可寫入的上層目錄就 DISABLED（相對目標與 .. 也一樣）', async () => {
+  const home = tmpHome()
+  mkdirSync(join(home, 'open', 'a', 'b'), { recursive: true }); chmodSync(join(home, 'open'), 0o777)
+  spawnSync('ln', ['-s', join(home, 'open', 'a', 'b'), join(home, 'link')])
+  spawnSync('ln', ['-s', 'open/a/b', join(home, 'rel')])
+  mkdirSync(join(home, 'safe'))
+  for (const dir of [join(home, 'link', 'ck'), join(home, 'rel', 'ck'), join(home, 'safe', '..', 'link', 'ck')]) {
+    const r = await promptsFor({ ...BASE, checkpointDir: dir })
+    assert.match(sh(readerOf(r.seen.get('review:architecture')), home).out, /PAI_CHECKPOINT DISABLED .*writable by other users/, dir)
+  }
+  assert.deepEqual(readdirSync(join(home, 'open', 'a', 'b')), [])
+  chmodSync(join(home, 'open'), 0o755)
+  const ok = await promptsFor({ ...BASE, checkpointDir: join(home, 'link', 'ck') })
+  assert.match(sh(readerOf(ok.seen.get('review:architecture')), home).out, /PAI_CHECKPOINT FRESH/)
+  rmSync(home, { recursive: true, force: true })
+})
+
+test('#103 r6：checkpoint 目錄放在被審目錄裡、或目錄裡有大型 node_modules，都還能接回', async () => {
+  const home = tmpHome()
+  const repo = join(home, 'repo'); mkdirSync(join(repo, 'src'), { recursive: true })
+  writeFileSync(join(repo, 'src', 'a.js'), 'ok()\n')
+  spawnSync('python3', ['-c', 'import os,sys\nd=sys.argv[1]\nos.makedirs(d)\nfor i in range(20500): open(os.path.join(d,"f%d"%i),"w").close()', join(repo, 'node_modules', 'big')])
+  const r = await promptsFor({ profile: 'code', file: repo, codexEnabled: false, checkpointDir: join(repo, '.pai-ckpt'), checkpointRun: 'r1' })
+  const p = r.seen.get('review:architecture')
+  const out = sh(readerOf(p), home).out
+  assert.match(out, /PAI_CHECKPOINT FRESH/, out)
+  const file = out.match(/PAI_CHECKPOINT FILE (.+)/)[1].trim()
+  const rec = fenced(p, "<<'PAI_EOF_")
+  assert.match(sh(rec, home).out, /recorded/)
+  sh(readerOf(r.seen.get('checkpoint-init')), home)
+  assert.match(sh(readerOf(p), home).out, /PAI_CHECKPOINT RESUME/, 'checkpoint 目錄自己的檔讓紀錄失效')
+  assert.ok(existsSync(file))
+  rmSync(home, { recursive: true, force: true })
+})
+
+test('#103 r6：init 先檢查目錄再比對 base64，目錄不能用時回 ERROR，不被 MISMATCH 蓋掉', async () => {
+  const home = tmpHome()
+  const ww = join(home, 'shared'); mkdirSync(ww); chmodSync(ww, 0o777)
+  const r = await promptsFor({ ...BASE, checkpointDir: join(ww, 'ck') })
+  const broken = readerOf(r.seen.get('checkpoint-init')).replace(/B64 = """\n[A-Za-z0-9+/=]/, 'B64 = """\n*')
+  assert.match(sh(broken, home).out, /PAI_ARGS ERROR .*writable by other users/)
+  chmodSync(ww, 0o755)
+  rmSync(home, { recursive: true, force: true })
+})
+
+test('#103 r6：checkpoint 只收 true／false；接回的席次列在 stats.checkpoint.resumedSeats', async () => {
+  for (const v of ['false', 0, null]) await assert.rejects(runEnsemble({ ...BASE, checkpoint: v }, async () => ({ findings: [] })), /invalid checkpoint/)
+  const reply = (l) => (l === 'review:security' ? { findings: [], checkpointState: 'RESUME' } : l === 'checkpoint-init' ? { saved: true } : { findings: [], checkpointState: 'FRESH' })
+  const on = await promptsFor(BASE, reply)
+  assert.deepEqual(on.out.stats.checkpoint.resumedSeats, ['review:security'])
+  assert.ok(on.opts.get('review:architecture').schema.properties.checkpointState, '開啟時 schema 沒有 checkpointState')
+  const off = await promptsFor({ ...BASE, checkpoint: false })
+  assert.ok(!off.opts.get('review:architecture').schema.properties.checkpointState, '關閉時 schema 不該變')
+})
+
+test('#103 r6：codex 的 DISABLED 規則也停掉 step 1 的紀錄與 step 3 的 done；紀錄命令環境失敗時停止存檔', async () => {
+  const r = await promptsFor({ ...BASE, codexEnabled: true, codexCallPath: '/bin/codex-call' })
+  assert.match(r.seen.get('codex'), /skip every checkpoint step — this one, the record command in step 1 and the done command in step 3/)
+  assert.match(r.seen.get('review:architecture'), /Any other failure \(no python3, a permission error\) means checkpointing stopped working/)
 })
 
 // ── runner ── 新案請加在這條線之上；迴圈之後註冊的 test() 不會執行。
