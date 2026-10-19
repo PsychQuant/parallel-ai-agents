@@ -132,7 +132,8 @@ PR 文字固定是 `ORACLE-PR-TITLE-MARKER`：算術展開（`$(( PR_TITLE ))` �
       test/oracle.py --selftest-severity         `select_most_severe` 的單元測試
       test/oracle.py --selftest-aud              `aud_violations` 的單元測試（記錄編碼、init／fin、損毀記錄；R48）
       環境變數 `ORACLE_LINT=<path>` 換掉被對帳的 lint（只給突變測試用：量「神諭抓不抓得到某個 lint 突變」）。
-**已知限制（R50 第五輪 L 組；(1) 是誤報、(2) 是『量不到』、(3) 是效能、(4) 是 fail-loud 地當掉，(5)(6) 是**漏報**——神諭判『一致』而 lint 放行的 step 真的會外流）**：(1) 宣告 step 的差分比的是兩次執行的可觀察結果，所以宣告 step 的輸出必須是確定的——輸出含 `$$`、`$RANDOM`、`$(date +%s%N)`、`$(mktemp -u)` 的宣告 step 會被判『不一致：繞過』（rc=1，誤報；K4 只正規化了路徑；macOS 上自 R54 起私有目錄在 `/tmp`〔名字隨機、每次不同〕，宣告 step 印 `ls /tmp` 的裸名在兩次執行間不同：沒有印出 PR 文字時判『量不到』（`32d45ff` 判『一致』），同一個 step 也印出 PR 文字時判『不一致：繞過』（rc=1；R56 協調者兩種都重現）。刪掉 `/tmp` 底下東西的 step（`rm -rf /tmp/o*` 之類）連神諭的私有目錄一起刪，pipefail 探針與哨兵檔因此丟掉，判『量不到（pipefail 探針被換掉…）』〔協調者重現〕或『量不到（儀器不可信）』rc=1〔R55 regression 的報告，沒有重現——不敢在真的 `/tmp` 上跑 `rm -rf /tmp/*`〕。同時跑的兩個神諭共用 `/tmp`，彼此看得到對方的私有目錄（`32d45ff` 在 `TMPDIR` 指到 `/tmp` 的環境本來就如此；R54 起 macOS 也是）；文字被截斷在路徑中間時，被截斷的 `echo M >>/tmp/oab1` 留下前綴名的殘檔，那個名字若被預先放了符號連結，這次的寫入會讓別的檔案靜默多一行標記；哨兵名是隨機的，單靠預先放置猜不到，要把符號連結指到這次的哨兵檔得能即時看到 `/tmp`，那時判定才從『一致』翻成『不一致：繞過』（fail-loud，不是漏報；R55 security／regression 提出，R57 security 把範圍縮小）。**R58 起另一類誤報**：YAML `env:` 裡值是非字面、非 `GH_SAFE_EXPRS`、但其實不受 PR 控制的運算式（`secrets.*`、`github.repository`、`runner.os`、`matrix.*`、`env.*`、`github.actor`）一律被當成 PR 可控並注入 payload，被 `bash -c "echo $KEY"` 這類寫法再求值時判『不一致：繞過（注入）』（fail-loud 的誤報；R58 A2 實測 8 格；全集 fixture 沒有這個形狀，所以逐 step 判定不變）。）；(2) 儀器的每命令開銷（DEBUG trap）讓約一萬個以上的迴圈命令在 5 秒內跑不完，判『量不到（逾時 5s）』、rc=0（步驟本身 0.1 秒內可完成；負載高時門檻更低）；(3) `yaml_declaration` 的正規式與 `_heredoc_delim_at` 對極端輸入（3 萬個空白、2 萬個運算式的 heredoc）是二次方（幾秒到幾十秒），沒有修；(4) fixture 層的輸入錯誤（YAML 損毀編碼、孤立代理字元、1.5 MB 的環境變數值、不存在的檔）fail-loud 地以 traceback 結束，不是判定；(5) **`yaml_declaration` 的範圍歸屬（R54 起列入；三棵樹判定相同，只在預設模式有實例，#96）**：step 範圍尾端、`env:` 值的行尾、job 層最後一個鍵（`timeout-minutes: 5  # LOG-FILTER: …`）、下一個 job 的鍵行尾的 `# LOG-FILTER:` 註解，神諭算成這個 step 的宣告、lint 不算，**真外流因此被判『一致』（漏報）**——縮排比 dash 深只是『尾端註解不屬於 step』的代理；(6) **神諭的 runner 模型比真 runner 窄（#97）**：見上面 PATH 那一段——裸 `python3 -c` 的 stub、`PATH` 以外的工具、非 shell 求值者、在程式內轉換 PR 文字的求值者（把文字截短、換掉斜線、大小寫、編碼；各情境的最短 payload 字數見 `INJECT_PAYLOADS` 上方的〈量過的邊界〉表——保留 fd：命令位置 31、算術下標 43；關 fd ∧ 保留環境：44、54；關 fd ∧ 清環境：44、56；關 fd ∧ 清環境 ∧ 換掉斜線：沒有任何一組命中）、依賴 runner 環境的命令（repo 內的腳本、`sudo`：命令沒有被執行或行為不同，判『一致』不等於沒有外流）——這些讓每組 payload 都不命中，判『一致』，是漏報。**對 `8b45659` 與 `5b5a46d` 兩棵舊樹，單調性是字面的**（R56 起；R54 寫成『相對 `5b5a46d` 另有一個 2 字的窗』，實際有三個前綴各一個窗，另有『換斜線 ∧ 關 fd ∧ 保留環境』的不限長度格，R55 requirements／regression／DA）。
+**已知限制（R50 第五輪 L 組；(1) 是誤報、(2) 是『量不到』、(3) 是效能、(4) 是 fail-loud 地當掉，(5)(6)(7) 是**漏報**——神諭判『一致』而 lint 放行的 step 真的會外流）**：(1) 宣告 step 的差分比的是兩次執行的可觀察結果，所以宣告 step 的輸出必須是確定的——輸出含 `$$`、`$RANDOM`、`$(date +%s%N)`、`$(mktemp -u)` 的宣告 step 會被判『不一致：繞過』（rc=1，誤報；K4 只正規化了路徑；macOS 上自 R54 起私有目錄在 `/tmp`〔名字隨機、每次不同〕，宣告 step 印 `ls /tmp` 的裸名在兩次執行間不同：沒有印出 PR 文字時判『量不到』（`32d45ff` 判『一致』），同一個 step 也印出 PR 文字時判『不一致：繞過』（rc=1；R56 協調者兩種都重現）。刪掉 `/tmp` 底下東西的 step（`rm -rf /tmp/o*` 之類）連神諭的私有目錄一起刪，pipefail 探針與哨兵檔因此丟掉，判『量不到（pipefail 探針被換掉…）』〔協調者重現〕或『量不到（儀器不可信）』rc=1〔R55 regression 的報告，沒有重現——不敢在真的 `/tmp` 上跑 `rm -rf /tmp/*`〕。同時跑的兩個神諭共用 `/tmp`，彼此看得到對方的私有目錄（`32d45ff` 在 `TMPDIR` 指到 `/tmp` 的環境本來就如此；R54 起 macOS 也是）；文字被截斷在路徑中間時，被截斷的 `echo M >>/tmp/oab1` 留下前綴名的殘檔，那個名字若被預先放了符號連結，這次的寫入會讓別的檔案靜默多一行標記；哨兵名是隨機的，單靠預先放置猜不到，要把符號連結指到這次的哨兵檔得能即時看到 `/tmp`，那時判定才從『一致』翻成『不一致：繞過』（fail-loud，不是漏報；R55 security／regression 提出，R57 security 把範圍縮小）。**R58 起另一類誤報**：YAML `env:` 裡值是非字面、非 `GH_SAFE_EXPRS`、但其實不受 PR 控制的運算式（`secrets.*`、`github.repository`、`runner.os`、`matrix.*`、`env.*`、`github.actor`）一律被當成 PR 可控並注入 payload，被 `bash -c "echo $KEY"` 這類寫法再求值時判『不一致：繞過（注入）』（fail-loud 的誤報；R58 A2 實測 8 格；全集 fixture 沒有這個形狀，所以逐 step 判定不變）。）；(2) 儀器的每命令開銷（DEBUG trap）讓約一萬個以上的迴圈命令在 5 秒內跑不完，判『量不到（逾時 5s）』、rc=0（步驟本身 0.1 秒內可完成；負載高時門檻更低）；(3) `yaml_declaration` 的正規式與 `_heredoc_delim_at` 對極端輸入（3 萬個空白、2 萬個運算式的 heredoc）是二次方（幾秒到幾十秒），沒有修；(4) fixture 層的輸入錯誤（YAML 損毀編碼、孤立代理字元、1.5 MB 的環境變數值、不存在的檔）fail-loud 地以 traceback 結束，不是判定；(5) **`yaml_declaration` 的範圍歸屬（R54 起列入；三棵樹判定相同，只在預設模式有實例，#96）**：step 範圍尾端、`env:` 值的行尾、job 層最後一個鍵（`timeout-minutes: 5  # LOG-FILTER: …`）、下一個 job 的鍵行尾的 `# LOG-FILTER:` 註解，神諭算成這個 step 的宣告、lint 不算，**真外流因此被判『一致』（漏報）**——縮排比 dash 深只是『尾端註解不屬於 step』的代理；(6) **神諭的 runner 模型比真 runner 窄（#97）**：見上面 PATH 那一段——裸 `python3 -c` 的 stub、`PATH` 以外的工具、非 shell 求值者、在程式內轉換 PR 文字的求值者（把文字截短、換掉斜線、大小寫、編碼；各情境的最短 payload 字數見 `INJECT_PAYLOADS` 上方的〈量過的邊界〉表——保留 fd：命令位置 31、算術下標 43；關 fd ∧ 保留環境：44、54；關 fd ∧ 清環境：44、56；關 fd ∧ 清環境 ∧ 換掉斜線：沒有任何一組命中）、依賴 runner 環境的命令（repo 內的腳本、`sudo`：命令沒有被執行或行為不同，判『一致』不等於沒有外流）——這些讓每組 payload 都不命中，判『一致』，是漏報。**對 `8b45659` 與 `5b5a46d` 兩棵舊樹，單調性是字面的**（R56 起；R54 寫成『相對 `5b5a46d` 另有一個 2 字的窗』，實際有三個前綴各一個窗，另有『換斜線 ∧ 關 fd ∧ 保留環境』的不限長度格，R55 requirements／regression／DA）。**R60 起單調性由構造保證**（R59 的兩個 blocking 都是『新設定取代了舊設定』）：舊樹用過的每個注入設定——只有 `PR_TITLE`／`PR_BODY` 拿 payload（`legacy`）、`ORACLE_INJECT` 一律指絕對路徑（`cwd-abs`）、哨兵放 cwd 或 `<priv>/i`——在新樹裡各是一次獨立的執行，新設定（所有鍵同時、逐鍵）只新增，不取代。
+(7) **注入探針沒有涵蓋的兩個入口（所有樹相同，R59 security 提出、DA 確認不是回歸；R60 揭露，沒有修）**：(a) `PS4` 在 `_OWN_ENV` 裡，YAML `env: PS4: ${{ …title }}` 加 `set -o pipefail` 與 `{ /bin/bash -xc true; } 2>&1 | python3 scripts/neutralise.py`（`--strict` 放行；單獨的 `{ /bin/bash -xc true; }` 沒有接 neutralise，lint 判 RULE-red）時 bash 的 xtrace 會執行 `PS4` 裡的命令替換；神諭把 `PS4` 一律蓋成自己的 `PS4_MARK`，而且這個 step 的 run 文字沒有 `$`、注入探針根本不跑，所以判『一致』——兩個入口各自都足以讓它判『一致』；`#90` 寫的『`--strict` 本來就擋 `-x`／`set -x`』對放在過濾群組 `{ …; } 2>&1 | …` 之內的子行程 `bash -x` 不成立（群組外的子 `bash -x` 照樣被擋）；(b) 注入探針只在 run 文字含 `$` 時才跑（`"$" in run0`），經環境隱含讀取 PR 可控鍵、run 文字裡沒有 `$` 的 step（`{ /bin/bash -xc true; }`、`git` 讀 `GIT_SSH_COMMAND` 這一類）永遠不被探針探測。兩者都是『聯集裡沒有任何樹命中的格子』，不是退步；補 (a) 要同時動 `_OWN_ENV` 與 `$` 閘門，補 (b) 單動 `$` 閘門就夠，兩者都要再改對應的 fixture 判定，留給有明確需要時再做。
 退出碼：神諭用的 bash 不在 lint 檔頭 `# ORACLE-BASH-SUPPORTED:` 的集合裡 → 1（`bash_supported`，第 13 列）；神諭與 lint 的
 `GH_SAFE_EXPRS` 不同步 → 載入時具名退出；有 `KNOWN_DISAGREE` 之外的不一致（含方向或雜湊不符的條目）→ 1；`KNOWN_DISAGREE` 裡的項目變成一致（理由不再成立）→ 1；
 已知類別的歸類數與檔頭宣告數不相等（任一方向）→ 1；must-fail 探針沒有以宣告的理由失敗 → 1；不給檔案參數執行整個 fixture 集時，已知類別總數／must-fail 探針總數與寫死常數 `FIXTURE_CLASS_TOTALS`／`FIXTURE_MUSTFAIL_TOTAL` 不符 → 1；否則 0。
@@ -342,16 +343,16 @@ INJECT_MARKER = "ORACLE-INJECT-MARKER"
 #   · 文字被截斷的長度／被改寫（換斜線、`IFS=` 之後）  ：injection-transform-matrix.yml、injection-private-path-length.yml、injection-5b5a46d-wins.yml
 #   · 求值者可寫的範圍（`/tmp`、cwd）                  ：injection-fs-restricted.yml（macOS 真沙箱：拒寫 `/private/tmp`、只准寫 cwd、連新檔都不准建、拒寫 cwd 而 `/tmp` 可寫）、injection-priv-sentinel-readonly.yml（可攜，`chmod 0444` 模擬：私有哨兵唯讀、cwd 哨兵唯讀、cwd 也唯讀）
 #   · 被注入的環境變數鍵（不只 `PR_TITLE`、`PR_BODY`）  ：injection-env-key-names.yml
-#   · shell 方言與脈絡（dash、bash 3.2、受限 shell；命令位置、算術、`-v`）：injection-transport-matrix.yml、injection-transform-matrix.yml、injection-sentinel-dash-fd-only.yml
-# **沒有探針的維度**（未實跑或不在神諭的模型裡）：求值者的 uid 或 mount namespace（沒有 sudo）、`/tmp` 之外的其他唯讀掛載、非 shell 求值者（#97）、step 的 `with:` 輸入（`run:` step 沒有）。**三個哨兵位置同時看不到的格子**（R58 宣稱查核 B、C 組以 `TMPDIR=/tmp` 等實測；不修，列為已知限制）：(a) 步驟 cwd 在 `/tmp` 底下（`TMPDIR=/tmp`，或 `TMPDIR` 未設的 Linux）而求值者寫不到 `/tmp`——SB1、SB3、SB5、SB6 判『一致』，`5b5a46d` 也一樣；(b)〔**已補，不再是盲格**〕`TMPDIR` 含空白（絕對路徑不加引號展開會被切開，`_env_expansion_ok`；`ecb77d9` 的 (b) 把它列在這裡，是錯的：`ecb77d9` 退回 `<priv>/i`，`5b5a46d` 在 SB1、SB2、SB5 判繞過、`ecb77d9` 判『一致』；對外文字的查核逐格重跑才抓到）——加引號的 E 組 payload（`5b5a46d` 的 `echo M >> "$ORACLE_INJECT"`）一律用絕對路徑，不加引號的改用相對於步驟 cwd 的路徑（stderr 警告一行），SB1～SB8 在含空白的 `TMPDIR` 下 8/8；殘餘：求值者先 `cd` 到別處再求值 ∧ 不加引號的 payload ∧ 含空白的 `TMPDIR` 時，相對路徑 ENOENT 寫不進去（`5b5a46d` 的不加引號 E 組同樣寫不進去，不是退步）；(c) cwd 與 `/tmp` 都寫不到而 fd 又關了；(d) 寫不進 cwd 底下的隱藏目錄（沙箱 `(deny file-write* (regex #"/[.][^/]+/"))`）又寫不到 `/tmp`、fd 關了，或求值者設了 `ulimit -f 0`（每個檔案哨兵都寫不進去）——R58 A2 的 N5、N6，四棵樹（`8b45659`、`5b5a46d`、`6490b57`、R58）都判『一致』。`steps.*.outputs` 等其他非字面運算式經 `env:` 進來時與 `github.event.*` 同樣被換成標記並注入（R58 F2），沒有專屬探針。
-# **不在這張表上的**（已知限制，L1 求值者，lint 檔頭明文不保證）：求值者在程式內對 PR 文字做**轉換**讓每一組都不命中——換掉斜線 ∧ 關 fd ∧ 清環境、大小寫轉換（`${0,,}`）、編碼、把文字截短。有限的 payload 集合補不完這一族，所以只量代表形狀。
+#   · shell 方言與脈絡（dash、受限 shell；命令位置、算術）：injection-transport-matrix.yml、injection-transform-matrix.yml、injection-sentinel-dash-fd-only.yml；`-v` 脈絡：injection-5b5a46d-wins.yml（V57／V58／N63／N64）；bash 3.2 沒有專屬格（macOS 的 `/bin/bash` 剛好是 3.2，是附帶）；POSIX 模式的 shell／`IFS` 不含路徑字元的 bash 在含空白的 `TMPDIR` 下：injection-posix-spaced-tmpdir.yml（R60，可攜版）
+# **沒有探針的維度**（未實跑或不在神諭的模型裡）：求值者的 uid 或 mount namespace（沒有 sudo）、`/tmp` 之外的其他唯讀掛載、非 shell 求值者（#97）、step 的 `with:` 輸入（`run:` step 沒有）。**三個哨兵位置同時看不到的格子**（R58 宣稱查核 B 組以 `TMPDIR=/tmp` 實測〔C 組重現的是 SB7、SB8，沒有 `TMPDIR=/tmp` 的紀錄〕；(a)(c)(d) 不修、列為已知限制，(b) 已補）：(a) 步驟 cwd 在 `/tmp` 底下（`TMPDIR=/tmp`，或 `TMPDIR` 未設的 Linux）而求值者寫不到 `/tmp`——SB1、SB3、SB5、SB6 判『一致』，`5b5a46d` 也一樣；(b)〔**已補，不再是盲格**〕`TMPDIR` 含空白（絕對路徑不加引號展開會被切開，`_env_expansion_ok`；`ecb77d9` 的 (b) 把它列在這裡，是錯的：`ecb77d9` 退回 `<priv>/i`，`5b5a46d` 在 SB1、SB2、SB5 判繞過、`ecb77d9` 判『一致』；對外文字的查核逐格重跑才抓到）——加引號的 E 組 payload（`5b5a46d` 的 `echo M >> "$ORACLE_INJECT"`）一律用絕對路徑，不加引號的改用相對於步驟 cwd 的路徑（stderr 警告一行），SB1～SB8 在含空白的 `TMPDIR` 下 8/8；**R60（R59 第 13 格）**：前一版另寫『求值者先 `cd` 到別處再求值 ∧ 不加引號的 payload ∧ 含空白的 `TMPDIR` 時，相對路徑 ENOENT 寫不進去，`5b5a46d` 的不加引號 E 組同樣寫不進去，不是退步』——只對一般模式的 bash 成立：POSIX 模式的 shell（`bash --posix`、macOS 的 `/bin/sh`、dash、zsh〔預設不做字詞拆分〕）與 `IFS` 不含路徑中任何字元的 bash（例如 `IFS=:`；`IFS=/` 仍會切開）不切開重導向的目標詞，`5b5a46d` 的絕對路徑寫得進去，R58 判『一致』、`5b5a46d` 判繞過。現在暫存目錄含空白時，不加引號的 E 組在相對路徑之外**另試一次絕對路徑**（`cwd-abs`，`_inject_runs(spaced=True)`），`injection-posix-spaced-tmpdir.yml` 的 PX1～PX3 釘住；(c) cwd 與 `/tmp` 都寫不到而 fd 又關了；(d) 寫不進 cwd 底下的隱藏目錄（沙箱 `(deny file-write* (regex #"/[.][^/]+/"))`）又寫不到 `/tmp`、fd 關了，或求值者設了 `ulimit -f 0`（每個檔案哨兵都寫不進去）——R58 A2 的 N5、N6，四棵樹（`8b45659`、`5b5a46d`、`6490b57`、R58）都判『一致』。`steps.*.outputs` 等其他非字面運算式經 `env:` 進來時與 `github.event.*` 同樣被換成標記並注入（R58 F2），沒有專屬探針。
+# **不在這張表上的**（已知限制，L1 求值者，lint 檔頭明文不保證）：求值者在程式內對 PR 文字做**轉換**讓每一組都不命中——換掉斜線 ∧ 關 fd ∧ 清環境、大小寫轉換（`${0,,}`）、編碼、把文字截到最短 payload 以下（各情境的邊界見下面〈量過的邊界〉）。有限的 payload 集合補不完這一族；〈量過的邊界〉的字數由 payload 長度算出（探針涵蓋其中幾格：injection-private-path-length、injection-5b5a46d-wins、injection-transform-matrix），『換斜線 ∧ 關 fd ∧ 清環境』與 `${0,,}` 沒有探針格，所以只量代表形狀。
 # **量過的邊界**（最短 payload 的字數；文字被截到比它少就漏。私有路徑 `/tmp/oXXXXXXXX/i` 是 16 字，由 `--selftest-aud` 量實際建出的目錄）：
 #   · 保留 fd                          ：命令位置 31（R）、算術下標 43（S）；
 #   · 關 fd ∧ 保留環境                 ：命令位置 44（Pc）、算術下標 54（E）；
 #   · 關 fd ∧ 清環境                   ：命令位置 44（Pc）、算術下標 56（P）；
 #   · 關 fd ∧ 保留環境 ∧ 換掉斜線      ：命令位置 45（E 的程式碼行）、算術下標 54（E）；
 #   · 關 fd ∧ 清環境 ∧ 換掉斜線        ：沒有任何一組命中（P、Pc、D、Dc 含 `/`，E 要環境，S、R 要 fd）——L1 的核心形狀。
-# 代表例 `bash -c 'eval "${0,,}"'` 要 bash ≥ 4（macOS 的 `/bin/bash` 3.2 回 `bad substitution`、根本沒求值，那裡判『一致』是因為命令沒有執行，不是被偵測到安全；CI 的 ubuntu 是 bash 5，才是真正的『每一組都不命中』）。
+# 代表例 `bash -c 'eval "${0,,}"'` 要 bash ≥ 4（macOS 的 `/bin/bash` 3.2 回 `bad substitution`、根本沒求值，那裡判『一致』是因為命令沒有執行，不是被偵測到安全；CI 的 ubuntu 是 bash 5.2.21，`${0,,}` 在那裡會被求值（這一格沒有探針；本機 bash 5.3.15 實測每一組都不命中））。
 INJECT_PATH_TOKEN = "@@ORACLE-INJECT-PATH@@"
 # 神諭自己擁有的環境變數名字（R58 F2）：`run_script` 一律蓋過 YAML `env:` 的同名鍵，注入時也不把它們當成『PR 可控的鍵』再蓋一次（通道檔的變數名由呼叫端另外排除）。
 _OWN_ENV = frozenset({"PATH", "HOME", "PS4", "PR_TITLE", "ORACLE_PRIV", "ORACLE_INJECT", "RUNNER_TEMP", "GITHUB_WORKSPACE"})
@@ -861,7 +862,7 @@ def pf_observation(recs):
 @functools.lru_cache(maxsize=None)
 def _warn_short_tmp_unavailable():
     """`/tmp` 不可寫時每個神諭行程只說一次（`lru_cache`；平行的神諭與 `mutation_check` 的每個子行程各說一次，R57 Codex 4；R56，R55 Codex 3／logic LOW）：退回預設 `TMPDIR` 之後私有路徑變長（macOS 約 60 字、`/tmp` 的 16 字），文字被截斷在 56／44 字的求值者面前，路徑 payload（P、Pc）就整段不被求值——
-    判『一致』的步驟可能其實是漏報。靜默降低覆蓋是這個神諭的老毛病（見〈已知限制〉），所以至少在 stderr 留一行；判定不變、rc 不變。"""
+    判『一致』的步驟可能其實是漏報。靜默降低覆蓋是這個神諭的老毛病（見〈已知限制〉），所以至少在 stderr 留一行；這一行只寫 stderr，不改判定與 rc。"""
     print("⚠ 神諭：/tmp 不可寫，私有目錄改放預設 TMPDIR（路徑較長）——文字被截斷的注入格（算術脈絡 56 字、命令位置 44 字）可能因此漏報而判『一致』", file=sys.stderr)
 
 
@@ -870,8 +871,8 @@ def _warn_cwd_sentinel_unavailable():
     """步驟 cwd 底下的哨兵絕對路徑含空白、tab 或換行（`TMPDIR` 含空白，`_env_expansion_ok`）時只說一次（R58 F1）：不加引號的 E 組 payload（`>>$ORACLE_INJECT`）的 `ORACLE_INJECT` 改成**相對於步驟 cwd** 的路徑（`.orc-XXXXXXXX/inject`），
     加引號的那一組（`5b5a46d` 的 `echo M >> "$ORACLE_INJECT"`）一律用絕對路徑（`_cwd_env_value`），不退回 `<priv>/i`。R58 宣稱查核（張貼前）抓到：`ecb77d9` 在這種 `TMPDIR` 下停用 cwd 哨兵、退回 `<priv>/i`，少了 cwd 這個位置，`5b5a46d`（絕對路徑，帶引號的 E 組寫得進去）
     在 `injection-fs-restricted.yml` 的 SB1、SB2、SB5 判繞過、`ecb77d9` 判『一致』；第二次查核又抓到：第一個修法草稿一律改相對路徑，求值者先 `cd` 到別處再求值時（相對路徑 ENOENT）仍比 `5b5a46d` 退步。
-    殘餘：先 `cd` 再求值的**不加引號**payload 在含空白的 `TMPDIR` 下寫不進去（`5b5a46d` 的不加引號 E 組同樣寫不進去，不是退步）。判定不變、rc 不變；「一次」是每個神諭行程一次（`lru_cache`），不是整個平行批次一次。"""
-    print("⚠ 神諭：步驟 cwd 的路徑含空白、tab 或換行，不加引號的 E 組 payload 的 `ORACLE_INJECT` 改用相對於步驟 cwd 的路徑（加引號的一律用絕對路徑）", file=sys.stderr)
+    R60（R59 第 13 格）：相對路徑在求值者先 `cd` 到別處時 ENOENT，所以不加引號的 E 組**另試一次絕對路徑**（`inject_to="cwd-abs"`）——一般模式的 bash 對含空白的絕對路徑報 `ambiguous redirect`，但 POSIX 模式的 shell 與 `IFS` 不含路徑中任何字元的 bash（例如 `IFS=:`）不切開，`5b5a46d` 的設定（一律絕對路徑）因此整個保留在聯集裡。這一行警告只寫 stderr，不改判定與 rc（另試 `cwd-abs` 會把 PX1～PX3 由『一致』翻成『繞過』）；「一次」是每個神諭行程一次（`lru_cache`），不是整個平行批次一次。"""
+    print("⚠ 神諭：步驟 cwd 的路徑含空白、tab 或換行，不加引號的 E 組 payload 的 `ORACLE_INJECT` 改用相對於步驟 cwd 的路徑，另外再試一次絕對路徑（加引號的一律用絕對路徑）", file=sys.stderr)
 
 
 def _cwd_sentinel(d):
@@ -884,29 +885,58 @@ def _cwd_sentinel(d):
     return path, False
 
 
-def _inject_env_values(yaml_env, inject, skip=()):
-    """注入那一次要設的環境變數：`PR_TITLE`、`PR_BODY` 一律換成 payload；YAML `env:` 裡**代換之後**的值含 `PR_MARKER` 的鍵（神諭把非字面、非 `GH_SAFE_EXPRS` 的運算式一律當 PR 可控，不管它實際上是不是，如 `secrets.*`、`github.repository`）只換掉標記、保留前後綴。
-    神諭自己擁有的名字（`_OWN_ENV`）與 `skip`（通道檔的變數名）不動。R58 F2（R57 security M／DA M）：前一版的第二個集合看的是 `${{`，`_env_of` 早已把每個 `${{ }}` 代換掉（PR 可控的換成 `PR_MARKER`、字面常數換成值、安全運算式換成 `123`），值裡不再有 `${{`，永遠是空的。"""
-    out = {k: inject for k in ("PR_TITLE", "PR_BODY")}
-    for k, v in (yaml_env or {}).items():
-        if k not in out and k not in _OWN_ENV and k not in skip and PR_MARKER in str(v):
-            out[k] = str(v).replace(PR_MARKER, inject)
-    return out
+def _inject_env_values(yaml_env, inject, skip=(), mode="all"):
+    """注入那一次要設的環境變數。**單調性由構造保證（R60 G1，R59 regression／logic／DA）**：舊樹的設定、R58 的設定、逐鍵的設定各是一種 `mode`，`_inject_key_modes` 把它們全部列成**獨立的執行**，新設定只能新增、不能取代舊的：
+    · `"legacy"`：只有 `PR_TITLE`、`PR_BODY` 換成 payload，其他 PR 可控的鍵保持 `PR_MARKER`（`6490b57` 與更早的樹的行為；step 先驗證另一個 PR 欄位〔`head_ref`、第二個 `${{ …title }}` 鍵〕再執行 `PR_TITLE` 的閘門通過，sink 才執行）；
+    · `"all"`（預設，R58 F2）：`PR_TITLE`、`PR_BODY` 加上 YAML `env:` 裡**代換之後**的值含 `PR_MARKER` 的鍵（神諭把非字面、非 `GH_SAFE_EXPRS` 的運算式一律當 PR 可控，不管它實際上是不是，如 `secrets.*`、`github.repository`）都換成 payload（其他鍵只換掉標記、保留前後綴）——sink 在非 `PR_TITLE` 的鍵時才抓得到；
+      代價是閘門鍵也被污染，閘門把 payload 擋掉，sink 不執行（R59 的 sibling-gate：`all` 單獨使用不是 `legacy` 的超集）；
+    · `("one", k)`：只有鍵 `k` 的值裡的標記換成 payload（保留前後綴），`PR_TITLE`、`PR_BODY` 與其他鍵保持原值（sink 是非 `PR_TITLE` 的鍵、閘門是另一個鍵的 step；`PR_TITLE`、`PR_BODY` 不單獨成一格，所以『PR_BODY 當閘門、PR_TITLE 當 sink』這一對 R60 沒有涵蓋，見 CHANGELOG〈沒有處理的（R60）〉）。
+    神諭自己擁有的名字（`_OWN_ENV`）與 `skip`（通道檔的變數名）不動。R58 F2（R57 security M／DA M）：前一版的第二個集合看的是 `${{`，`_env_of` 早已把每個 `${{ }}` 代換掉（PR 可控的換成 `PR_MARKER`、字面常數換成值、安全運算式換成 `123`），值裡不再有 `${{`（字面常數本身含 `${{` 的極端寫法除外），實務上永遠是空的。"""
+    base = ("PR_TITLE", "PR_BODY")
+    extra = {k: str(v).replace(PR_MARKER, inject) for k, v in (yaml_env or {}).items() if k not in base and k not in _OWN_ENV and k not in skip and PR_MARKER in str(v)}
+    if mode == "legacy":
+        return {k: inject for k in base}
+    if mode == "all":
+        return {**{k: inject for k in base}, **extra}
+    if isinstance(mode, tuple) and mode[0] == "one" and mode[1] in extra:
+        return {mode[1]: extra[mode[1]]}
+    raise ValueError("未知的注入模式：%r" % (mode,))
 
 
-def _inject_runs():
-    """注入探針要跑的 (payload, `$ORACLE_INJECT` 的目標) 序列，依序試、命中就停。含 `$ORACLE_INJECT` 的 payload（E 組，#13–#16）試兩次：先 `"cwd"`（`5b5a46d` 的位置：步驟 cwd 底下預先建好的 `.orc-XXXX/inject`），
-    再 `"priv"`（R54～R57 的位置：`<priv>/i`）——求值者寫不進其中一個位置時另一個還在。其餘 payload 只試一次，目標寫 `"priv"`：它們不讀 `$ORACLE_INJECT`，而且這一次**不建** cwd 哨兵——步驟若檢查 cwd 底下有沒有點檔（`ls -A`、`set -- .[!.]*`、`find . -mindepth 1`），多出來的 `.orc-XXXX/` 會讓它提早結束，判定就比 `6490b57` 退步（R58 A2 的 M15）。報出來的 payload 編號不受目標影響。
-    R58 宣稱查核 C 組（第 1 列）：前一版只指 cwd，是把哨兵『搬走』而不是『加上』，求值者可寫 `/tmp`、不可寫 cwd 時比 `6490b57` 弱（`injection-fs-restricted.yml` 的 SB7、SB8，`injection-priv-sentinel-readonly.yml` 的 R5、R6）。"""
+def _inject_key_modes(yaml_env, skip=CHANNELS):
+    """這個 step 的注入探針要依序試的 `_inject_env_values` 模式（命中就停）。沒有額外的 PR 可控鍵時 `"all"` 與 `"legacy"` 完全相同，只試一次（絕大多數 step）；
+    有額外的鍵時依序是 `"all"`（R58 的行為，先試，報出來的 payload 編號與 R58 相同）、`"legacy"`（舊樹的行為）、每個額外鍵各一個 `("one", k)`。"""
+    extra = sorted(k for k, v in (yaml_env or {}).items() if k not in ("PR_TITLE", "PR_BODY") and k not in _OWN_ENV and k not in skip and PR_MARKER in str(v))
+    return ["all"] + (["legacy"] + [("one", k) for k in extra] if extra else [])
+
+
+def _tmpdir_spaced():
+    """神諭的暫存目錄（步驟 cwd 的上層）路徑，當成環境變數的值不加引號展開時會不會被切開（`_env_expansion_ok`）：會的話，不加引號的 E 組要另外試絕對路徑（`_inject_runs(spaced=True)`）。"""
+    return not _env_expansion_ok(tempfile.gettempdir())
+
+
+def _inject_runs(spaced=False):
+    """注入探針要跑的 (payload, `$ORACLE_INJECT` 的目標) 序列，依序試、命中就停。含 `$ORACLE_INJECT` 的 payload（E 組，#13–#16）先 `"cwd"`（`5b5a46d` 的位置：步驟 cwd 底下預先建好的 `.orc-XXXX/inject`），
+    再 `"priv"`（R56～R57 的位置：`$ORACLE_INJECT` 指到 `<priv>/i`——這個哨兵檔自 R52 起就有，R54 起在 `/tmp`）——求值者寫不進其中一個位置時另一個還在。**`spaced=True`（暫存目錄的路徑含空白、tab 或換行）時，不加引號的 E 組（#13–#15）在 `"cwd"` 與 `"priv"` 之間多一個 `"cwd-abs"`**
+    （R60 G2，R59 第 13 格）：`"cwd"` 在這種路徑下 `ORACLE_INJECT` 是相對於步驟 cwd 的路徑（一般模式的 bash 對含空白的絕對路徑報 `ambiguous redirect`），求值者先 `cd` 到別處就 ENOENT；
+    POSIX 模式的 shell（`bash --posix`、`/bin/sh`、dash、zsh〔預設不做字詞拆分〕）與 `IFS` 不含路徑中任何字元的 bash（例如 `IFS=:`）不切開重導向的目標詞，絕對路徑寫得進去——`5b5a46d` 的設定（一律絕對路徑）因此整個保留在聯集裡。
+    其餘 payload 只試一次，目標寫 `"priv"`：它們不讀 `$ORACLE_INJECT`，而且這一次**不建** cwd 哨兵——步驟若檢查 cwd 底下有沒有點檔（`ls -A`、`set -- .[!.]*`、`find . -mindepth 1`），多出來的 `.orc-XXXX/` 會讓它提早結束，判定就比 `6490b57` 退步（R58 A2 的 M15）。報出來的 payload 編號不受目標影響。
+    R58 宣稱查核 C 組（第 1 列）：前一版只指 cwd，是把哨兵『搬走』而不是『加上』，求值者可寫 `/tmp`、不可寫 cwd 時比 `6490b57` 弱（`injection-fs-restricted.yml` 的 SB7、SB8，`injection-priv-sentinel-readonly.yml` 的 R5、R6）。R59 的第 13 格是同一個形狀的第二次（R59 的 F2 是第三次，見 CHANGELOG「verify R59」條目）。"""
     for pl in INJECT_PAYLOADS:
-        for to in (("cwd", "priv") if "$ORACLE_INJECT" in pl else ("priv",)):
+        if "$ORACLE_INJECT" not in pl:
+            targets = ("priv",)
+        elif spaced and '"$ORACLE_INJECT"' not in pl:
+            targets = ("cwd", "cwd-abs", "priv")
+        else:
+            targets = ("cwd", "priv")
+        for to in targets:
             yield pl, to
 
 
 def _short_tmp():
     """私有目錄的上層：`/tmp`（可寫的話）。R54（#33 verify R53 logic M／security M）：路徑那一半的哨兵寫進 payload 裡的**字面路徑**，路徑愈長 payload 愈長，文字被截斷（`${title:0:100}`、`sys.argv[1][:60]`）時 payload 被截在
-    `$(` 中間而整段沒有被求值。放在預設的 `TMPDIR` 底下（macOS 約 48 字、私有路徑約 60 字）使 `PWD[…]` 形的路徑 payload（P）達 100 字、程式碼行 Pc 達 88 字；放在 `/tmp` 底下（`/tmp/oXXXXXXXX/i`，16 字）分別是 56 字與 44 字。順帶：`/tmp` 可寫時，判定不再隨 `TMPDIR` 的長度與字元而變。
-    `/tmp` 不可寫（罕見）就回 `None`，退回預設的 `TMPDIR`。文字被截斷在路徑中間時，被截斷的 `echo M >>/tmp/oab1` 會在 `/tmp` 留下一個前綴名的殘檔，內容是一行 `ORACLE-INJECT-MARKER`。**這不是『不改判定』**（R54 的說法，R55 security／regression 推翻）：該名字若被預先放了符號連結，這次的寫入會讓別的檔案靜默多一行標記；能即時看到 `/tmp` 的觀察者可以把它指到這次的哨兵檔（隨機的哨兵名單靠預先放置猜不到，R57 security 縮小範圍），判定從『一致』翻成『不一致：繞過』（fail-loud）；殘檔本身不改判定，累積在本機。**R55 security 指出 R54 的揭露少了四件事**（R56 補在這裡）：(a) 判定會被翻轉（上面）；(b) 實際打得到的前綴集中在 `mutation_check.py` 全輪（跑到『拿掉 R』『拿掉 P』這類靶時），最可預測的 `/tmp/o??` 只有約 1369 個名字，可以全部預先放好（R55 security 實測的是『拿掉 R』的突變體；另在 R54 上用可辨識前綴重跑 `oracle_selfcheck` 99 項，可歸因的殘檔是 0——R56 的 102 項沒有重量）；(c) 跨使用者的暴露是 R54 在 macOS 上**新開**的：`32d45ff` 在 macOS 的殘檔落在每個使用者自己的 `TMPDIR`（700），Linux 的 `TMPDIR` 未設時 R52 本來就在 `/tmp`，但預設 sysctl 會擋住跨 uid 的符號連結（未實測）；(d) 以 root 執行時，被截斷的前綴落在 `/`（Pc：`/t`、`/tm`；Dc：`/d`、`/de`、`/dev/f`，用的是 `>` 會截斷）——root 本來就不支援，但前一版說殘檔只在 `/tmp`。**不改路徑形狀的消除方法**（R55 security 提出，R56 沒有採用，留給使用者決定）：每次 `mkdtemp` 之後先 `lstat` 那 8 個前綴名，有任何一個已存在就重抽，跑完再清掉自己留下的、內容只有標記的一般檔案。`/tmp` 是共用目錄：殘檔由神諭自己留下，`mutation_check.py` 跑到『拿掉 R』『拿掉 P』這類靶時也會留下，會累積在本機；前綴愈短愈好猜（`/tmp/o` 是固定名、`/tmp/o?` 只有約 37 個名字），名字後半隨機只對較長的前綴成立。"""
+    `$(` 中間而整段沒有被求值。放在預設的 `TMPDIR` 底下（macOS 約 48 字、私有路徑約 60 字）使 `PWD[…]` 形的路徑 payload（P）達 100 字、程式碼行 Pc 達 88 字；放在 `/tmp` 底下（`/tmp/oXXXXXXXX/i`，16 字）分別是 56 字與 44 字。順帶：`/tmp` 可寫時，私有路徑的長度與字元不再隨 `TMPDIR` 而變（P、Pc 的字數固定）；但 R58 起步驟 cwd 與其下的 cwd 哨兵仍在 `TMPDIR` 底下，`TMPDIR` 含空白或等於 `/tmp` 時部分格子的判定會變（PX4、SB1…）。
+    `/tmp` 不可寫（罕見）就回 `None`，退回預設的 `TMPDIR`。文字被截斷在路徑中間時，被截斷的 `echo M >>/tmp/oab1` 會在 `/tmp` 留下一個前綴名的殘檔，內容是一行 `ORACLE-INJECT-MARKER`。**這不是『不改判定』**（R54 的說法，R55 security／regression 推翻）：該名字若被預先放了符號連結，這次的寫入會讓別的檔案靜默多一行標記；能即時看到 `/tmp` 的觀察者可以把它指到這次的哨兵檔（隨機的哨兵名單靠預先放置猜不到，R57 security 縮小範圍），判定從『一致』翻成『不一致：繞過』（fail-loud）；殘檔本身不改判定，累積在本機。**R55 security 指出 R54 的揭露少了四件事**（R56 補在這裡）：(a) 判定會被翻轉（上面）；(b) 實際打得到的前綴集中在 `mutation_check.py` 全輪（跑到『拿掉 R』『拿掉 P』這類靶時），最可預測的 `/tmp/o??` 只有約 1369 個名字，可以全部預先放好（R55 security 實測的是『拿掉 R』的突變體；另在 R54 上用可辨識前綴重跑 `oracle_selfcheck` 99 項，可歸因的殘檔是 0——R56 的 102 項沒有重量）；(c) 跨使用者的暴露是 R54 在 macOS 上**新開**的：`32d45ff` 在 macOS 的殘檔落在每個使用者自己的 `TMPDIR`（700），Linux 的 `TMPDIR` 未設時 R52 本來就在 `/tmp`，但預設 sysctl 會擋住跨 uid 的符號連結（未實測）；(d) 以 root 執行時，被截斷的前綴落在 `/` 或 `/dev`（Pc：`/t`、`/tm`；Dc：`/d`、`/de`，以及落在 `/dev` 的 `/dev/f`；用的是 `>` 會截斷）——root 本來就不支援，但前一版說殘檔只在 `/tmp`。**不改路徑形狀的消除方法**（R55 security 提出，R56 沒有採用，留給使用者決定）：每次 `mkdtemp` 之後先 `lstat` 那 8 個前綴名，有任何一個已存在就重抽，跑完再清掉自己留下的、內容只有標記的一般檔案。`/tmp` 是共用目錄：殘檔由神諭自己留下，`mutation_check.py` 跑到『拿掉 R』『拿掉 P』這類靶時也會留下，會累積在本機；前綴愈短愈好猜（`/tmp/o` 是固定名、`/tmp/o?` 只有約 37 個名字），名字後半隨機只對較長的前綴成立。"""
     if os.path.isdir("/tmp") and os.access("/tmp", os.W_OK | os.X_OK):
         return "/tmp"
     _warn_short_tmp_unavailable()
@@ -919,20 +949,22 @@ def _inject_path_ok(path):
 
 
 def _env_expansion_ok(path):
-    """路徑當成**環境變數的值**不加引號展開（`>>$ORACLE_INJECT`）時會不會被切開：bash 對展開的結果做字詞拆分——預設的 IFS 只有空白、tab、換行——所以只有這三個字元會讓展開變成多個字詞（`ambiguous redirect`，R58 張貼前的查核）。
+    """路徑當成**環境變數的值**不加引號展開（`>>$ORACLE_INJECT`）時會不會被切開。**範圍：一般模式的 bash、預設的 `IFS`**——這種 shell 對展開的結果做字詞拆分，預設的 IFS 只有空白、tab、換行，所以只有這三個字元會讓展開變成多個字詞（`ambiguous redirect`，R58 張貼前的查核）。
+    **POSIX 模式的 shell（`bash --posix`、macOS 的 `/bin/sh`、dash、zsh〔預設不做字詞拆分〕）與 `IFS` 不含路徑中任何字元的 bash（例如 `IFS=:`；`IFS=/` 仍會切開）不切開重導向的目標詞**，含空白的絕對路徑照樣寫得進去（R59 第 13 格；bash 3.2.57、5.3.15 與 `/bin/sh`、dash 實測）：回傳 False 只代表『一般模式的 bash 寫不進去』，所以呼叫端對這種路徑**另外**試一次絕對路徑（`cwd-abs`），不是改用相對路徑取代。
     `$`、引號、反引號、反斜線、非 ASCII 空白（U+3000、NBSP）、`[` 在展開裡都無害（環境變數的值不會被再剖析），這與 `_inject_path_ok`（路徑**逐字**放進 payload 的文字，所以連 `$`、引號都要擋）不同；
     萬用字元 `*`、`?` 也不擋：哨兵檔預先建好、路徑含隨機的目錄名，展開只會比對到它自己（實測 bash 3.2 與 5.3；`TMPDIR` 裡真有同形的兄弟目錄時才會多比對到，這裡不處理）。
-    求值者若改了 `IFS`（例如 `IFS=/`）不在這個判斷裡；`5b5a46d` 的不加引號 E 組用絕對路徑，同樣受影響。"""
+    求值者自己改 `IFS` 成不含路徑字元的值（例如 `IFS=:`）的情形由 `cwd-abs` 那一次涵蓋（`injection-posix-spaced-tmpdir.yml` 的 PX3）；`IFS` 含 `/` 的一般模式 bash 對任何路徑都切開，沒有任何目標涵蓋。"""
     return bool(path) and not any(c in " \t\n" for c in path)
 
 
-def _cwd_env_value(path, abs_ok, payload, rel):
+def _cwd_env_value(path, abs_ok, payload, rel, force_abs=False):
     """cwd 哨兵的 `ORACLE_INJECT` 要設成什麼（R58 張貼前的兩次查核）：哨兵的**絕對路徑** `path`，或相對於步驟 cwd 的 `rel`（`.orc-XXXXXXXX/inject`）。
     · payload 加引號（`>> "$ORACLE_INJECT"`，`5b5a46d` 的第四個字串）：任何路徑都照樣寫得進去（引號內的展開不再剖析），所以**一律用絕對路徑**——求值者先 `cd` 到別處再求值時，相對路徑 ENOENT、寫不進去；
       第一個修法草稿（一律改相對路徑，未 commit）在這一格比 `5b5a46d` 退步；第二個草稿又多擋了 `"`、`$`、反引號、反斜線、換行，理由不成立（環境變數的值不會被再剖析），同樣退步；
     · payload 不加引號（`>>$ORACLE_INJECT`，E 組的前三個）：絕對路徑要 `abs_ok`（`_env_expansion_ok`：不含空白、tab、換行），否則用 `rel`——含空白的絕對路徑會 `ambiguous redirect`。
-    相對路徑的前提是求值者繼承步驟 cwd：先 `cd` 再求值的不加引號 payload 在含空白的 `TMPDIR` 下寫不進去（`5b5a46d` 同樣寫不進去，所以不是退步）。"""
-    if '"$ORACLE_INJECT"' in payload:
+    相對路徑的前提是求值者繼承步驟 cwd：求值者先 `cd` 到別處就 ENOENT，所以呼叫端對含空白的路徑另外試 `force_abs=True`（`inject_to="cwd-abs"`：含空白的絕對路徑照樣給；一般模式的 bash 寫不進去、POSIX 模式的 shell 與 `IFS` 不含空白的 bash 寫得進去，`5b5a46d` 的設定）。
+    R58 的版本寫『`5b5a46d` 同樣寫不進去，所以不是退步』——只對一般模式的 bash 成立（R59 第 13 格）。"""
+    if '"$ORACLE_INJECT"' in payload or force_abs:     # force_abs：`inject_to="cwd-abs"`——含空白的絕對路徑照樣給（POSIX 模式的 shell 不切開，`5b5a46d` 的設定；R60 G2）
         return path
     return path if abs_ok else rel
 
@@ -1113,7 +1145,7 @@ def _reap_group(pgid):
     return True
 
 
-def run_script(run, bash, stub_bin, yaml_env=None, extra=False, inject=None, inject_to="cwd"):
+def run_script(run, bash, stub_bin, yaml_env=None, extra=False, inject=None, inject_to="priv", inject_keys="all"):
     """跑一次 run 區塊，回傳 (verdict, observable, leaked, marker_lines)。
     verdict: 'piped' / 'called-unpiped' / 'not-invoked' / 'timeout'
     observable: 差分用的可觀察結果（rc, stdout, stderr, mark 內容）——逾時的那次不拿來差分。
@@ -1139,13 +1171,13 @@ def run_script(run, bash, stub_bin, yaml_env=None, extra=False, inject=None, inj
             # 那正是 R32 DA-6 抓到的缺陷（heredoc 會吞掉它）。
             fh.write(PRELUDE); fh.write(run); fh.write("\n")
         sent = os.path.join(priv, "i")
-        cwd_sent, cwd_sent_on, cwd_env = os.path.join(d, ".orc-xxxxxxxx", "inject"), False, None      # R58 F1：`5b5a46d` 的哨兵位置（步驟 cwd 底下的 `.orc-XXXXXXXX/inject`）；只在 `inject_to == "cwd"` 的那一次才建並導出，`more()` 與 fd 197、`<priv>/i` 取 OR
+        cwd_sent, cwd_sent_on, cwd_env = os.path.join(d, ".orc-xxxxxxxx", "inject"), False, None      # R58 F1：`5b5a46d` 的哨兵位置（步驟 cwd 底下的 `.orc-XXXXXXXX/inject`）；只在 `inject_to` 是 `"cwd"` 或 `"cwd-abs"` 的那幾次才建並導出（`"priv"` 那一次不建），`more()` 與 fd 197、`<priv>/i` 取 OR
         if inject is not None:
             if not _inject_path_ok(sent):
                 sys.exit("✗ 神諭的私有目錄路徑含 payload 不能不加引號放進去的字元：%r（換一個 TMPDIR）" % sent)
             open(sent, "w").close()
             inject = inject.replace(INJECT_PATH_TOKEN, sent)
-            if inject_to == "cwd":
+            if inject_to in ("cwd", "cwd-abs"):
                 _ph, abs_ok = _cwd_sentinel(d)
                 cwd_sent_on = True
                 # 預先建檔（`5b5a46d` 也是）：求值者只准改既有的檔、不准建新檔時（`sandbox-exec` 的 `(deny file-write-create)`、唯讀的 cwd），E 組的 `>>` 建不出來。
@@ -1154,30 +1186,30 @@ def run_script(run, bash, stub_bin, yaml_env=None, extra=False, inject=None, inj
                 cwd_sent = os.path.join(cwd_dir, "inject")
                 open(cwd_sent, "w").close()
                 # 絕對路徑不加引號展開會被切開（含空白、tab、換行）時，不加引號的 E 組改用相對路徑（求值者繼承步驟 cwd），加引號的一律用絕對路徑（`_cwd_env_value`）：TMPDIR 含空白時 `5b5a46d` 的帶引號 E 組寫得進去，退回 `<priv>/i` 或一律改相對路徑都會比它退步（R58 張貼前的兩次查核）
-                cwd_env = _cwd_env_value(cwd_sent, abs_ok, inject, os.path.join(os.path.basename(cwd_dir), "inject"))
+                cwd_env = _cwd_env_value(cwd_sent, abs_ok, inject, os.path.join(os.path.basename(cwd_dir), "inject"), force_abs=(inject_to == "cwd-abs"))
         env = dict(yaml_env or {})
-        # runner 一定會設、lint 的正面文法也信任的兩個變數（R42：`FL_TARGET_VARS`／`FL_GHVALUE_VARS`）。前一版不設，
+        # runner 一定會設、lint 的正面文法也信任的變數（R42：`FL_TARGET_VARS`＝`RUNNER_TEMP`；`FL_GHVALUE_VARS`＝`HOME`、`RUNNER_TEMP`、`GITHUB_WORKSPACE`；神諭 R42 新設的是其中的 `RUNNER_TEMP` 與 `GITHUB_WORKSPACE`，`HOME` 本來就設）。前一版不設，
         # `> "$RUNNER_TEMP/e"` 在神諭裡變成寫 `/e`、失敗，那一步做了什麼就量不到（`bypass-r42-ghenv` 的 ge-alias-var、ge-cat-file）。
         env.update({"PATH": stub_bin + ":/usr/bin:/bin", "ORACLE_PRIV": priv,
                     "PR_TITLE": PR_MARKER, "HOME": d, "PS4": PS4_MARK,
                     "RUNNER_TEMP": runner_temp, "GITHUB_WORKSPACE": d})
         env.update(chan)
         if inject is not None:
-            # R56（#33 verify R55 requirements M／DA M）：`5b5a46d` 的四個 payload 靠 `$ORACLE_INJECT` 指到哨兵檔——不含 `/`、短，**只有它們命中**的格子是『換斜線 ∧ 關 fd ∧ 保留環境』與『算術／`-v`／`-n -o -v` 脈絡 ∧ 關 fd ∧ 保留環境而文字被截到 54–64 字』（`injection-5b5a46d-wins.yml`）；保留環境、沒被截到 45 字以下、不是受限 shell 的其他格子它們多半也命中（只是別組先命中：逐組試、命中就停，報出來的是先試到的那一組）；清環境的格子它們不命中。
-            # R50 拿掉這個變數時的理由（「不讓步驟用名字摸到儀器」）對現行程式不成立：`ORACLE_PRIV`（私有目錄）本來就導出給每個 step，哨兵是 `$ORACLE_PRIV/i`（R58 起另有 cwd 底下的 `.orc-XXXX/inject`，步驟本來就看得到自己的 cwd），payload 文字本身也帶著字面路徑；
+            # R56（#33 verify R55 requirements M／DA M）：`5b5a46d` 的四個 payload 靠 `$ORACLE_INJECT` 指到哨兵檔——不含 `/`、短，**只有它們命中**的格子至少有三類：『換斜線 ∧ 關 fd ∧ 保留環境』與『算術／`-v`／`-n -o -v` 脈絡 ∧ 關 fd ∧ 保留環境而文字被截到 54–55／57–58／63–64 字——三個各自的窗，不是連續的 54–64』（`injection-5b5a46d-wins.yml`，R56 當時的範圍），以及 R58 起的『求值者寫不到 `/tmp` ∧ 關 fd ∧ 保留環境』（`injection-fs-restricted.yml` 的 SB1–SB3、SB5、SB6）；保留環境、沒被截到 44 字以下（算術脈絡 53 字以下、`-v` 56 字以下、`-n -o -v` 62 字以下）、不是受限 shell 的其他格子，E 組命中（只是別組先命中：逐組試、命中就停，報出來的是先試到的那一組）；清環境的格子它們不命中。
+            # R50 拿掉這個變數時的理由（「不讓步驟用名字摸到儀器」）對『步驟可達的檔案』不成立（對『名字可被文法內的指派弄瞎』仍成立，見下面的已知盲點）：`ORACLE_PRIV`（私有目錄）本來就導出給每個 step，哨兵是 `$ORACLE_PRIV/i`（R58 起另有 cwd 底下的 `.orc-XXXX/inject`，步驟本來就看得到自己的 cwd），P、Pc 兩組 payload 文字本身也帶著字面路徑；
             # 多導出一個指到這兩個檔之一的名字不增加步驟可達的檔案（但多了一個可被文法內的指派弄瞎的名字：`ORACLE_INJECT=/dev/null` 讓 E 組失效，見 `instrument-oracle-inject-assign-known-blind-spot.yml`）。只在注入探針那一次導出（一般執行的環境與 R54 相同）。
             # R58 宣稱查核 C 組（第 1 列）：`$ORACLE_INJECT` 只能指到一個檔，所以『搬走』不等於『加上』——前一版只指 cwd 底下的哨兵，求值者寫不進 cwd、寫得進 `/tmp` 時（`sandbox-exec` 拒寫 cwd，
-            # 或 `chmod 0444` 那個檔）比 `6490b57` 還弱。`inject_to` 讓呼叫端對含 `$ORACLE_INJECT` 的 payload 兩個目標各試一次（`_inject_runs`）：`"cwd"` 是 `5b5a46d` 的位置（建 `<cwd>/.orc-XXXXXXXX/inject` 並導出指到它）、`"priv"` 是 R54～R57 的位置（不建 cwd 哨兵）。
+            # 或 `chmod 0444` 那個檔）比 `6490b57` 還弱。`inject_to` 讓呼叫端對含 `$ORACLE_INJECT` 的 payload 依序試 `"cwd"`、`"priv"`（暫存目錄路徑含空白、tab 或換行時，不加引號的 #13–#15 在兩者之間多一個 `"cwd-abs"`）（`_inject_runs`）：`"cwd"` 是 `5b5a46d` 的位置（建 `<cwd>/.orc-XXXXXXXX/inject` 並導出指到它）、`"priv"` 是 R56～R57 的位置（`<priv>/i` 本身自 R54 起在 `/tmp`；R54、R55 沒有導出 `ORACLE_INJECT`；不建 cwd 哨兵）。
             env["ORACLE_INJECT"] = cwd_env if cwd_sent_on else sent
-            # R58 F2（#33 verify R57 security M／DA M）：原本寫成 `{"PR_TITLE", "PR_BODY"} | {k for k, v in yaml_env.items() if "${{" in str(v)}`，第二個集合永遠是空的——
+            # R58 F2（#33 verify R57 security M／DA M）：原本寫成 `{"PR_TITLE", "PR_BODY"} | {k for k, v in (yaml_env or {}).items() if "${{" in str(v)}`，第二個集合永遠是空的——
             # `_env_of` 已把每個 `${{ }}` 代換掉（PR 可控的換成 `PR_MARKER`），值裡早就沒有 `${{`（R44 的 `2835ead` 起；`env: TITLE: ${{ …title }}` 加 `bash -c "$TITLE"` 因此判『一致』，
-            # 鍵名換成 `PR_TITLE` 才判繞過；`injection-env-key-names.yml`）。現在看**代換之後**的值：含 `PR_MARKER` 的鍵一律當 PR 可控的（保守：非字面、非安全運算式都算，見〈已知限制〉(1) 的誤報），只換掉標記（保留前後綴），神諭自己擁有的名字不動。
-            env.update(_inject_env_values(yaml_env, inject, chan))
+            # 鍵名換成 `PR_TITLE` 才判繞過；`injection-env-key-names.yml`）。現在看**代換之後**的值：預設（`"all"`）模式下，含 `PR_MARKER` 的鍵一律當 PR 可控的（保守：非字面、非安全運算式都算，見〈已知限制〉(1) 的誤報；R60 另加 `legacy` 與逐鍵 `("one", k)` 兩種模式各跑一遍），其他鍵只換掉標記（保留前後綴），`PR_TITLE`、`PR_BODY` 整個換成 payload，神諭自己擁有的名字不動。
+            env.update(_inject_env_values(yaml_env, inject, chan, inject_keys))
         streams = _Streams()
         try:
             # stdin **一定要**是 /dev/null：繼承呼叫端的 stdin 會讓任何讀 stdin 的指令卡住，
             # 於是「量不到」變成隨呼叫環境而定的東西（R31 自查：同一個 fixture 在終端機下逾時、
-            # 在 pipe 下不逾時）。runner 的 step stdin 也不是終端機。步驟放進**自己的行程群組**（`start_new_session`）：收尾時整群殺，不留背景行程。
+            # 在 pipe 下不逾時）。runner 的 step stdin 也不是終端機。步驟放進**自己的行程群組**（`start_new_session`）：收尾時把行程群組整群殺掉（用 `setsid`／`set -m` 逃出群組的行程不在其內）。
             p = subprocess.Popen([bash, script], env=env, cwd=d, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                  pass_fds=streams.FDS, start_new_session=True)
         finally:
@@ -1998,6 +2030,28 @@ def selftest_aud():
             _warn_cwd_sentinel_unavailable.cache_clear()
         return (bool(hit), buf.getvalue().count("⚠"))
 
+    def spaced_tmpdir_posix_cd():
+        """`TMPDIR` 含空白 ∧ 求值者是 POSIX 模式的 bash ∧ 先 `cd /`（R60 G2，R59 第 13 格）：`inject_to="cwd"`（相對路徑）寫不進去、`"cwd-abs"`（絕對路徑，`5b5a46d` 的設定）寫得進去——POSIX 模式不切開重導向的目標詞。
+        回傳 (cwd 的那一次有沒有命中, cwd-abs 的那一次有沒有命中)。暫存目錄名字含空白，`tempfile.tempdir` 暫時指過去（同 `spaced_tmpdir_sentinel`）；警告輸出吞掉。"""
+        import io, contextlib
+        _warn_cwd_sentinel_unavailable.cache_clear()
+        base = tempfile.mkdtemp(prefix="orc sp ")
+        old = tempfile.tempdir
+        try:
+            tempfile.tempdir = base
+            e1 = next(pl for pl in INJECT_PAYLOADS if "$ORACLE_INJECT" in pl and '"$ORACLE_INJECT"' not in pl)
+            step = '/bin/bash --posix -c \'cd /; t=$0; (( t )) || :\' "$PR_TITLE"'
+            hits = []
+            for to in ("cwd", "cwd-abs"):
+                with _Scratch(prefix="oracle-") as sd, contextlib.redirect_stderr(io.StringIO()):
+                    sb = os.path.join(sd, "bin"); os.mkdir(sb)
+                    hits.append(bool(run_script(step, pick_bash(), sb, None, extra=True, inject=e1, inject_to=to)[4]["inject"]))
+        finally:
+            tempfile.tempdir = old
+            shutil.rmtree(base, ignore_errors=True)
+            _warn_cwd_sentinel_unavailable.cache_clear()
+        return tuple(hits)
+
     def run_stub(args, stdin=b""):
         """跑 STUB（神諭給步驟的假 `python3`），回傳 (rc, stderr)。"""
         with _Scratch() as d:
@@ -2072,6 +2126,21 @@ def selftest_aud():
          "不含標記的鍵、神諭自己擁有的名字（`PATH`）與通道檔變數不動",
          _inject_env_values({"TITLE": PR_MARKER, "X": "pre-" + PR_MARKER + "-post", "FIXED": "1.2.3", "PATH": PR_MARKER, "GITHUB_ENV": PR_MARKER}, "PAY", skip=("GITHUB_ENV",)),
          lambda r: r == {"PR_TITLE": "PAY", "PR_BODY": "PAY", "TITLE": "PAY", "X": "pre-PAY-post"}),
+        ("**注入設定的聯集由構造保證單調：`legacy`／`all`／逐鍵是三種獨立的設定**（R60 G1，R59 regression／logic／DA：R58 把同一個 payload 塞進每個 PR 可控鍵，閘門鍵也被污染，step 先驗證另一個 PR 欄位再執行 `PR_TITLE` 時 sink 不執行；`legacy`＝舊樹的設定，只有 `PR_TITLE`、`PR_BODY` 拿 payload）：`legacy` 只動這兩個鍵、`all` 再加上額外的鍵（保留前後綴）、`(\"one\", k)` 只動 `k`",
+         [_inject_env_values({"TITLE": PR_MARKER, "X": "pre-" + PR_MARKER + "-post", "FIXED": "1.2.3", "PATH": PR_MARKER, "GITHUB_ENV": PR_MARKER}, "PAY", skip=("GITHUB_ENV",), mode=m) for m in ("legacy", "all", ("one", "TITLE"), ("one", "X"))],
+         lambda L: L == [{"PR_TITLE": "PAY", "PR_BODY": "PAY"}, {"PR_TITLE": "PAY", "PR_BODY": "PAY", "TITLE": "PAY", "X": "pre-PAY-post"}, {"TITLE": "PAY"}, {"X": "pre-PAY-post"}]),
+        ("**每個 step 的注入設定清單**（`_inject_key_modes`）：沒有額外的 PR 可控鍵（或只有神諭自己的名字、通道檔變數、字面值）時只有 `all`（與 `legacy` 相同，不重複跑）；有額外的鍵時依序是 `all`（R58 的行為，報出來的 payload 編號不變）、`legacy`、每個額外鍵各一個 `(\"one\", k)`（鍵名排序）",
+         [_inject_key_modes({}), _inject_key_modes({"FIXED": "1.2.3", "PATH": PR_MARKER, "GITHUB_ENV": PR_MARKER}), _inject_key_modes({"B": PR_MARKER, "A": "x-" + PR_MARKER})],
+         lambda L: L == [["all"], ["all"], ["all", "legacy", ("one", "A"), ("one", "B")]]),
+        ("**`$ORACLE_INJECT` 的目標序列**（`_inject_runs`；R60 G2，R59 第 13 格）：暫存目錄含空白時，不加引號的 E 組（#13–#15）在 `cwd` 與 `priv` 之間多一個 `cwd-abs`（POSIX 模式的 shell 不切開重導向的目標詞，絕對路徑寫得進去——`5b5a46d` 的設定整個保留在聯集裡）；"
+         "加引號的 E 組（#16）與其他 payload 不受影響；暫存目錄單純時與 R58 相同。`cwd-abs` 才是含空白的絕對路徑：`_cwd_env_value(force_abs=True)`",
+         ([t for pl, t in _inject_runs(False) if pl == INJECT_PAYLOADS[12]], [t for pl, t in _inject_runs(True) if pl == INJECT_PAYLOADS[12]], [t for pl, t in _inject_runs(True) if '"$ORACLE_INJECT"' in pl],
+          [t for pl, t in _inject_runs(True) if "$ORACLE_INJECT" not in pl][:1], _cwd_env_value("/a b/x", False, "echo M >>$ORACLE_INJECT", "r/x", force_abs=True), _cwd_env_value("/a b/x", False, "echo M >>$ORACLE_INJECT", "r/x")),
+         lambda r: r == (["cwd", "priv"], ["cwd", "cwd-abs", "priv"], ["cwd", "priv"], ["priv"], "/a b/x", "r/x")),
+        ("**`run_script` 的 `inject_to` 預設是 `\"priv\"`、`inject_keys` 預設是 `\"all\"`**（R60，R59 logic LOW：`inject_to` 的預設值是死碼〔所有帶 `inject=` 的呼叫者都明傳〕、沒有網守；`inject_keys` 的預設 `\"all\"` 則有 `spaced_tmpdir_sentinel`／`spaced_tmpdir_posix_cd` 兩個呼叫者在用——日後只傳 `inject=` 的呼叫者會讓非 E 組的注入執行也建 cwd 哨兵，A2 的 M15 回來）",
+         [__import__("inspect").signature(run_script).parameters[k].default for k in ("inject_to", "inject_keys")], lambda r: r == ["priv", "all"]),
+        ("**POSIX 模式的求值者在含空白的 `TMPDIR` 下先 `cd` 再求值**（行為，R60 G2，R59 第 13 格）：`cwd`（相對路徑）寫不進去、`cwd-abs`（絕對路徑）寫得進去——R58 在含空白的路徑上對不加引號的 E 組用相對路徑（加引號的 E 組仍用絕對路徑），`5b5a46d` 一律用絕對路徑，求值者是 `bash --posix` 時 R58 判『一致』、`5b5a46d` 判繞過",
+         spaced_tmpdir_posix_cd(), lambda r: r == (False, True)),
         ("**步驟 cwd 底下的第三個哨兵**（R58 F1，R57 第 12 格）：路徑單純時可用、沒有警告；路徑含空白時絕對路徑不能用、警告恰好一次、`ORACLE_INJECT` 改用相對於步驟 cwd 的路徑（這裡只驗回傳值與警告；行為在下一組）",
          cwd_sentinel_cases(), lambda r: r == (("/tmp/ab/.orc-xxxxxxxx/inject", True, 0), ("/tmp/a b/.orc-xxxxxxxx/inject", False, 1), 1)),
         ("**`TMPDIR` 含空白時 cwd 哨兵照建照讀**（R58 張貼前查核：絕對路徑不能不加引號放進 payload 時，`ORACLE_INJECT` 改用相對於步驟 cwd 的路徑；退回 `<priv>/i` 的版本在 `injection-fs-restricted.yml` 的 SB1、SB2、SB5 比 `5b5a46d` 退步；SB3、SB6 兩者含空白時都判一致〔不加引號的 E 組遇到含空白的絕對路徑是 ambiguous redirect〕，相對路徑讓新樹在這兩格判繞過）："
@@ -2379,15 +2448,17 @@ def check_file(f, text, bash, stub_bin):
             # 宣告了 `# LOG-FILTER:` 而沒有觸發的 step 本來就不進正面文法（L3），探針不該把它報成未知繞過。
             timed = o == "timeout" and unm
             dist = verdict.startswith("量不到（儀器不可信")   # 哨兵與稽核無關：儀器不可信不關掉獨立的注入探針（R49 security／logic／Codex 同報）
-            # pipefail 探針被換掉（`__orc_want=x`、`$ORACLE_PRIV` 被動過）也與注入無關，同一個原則（R52，#33 verify R51 logic LOW：R50 只對 `dist` 開門，文法內的
-            # `__orc_want=x` 因此把注入繞過從 rc=1 降成 rc=0）。注入哨兵的 fd 那一半不經 `$ORACLE_PRIV`；路徑那一半是 `$ORACLE_PRIV/i`，目錄被動過就只剩 fd 那一半與 cwd 底下的 `.orc-XXXX/inject`（`injection-sentinel-fd-half.yml`；R58 起該探針的求值者清掉環境，才單獨釘住 fd 那一半）。
+            # pipefail 探針被換掉（`__orc_want=x`、`trap … DEBUG` 之類改動儀器的 trap；動 `$ORACLE_PRIV` 目錄則在 lint 放行的 step 判『儀器不可信』〔由 `dist` 放行〕，只有 lint 擋下的 step 才判這個『量不到』〔由 `pfu` 放行〕）也與注入無關，同一個原則（R52，#33 verify R51 logic LOW：R50 只對 `dist` 開門，文法內的
+            # `__orc_want=x` 因此把注入繞過從 rc=1 降成 rc=0）。注入哨兵的 fd 那一半不經 `$ORACLE_PRIV`；路徑那一半是 `$ORACLE_PRIV/i`，目錄被動過就只剩 fd 那一半，以及（只有含 `$ORACLE_INJECT` 的 E 組 #13–#16 那幾次執行才有）cwd 底下的 `.orc-XXXX/inject`（`injection-sentinel-fd-half.yml`；R58 起該探針的求值者清掉環境，才單獨釘住 fd 那一半）。
             pfu = verdict.startswith("量不到（pipefail 探針被換掉")
             if ("--strict" in largs and "$" in run0 and in_grammar(run, yaml_decl_step)
                     and ((lint == "pass" and (verdict.startswith("一致") or timed or dist or pfu))
                          or (lint == "RULE-red" and (verdict.startswith("不一致：誤擋") or timed or pfu)))
                     and (not unm or timed or dist or pfu)):
-                hit = next((pl for pl, to in _inject_runs()
-                            if run_script(run, bash, stub_bin, yenv, extra=True, inject=pl, inject_to=to)[4]["inject"]), None)
+                # R60 G1／G2：注入設定的聯集由構造保證單調——每個『鍵的模式』（`_inject_key_modes`：R58 的 `all`、舊樹的 `legacy`、逐鍵）各跑一遍所有 payload × 目標（`_inject_runs`，暫存目錄含空白時不加引號的 E 組多一個絕對路徑的目標）
+                spaced = _tmpdir_spaced()
+                hit = next((pl for mode in _inject_key_modes(yenv) for pl, to in _inject_runs(spaced)
+                            if run_script(run, bash, stub_bin, yenv, extra=True, inject=pl, inject_to=to, inject_keys=mode)[4]["inject"]), None)
                 if hit is not None:
                     unm = False
                     if lint == "pass":

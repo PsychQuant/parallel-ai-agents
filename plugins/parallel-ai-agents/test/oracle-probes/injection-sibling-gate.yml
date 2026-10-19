@@ -1,0 +1,67 @@
+# R60 G1（#33 verify R59 regression／logic／DA，F2 的『所有 PR 可控鍵同時注入』不是舊樹的行為超集）：**step 先驗證 PR 的另一個環境變數鍵（`head_ref`，或第二個值同為標題的鍵），再執行 PR 文字**（SG1～SG4 執行 `PR_TITLE`、SG6 執行 `TITLE`；SG5 是閘門與 sink 同一個鍵的對照組）。
+# R58 的 `_inject_env_values` 把同一個 payload 同時塞進 `PR_TITLE`、`PR_BODY` 與每一個『代換後的值含 `PR_MARKER`』的 env 鍵（閘門鍵與 sink 鍵；值只含標記的鍵拿到原 payload，有前後綴的鍵保留前後綴；神諭自己的名字如 `PS4` 不動），閘門被 payload 弄成 false（含 `>`、非法字元，或 SG1 的長度 > 30），sink 永不執行，判『一致』；
+# `6490b57` 與更早的樹只污染 `PR_TITLE`／`PR_BODY`，閘門鍵保持 `PR_MARKER`（良性），閘門通過、sink 執行，判『繞過』——這個方向的真值也是繞過：真 runner 上 `head_ref` 與標題是獨立控制的，
+# 攻擊者給一個合法分支名加一個惡意標題，標題就被執行。形狀是純 `bash -c`／`python3 -c`，沒有沙箱、沒有 posix、沒有空白 `TMPDIR`。
+# R60 的修法：舊樹的設定（只有 `PR_TITLE`、`PR_BODY` 拿 payload）留成一次獨立的執行，R58 的『所有鍵同時』保留，新增『一次一個額外鍵』（`PR_TITLE`、`PR_BODY` 不單獨成一格；所以『PR_BODY 當閘門、PR_TITLE 當 sink』這一對 R60 沒有涵蓋，見 CHANGELOG 的〈沒有處理的〉）——是新增，不是取代（`_inject_key_modes`）；單調性是這份手寫清單的性質，不是機械保證。
+# 六格（分母 6，真 lint `--strict` 全部放行；SG1～SG4 與 SG6 要判『不一致：繞過（注入）』，SG5 是對照組要判『一致』）：
+#   SG1  `T2`（第二個 PR 可控鍵，值是標題）的長度閘門：長度 > 30 就結束（每個 payload ≥ 31 字，標記只有 22 字），之後執行 `PR_TITLE`。
+#   SG2  `T2` 的重導向閘門：含 `>` 就結束，之後執行 `PR_TITLE`。
+#   SG3  `REF`（`github.head_ref`）的 `>` 閘門，之後執行 `PR_TITLE`——最寫實的一格：分支名與標題獨立控制。
+#   SG4  純 bash：`[[ $0 =~ ^[A-Za-z0-9._/-]+$ ]] && exec /bin/bash -c "$1"`，閘門是 `REF`（分支名的合法字元），sink 是 `PR_TITLE`。
+#   SG6  sink 是**非 `PR_TITLE` 的鍵**（`TITLE`），閘門是 `REF`（`head_ref`，以 argv 傳入）：舊樹的設定（只污染 `PR_TITLE`／`PR_BODY`）污染不到 sink，R58 的『所有鍵』連閘門一起污染——只有『一次一個鍵』（`("one", "TITLE")`）抓得到。
+#   SG5  對照組：閘門就是 `PR_TITLE` 自己（L1 類：求值者在程式內依 PR 文字決定要不要執行——任何一棵樹都判『一致』，不是這個探針要抓的）。
+# **負對照**（R60 實測）：`6490b57`、`5b5a46d` 的 SG1～SG4 判繞過、SG5 判一致、SG6 判一致（舊樹污染不到 `TITLE`）；`8b45659`（只有 fd 197 的 payload，Python `subprocess` 起的子行程關掉 fd）的 SG1～SG3 判『一致』、SG4 判繞過，是它自己的傳輸限制，不是 F2 的退步；R58（`ecb77d9`～`bf0c8a7`）的 SG1～SG4 與 SG6 判『一致』。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: SG1 sibling key length gate then eval PR_TITLE
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          T2: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import os, sys, subprocess; sys.exit(0) if len(os.environ["T2"]) > 30 else subprocess.run(["/bin/bash", "-c", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: SG2 sibling key rejects redirections then eval PR_TITLE
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          T2: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import os, sys, subprocess; sys.exit(0) if ">" in os.environ["T2"] else subprocess.run(["/bin/bash", "-c", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: SG3 sibling key is head_ref, gate on it then eval PR_TITLE
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          REF: ${{ github.head_ref }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import os, sys, subprocess; sys.exit(0) if ">" in os.environ["REF"] else subprocess.run(["/bin/bash", "-c", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: SG4 bash regex gate on head_ref then exec PR_TITLE
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          REF: ${{ github.head_ref }}
+        run: |
+          set -o pipefail
+          { /bin/bash -c '[[ $0 =~ ^[A-Za-z0-9._/-]+$ ]] && exec /bin/bash -c "$1"' "$REF" "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: SG5 control same key gate (L1 class)
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import os, sys, subprocess; sys.exit(0) if len(sys.argv[1]) > 30 else subprocess.run(["/bin/bash", "-c", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: SG6 sink is a non-title key, gate on head_ref
+        shell: bash
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+          REF: ${{ github.head_ref }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import os, sys, subprocess; sys.exit(0) if ">" in sys.argv[1] else subprocess.run(["/bin/bash", "-c", os.environ["TITLE"]])' "$REF"; } 2>&1 | python3 scripts/neutralise.py

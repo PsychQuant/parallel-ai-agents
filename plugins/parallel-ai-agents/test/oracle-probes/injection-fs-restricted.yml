@@ -1,17 +1,18 @@
 # R58 F1（#33 verify R57 logic M／regression M／DA M，第 12 格）：**求值者在受限的檔案系統視野裡執行 PR 文字**。真沙箱版，只在 macOS 跑（`/usr/bin/sandbox-exec`）；可攜版（用 `chmod` 模擬「私有哨兵寫不進去」）見 `injection-priv-sentinel-readonly.yml`。
 # `5b5a46d` 的哨兵在步驟 cwd 底下；R50 改成只走 fd，R52 加上 `TMPDIR` 底下的私有字面路徑，R54 搬到 `/tmp/oXXXXXXXX/i`，R56 把 `5b5a46d` 的四個 `$ORACLE_INJECT` 字串補回來，但 `$ORACLE_INJECT` 指到 `<priv>/i`（在 `/tmp`）——**字串補回來了，位置沒有**。
-# 求值者寫不到 `/tmp`（拒寫 `/private/tmp`），或只准寫 cwd 時，S／R／D／Dc 要 fd（`close_fds=True` 關了）、P／Pc／E 全寫向 `/tmp`（被拒），`5b5a46d`（哨兵在 cwd）看得到、R54～R57 看不到。
+# 求值者寫不到 `/tmp`（拒寫 `/private/tmp`），或只准寫 cwd 時，S／R／D／Dc 要 fd（`close_fds=True` 關了）、P／Pc 寫向 `/tmp`（R54 起）、E 經 `$ORACLE_INJECT` 指到 `<priv>/i`（也在 `/tmp`；R56～R57 的位置），都被拒；`5b5a46d`（哨兵在 cwd）看得到、R54～R57 看不到。
 # R58：E 組的 `$ORACLE_INJECT` 對 cwd 底下預先建好的哨兵與 `<priv>/i` 各試一次，`more()` 與 fd 197、`<priv>/i` 取 OR。
-# 八格（分母 8，真 lint `--strict` 全部放行，全部要判『不一致：繞過（注入）』）：
+# 八格（分母 8，真 lint `--strict` 全部放行，全部要判『不一致：繞過（注入）』；範圍：macOS 預設的 `TMPDIR`、步驟 cwd 不在 `/tmp` 底下，`TMPDIR=/tmp` 時 SB1、SB3、SB5、SB6 判『一致』，見最後的『平台範圍』）：
 #   SB1  沙箱拒寫 `/private/tmp`，關 fd、保留環境，命令位置。
-#   SB2  沙箱只准寫 cwd 與 `/dev`，關 fd、保留環境，命令位置（與平台無關的形狀：Linux 上 `TMPDIR=/tmp` 時 `5b5a46d` 的 cwd 也在 `/tmp` 底下，只有 SB2 分得出兩棵樹）。
-#   SB3  沙箱拒寫 `/private/tmp`，關 fd、保留環境，算術脈絡 `t=$0; (( t ))`。
-#   SB4  對照組：沙箱拒寫 `/private/tmp`，**fd 保留**（`#1` 的 `PWD[$(echo M>&197)]` 命中）。
+#   SB2  沙箱只准寫 cwd 與 `/dev`，關 fd、保留環境，命令位置（與平台無關的形狀：`TMPDIR=/tmp` 時拒寫 `/tmp` 的 SB1、SB3、SB5、SB6 與 SB2 之中，只有 SB2 分得出 `5b5a46d` 與 `6490b57`；SB4、SB7、SB8 另外分得出，方向相反）。
+#   SB3  沙箱拒寫 `/private/tmp`，關 fd、保留環境，算術脈絡 `t=$0; (( t )) || :`。
+#   SB4  對照組：沙箱拒寫 `/private/tmp`，**fd 保留**（`#1` 的 `PWD[$(echo${IFS}M>&197)]` 命中；`M` 代表標記字串）。
 #   SB5  沙箱拒寫 `/private/tmp` 並且**拒絕建立新檔**（`(deny file-write-create)`），關 fd、保留環境，命令位置：只能改既有的檔。`5b5a46d` 預先建好哨兵檔所以判繞過；R58 第一版不預先建檔（理由是『E 組的 `>>` 自己建，預先建檔的突變體是等價突變體』），SB5、SB6 判『一致』——**那句話是錯的**（R58 宣稱查核 B 組，我重現）。現在預先建檔。
-#   SB6  同 SB5，算術脈絡 `t=$0; (( t ))`。
+#   SB6  同 SB5，算術脈絡 `t=$0; (( t )) || :`。
 #   SB7  沙箱拒寫 cwd 底下的所有路徑、`/tmp` 可寫，關 fd、保留環境、把 `/` 換成 `_`（P、Pc、D、Dc 的路徑都含 `/`，只有不含 `/` 的 E 組命中）：`$ORACLE_INJECT` 指到 cwd 底下的哨兵時寫不進去，只有指到 `<priv>/i` 的那一次命中。R58 第一版只指 cwd（『搬走』不是『加上』），這一格判『一致』，`6490b57` 判繞過（R58 宣稱查核 C 組）。
 #   SB8  同 SB7，算術脈絡 `t=${0:0:54}; (( t )) || :`（文字截到 54 字）。
-# **負對照**：`6490b57` 的 SB1、SB2、SB3 判『一致』，SB4 判繞過，SB7、SB8 判繞過。**`TMPDIR` 含空白**：8/8（不加引號的 E 組 payload 的 `ORACLE_INJECT` 改用相對於步驟 cwd 的路徑、加引號的一律用絕對路徑；R58 張貼前查核：`ecb77d9` 退回 `<priv>/i`，`5b5a46d` 的 SB1、SB2、SB5 判繞過、`ecb77d9` 判『一致』；求值者先 `cd` 再求值的格子由 `--selftest-aud` 守住，這張探針沒有）。**平台範圍**：步驟 cwd 在 `/tmp` 底下（`TMPDIR=/tmp`，或 `TMPDIR` 未設的 Linux）時，SB1、SB3、SB5、SB6 判『一致』（cwd 哨兵也在被拒寫的 `/tmp` 底下；`5b5a46d` 也一樣）——這張探針是在 macOS 預設的 `TMPDIR`（`/var/folders/…`）下跑的。
+# **負對照**：`6490b57` 的 SB1、SB2、SB3、SB5、SB6 判『一致』，SB4、SB7、SB8 判繞過。**`TMPDIR` 含空白**：8/8（不加引號的 E 組 payload 的 `ORACLE_INJECT` 先指相對於步驟 cwd 的路徑、R60 起另外再試一次絕對路徑，加引號的一律用絕對路徑；R58 張貼前查核：`ecb77d9` 退回 `<priv>/i`，`5b5a46d` 的 SB1、SB2、SB5 判繞過、`ecb77d9` 判『一致』；求值者先 `cd` 再求值的格子由 `--selftest-aud` 守住，這張探針沒有）。**平台範圍**：步驟 cwd 在 `/tmp` 底下（`TMPDIR=/tmp`，或 `TMPDIR` 未設的 Linux）時，SB1、SB3、SB5、SB6 判『一致』（cwd 哨兵也在被拒寫的 `/tmp` 底下；`5b5a46d` 也一樣；macOS 實測用 `TMPDIR=/tmp`，Linux 沒有 `sandbox-exec`、這張探針不跑，同形狀由 `injection-priv-sentinel-readonly.yml` 的可攜版類推）——這張探針是在 macOS 預設的 `TMPDIR`（`/var/folders/…`）下跑的。
+# R60（R59 regression LOW）：SB2／SB7／SB8 把 `os.getcwd()` 放進 SBPL 字串前先跳脫 `\` 與 `"`（`TMPDIR` 含 `"`，或含會讓 SBPL 字串非法的 `\`〔如 `\x`、結尾的 `\`〕時，沒跳脫的 profile 語法壞掉、`sandbox-exec` 起不來，三格在 `bf0c8a7`、`5b5a46d`、`6490b57` 都判『一致』；含 `\q` 這類合法跳脫時 profile 解析成別的路徑，第 105 項會紅而不是跳過，看起來像神諭回歸）。
 # LINT-ARGS: --strict
 name: t
 on: pull_request
@@ -32,7 +33,7 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           set -o pipefail
-          { /usr/bin/python3 -c 'import os, sys, subprocess; p = "(version 1)(allow default)(deny file-write*)(allow file-write* (subpath \"%s\") (subpath \"/dev\"))" % os.getcwd(); subprocess.run(["/usr/bin/sandbox-exec", "-p", p, "/bin/bash", "-c", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+          { /usr/bin/python3 -c 'import os, sys, subprocess; p = "(version 1)(allow default)(deny file-write*)(allow file-write* (subpath \"%s\") (subpath \"/dev\"))" % os.getcwd().replace(chr(92), chr(92) * 2).replace(chr(34), chr(92) + chr(34)); subprocess.run(["/usr/bin/sandbox-exec", "-p", p, "/bin/bash", "-c", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
       - name: SB3 sandbox denies /private/tmp, close_fds, env kept, arithmetic
         shell: bash
         env:
@@ -67,11 +68,11 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           set -o pipefail
-          { /usr/bin/python3 -c 'import os, sys, subprocess; p = "(version 1)(allow default)(deny file-write* (subpath \"%s\"))" % os.getcwd(); subprocess.run(["/usr/bin/sandbox-exec", "-p", p, "/bin/bash", "-c", sys.argv[1].replace("/", "_")])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+          { /usr/bin/python3 -c 'import os, sys, subprocess; p = "(version 1)(allow default)(deny file-write* (subpath \"%s\"))" % os.getcwd().replace(chr(92), chr(92) * 2).replace(chr(34), chr(92) + chr(34)); subprocess.run(["/usr/bin/sandbox-exec", "-p", p, "/bin/bash", "-c", sys.argv[1].replace("/", "_")])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
       - name: SB8 sandbox denies writes under cwd (/tmp writable), close_fds, env kept, arithmetic truncated to 54
         shell: bash
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           set -o pipefail
-          { /usr/bin/python3 -c 'import os, sys, subprocess; p = "(version 1)(allow default)(deny file-write* (subpath \"%s\"))" % os.getcwd(); subprocess.run(["/usr/bin/sandbox-exec", "-p", p, "/bin/bash", "-c", "t=${0:0:54}; (( t )) || :", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+          { /usr/bin/python3 -c 'import os, sys, subprocess; p = "(version 1)(allow default)(deny file-write* (subpath \"%s\"))" % os.getcwd().replace(chr(92), chr(92) * 2).replace(chr(34), chr(92) + chr(34)); subprocess.run(["/usr/bin/sandbox-exec", "-p", p, "/bin/bash", "-c", "t=${0:0:54}; (( t )) || :", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py

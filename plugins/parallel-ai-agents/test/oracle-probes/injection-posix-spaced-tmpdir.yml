@@ -1,0 +1,49 @@
+# R60 G2（#33 verify R59 第 13 格；requirements M／logic M／regression M／DA M／Codex M）：**`TMPDIR` 含空白 ∧ 求值者的 shell 不切開重導向的目標詞 ∧ 求值者先離開步驟 cwd**。
+# `5b5a46d` 的 `ORACLE_INJECT` 一律是步驟 cwd 底下哨兵的**絕對路徑**；`TMPDIR` 含空白時，一般模式的 bash 對不加引號的 `>>$ORACLE_INJECT` 報 `ambiguous redirect`（3.2.57、5.3.15 實測），
+# 但 `--posix` 的 bash、macOS 的 `/bin/sh`、dash、zsh（預設不做字詞拆分）以及 `IFS` 不含路徑中任何字元的 bash（例如 `IFS=:`；`IFS=/` 仍會切開）不切開——絕對路徑寫得進去。R58b（`76bd0f9` 起）的 `_cwd_env_value` 在絕對路徑含空白、tab 或換行時，對不加引號的 E 組（`>>$ORACLE_INJECT`）改成相對路徑（`.orc-XXXXXXXX/inject`；加引號的 E 字串仍用絕對路徑；`ecb77d9` 沒有這個函式，含空白時是停用 cwd 哨兵、退回 `<priv>/i`），
+# 求值者換了 cwd 之後相對路徑 ENOENT：`5b5a46d` 判繞過、R58 判『一致』。R58 決策留言與 `oracle.py` 的『`5b5a46d` 的不加引號 E 組同樣寫不進去，不是退步』只對一般模式的 bash 成立。
+# R60 的修法：不加引號的 E 組在絕對路徑不能直接用時，絕對路徑與相對路徑**各試一次**（`_inject_runs(spaced=True)` 多一個 `"cwd-abs"` 目標），`5b5a46d` 的設定整個保留在聯集裡。
+# **這張探針只在 `TMPDIR` 含空白時有意義**（`oracle_selfcheck` 第 107 項建一個含空白的暫存目錄並設成 `TMPDIR`）；`TMPDIR` 不含空白時四格都是絕對路徑，PX4 也會判繞過。
+# 私有哨兵用 `chmod 0444 "$ORACLE_PRIV/i"` 模擬『寫不進去』（同 `injection-priv-sentinel-readonly.yml`，非 root 才成立；`ORACLE_LINT` 指到一律放行的替身 lint），fd 被 Python `subprocess` 的 `close_fds` 關掉，
+# 所以只有 E 組經 cwd 底下的 `$ORACLE_INJECT` 寫得進去。這是 macOS 與 Linux 都跑得了的可攜版（不需要 `sandbox-exec`）。
+# 四格（分母 4；前三格要判『不一致：繞過（注入）』，第四格是對照組要判『一致』）：
+#   PX1  `/bin/bash --posix -c 'cd /; t=$0; (( t ))'`：POSIX 模式不切開重導向的目標詞，求值者先 `cd /`。
+#   PX2  同 PX1，但不在命令裡 `cd`，由 `subprocess.run(..., cwd="/")` 換 cwd（requirements 的 `rq13-sh-cd.yml`／`rq13-ifs-cd.yml` 與 logic 的 `cd-posix.yml`／`posix-cd-spaced.yml` 這一類；Codex 的靜態推演用的是命令內的 `cd /`，也就是 PX1 的形狀）。
+#   PX3  `/bin/bash -c 'IFS=:; cd /; t=$0; (( t ))'`：一般模式的 bash，但 `IFS` 不含路徑中任何字元，所以不切開（requirements 的 `rq13-ifs-cd.yml`）。
+#   PX4  對照組：一般模式的 bash、預設 `IFS`、`cd /`——絕對路徑 `ambiguous redirect`、相對路徑 ENOENT，在 `6490b57`、R58 與 R60 的樹上判『一致』（把 `chmod` 那行換成 `:` 的變體，`5b5a46d` 對 PX4 也判『一致』；這一格釘住『不是每個求值者都寫得進去』，不是要抓的缺口）。
+# **負對照**（R60 在 `5b5a46d`、`6490b57`、`bf0c8a7` 上，`TMPDIR` 含空白、`ORACLE_LINT` 指到一律放行的替身 lint 實測）：`6490b57` 與 `bf0c8a7` 對這張探針本身四格都判『一致』；**`5b5a46d` 對這張探針本身四格都判『量不到（儀器不可信）』**——它的儀器變數文字守衛擋下步驟裡的 `$ORACLE_PRIV`，所以這張探針不是 `5b5a46d` 的負對照；把 `chmod` 那行換成 `:` 的變體（步驟裡沒有 `ORACLE_*`），`5b5a46d` 的 PX1～PX3 判繞過、PX4 判『一致』（`6490b57` 與 `bf0c8a7` 對變體四格都判繞過，因為私有哨兵沒有唯讀，變體對它們沒有鑑別力）。`5b5a46d` 對『沙箱拒寫 `/private/tmp` ∧ `bash --posix` ∧ 先 `cd /` ∧ `TMPDIR` 含空白』判繞過、`bf0c8a7` 判『一致』是用沙箱版（R59 協調者的 `probe-posix.yml`，不在 repo 裡）量的。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: PX1 posix-mode bash, cd away first, arithmetic, private sentinel read-only
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          chmod 0444 "$ORACLE_PRIV/i" 2>/dev/null || :
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "--posix", "-c", "cd /; t=$0; (( t )) || :", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: PX2 posix-mode bash, evaluator cwd is /, arithmetic, private sentinel read-only
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          chmod 0444 "$ORACLE_PRIV/i" 2>/dev/null || :
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "--posix", "-c", "t=$0; (( t )) || :", sys.argv[1]], cwd="/")' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: PX3 bash with non-whitespace IFS and cd away first, arithmetic, private sentinel read-only
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          chmod 0444 "$ORACLE_PRIV/i" 2>/dev/null || :
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "-c", "IFS=:; cd /; t=$0; (( t )) || :", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: PX4 control default bash and default IFS, cd away first, private sentinel read-only
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          chmod 0444 "$ORACLE_PRIV/i" 2>/dev/null || :
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "-c", "cd /; t=$0; (( t )) || :", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py

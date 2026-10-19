@@ -15,8 +15,8 @@ R37 時有兩件事它驗不到——要驗它們，未突變的神諭在 fixtur
 
 批次與編號（編號＝下面 `CHECKS` 的順序；每一項的內容在它自己的說明欄，這裡不再複述一份會過期的描述——R43 第 21 列：
 前一版的 docstring 逐批列舉、數字加起來少一項，而且寫著「二十六項」「三十項」卻沒有一個地方真的數過）：
-  R37 1–2；R39 3–8；R40 9–10；R42 11–15；R42 WP7 16–19；R42 WP8 20–26；R44 27–31；R46 32–38；R48 39–45；R50 46–72；R52 73–95；R54 96–99；R56 100–102；R58 103–105。
-共 105 項。守衛：`main()` 開頭比對這一行的總數與批次區間的終點是否等於 `len(CHECKS)`，不等就 rc=1——數字與清單不是兩份各自維護的東西。
+  R37 1–2；R39 3–8；R40 9–10；R42 11–15；R42 WP7 16–19；R42 WP8 20–26；R44 27–31；R46 32–38；R48 39–45；R50 46–72；R52 73–95；R54 96–99；R56 100–102；R58 103–105；R60 106–107。
+共 107 項。守衛：`main()` 開頭比對這一行的總數與批次區間的終點是否等於 `len(CHECKS)`，不等就 rc=1——數字與清單不是兩份各自維護的東西。
 
 用法：test/oracle_selfcheck.py      rc=0：每一項都照預期；rc=1：至少一項沒有（或上面的數字與 `CHECKS` 不符）。
 """
@@ -31,6 +31,9 @@ HERE = pathlib.Path(__file__).resolve().parent
 ORACLE = HERE / "oracle.py"
 PROBES = HERE / "oracle-probes"
 LINT = HERE / "lint-ci-log-filter.sh"
+
+SPACED_TMPDIR = "<含空白的暫存目錄>"   # `extra` 裡 `TMPDIR` 的這個值：`run_check` 在自己的暫存目錄底下建一個名字含空白的目錄並設成 `TMPDIR`（R60 G2）
+
 
 def INJ(n):
     """注入探針的期待輸出：總數『一致 0、不一致 n』**加上**每一格的原因都是『繞過（注入』（恰好 n 次）。R56（R55 Codex 4）：前一版只比總數——
@@ -301,16 +304,29 @@ CHECKS = [
      [PROBES / "injection-env-key-names.yml"], 1, INJ(4)),
     # R58 F1 的真沙箱版（macOS 才有 `/usr/bin/sandbox-exec`；沒有時 `main()` 明確印『跳過』，不算通過也不算失敗）。
     ("**第 12 格（真沙箱版，只在 macOS）**（R58 F1，R57 logic M／regression M／DA M）：`sandbox-exec` 拒寫 `/private/tmp`（SB1、SB3〔算術脈絡〕）或只准寫 cwd（SB2），關 fd、保留環境，加一格保留 fd 的對照組 SB4，兩格連新檔都不准建的 SB5、SB6（`deny file-write-create`：只能改既有的檔，cwd 哨兵必須預先建好），以及兩格拒寫 cwd 但 `/tmp` 可寫的 SB7、SB8（換掉斜線或截到 54 字：只有 `$ORACLE_INJECT` 指到 `<priv>/i` 的那一次命中）——八格都要判『不一致：繞過（注入）』。"
-     "負對照：`6490b57` 的 SB1～SB3 判『一致』、SB4 判繞過；cwd 哨兵不預先建檔時 SB5、SB6 判『一致』（`5b5a46d` 全判繞過）；`$ORACLE_INJECT` 只指 cwd 時 SB7、SB8 判『一致』（`6490b57` 判繞過）", {},
+     "負對照：`6490b57` 的 SB1～SB3 判『一致』、SB4 判繞過；cwd 哨兵不預先建檔時 SB5、SB6 判『一致』（`5b5a46d` 的 SB1～SB6 判繞過、SB7、SB8 判『一致』：它的哨兵在被拒寫的 cwd 底下）；`$ORACLE_INJECT` 只指 cwd 時 SB7、SB8 判『一致』（`6490b57` 判繞過）", {},
      [PROBES / "injection-fs-restricted.yml"], 1, INJ(8)),
+    # R60 G1（#33 verify R59 regression／logic／DA，F2 的『所有 PR 可控鍵同時注入』不是舊樹的行為超集）。
+    ("**注入設定的聯集由構造保證單調：舊樹的設定、所有鍵同時、逐鍵各一次**（R60 G1，R59 regression／logic／DA）：step 先驗證 PR 的另一個欄位——第二個 `${{ …title }}` 鍵的長度閘門、`>` 閘門、`head_ref` 的 `>` 閘門、"
+     "純 bash 的 `[[ $0 =~ … ]] && exec` 閘門——再執行 `PR_TITLE`，加上 sink 是非 `PR_TITLE` 的鍵（`TITLE`）、閘門是 `REF` 的 SG6，真 lint `--strict` 全部放行，SG1～SG4 與 SG6 要判『不一致：繞過（注入）』；SG5 是對照組（閘門就是 `PR_TITLE` 自己，L1 類），要判『一致』。"
+     "負對照：R58（`ecb77d9`～`bf0c8a7`）的 SG1～SG4 與 SG6 判『一致』（payload 同時塞進閘門鍵，閘門把它擋掉、sink 不執行）；`6490b57`、`5b5a46d` 的 SG1～SG4 判繞過、SG6 判一致（污染不到 `TITLE`）", {},
+     [PROBES / "injection-sibling-gate.yml"], 1,
+     ["一致 1、不一致 5", ("不一致：繞過（注入", 5)] + [re.compile(r"\bSG%d\b[^\n]*oracle=\S+\s+不一致：繞過（注入" % n, re.M) for n in (1, 2, 3, 4, 6)] + [re.compile(r"\bSG5\b[^\n]*oracle=\S+\s+一致$", re.M)]),
+    # R60 G2（第 13 格）：暫存目錄含空白時，POSIX 模式的 shell 不切開重導向的目標詞，絕對路徑寫得進去。
+    ("**第 13 格：`TMPDIR` 含空白 ∧ 求值者的 shell 不切開重導向的目標詞 ∧ 求值者先離開步驟 cwd**（R60 G2，R59 requirements／logic／regression／DA／Codex）：`bash --posix` 先 `cd /`（PX1）、`bash --posix` 由 `subprocess` 換 cwd（PX2）、"
+     "`IFS` 不含空白的 bash 先 `cd /`（PX3）三格要判『不一致：繞過（注入）』（私有哨兵用 `chmod 0444` 模擬寫不進去，只有不加引號的 E 組經 cwd 底下的 `$ORACLE_INJECT` 的**絕對路徑**寫得進去）；PX4 是對照組（一般模式的 bash、預設 `IFS`、`cd /`：絕對路徑 `ambiguous redirect`、相對路徑 ENOENT），要判『一致』。"
+     "負對照：R58 的 `76bd0f9`／`bf0c8a7` 對 PX1～PX3 判『一致』（不加引號的 E 組的 `ORACLE_INJECT` 改成相對路徑〔加引號的仍用絕對路徑〕，求值者換了 cwd 就 ENOENT；`ecb77d9` 則是停用 cwd 哨兵、退回 `<priv>/i`，私有哨兵唯讀所以也寫不進去）；`5b5a46d`（一律絕對路徑）對這張探針本身判『量不到（儀器不可信）』——步驟文字提到 `ORACLE_PRIV`——，把 `chmod` 那行換成 `:` 的變體則 PX1～PX3 判繞過、PX4 判『一致』。`run_check` 在自己的暫存目錄底下建一個名字含空白的目錄並設成 `TMPDIR`", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh"), "TMPDIR": SPACED_TMPDIR},
+     [PROBES / "injection-posix-spaced-tmpdir.yml"], 1,
+     ["一致 1、不一致 3", ("不一致：繞過（注入", 3)] + [re.compile(r"\bPX%d\b[^\n]*oracle=\S+\s+不一致：繞過（注入" % n, re.M) for n in (1, 2, 3)] + [re.compile(r"\bPX4\b[^\n]*oracle=\S+\s+一致$", re.M)]),
 ]
 
 # 需要平台工具才跑得了的項目（探針檔名 → 必須存在的執行檔）：沒有就在 `main()` 印『跳過』，不算通過也不算失敗（Linux 上沒有 `sandbox-exec`）。
+# **沒有任何 CI job 會跑第 105 項**：ubuntu job 沒有 `sandbox-exec`、macOS job 不跑 `oracle_selfcheck`（R59 G5 要求納入 CI；`.github/` 是這個 PR 的閘門本身，加一步會改變『閘門相對 `6490b57` 沒有變』這個前提，R60 沒有做，列在 CHANGELOG 的〈沒有處理的〉）——這一項只在開發機上跑。
 REQUIRES = {"injection-fs-restricted.yml": "/usr/bin/sandbox-exec"}
 
 
 def tool_usable(path):
-    """執行檔存在、而且真的跑得起來。`sandbox-exec` 在外層沙箱裡（`(deny process-exec …)`）存在但執行不了，八格全判『一致』、第 105 項紅，訊息會讓人以為神諭退步（R58 A2）；
+    """執行檔存在；若是 `sandbox-exec`，另外實跑一個最小 profile（20 秒逾時）確認跑得起來，其他執行檔只看存在。`sandbox-exec` 在外層沙箱裡（`(deny process-exec …)`）存在但執行不了，八格全判『一致』、第 105 項紅，訊息會讓人以為神諭退步（R58 A2）；
     跑一次最小的 profile 確認它可用，不可用就和『不存在』一樣印『跳過』。"""
     if not os.path.exists(path):
         return False
@@ -343,6 +359,10 @@ def run_check(extra, files, mut):
                 oracle = dst
                 env.setdefault("ORACLE_LINT", str(LINT))   # 突變版神諭的 HERE 是暫存目錄，lint 要明確指回 repo 的那一支
             dst.write_text(src, encoding="utf-8")
+        if env.get("TMPDIR") == SPACED_TMPDIR:
+            sp = pathlib.Path(d) / "sp ace"
+            sp.mkdir()
+            env["TMPDIR"] = str(sp)
         try:
             r = subprocess.run([sys.executable, str(oracle)] + [str(f) for f in files],
                                env=env, capture_output=True, text=True, errors="replace", timeout=600)
@@ -393,7 +413,24 @@ def matcher_problems():
         ("正規式找得到", re.compile(r"\bB\b[^\n]*oracle=\S+\s+一致$", re.M), ok_out, True),
         ("正規式：A 判的是繞過、不是一致（方向對調會被拒）", re.compile(r"\bA\b[^\n]*oracle=\S+\s+一致$", re.M), ok_out, False),
     ]
-    return ["%s：期待 %s、實際 %s" % (what, exp, text_ok(want, out)) for what, want, out, exp in cases if text_ok(want, out) != exp]
+    problems = ["%s：期待 %s、實際 %s" % (what, exp, text_ok(want, out)) for what, want, out, exp in cases if text_ok(want, out) != exp]
+    # R60（R59 Codex 3；logic LOW 另外指出第 105 項不在 CI、指紋沒記 `sandbox-exec` 可用性）：`tool_usable` 也有單元測試——把它改成永遠回 False，第 105 項在 macOS 上整個被跳過、selfcheck 仍然綠（R59 凍結樹 `bf0c8a7` 時沒有任何靶殺它；R60 起 `mutation_check.py` 有兩個 `tool_usable` 靶）。
+    # 用假的 `sandbox-exec`（一支 shell 腳本）涵蓋：跑得起來、執行失敗、不存在、以及非 `sandbox-exec` 的一般執行檔（只看存在）。
+    with tempfile.TemporaryDirectory(prefix="tool-usable-") as td:
+        def fake(name, body):
+            q = pathlib.Path(td) / name
+            q.parent.mkdir(exist_ok=True)
+            q.write_text("#!/bin/sh\n" + body + "\n")
+            q.chmod(0o755)
+            return str(q)
+        for what, path, exp in (("假 sandbox-exec 成功（rc=0）→ 可用", fake("ok/sandbox-exec", "exit 0"), True),
+                                ("假 sandbox-exec 失敗（rc≠0；真實的外層沙箱 `deny process-exec` 實測為 rc=71，這裡用 1 代表任何非零）→ 不可用", fake("bad/sandbox-exec", "exit 1"), False),
+                                ("路徑不存在 → 不可用", str(pathlib.Path(td) / "missing" / "sandbox-exec"), False),
+                                ("不是 sandbox-exec 的執行檔，存在就算可用", fake("other/tool", "exit 1"), True)):
+            got = tool_usable(path)
+            if got != exp:
+                problems.append("tool_usable：%s：期待 %s、實際 %s" % (what, exp, got))
+    return problems
 
 
 def doc_count_mismatch():
@@ -413,7 +450,7 @@ def main():
         for x in probs:
             print("✗ " + x)
         if not probs:
-            print("matcher ok（12 案）")
+            print("matcher ok（12 案＋tool_usable 4 案）")
         return 1 if probs else 0
     bad = 0
     for x in matcher_problems():
