@@ -2,21 +2,26 @@
 
 pai-ensemble 的每個席次（每個 lens reviewer、codex、devil's-advocate）邊做邊把進度寫進檔案。session 在 run 跑到一半時中斷，接回之後沒跑完的席次會從檔案接著做，不用從頭再來。
 
-為什麼需要它：Workflow 快取的單位是一次 `agent()`，跑到一半的席次在中斷後什麼都留不下來；harness 也只在 run 完成時才存 `args`。workflow script 本身不能讀寫檔案，所以檔案全部由 agent 執行 engine 組好的命令寫入（`workflows/ensemble-workflow.js` 的 `READER_PY`、`RECORD_CMD`、`MARK_CMD`、`INIT_PY`）。
+為什麼需要它：Workflow 快取的單位是一次 `agent()`，跑到一半的席次在中斷後什麼都留不下來；harness 也只在 run 完成時才存 `args`。workflow script 本身不能讀寫檔案，所以檔案全部由 agent 執行 engine 組好的命令寫入（`workflows/ensemble-workflow.js` 的 `READER_PY`、`RECORD_CMD`、`MARK_CMD`、`INIT_PY`）。每個命令都以 `python3 -I` 執行：席次的工作目錄是被審的 repo，那裡的 `json.py` 之類的檔不會被當成模組載入。
 
 ## 目錄
 
 | 情況 | 目錄 |
 |---|---|
-| 沒給 `checkpointDir` | `$HOME/.cache/pai-ensemble/<argsDigest>/` |
+| 沒給 `checkpointDir` | `$HOME/.cache/pai-ensemble/<dirKey>/` |
 | 給了 `checkpointDir`（絕對路徑） | 那個目錄本身 |
+| 再給 `checkpointRun` | 上面的目錄底下多一層 `run-<標籤>-<8 碼雜湊>/` |
 | `checkpoint: false` | 不存檔 |
 
-`argsDigest` 是 args 去掉 `checkpointDir`／`checkpoint` 兩鍵、key 遞迴排序成 canonical JSON 之後的 FNV-1a 64（UTF-8 位元組，16 碼 hex）。它只用來辨認「是不是同一組輸入」，不防偽造。
+`dirKey` 是 `profile`、`file`、`diffFile`、`srtFile`、`contextBlock` 這五個所有席次共用的輸入，以 canonical JSON 計算的 FNV-1a 64（16 碼 hex）。只影響部分席次的參數（`daFocus`、`codexModel`、某個 lens 的 `priors`、`agentModel`）不換目錄。它只用來辨認「是不是同一份東西」，不防偽造。
+
+`checkpointRun` 給「同一組輸入、刻意獨立的多輪」用：`ensemble-academic-review` 的 mix 第 1 輪與第 3 輪 args 完全相同。不分開的話，第 1 輪中斷在一半的席次會把部分結果交給第 3 輪。`ensemble-eval` 的 K 次 run 則各給一個 `checkpointDir`，效果相同。
+
+目錄與檔案都是私有的：目錄 0700（呼叫端先建好、但權限較寬的目錄會收緊），檔案 0600。目錄必須是本人擁有的真目錄，symlink 或別人擁有的目錄都會讓讀檔器回 `DISABLED`。
 
 目錄裡有：
 
-- `args.json`：這個 run 的完整 args（canonical JSON）。由 `checkpoint-init` 席次寫入，寫完用 python 重算雜湊比對；比對不過時不寫，run 的結果多一則 INFO `checkpoint: args.json not saved`，verdict 不受影響。args 以 base64 交給這個席次：`contextBlock` 可能含不受信任的內容，照抄命令的席次不應讀到其中可讀的文字。
+- `args-<argsDigest>.json`：這個 run 的完整 args（canonical JSON）。`argsDigest` 是 args 去掉 `checkpointDir`、`checkpoint`、`checkpointRun` 之後的雜湊，也記在 `stats.checkpoint.argsDigest`。這個檔由 `checkpoint-init` 席次寫入：args 以 base64 交給它，它解碼後對解碼出的位元組重算雜湊，與 engine 算的比對，不符就不寫，run 的結果多一則 INFO `checkpoint: args.json not saved`，verdict 不受影響。以 base64 交付是因為 `contextBlock` 可能含不受信任的內容，照抄命令的席次不應讀到其中可讀的文字。同一個目錄跑過不同的 args 時，各自的檔並存。
 - `<席次>-<8 碼雜湊>.partial.jsonl`：每個席次一個檔。席次名稱裡檔名不安全的字元轉成 `_`，8 碼雜湊避免兩個 key 轉換後撞名。
 - `<上面的檔名>.prev-N`：被留存的舊檔（見下）。
 
@@ -24,11 +29,21 @@ pai-ensemble 的每個席次（每個 lens reviewer、codex、devil's-advocate�
 
 | `kind` | 誰寫 | 內容 |
 |---|---|---|
-| `header` | 讀檔器，檔案第一行 | `argsDigest`、`artifactSha`（`diffFile` 或 `file` 是一般檔案時的 sha256，否則 `null`）、`label`、`v` |
+| `header` | 讀檔器，檔案第一行 | `v`（2）、`seatDigest`、`artifactSha`、`label` |
 | `finding` | reviewer／DA | schema 的 finding 欄位 |
 | `checked` | reviewer／DA | `item`：查過、沒有問題的項目 |
 | `codex-run` | codex 席次 | `id`：`codex-call --detach` 印出的 32 碼 run id |
 | `done` | 每個席次，回傳前 | 無 |
+
+`seatDigest` 是這個席次自己的輸入：它在 checkpoint 關閉時會收到的 prompt，加上 dispatch model，算出的雜湊。所以：
+
+- 改了某個參數，只有它實際影響到的席次換 key，其他席次的 prompt、journal 快取與部分結果都不受影響。
+- devil's-advocate 的 prompt 含各 reviewer 的結果摘要，所以 reviewer 結論不同的新一輪，不會沿用上一輪 DA 針對舊結論做的反駁。
+- engine 升級改了內建 lens 或 DA 的指示文字，key 也跟著變。
+
+`artifactSha` 涵蓋席次讀的檔：`diffFile` 或 `file`，需要逐字稿的 lens 再加 `srtFile`。是目錄的話只記「是目錄」，目錄內容改變偵測不到。
+
+紀錄以 `\n` 切行。`json.dumps` 會原樣寫出 U+2028／U+2029／U+0085，以這些字元切行會把一筆紀錄拆成兩半。
 
 ## 接回與重跑
 
@@ -37,28 +52,34 @@ pai-ensemble 的每個席次（每個 lens reviewer、codex、devil's-advocate�
 | 檔案狀態 | 結果 |
 |---|---|
 | 不存在 | `FRESH`：寫檔頭，從頭做 |
-| 檔頭的 `argsDigest` 與 `artifactSha` 都相同、沒有 `done` | `RESUME`：印出先前的紀錄（最多 200 筆、60 KB，超過印 `TRUNCATED`）；壞掉的行跳過並計數 |
-| 沒有檔頭、args 變了、artifact 變了、或有 `done` | 舊檔改名為 `.prev-N`（N 取第一個沒用過的），`FRESH` |
-| 讀檔器自己出錯（例如沒有 python3、目錄建不起來） | `DISABLED`：席次照常審閱、不存檔 |
+| 檔頭的 `seatDigest` 與 `artifactSha` 都相同、沒有 `done` | `RESUME`：印出先前的紀錄；壞掉的行跳過並計數 |
+| 沒有檔頭、輸入變了、artifact 變了、或有 `done` | 舊檔改名為 `.prev-N`（N 取第一個沒用過的），`FRESH` |
+| 讀檔器自己出錯（目錄建不起來、沒有 `HOME`、檔案位置不是一般檔案） | `DISABLED`：席次照常審閱、不存檔 |
+| 命令沒有印出任何 `PAI_CHECKPOINT` 行（例如沒有 python3） | prompt 交代視同 `DISABLED` |
+
+`RESUME` 的輸出先印最新的 `codex-run`，再印 finding，最後印其餘紀錄。總量以 20,000 字元為上限（Bash 工具的輸出在 30,000 字元附近會被截斷），單筆超過 8,000 字元的不印，但不擋住後面的紀錄。有沒印出來的就印 `PAI_CHECKPOINT TRUNCATED`，prompt 要席次自己從 `PAI_CHECKPOINT FILE` 那一行指出的檔案讀其餘紀錄。
 
 **為什麼看到 `done` 就從頭做**：接回時，已完成的席次直接由 journal 快取回答，根本不會再跑；會看到 `done` 的只有「同一組輸入的新的一輪」。新的一輪不沿用上一輪的結論，舊檔留存為 `.prev-N`。
 
-**codex 席次**：接回時先 `--poll` 檔案裡的 run id，worker 還在跑或已經完成就不再開一個新的；`FAILED`／`TIMEOUT`／`unknown run id`／非零退出才重新 `--detach`。終態已經回報過的 run，poll 不會再報一次，這時會重新 detach（多花一次額度，結果仍然正確）。
+**codex 席次**：讀檔器只印最新的一筆合法 `codex-run`。接回時先 `--poll` 那個 run id，worker 還在跑或已經完成就不再開一個新的；`FAILED`／`TIMEOUT`／`unknown run id`／非零退出才重新 `--detach`。終態已經回報過的 run，poll 不會再報一次，這時會重新 detach（多花一次額度，結果仍然正確）。
 
 ## 呼叫端契約
 
 - 部分結果**可以讀、可以在 terminal 顯示**，例如 workflow 中途失敗時讓使用者看到已經做了什麼。
 - 部分結果**不是報告**：不得當成 verify 結果貼出去，也不得據此推進任何狀態。
-- 要接回中斷的 run：`Workflow({scriptPath, resumeFromRunId, args})`。args 從呼叫端自己的紀錄取，或從 `args.json` 取。用 `ls -t ~/.cache/pai-ensemble/*/args.json` 依時間列出，由 args 裡的 `diffFile` 等欄位辨認是哪一輪。
+- 要接回中斷的 run：`Workflow({scriptPath, resumeFromRunId, args})`。args 從呼叫端自己的紀錄取，或從 `args-<argsDigest>.json` 取。用 `ls -t ~/.cache/pai-ensemble/*/args-*.json` 依時間列出，由 args 裡的 `diffFile` 等欄位辨認是哪一輪。
+- 同一組輸入要跑成彼此獨立的多輪時，各輪給不同的 `checkpointRun`（或不同的 `checkpointDir`）。
+- 開啟 checkpoint 時，run 會多派一個 `checkpoint-init` 席次，不算在 `maxAgents` 與 `stats.agents` 裡，以 `stats.checkpoint.initDispatched` 表示。
 
 ## 已知限制
 
-- **同一組 args 同時跑兩個 run 會共用目錄**，兩邊的席次可能讀到彼此的部分結果。需要各自獨立的呼叫端（例如 `ensemble-eval` 的 K 次 run）請各給一個 `checkpointDir`。
-- `file` 是目錄時 `artifactSha` 是 `null`，目錄內容改變偵測不到。
-- 協定是 prompt 層的要求：席次沒照做，接回時能省的就少；最終回傳仍以席次的 schema 輸出為準，正確性不受影響。
-- 給同一個 `checkpointDir` 跑不同的 args 時，`args.json` 是最後一次的；各席次的檔案以檔頭的 `argsDigest` 分辨，不會沿用到別組輸入。
+- **接回只看席次的 prompt 與 artifact 的位元組**。被審的程式若在兩者都不變的情況下改了（例如審的是工作樹，而 diff 檔沒有重產），接回的席次會沿用舊的紀錄。被審內容可能這樣變的呼叫端，要把 commit id 或 tree id 寫進 `contextBlock`，這樣它一變，所有席次的 key 就跟著變。
+- **args 很大時 init 的成本也大**：init 席次要逐字抄出 base64 的 args，4 KB 的 `contextBlock` 約 6 千字元，100 KB 約 14.6 萬字元。抄錯只會出 INFO，但輸出 token 已經付了。
+- **同一組輸入同時跑兩個 run 會共用目錄**，兩邊的席次可能讀到彼此的部分結果，或互相把對方的檔改名為 `.prev-N`。需要各自獨立的呼叫端請給不同的 `checkpointRun` 或 `checkpointDir`。
+- 協定是 prompt 層的要求：席次沒照做，接回時能省的就少，但最終回傳仍以席次的 schema 輸出為準。只有一個例外會改變結論：席次沒寫 `done` 就結束，而呼叫端又以同一組輸入開一個新的 run（不是接回）。這時新的 run 會沿用那份部分結果。要獨立的新一輪，就給不同的 `checkpointRun`。
+- 目錄擁有者的檢查（別人擁有的目錄回 `DISABLED`）沒有自動化測試，因為要另一個使用者才建得出那種目錄。
 
 ## 隱私與清理
 
-- 檔案只在本機。finding 的內容可能引用被審的內容，所以和被審的東西同等看待。
-- **永久保留，不自動刪除**（使用者 2026-10-20 裁決）。要清就手動刪：`rm -rf ~/.cache/pai-ensemble/<digest>`，或整個 `~/.cache/pai-ensemble/`。
+- 檔案只在本機，權限是本人可讀寫。finding 的內容可能引用被審的內容，所以和被審的東西同等看待。
+- **永久保留，不自動刪除**（使用者 2026-10-20 裁決）。要清就手動刪：`rm -rf ~/.cache/pai-ensemble/<key>`，或整個 `~/.cache/pai-ensemble/`。
