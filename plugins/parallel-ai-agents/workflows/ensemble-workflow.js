@@ -133,7 +133,9 @@ const FINDINGS_SCHEMA = {
 const SEVERITY_RANK = { CRITICAL: 5, HIGH: 4, MEDIUM: 3, LOW: 2, INFO: 1 }
 
 // Hard ceiling on total agents per run, so the `replicas` knob can scale "大量 agents" without
-// unbounded cost. total = baseLenses × replicas + (codex?1:0) + 1 DA, clamped to this.
+// unbounded cost. total = baseLenses × replicas + (codex?1:0) + 1 DA, clamped to this. With
+// checkpointing on (the default) one more agent, checkpoint-init, is dispatched on top and is not
+// counted here (stats.checkpoint.initDispatched).
 const MAX_AGENTS = 16
 
 // ── Per-skill profiles. Phase 1 ships `lecture`; `code` (Phase 2) and `academic` (Phase 3)
@@ -540,10 +542,44 @@ function seatKey(ck, bodyWithoutCheckpoint) {
 // Shared by the reader and the init step: the checkpoint directory must be a real directory owned
 // by this user, and everything created in it is private (0700 / 0600) — finding bodies quote the
 // audited content and the files are kept until the user deletes them (#103 verify r1).
+// Every lookup on the way there must also be safe from other users (#103 verify r4): each existing
+// entry on the path (a directory or a symlink) is owned by root or this user, and each directory
+// it resolves to is not writable by others — unless sticky (/tmp), or group-writable only by this
+// user's own private group. Otherwise another user could swap a component after the check and
+// redirect the later record writes. Symlinks owned by root or this user (macOS /tmp, /var) pass.
 const CKDIR_PY = [
+  'def owned(st, p):',
+  '    if st.st_uid not in (0, os.getuid()):',
+  '        raise RuntimeError("owned by another user: " + p)',
+  '    if not stat.S_ISDIR(st.st_mode) or st.st_mode & stat.S_ISVTX:',
+  '        return',
+  '    if st.st_mode & 0o002:',
+  '        raise RuntimeError("writable by other users: " + p)',
+  '    if st.st_mode & 0o020:',
+  '        import grp, pwd',
+  '        try:',
+  '            g = grp.getgrgid(st.st_gid)',
+  '            mine = st.st_gid == os.getgid() and g.gr_name == pwd.getpwuid(os.getuid()).pw_name and not g.gr_mem',
+  '        except KeyError:',
+  '            mine = False',
+  '        if not mine:',
+  '            raise RuntimeError("writable by its group: " + p)',
+  'def ckpath(D):',
+  '    cur = "/"',
+  '    owned(os.stat(cur), cur)',
+  '    for comp in os.path.dirname(D).split("/"):',
+  '        if not comp:',
+  '            continue',
+  '        nxt = os.path.join(cur, comp)',
+  '        if not os.path.lexists(nxt):',
+  '            return',
+  '        owned(os.lstat(nxt), nxt)',
+  '        owned(os.stat(nxt), nxt)',
+  '        cur = nxt',
   'def ckdir(D):',
   '    if not os.path.isabs(D):',
   '        raise RuntimeError("checkpoint directory is not absolute (HOME unset or relative?): " + D)',
+  '    ckpath(D)',
   '    os.umask(0o077)',
   '    os.makedirs(D, mode=0o700, exist_ok=True)',
   '    st = os.lstat(D)',
@@ -582,9 +618,30 @@ const READER_PY = [
   '                for chunk in iter(lambda: fh.read(1 << 20), b""):',
   '                    f.update(chunk)',
   '            h.update(f.digest())',
+  '        elif os.path.isdir(p):',
+  '            t = tree(p)',
+  '            if t is None:',
+  '                return "unhashable-" + os.urandom(8).hex()',
+  '            h.update(b"<dir>" + t)',
   '        else:',
-  '            h.update(b"<dir>" if os.path.isdir(p) else b"<missing>")',
+  '            h.update(b"<missing>")',
   '    return h.hexdigest()',
+  'def tree(root):',
+  '    t, n = hashlib.sha256(), 0',
+  '    try:',
+  '        for d, dirs, files in os.walk(root, onerror=lambda e: (_ for _ in ()).throw(e)):',
+  '            dirs[:] = sorted(x for x in dirs if x != ".git")',
+  '            for x in sorted(files) + [x for x in dirs if os.path.islink(os.path.join(d, x))]:',
+  '                n += 1',
+  '                if n > 20000:',
+  '                    return None',
+  '                q = os.path.join(d, x)',
+  '                st = os.lstat(q)',
+  '                link = os.readlink(q).encode("utf-8", "surrogateescape") if stat.S_ISLNK(st.st_mode) else b""',
+  '                t.update(os.path.relpath(q, root).encode("utf-8", "surrogateescape") + b"\\0%o\\0%d\\0%d\\0" % (st.st_mode, st.st_size, st.st_mtime_ns) + link + b"\\0")',
+  '    except OSError:',
+  '        return None',
+  '    return t.digest()',
   'def main(B, D, NAME, SEAT, ARTS, LABEL):',
   '    sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")',
   '    ckdir(B)',
@@ -667,7 +724,11 @@ const INIT_PY = [
   '        h = (h * 0x100000001b3) & 0xffffffffffffffff',
   '    return "%016x" % h',
   'def main(B, D, NAME, PAYLOAD, B64):',
-  '    raw = base64.b64decode("".join(B64.split()), validate=True)',
+  '    try:',
+  '        raw = base64.b64decode("".join(B64.split()), validate=True)',
+  '    except ValueError as e:',
+  '        print("PAI_ARGS MISMATCH the copy does not decode: %s" % e)',
+  '        return',
   '    got = fnv(raw)',
   '    if got != PAYLOAD:',
   '        print("PAI_ARGS MISMATCH expected %s got %s" % (PAYLOAD, got))',
@@ -789,7 +850,7 @@ function checkpointSection(ck, label, artifacts, seat) {
     '{"kind":"finding","severity":"MEDIUM","title":"…","file":null,"line":null,"body":"…"}',
     eof,
     '```',
-    `For an item checked with no defect, the line is \`{"kind":"checked","item":"<what you checked>"}\`. Anything other than \`recorded\` means it was NOT recorded — fix the JSON and run it again.`,
+    `For an item checked with no defect, the line is \`{"kind":"checked","item":"<what you checked>"}\`. Anything other than \`recorded\` means it was NOT recorded — fix the JSON and run it again. The file is kept on disk until the user deletes it: never copy a secret value (token, password, key) into a record — name where it is instead.`,
     `Just before you return: run \`${MARK_CMD} ${F} done\`, then return ALL findings — the ones recorded before the interruption and the new ones — via the schema.`,
   ].join('\n')
 }
@@ -1120,7 +1181,12 @@ const round1All = await parallel(
     : [...(codexThunk ? [codexThunk] : []), ...reviewThunks] // checkpoint:false keeps the pre-#103 order
 )
 const initResult = initThunk ? round1All[round1All.length - 1] || { saved: false, detail: 'missing' } : null
-const round1 = (initThunk ? round1All.slice(0, -1) : round1All).filter(Boolean)
+// Dispatch order differs with checkpointing on (journal chain), but results are put back in the
+// pre-#103 order — codex first — so stats.reviewers and the severity-tie dedup winner do not
+// depend on whether checkpointing is on (#103 verify r4).
+const round1 = (initThunk
+  ? (codexThunk ? [round1All[reviewThunks.length], ...round1All.slice(0, reviewThunks.length)] : round1All.slice(0, -1))
+  : round1All).filter(Boolean)
 const reviewerResults = round1.filter((r) => r.lens !== 'codex')
 
 // Phase 2: devil's-advocate adversarially refutes the reviewers' judgments (also fail-aware).
@@ -1154,11 +1220,14 @@ if (codexOn && !okLenses.has('codex')) {
 // complete; only the "resume without the caller's own copy of args" convenience is missing.
 const processNotes = []
 if (initResult && !initResult.saved) {
-  // An ERROR from the init command usually has the same cause as the seats' readers failing
-  // (unusable directory, no HOME), so it must not promise that partial results were saved (#103
-  // verify r2). A copy mismatch, a skipped or failed init agent says nothing about the seats.
-  const envFault = /^PAI_ARGS ERROR/.test(initResult.detail || '')
-  processNotes.push({ lens: 'checkpoint', severity: 'INFO', title: 'checkpoint: args.json not saved', file: null, body: `the checkpoint-init seat did not confirm ${CKPT.argsName} (${initResult.detail || 'no detail'}); ` + (envFault ? 'the same fault may have disabled checkpointing for every seat, so do not count on partial results for this run.' : "the seats' partial results are still saved, but resuming this run needs the caller's own copy of the args.") })
+  // Only the cases the engine can name say nothing about the seats: the init agent was skipped,
+  // errored or returned nothing (engine-written details), or the command reported a copy
+  // MISMATCH (a bad base64 copy included). Anything else — PAI_ARGS ERROR, a missing python3, a
+  // traceback, an agent's paraphrase — may be the fault that also disables every seat's
+  // checkpoint, so the note must not promise saved partial results (#103 verify r2, r4).
+  const d = initResult.detail || ''
+  const seatsUnaffected = ['skipped', 'errored', 'missing'].includes(d) || /PAI_ARGS MISMATCH/.test(d)
+  processNotes.push({ lens: 'checkpoint', severity: 'INFO', title: 'checkpoint: args.json not saved', file: null, body: `the checkpoint-init seat did not confirm ${CKPT.argsName} (${d || 'no detail'}); ` + (seatsUnaffected ? "the seats' partial results are still saved, but resuming this run needs the caller's own copy of the args." : "this may be the same fault that disables checkpointing for every seat (python3 missing, directory unusable), so check a seat's PAI_CHECKPOINT line before counting on partial results.") })
 }
 
 const merged = mergeDedup([...round1.flatMap((r) => r.findings), ...da.findings, ...integrity, ...processNotes])

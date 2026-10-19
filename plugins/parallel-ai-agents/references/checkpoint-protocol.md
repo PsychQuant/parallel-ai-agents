@@ -13,11 +13,11 @@ pai-ensemble 的每個席次（每個 lens reviewer、codex、devil's-advocate�
 | 再給 `checkpointRun` | 上面的目錄底下多一層 `run-<標籤>-<8 碼雜湊>/` |
 | `checkpoint: false` | 不存檔 |
 
-`dirKey` 是 `profile`、`file`、`diffFile`、`srtFile`、`contextBlock` 這五個所有席次共用的輸入，以 canonical JSON 計算的 FNV-1a 64（16 碼 hex）。只影響部分席次的參數（`daFocus`、`codexModel`、某個 lens 的 `priors`、`agentModel`）不換目錄。它只用來辨認「是不是同一份東西」，不防偽造。
+`dirKey` 是 `profile`、`file`、`diffFile`、`srtFile`、`contextBlock` 這五個所有席次共用的輸入，以 canonical JSON 計算的 FNV-1a 64（16 碼 hex）。其他參數不換目錄：只影響部分席次的（`daFocus`、`codexModel`、某個 lens 的 `priors`），以及影響所有席次但只改它們的鍵、不改它們讀的東西的 `agentModel`。它只用來辨認「是不是同一份東西」，不防偽造。
 
-`checkpointRun` 給「同一組輸入、刻意獨立的多輪」用：`ensemble-academic-review` 的 mix 第 1 輪與第 3 輪 args 完全相同。不分開的話，第 1 輪中斷在一半的席次會把部分結果交給第 3 輪。`ensemble-eval` 的 K 次 run 則各給一個 `checkpointDir`，效果相同。
+`checkpointRun` 給「同一組輸入、刻意獨立的多輪」用：`ensemble-academic-review` 的 mix 第 1 輪與第 3 輪 args 完全相同。不分開的話，第 1 輪中斷在一半的席次會把部分結果交給第 3 輪。標籤也要分開「不同次的審閱」：對同一份論文重新開一次獨立審閱時，若沿用 `round-1`，上一次中斷在一半的席次會被接續。所以 academic-review 的標籤帶一個審閱開始時決定、接回時沿用的識別碼。`ensemble-eval` 的 K 次 run 則各給一個 `checkpointDir`，效果相同。
 
-目錄與檔案都是私有的：目錄 0700（呼叫端先建好、但權限較寬的目錄會收緊），檔案 0600。目錄必須是本人擁有的絕對路徑真目錄，symlink、別人擁有的目錄，或 `HOME` 沒設、設成相對路徑，都會讓讀檔器回 `DISABLED`。
+目錄與檔案都是私有的：目錄 0700，檔案 0600。呼叫端先建好、但權限較寬的目錄會被收緊；給了 `checkpointRun` 時，呼叫端的 `checkpointDir` 本身也會被收緊。目錄本身必須是本人擁有的絕對路徑真目錄，不能是 symlink。通往它的路徑上，每一個已存在的項目（目錄或 symlink）都必須由 root 或本人擁有；每一個目錄都不能讓他人寫入，除非它有 sticky 位元（例如 `/tmp`），或只是本人專屬群組可寫。這些條件任一不符，或 `HOME` 沒設、設成相對路徑，讀檔器都回 `DISABLED`，init 回 `PAI_ARGS ERROR`。路徑檢查的理由：他人能寫入的目錄裡，路徑的某一層可以在檢查之後被換掉，之後的紀錄就寫到別的地方。root 擁有的 symlink（macOS 的 `/tmp`、`/var`）可以通過。
 
 目錄裡有：
 
@@ -41,7 +41,7 @@ pai-ensemble 的每個席次（每個 lens reviewer、codex、devil's-advocate�
 - devil's-advocate 的 prompt 含各 reviewer 的結果摘要，所以 reviewer 結論不同的新一輪，不會沿用上一輪 DA 針對舊結論做的反駁。
 - engine 升級改了內建 lens 或 DA 的指示文字，key 也跟著變。
 
-`artifactSha` 涵蓋席次讀的檔與席次所在的工作目錄：`diffFile`、`file`（兩個都給時兩個都算），需要逐字稿的 lens 再加 `srtFile`。路徑先解析成絕對路徑，工作目錄也算進去，所以同一份 diff 在另一個 repo 裡審時不會沿用紀錄。artifact 是目錄的話只記「是目錄」，目錄內容改變偵測不到。
+`artifactSha` 涵蓋席次讀的檔與席次所在的工作目錄：`diffFile`、`file`（兩個都給時兩個都算），需要逐字稿的 lens 再加 `srtFile`。路徑先解析成絕對路徑，工作目錄也算進去，所以同一份 diff 在另一個 repo 裡審時不會沿用紀錄（沒有 artifact 檔、只給 `contextBlock` 時也一樣）。artifact 是目錄時，雜湊每個項目的相對路徑、型態權限、大小、修改時間與 symlink 目標，`.git` 不算；目錄裡有東西改了就不接回。項目超過 20,000 個或讀不了時，每次都算出不同的值，也就是一律從頭做，不接回。
 
 紀錄以 `\n` 切行。`json.dumps` 會原樣寫出 U+2028／U+2029／U+0085，以這些字元切行會把一筆紀錄拆成兩半。
 
@@ -59,11 +59,13 @@ pai-ensemble 的每個席次（每個 lens reviewer、codex、devil's-advocate�
 
 紀錄命令的 heredoc 分隔符取自席次的鍵（`PAI_EOF_<12 碼>`）：紀錄內容常引用被審的 artifact，固定的分隔符可能被內容裡的同一行提早結束，後面的文字就會被當成 shell 執行。這個鍵是可以算出來的雜湊，不是秘密：要事先算出它，得知道席次完整的 prompt（含呼叫端的 `contextBlock`），artifact 的作者通常不知道。紀錄命令寫入前，如果檔尾沒有換行（上一筆寫到一半被打斷），會先補一個換行，所以被截斷的那一行不會吃掉下一筆。
 
+席次被交代不要把秘密的值（token、密碼、金鑰）寫進紀錄，只寫出它在哪裡，因為檔案會一直留在磁碟上。這一條也是 prompt 層的要求。
+
 `RESUME` 的輸出先印最新的 `codex-run`，再印 finding，最後印其餘紀錄。總量以 20,000 字元為上限（Bash 工具的輸出在 30,000 字元附近會被截斷），單筆超過 8,000 字元的不印，但不擋住後面的紀錄。有沒印出來的就印 `PAI_CHECKPOINT TRUNCATED`，prompt 要席次自己從 `PAI_CHECKPOINT FILE` 那一行指出的檔案讀其餘紀錄。
 
 **為什麼看到 `done` 就從頭做**：args 不變的接回，已完成的席次直接由 journal 快取回答，不會再跑。會看到 `done` 的主要是「同一組輸入的新的一輪」，新的一輪不沿用上一輪的結論，舊檔留存為 `.prev-N`。另有兩種情形也會看到，代價是那一輪的工作重做：改過 args 再接回時，排在第一個改變的呼叫之後、已經做完的席次；以及寫完 `done`、結果還沒進 journal 就中斷的席次（見已知限制）。
 
-**journal 快取怎麼對應**（2026-10-20 以兩個探針 workflow 實測）：快取鍵依派發順序串接。args 不變的接回時，所有已完成的呼叫都由快取回答，排在被打斷的呼叫之後的也一樣，只有被打斷的那些重跑。改過 args 再接回時，派發順序中第一個 prompt 改變的呼叫之後，所有呼叫都重跑，prompt 沒變的也一樣。這些重跑的席次看到自己的 `done`，就從頭做。派發順序是各 lens、codex、`checkpoint-init`、devil's-advocate。init 的 prompt 帶著整份 args，所以排在 barrier 的最後；也因此任何 args 的改動都會讓 devil's-advocate 在接回時重跑。codex 排在 lens 之後，只改 codex 的參數時，lens 的快取照樣有效。`checkpoint: false` 時沒有 init，派發順序維持 #103 之前的 codex 在前。
+**journal 快取怎麼對應**（2026-10-20 以兩個探針 workflow 實測）：快取鍵依派發順序串接。args 不變的接回時，所有已完成的呼叫都由快取回答，排在被打斷的呼叫之後的也一樣，只有被打斷的那些重跑。改過 args 再接回時，派發順序中第一個 prompt 改變的呼叫之後，所有呼叫都重跑，prompt 沒變的也一樣。這些重跑的席次看到自己的 `done`，就從頭做。派發順序是各 lens、codex、`checkpoint-init`、devil's-advocate。init 的 prompt 帶著整份 args，所以排在 barrier 的最後；也因此任何 args 的改動都會讓 devil's-advocate 在接回時重跑。codex 排在 lens 之後，只改 codex 的參數時，lens 的快取照樣有效。`checkpoint: false` 時沒有 init，派發順序維持 #103 之前的 codex 在前。派發順序只影響誰先開始：回傳結果一律排回 codex 在前，`stats.reviewers` 的順序與並列重複的 finding 的歸屬，與存檔開關無關。
 
 **codex 席次**：讀檔器只印最新的一筆合法 `codex-run`。接回時先 `--poll` 那個 run id，worker 還在跑或已經完成就不再開一個新的；`FAILED`／`TIMEOUT`／`unknown run id`／非零退出才重新 `--detach`。終態已經回報過的 run，poll 不會再報一次，這時會重新 detach（多花一次額度，結果仍然正確）。
 
@@ -73,19 +75,22 @@ pai-ensemble 的每個席次（每個 lens reviewer、codex、devil's-advocate�
 - 部分結果**不是報告**：不得當成 verify 結果貼出去，也不得據此推進任何狀態。
 - 要接回中斷的 run：`Workflow({scriptPath, resumeFromRunId, args})`。args 從呼叫端自己的紀錄取，或從 checkpoint 目錄的 `args.json` 取。預設位置用 `find ~/.cache/pai-ensemble -name args.json -exec ls -t {} +` 依時間列出（涵蓋 `run-*/` 子目錄），由 args 裡的 `diffFile` 等欄位辨認是哪一輪；給了 `checkpointDir` 的就看那個目錄（與它底下的 `run-*/`）。
 - 同一組輸入要跑成彼此獨立的多輪時，各輪給不同的 `checkpointRun`（或不同的 `checkpointDir`）。
+- 出現過 `RESUME` 的 run，結論有一部分建立在前一次中斷的紀錄上，不等於全新一輪的結論。要全新一輪，就換 `checkpointRun` 或 `checkpointDir`。
 - 開啟 checkpoint 時，run 會多派一個 `checkpoint-init` 席次，不算在 `maxAgents` 與 `stats.agents` 裡，以 `stats.checkpoint.initDispatched` 表示。
 
 ## 已知限制
 
-- **接回只看席次的 prompt 與 artifact 的位元組**。被審的程式若在兩者都不變的情況下改了（例如審的是工作樹，而 diff 檔沒有重產），接回的席次會沿用舊的紀錄。被審內容可能這樣變的呼叫端，要把 commit id 或 tree id 寫進 `contextBlock`，這樣它一變，所有席次的 key 就跟著變。
+- **接回只看席次的 prompt 與 artifact 的內容**。席次另外讀的東西不在雜湊裡：diff 模式下自己去讀的周邊程式碼、`contextBlock` 點名的參考檔（ensemble-eval 的 results.csv、academic 的分析檔）。這些東西在 prompt 與 artifact 都不變時改了，接回的席次會沿用舊的紀錄。被審內容可能這樣變的呼叫端，要把 commit id、tree id 或參考檔的雜湊寫進 `contextBlock`，這樣它一變，所有席次的 key 就跟著變。
 - **args 很大時 init 的成本也大**：init 席次要逐字抄出 base64 的 args，它的 prompt 約是 args 位元組數的 1.37 倍再加 2.5 KB。contextBlock 為 4 KB 時約 8 千字元，30 KB 約 4.4 萬，100 KB 約 14.1 萬（2026-10-20 實測）。中文的 contextBlock 每個字 3 位元組，同樣位元組數下，init 的 prompt 是 reviewer prompt 的 3.3 倍。抄錯只會出 INFO，但輸出 token 已經付了。
 - **寫下 `done` 到結果進 journal 之間有一段空窗**：席次寫完 `done` 之後才回傳結果。session 若剛好在這中間中斷，接回時這個席次沒有快取可用，會重新派發；它看到自己的 `done`，就從頭做。結果仍然正確，但那一輪的工作白做。這段空窗是席次寫下 `done` 之後產生最終回傳（全部 finding）的時間，沒有量過，在高 effort 下可能是數十秒。
 - **改過 args 再接回時，快取只保留到第一個改變的呼叫之前**（見上方「journal 快取怎麼對應」）。之後的席次即使自己的 prompt 沒變也會重跑，而且因為看到 `done` 而從頭做。
 - **同一組輸入同時跑兩個 run 會共用目錄**，兩邊的席次可能讀到彼此的部分結果，或互相把對方的檔改名為 `.prev-N`。需要各自獨立的呼叫端請給不同的 `checkpointRun` 或 `checkpointDir`。
-- **協定是 prompt 層的要求，engine 核對不到兩件事**：(1) 接回的席次有沒有把紀錄裡的 finding 帶回最終回傳——沒照做時，中斷前記下的 finding 會從結果消失（不會多出錯的 finding，但會漏）；(2) 席次有沒有寫 `done`——沒寫就結束時，呼叫端以同一組輸入開的新 run（不是接回）會沿用那份部分結果。要獨立的新一輪，就給不同的 `checkpointRun`。
+- **接回的席次把紀錄當成已確立**：紀錄裡的 finding 原樣帶回，checked 的項目不再重查。紀錄若記錯，或記錄時被 artifact 的內容誤導，接回之後不會被重驗；記下的 finding 也沒有撤回的方法。
+- **協定是 prompt 層的要求，engine 核對不到兩件事**：(1) 接回的席次有沒有把紀錄裡的 finding 帶回最終回傳——沒照做時，中斷前記下的 finding 會從結果消失；(2) 席次有沒有寫 `done`——沒寫就結束時，呼叫端以同一組輸入開的新 run（不是接回）會沿用那份部分結果。要獨立的新一輪，就給不同的 `checkpointRun`。
 - **init 排在 barrier 最後的代價**：席次數超過並行上限（`min(16, CPU 數 − 2)`）時，init 要等前面某個席次做完才開始，`args.json` 會晚寫；在那之前中斷，接回要靠呼叫端自己的 args。
 - **預設目錄的鍵不含工作目錄**：兩個 repo 用同樣的共用輸入（例如同一個 `contextBlock`、同一個 artifact 路徑）會落在同一個目錄。artifact 雜湊含工作目錄，所以不會沿用彼此的紀錄，但會互相把對方的檔改名為 `.prev-N`。
-- 目錄擁有者的檢查（別人擁有的目錄回 `DISABLED`）沒有自動化測試，因為要另一個使用者才建得出那種目錄。
+- 目錄擁有者的檢查（別人擁有的目錄或路徑項目回 `DISABLED`）沒有自動化測試，因為要另一個使用者才建得出那種目錄；他人可寫入的路徑那一條有測試。
+- **init 沒有成功時的 INFO**：只有引擎認得的情形（init 席次被略過、出錯、沒回傳，或命令回 `PAI_ARGS MISMATCH`，含 base64 抄錯）說「各席次的部分結果仍存著」。其餘情形（`PAI_ARGS ERROR`、沒有 python3、traceback、席次轉述的文字）說「可能是同一個原因讓每個席次都沒存檔，先看席次的 `PAI_CHECKPOINT` 行」。
 - **接回的鍵與目錄名，與使用者裁決的字面不同**：2026-10-19 的裁決寫「args 雜湊與 artifact 雜湊都相同才沿用」，2026-10-20 寫預設目錄以 args 雜湊命名。實作改成每個席次自己的輸入（verify R1 的 HIGH），目錄以共用輸入的 `dirKey` 命名。差別：只改到某些席次的參數時，派發順序中排在第一個改變的呼叫之前、或還沒做完的席次會沿用紀錄（比裁決窄）；排在它之後、已經做完的席次照樣從頭做，與裁決相同；同一份 diff 換了工作目錄時會失效（比裁決寬）。仍待使用者確認。
 
 ## 隱私與清理

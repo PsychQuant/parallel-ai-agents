@@ -20,9 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **接回與重跑**：每個席次以自己的輸入（checkpoint 關閉時會收到的 prompt，加上 dispatch model）與它讀的檔的位元組為鍵；兩者都相同、而且沒有完成記號，才沿用先前的紀錄，否則舊檔改名為 `.prev-N`、從頭做。所以只改一個 lens 的 `priors` 或 `codexModel` 時，其他席次的 prompt 與部分結果不受影響（journal 快取依派發順序串接，只保留到第一個改變的呼叫之前；實測與已知限制見協定）；devil's-advocate 的鍵含各 reviewer 的結果摘要。完成記號區分「接回」與「同一組輸入的新的一輪」：args 不變的接回，已完成的席次由 journal 快取回答，不會讀到自己的檔。
   - **codex 席次**：detach 後記下 run id；接回時先 `--poll` 最新的那一個，worker 還在就不再開新的、不重付額度。
   - **args 存檔**：新的 `checkpoint-init` 席次把 args 寫成 `args.json`（這個目錄最近一次的那一份）與 `args-<argsDigest>.json`（同一目錄不同 args 並存）。args 以 base64 交給它（contextBlock 可能是不受信任的內容，照抄命令的席次不應讀到其中可讀的文字），它對解碼後的位元組重算雜湊，與 engine 算的比對；不符只多一則 INFO `checkpoint: args.json not saved`，不影響 verdict，也不算進 `stats.integrity`。它在 barrier 裡最後派發（journal 的快取鍵依派發順序串接，而它的 prompt 帶著整份 args），不算在 `stats.agents` 與 `maxAgents` 裡。
-  - **檔案是私有的**：目錄 0700、檔案 0600，目錄必須是本人擁有的絕對路徑真目錄。所有命令以 `python3 -I` 執行，席次工作目錄（被審的 repo）裡的 `json.py` 之類不會被載入。紀錄命令的 heredoc 分隔符取自席次的鍵，被審內容裡的分隔符行無法提早結束它。
-  - **artifact 雜湊含工作目錄**：同一份 diff 在另一個 repo 裡審，不會沿用紀錄（沒有 artifact 檔、只有 `contextBlock` 時也一樣）；`diffFile` 與 `file` 都給時兩個都算。
-  - **派發順序**：開啟 checkpoint 時是各 lens、codex、`checkpoint-init`、devil's-advocate（配合 journal 的串接快取）；`checkpoint: false` 時維持 codex 在前。
+  - **檔案是私有的**：目錄 0700、檔案 0600，目錄必須是本人擁有的絕對路徑真目錄；通往它的路徑上每一個已存在的項目都要由 root 或本人擁有，每一個目錄都不能讓他人寫入（sticky 的 `/tmp` 與本人專屬群組除外），否則存檔停用。席次被交代不要把秘密的值寫進紀錄。所有命令以 `python3 -I` 執行，席次工作目錄（被審的 repo）裡的 `json.py` 之類不會被載入。紀錄命令的 heredoc 分隔符取自席次的鍵，被審內容裡的分隔符行無法提早結束它。
+  - **artifact 雜湊含工作目錄**：同一份 diff 在另一個 repo 裡審，不會沿用紀錄（沒有 artifact 檔、只有 `contextBlock` 時也一樣）；`diffFile` 與 `file` 都給時兩個都算。artifact 是目錄時雜湊整棵樹（相對路徑、大小、修改時間，不含 `.git`），內容改了就不接回；超過 20,000 個項目時一律從頭做。
+  - **派發順序**：開啟 checkpoint 時是各 lens、codex、`checkpoint-init`、devil's-advocate（配合 journal 的串接快取）；`checkpoint: false` 時維持 codex 在前。回傳結果一律排回 codex 在前，所以 `stats.reviewers` 的順序與並列重複的 finding 的歸屬不受存檔開關影響，只有開始的先後不同。
+  - **init 沒成功時的 INFO**：只有 init 席次被略過、出錯，或回 `PAI_ARGS MISMATCH`（含 base64 抄錯）時，才說各席次的部分結果仍存著；其餘情形說可能每個席次都沒存檔。
   - **接回時的輸出有上限**：先印最新的 run id 與 finding，總量 20,000 字元；放不下的，prompt 要席次自己從檔案讀。
   - `stats.checkpoint = { enabled, dir, argsDigest, argsFile, initDispatched, argsSaved }`，early-return 的結果也帶；開局 `log()` 印出目錄。
   - 協定（檔案格式、接回規則、journal 快取怎麼對應的實測、呼叫端可以拿部分結果做什麼、已知限制）：`references/checkpoint-protocol.md`。五個 ensemble-* skill 的 Backend A 段各加一行說明預設存檔的行為。
@@ -31,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **所有席次的 prompt 都多了 checkpoint 段**（`checkpoint: false` 時除外）。升級後第一輪，舊版 run 的 journal 快取一律對不上，接回舊 run 會從頭跑。
+- **預設開啟時多派一個 agent**（`checkpoint-init`），每個席次多跑一個讀檔命令與幾個紀錄命令；args 很大時 init 的成本也大（協定的已知限制）。
 - external-consumer contract 的派發前 throw 從一種（`agentModel`）變成兩種（另加 `checkpointDir`／`checkpointRun`）。
 
 ### 依賴

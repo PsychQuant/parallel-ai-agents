@@ -208,11 +208,11 @@ TaskCreate: "Final: merge all rounds"
      "replicas": 1,
      "disableLenses": [],
      "priors": {},
-     "checkpointRun": "round-{N}"
+     "checkpointRun": "<審閱識別碼>-round-{N}"
    }
    ```
 
-   - **`checkpointRun`（#103）**：每一輪給自己的值（`round-1`、`round-2`…）。mix 的第 1 輪與第 3 輪 args 完全相同，不分開的話，第 1 輪中斷在一半的席次會把部分結果交給第 3 輪，第 3 輪就不再獨立。單輪模式照樣給 `round-1`；接回中斷的那一輪時沿用同一個值。
+   - **`checkpointRun`（#103）**：`<審閱識別碼>-round-{N}`。審閱識別碼在這一次審閱開始時決定一次（例如開始時的臺北時間 `YYYYMMDD-HHMM`），記在這次審閱的工作筆記裡，之後每一輪與接回都沿用；對同一份稿子重新開一次獨立審閱時換一個新的。輪次部分每一輪不同（`round-1`、`round-2`…）：mix 的第 1 輪與第 3 輪 args 完全相同，不分開的話，第 1 輪中斷在一半的席次會把部分結果交給第 3 輪。審閱識別碼則讓上一次審閱中斷在一半的席次，不會被新的審閱接著做。單輪模式照樣給 `<審閱識別碼>-round-1`；接回中斷的那一輪時沿用同一個值。
 
    - **`disableLenses`**（對應 reviewer 開關）：`--no-numeric` → `["number-verifier"]`；`--no-references` → `["reference-verifier"]`；兩者皆給 → 退化為 methodology + writing + DA + Codex。methodology/writing 永遠在。
    - **`priors`（hybrid 輪才填 —— 這是資訊不對稱的控制點）**：`{"reference-verifier": "<前輪可疑文獻 watch-list>", "da": "<所有前輪完整結果>"}`。**methodology / writing / number-verifier / codex 一律不放進 map** → 它們看不到前輪（避免 anchoring bias；number-verifier 每輪必從 ground-truth 重跑）。**independent 輪 `priors: {}`**。

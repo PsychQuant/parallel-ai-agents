@@ -77,6 +77,8 @@ Wrapper 在 plugin 安裝時自動加入 PATH（透過 `bin/`），所以直接�
 
 Python 在 macOS 上版本飄移：`/usr/bin/python3` 是 stub（要 Xcode CLT 才有真 binary）；版本可能是 3.9 / 3.10 / 3.11 / 3.13，新語法（如 `dict | None`）需 3.10+ 不一定可用。Swift script 用 Xcode CLT 內建的 swift 5+，shebang 直接跑，無版本兼容問題。
 
+例外：ensemble engine 的存檔命令（#103）用 python3。workflow script 不能讀寫檔案，只能交給 agent 跑 shell 命令；這些命令以 `python3 -I` 執行，語法限 3.8。沒有 python3 時存檔停用，審閱照常（`references/checkpoint-protocol.md`）。
+
 不走 Swift binary（che-mcps notarize 模式）的理由：這 wrapper 不需 TCC 權限（只發 HTTPS），開新 repo + notarize 流程過度工程化。Swift script 的 1-2s cold start 對 ensemble 場景（5-15s LLM response 為主）是可接受的雜訊。
 
 ## Development

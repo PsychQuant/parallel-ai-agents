@@ -843,6 +843,67 @@ test('#103 r4：紀錄命令在非 UTF-8 locale 下照樣寫 UTF-8；檔頭壞�
   rmSync(home, { recursive: true, force: true })
 })
 
+test('#103 r5：路徑上任一層可被他人寫入（非 sticky）或經 symlink 指進這種目錄時 DISABLED；sticky 的目錄照常', async () => {
+  const home = tmpHome()
+  const ww = join(home, 'shared'); mkdirSync(ww); chmodSync(ww, 0o777)
+  let r = await promptsFor({ ...BASE, checkpointDir: join(ww, 'ck') })
+  assert.match(sh(readerOf(r.seen.get('review:architecture')), home).out, /PAI_CHECKPOINT DISABLED .*writable by other users/)
+  assert.match(sh(readerOf(r.seen.get('checkpoint-init')), home).out, /PAI_ARGS ERROR .*writable by other users/)
+  spawnSync('ln', ['-s', ww, join(home, 'lp')])
+  r = await promptsFor({ ...BASE, checkpointDir: join(home, 'lp', 'ck2') })
+  assert.match(sh(readerOf(r.seen.get('review:architecture')), home).out, /PAI_CHECKPOINT DISABLED .*writable by other users/)
+  assert.deepEqual(readdirSync(ww), [], '他人可寫的目錄裡被寫了東西')
+  chmodSync(ww, 0o1777)
+  r = await promptsFor({ ...BASE, checkpointDir: join(ww, 'ck3') })
+  assert.match(sh(readerOf(r.seen.get('review:architecture')), home).out, /PAI_CHECKPOINT FRESH/)
+  chmodSync(ww, 0o755)
+  rmSync(home, { recursive: true, force: true })
+})
+
+test('#103 r5：目錄型 artifact 的內容變了就不接回；超過 20000 個項目時一律從頭做', async () => {
+  const home = tmpHome()
+  const src = join(home, 'src'); mkdirSync(join(src, 'auth'), { recursive: true })
+  writeFileSync(join(src, 'auth', 'login.js'), 'ok()\n')
+  const r = await promptsFor({ profile: 'code', file: src, codexEnabled: false })
+  const p = r.seen.get('review:architecture')
+  const file = sh(readerOf(p), home).out.match(/PAI_CHECKPOINT FILE (.+)/)[1].trim()
+  assert.match(sh(readerOf(p), home).out, /PAI_CHECKPOINT RESUME/, '內容沒變卻不接回')
+  writeFileSync(join(src, 'auth', 'login.js'), 'eval(req.body.x)\n')
+  assert.match(sh(readerOf(p), home).out, /reason: artifact-changed/, '目錄內容變了仍接回')
+  mkdirSync(join(src, '.git')); writeFileSync(join(src, '.git', 'index'), 'x')
+  assert.match(sh(readerOf(p), home).out, /PAI_CHECKPOINT RESUME/, '.git 變動不該讓紀錄失效')
+  spawnSync('python3', ['-c', 'import os,sys\nd=sys.argv[1]\nos.makedirs(d)\nfor i in range(20001): open(os.path.join(d,"f%d"%i),"w").close()', join(src, 'big')])
+  sh(readerOf(p), home)
+  assert.match(sh(readerOf(p), home).out, /reason: artifact-changed/, '超過上限仍被當成同一份內容')
+  assert.ok(existsSync(file))
+  rmSync(home, { recursive: true, force: true })
+})
+
+test('#103 r5：init 的 INFO 只在引擎認得的情形說「部分結果仍存著」；base64 抄錯回 MISMATCH', async () => {
+  const note = async (v) => (await promptsFor(BASE, v)).out.findings.find((f) => /args\.json not saved/.test(f.title)).body
+  const fail = (detail) => (l) => (l === 'checkpoint-init' ? { saved: false, detail } : { findings: [] })
+  for (const d of ['bash: python3: command not found', 'Traceback (most recent call last): PermissionError', 'PAI_ARGS ERROR RuntimeError: not a directory', ''])
+    assert.ok(!/still saved/.test(await note(fail(d))), `「${d}」不該說部分結果仍存著`)
+  assert.match(await note(fail('The command printed: PAI_ARGS MISMATCH expected a got b')), /still saved/)
+  assert.match(await note((l) => (l === 'checkpoint-init' ? null : { findings: [] })), /still saved/)
+  const home = tmpHome()
+  const r = await promptsFor(BASE)
+  const broken = readerOf(r.seen.get('checkpoint-init')).replace(/B64 = """\n[A-Za-z0-9+/=]/, 'B64 = """\n*')
+  assert.match(sh(broken, home).out, /PAI_ARGS MISMATCH the copy does not decode/)
+  rmSync(home, { recursive: true, force: true })
+})
+
+test('#103 r5：開不開存檔，stats.reviewers 的順序與並列重複的歸屬都相同（codex 在前）', async () => {
+  const dup = { severity: 'HIGH', title: 'same', file: 'a.js', line: 1, body: 'x' }
+  const reply = (l) => (l === 'codex' || l === 'review:architecture' ? { findings: [{ ...dup }], saved: true } : { findings: [], saved: true })
+  const base = { ...BASE, codexEnabled: true, codexCallPath: '/bin/codex-call' }
+  const off = (await promptsFor({ ...base, checkpoint: false }, reply)).out
+  const on = (await promptsFor(base, reply)).out
+  assert.deepEqual(on.stats.reviewers.map((x) => x.lens), off.stats.reviewers.map((x) => x.lens))
+  const lensOf = (o) => o.findings.find((f) => f.title === 'same').lens
+  assert.equal(lensOf(on), lensOf(off))
+})
+
 // ── runner ── 新案請加在這條線之上；迴圈之後註冊的 test() 不會執行。
 let pass = 0
 let fail = 0
