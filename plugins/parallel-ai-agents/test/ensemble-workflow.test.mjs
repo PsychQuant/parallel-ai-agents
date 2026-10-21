@@ -833,7 +833,9 @@ test('#103 r4：紀錄命令在非 UTF-8 locale 下照樣寫 UTF-8；檔頭壞�
   const file = s.out.match(/PAI_CHECKPOINT FILE (.+)/)[1].trim()
   const rec = fenced(p, "<<'PAI_EOF_").replace(/\n[^\n]*\n(PAI_EOF_[0-9a-f]{12})$/, '\n{"kind":"checked","item":"中文項目"}\n$1')
   assert.match(sh(rec, home, { env: { LC_ALL: 'en_US.ISO8859-1', LANG: 'en_US.ISO8859-1' } }).out, /recorded/)
-  assert.ok(readFileSync(file, 'utf8').includes('中文項目'), '紀錄不是有效的 UTF-8')
+  const line = readFileSync(file, 'utf8').split('\n')[1]
+  assert.ok(/^[\x00-\x7f]*$/.test(line), '紀錄不是純 ASCII')
+  assert.equal(JSON.parse(line).item, '中文項目', '紀錄讀回來不是原字串')
   writeFileSync(file, '['.repeat(200000) + '\n')
   s = sh(readerOf(p), home)
   assert.match(s.out, /reason: no-header/, s.out.slice(0, 200))
@@ -867,9 +869,11 @@ test('#103 r5：目錄型 artifact 的內容變了就不接回；超過 20000 �
   const r = await promptsFor({ profile: 'code', file: src, codexEnabled: false })
   const p = r.seen.get('review:architecture')
   const file = sh(readerOf(p), home).out.match(/PAI_CHECKPOINT FILE (.+)/)[1].trim()
+  assert.match(sh(fenced(p, "<<'PAI_EOF_"), home).out, /recorded/)
   assert.match(sh(readerOf(p), home).out, /PAI_CHECKPOINT RESUME/, '內容沒變卻不接回')
   writeFileSync(join(src, 'auth', 'login.js'), 'eval(req.body.x)\n')
   assert.match(sh(readerOf(p), home).out, /reason: artifact-changed/, '目錄內容變了仍接回')
+  assert.match(sh(fenced(p, "<<'PAI_EOF_"), home).out, /recorded/)
   mkdirSync(join(src, '.git')); writeFileSync(join(src, '.git', 'index'), 'x')
   assert.match(sh(readerOf(p), home).out, /PAI_CHECKPOINT RESUME/, '.git 變動不該讓紀錄失效')
   spawnSync('python3', ['-c', 'import os,sys\nd=sys.argv[1]\nos.makedirs(d)\nfor i in range(20001): open(os.path.join(d,"f%d"%i),"w").close()', join(src, 'big')])
@@ -963,6 +967,136 @@ test('#103 r6：codex 的 DISABLED 規則也停掉 step 1 的紀錄與 step 3 �
   const r = await promptsFor({ ...BASE, codexEnabled: true, codexCallPath: '/bin/codex-call' })
   assert.match(r.seen.get('codex'), /skip every checkpoint step — this one, the record command in step 1 and the done command in step 3/)
   assert.match(r.seen.get('review:architecture'), /Any other failure \(no python3, a permission error\) means checkpointing stopped working/)
+})
+
+const recordWith = (p, json) => fenced(p, "<<'PAI_EOF_").replace(/\n[^\n]*\n(PAI_EOF_[0-9a-f]{12})$/, () => '\n' + json + '\n' + fenced(p, "<<'PAI_EOF_").split('\n').pop())
+
+test('#103 r7：紀錄命令遇到任何壞輸入都印 REJECTED 且 exit 0；finding 要有 title 與 body、checked 要有 item', async () => {
+  const home = tmpHome()
+  const r = await promptsFor(BASE)
+  const p = r.seen.get('review:architecture')
+  sh(readerOf(p), home)
+  const bad = [
+    '{"kind":"finding","title":"a "quoted" word","body":"x"}',
+    '{"kind":"finding","title":"re","body":"\\d+ is a regex"}',
+    '{"kind":"finding","title":"t","body":"tab\there"}',
+    '{"kind":"checked","item":"x",}',
+    "{'kind':'checked','item':'x'}",
+    '{"kind":"finding"}',
+    '{"kind":"finding","title":"  ","body":"x"}',
+    '{"kind":"checked"}',
+    '[1,2]',
+  ]
+  for (const j of bad) {
+    const s = sh(recordWith(p, j), home)
+    assert.match(s.out, /^REJECTED/m, `沒有印 REJECTED：${j}\n${s.out}`)
+    assert.ok(!/Traceback/.test(s.out), `印了 traceback：${j}`)
+    assert.equal(s.code, 0, `exit 不是 0：${j}`)
+  }
+  const empty = fenced(p, "<<'PAI_EOF_").replace(/\n[^\n]*\n(PAI_EOF_[0-9a-f]{12})$/, '\n$1')
+  assert.match(sh(empty, home).out, /^REJECTED/m, '空輸入沒有印 REJECTED')
+  const surrogate = sh(recordWith(p, '{"kind":"finding","title":"s","body":"lone \\ud800 surrogate"}'), home)
+  assert.match(surrogate.out, /^recorded/m, '孤立代理對應該寫得進去（以 ASCII 跳脫）')
+  rmSync(home, { recursive: true, force: true })
+})
+
+test('#103 r7：紀錄檔只含 ASCII，C1 控制字元、DEL、雙向覆寫不會原樣留在檔案裡', async () => {
+  const home = tmpHome()
+  const r = await promptsFor(BASE)
+  const p = r.seen.get('review:architecture')
+  const file = sh(readerOf(p), home).out.match(/PAI_CHECKPOINT FILE (.+)/)[1].trim()
+  const body = 'esc\u001b[31m c1\u009b del\u007f bidi‮ end'
+  assert.match(sh(recordWith(p, JSON.stringify({ kind: 'finding', title: 't', body })), home).out, /^recorded/m)
+  const raw = readFileSync(file)
+  assert.ok(![...raw].some((b) => b > 0x7e && b !== 0x0a), '檔案裡有非 ASCII 位元組')
+  assert.equal(JSON.parse(raw.toString('utf8').split('\n')[1]).body, body)
+  rmSync(home, { recursive: true, force: true })
+})
+
+test('#103 r7：只有檔頭、沒有任何紀錄的檔案印 FRESH 並沿用（不改名、不算接回）', async () => {
+  const home = tmpHome()
+  const r = await promptsFor(BASE)
+  const p = r.seen.get('review:architecture')
+  const file = sh(readerOf(p), home).out.match(/PAI_CHECKPOINT FILE (.+)/)[1].trim()
+  const s = sh(readerOf(p), home)
+  assert.match(s.out, /^PAI_CHECKPOINT FRESH \(an earlier run of this seat left this file with no records/m)
+  assert.ok(!/RESUME/.test(s.out))
+  assert.ok(!existsSync(file + '.prev-1'), '沒有紀錄的檔案不該被改名')
+  rmSync(home, { recursive: true, force: true })
+})
+
+test('#103 r7：建不了紀錄檔時只印 DISABLED，不會先印 FRESH', async () => {
+  const home = tmpHome()
+  const ro = join(home, 'ro'); mkdirSync(ro); chmodSync(ro, 0o500)
+  const r = await promptsFor({ ...BASE, checkpointDir: ro })
+  const s = sh(readerOf(r.seen.get('review:architecture')), home)
+  assert.match(s.out, /PAI_CHECKPOINT DISABLED/)
+  assert.ok(!/PAI_CHECKPOINT FRESH/.test(s.out), `建檔失敗前就印了 FRESH：${s.out}`)
+  chmodSync(ro, 0o700)
+  rmSync(home, { recursive: true, force: true })
+})
+
+test('#103 r7：目錄型 artifact 的一般目錄也進雜湊：只改目錄權限、多一個空目錄都不接回；空目錄也算進上限', async () => {
+  const home = tmpHome()
+  const src = join(home, 'src'); mkdirSync(join(src, 'config'), { recursive: true })
+  writeFileSync(join(src, 'config', 'a.txt'), 'x\n')
+  const r = await promptsFor({ profile: 'code', file: src, codexEnabled: false })
+  const p = r.seen.get('review:architecture')
+  const prime = () => { sh(readerOf(p), home); assert.match(sh(recordWith(p, '{"kind":"checked","item":"perm"}'), home).out, /recorded/) }
+  prime()
+  assert.match(sh(readerOf(p), home).out, /PAI_CHECKPOINT RESUME/, '什麼都沒變卻不接回')
+  chmodSync(join(src, 'config'), 0o777)
+  assert.match(sh(readerOf(p), home).out, /reason: artifact-changed/, '只改目錄權限仍接回')
+  chmodSync(join(src, 'config'), 0o755)
+  assert.match(sh(recordWith(p, '{"kind":"checked","item":"perm"}'), home).out, /recorded/)
+  sh(readerOf(p), home)
+  assert.match(sh(recordWith(p, '{"kind":"checked","item":"perm"}'), home).out, /recorded/)
+  mkdirSync(join(src, 'empty'))
+  assert.match(sh(readerOf(p), home).out, /reason: artifact-changed/, '多一個空目錄仍接回')
+  spawnSync('python3', ['-c', 'import os,sys\nfor i in range(20001): os.makedirs(os.path.join(sys.argv[1],"d%d"%i))', join(src, 'many')])
+  assert.match(sh(recordWith(p, '{"kind":"checked","item":"x"}'), home).out, /recorded/)
+  assert.match(sh(readerOf(p), home).out, /reason: artifact-unhashable/, '兩萬個空目錄沒有算進上限')
+  rmSync(home, { recursive: true, force: true })
+})
+
+test('#103 r7：路徑裡先接一個還不存在的元件再用 .. 走進他人可寫的目錄，仍然 DISABLED（ckdir 建完後重走整條路徑）', async () => {
+  const home = tmpHome()
+  mkdirSync(join(home, 'safe'))
+  const open = join(home, 'open'); mkdirSync(open); chmodSync(open, 0o777)
+  // 字串串接，不用 join：path.join 會把 .. 化簡掉，那樣就測不到 ..（r7 負控抓到）
+  const r = await promptsFor({ ...BASE, checkpointDir: home + '/safe/nonexist/../../open/a/ck' })
+  assert.match(sh(readerOf(r.seen.get('review:architecture')), home).out, /PAI_CHECKPOINT DISABLED .*writable by other users/)
+  assert.match(sh(readerOf(r.seen.get('checkpoint-init')), home).out, /PAI_ARGS ERROR .*writable by other users/)
+  // 單獨呼叫一次 ckdir 也要擋下：不能只靠 main() 剛好呼叫兩次（r6 verify DA）
+  const once = readerOf(r.seen.get('review:architecture')).replace(/\n    main\([^\n]*\)\n/, () => `\n    ckdir(${JSON.stringify(home + '/safe/nonexist2/../../open/b/ck')})\n    print("CKDIR OK")\n`)
+  assert.ok(once.includes('CKDIR OK'), '沒有替換到 main(...) 那一行')
+  const o = sh(once, home).out
+  assert.match(o, /PAI_CHECKPOINT DISABLED RuntimeError: writable by other users/)
+  assert.ok(!/CKDIR OK/.test(o), '單獨一次 ckdir 放行了')
+  chmodSync(open, 0o755)
+  rmSync(home, { recursive: true, force: true })
+})
+
+test('#103 r7：過長的 lens key 與 checkpointRun 不會讓檔名超過上限而靜默停用存檔', async () => {
+  const home = tmpHome()
+  const key = 'k'.repeat(300)
+  const r = await promptsFor({ profile: 'custom', customLenses: [{ key, focus: 'x' }], diffFile: '/tmp/d.diff', codexEnabled: false, checkpointRun: 'r'.repeat(300) })
+  const p = r.seen.get(`review:${key}`)
+  const s = sh(readerOf(p), home)
+  assert.match(s.out, /PAI_CHECKPOINT FRESH/, s.out.slice(0, 300))
+  const file = s.out.match(/PAI_CHECKPOINT FILE (.+)/)[1].trim()
+  assert.ok(file.split('/').every((c) => Buffer.byteLength(c) <= 255))
+  rmSync(home, { recursive: true, force: true })
+})
+
+test('#103 r7：codex 的紀錄或 done 命令失敗不影響 detach 結果；stats 另列 disabledSeats', async () => {
+  const r = await promptsFor({ ...BASE, codexEnabled: true, codexCallPath: '/bin/codex-call' })
+  assert.match(r.seen.get('codex'), /If that record command fails, the detach still succeeded: skip the remaining checkpoint steps and go on to step 2/)
+  assert.match(r.seen.get('codex'), /\(if it fails, go on — it does not change your findings\)/)
+  const reply = (l) => (l === 'review:security' ? { findings: [], checkpointState: 'DISABLED' } : l === 'checkpoint-init' ? { saved: true } : { findings: [], checkpointState: 'FRESH' })
+  const on = await promptsFor(BASE, reply)
+  assert.deepEqual(on.out.stats.checkpoint.disabledSeats, ['review:security'])
+  assert.deepEqual(on.out.stats.checkpoint.resumedSeats, [])
 })
 
 // ── runner ── 新案請加在這條線之上；迴圈之後註冊的 test() 不會執行。

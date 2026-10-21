@@ -62,7 +62,7 @@
  *
  * Returns: { findings: Finding[], verdict: 'PASS' | 'FINDINGS', stats: {...} }
  * conforming to references/ensemble-findings-schema.json. stats.checkpoint (#103) =
- * { enabled, dir?, argsDigest, argsFile?, initDispatched?, argsSaved?, resumedSeats? }. Checkpoint protocol (file layout, resume vs re-run,
+ * { enabled, dir?, argsDigest, argsFile?, initDispatched?, argsSaved?, resumedSeats?, disabledSeats? }. Checkpoint protocol (file layout, resume vs re-run,
  * what a caller may do with partial results): references/checkpoint-protocol.md.
  *
  * MODEL-ROUTING CONFIRMED LIVE (#20, 2026-07-02): two 6-agent ensemble runs on this same
@@ -83,8 +83,9 @@
  * require a major version bump + a migration note in CHANGELOG.md. profile:'custom' +
  * customLenses/includeLenses + contextBlock (pre-sentinel-wrapped by the consumer if the
  * content is untrusted) + diffFile + agentModel is the supported composition surface.
- * Contract exits: guards return findings-shaped results (verdict:'FINDINGS'); the TWO
- * exceptions are an invalid agentModel and an invalid checkpointDir / checkpointRun (#103), which THROW before
+ * Contract exits: guards return findings-shaped results (verdict:'FINDINGS'); the THREE
+ * exceptions are an invalid agentModel, an invalid checkpointDir / checkpointRun, and a checkpoint
+ * that is not a boolean (null included, unlike agentModel and checkpointDir) (#103), which THROW before
  * any dispatch (arg-contract violations — callers wanting a soft failure must validate before
  * calling). null/''/absent agentModel all mean "default" (opus); null/''/absent checkpointDir
  * mean the default location.
@@ -531,9 +532,11 @@ function base64Utf8(s) {
   return out
 }
 // File-name-safe tag for a seat label. The hash suffix keeps two keys that sanitize to the same
-// string ("a:b" / "a_b") from sharing a partial file.
+// string ("a:b" / "a_b") from sharing a partial file. The readable part is cut at 64 characters,
+// so a long lens key or checkpointRun cannot exceed the file-system name limit and silently
+// disable checkpointing (#103 verify r6); the hash is still over the whole label.
 function fileTag(label) {
-  return String(label).replace(/[^A-Za-z0-9._-]/g, '_') + '-' + fnv1a64Hex(label).slice(0, 8)
+  return String(label).replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 64) + '-' + fnv1a64Hex(label).slice(0, 8)
 }
 
 // A seat's checkpoint is keyed on ITS OWN inputs: the prompt it would get with checkpointing off,
@@ -615,13 +618,15 @@ const CKDIR_PY = [
   '        raise RuntimeError("owned by another user: " + D)',
   '    if st.st_mode & 0o077:',
   '        os.chmod(D, 0o700)',
+  '    resolve(D)',
   'def create(p):',
   '    return os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)',
 ].join('\n')
 
 // Reader run as each seat's step 0. Fully assembled (the seat fills in nothing). States:
 //   no file                                  → FRESH, write the header
-//   header matches, no done mark             → RESUME, print the earlier records (bounded)
+//   header matches, no done mark, no record  → FRESH, keep using the file (#103 verify r6)
+//   header matches, no done mark, ≥1 record  → RESUME, print the earlier records (bounded)
 //   no/other header, seat inputs or artifact
 //   bytes changed, or a done mark            → keep the old file as .prev-N, FRESH
 // A done mark means the seat FINISHED in an earlier run. A resume with unchanged args does not
@@ -630,8 +635,9 @@ const CKDIR_PY = [
 // seat re-dispatched after an args edit or one that was cut off between writing done and the
 // harness journaling its answer (references/checkpoint-protocol.md, known limits). Any exception → DISABLED, exit 0, and the
 // prompt treats "no PAI_CHECKPOINT line at all" (python3 missing) the same way.
-// Records are split on "\n" only: json.dumps leaves U+2028/U+2029/U+0085 raw, and splitlines()
-// would cut a record in two (#103 verify r1).
+// FRESH is printed only after the file exists, so a failing create shows DISABLED alone.
+// Records are split on "\n" only: files written before r7 hold U+2028/U+2029/U+0085 raw, and
+// splitlines() would cut such a record in two (#103 verify r1).
 const READER_PY = [
   'SKIP = {".git", "node_modules", ".build", ".venv", "venv", "__pycache__", ".tox", ".mypy_cache", ".pytest_cache", ".gradle", "DerivedData"}',
   'def sha(paths, skip):',
@@ -658,6 +664,10 @@ const READER_PY = [
   '    try:',
   '        for d, dirs, files in os.walk(root, onerror=lambda e: (_ for _ in ()).throw(e)):',
   '            dirs[:] = sorted(x for x in dirs if x not in SKIP and os.path.realpath(os.path.join(d, x)) not in skip)',
+  '            n += 1',
+  '            if n > 20000:',
+  '                return None',
+  '            t.update(b"D" + os.path.relpath(d, root).encode("utf-8", "surrogateescape") + b"\\0%o\\0" % os.lstat(d).st_mode)',
   '            for x in sorted(files) + [x for x in dirs if os.path.islink(os.path.join(d, x))]:',
   '                n += 1',
   '                if n > 20000:',
@@ -665,7 +675,7 @@ const READER_PY = [
   '                q = os.path.join(d, x)',
   '                st = os.lstat(q)',
   '                link = os.readlink(q).encode("utf-8", "surrogateescape") if stat.S_ISLNK(st.st_mode) else b""',
-  '                t.update(os.path.relpath(q, root).encode("utf-8", "surrogateescape") + b"\\0%o\\0%d\\0%d\\0" % (st.st_mode, st.st_size, st.st_mtime_ns) + link + b"\\0")',
+  '                t.update(b"F" + os.path.relpath(q, root).encode("utf-8", "surrogateescape") + b"\\0%o\\0%d\\0%d\\0" % (st.st_mode, st.st_size, st.st_mtime_ns) + link + b"\\0")',
   '    except OSError:',
   '        return None',
   '    return t.digest()',
@@ -715,6 +725,10 @@ const READER_PY = [
   '                        bad += 1',
   '                    continue',
   '                recs.append(r)',
+  '        if not reason and not recs and not run:',
+  '            print("PAI_CHECKPOINT FRESH (an earlier run of this seat left this file with no records; continuing it; %d unreadable line(s) skipped)" % bad)',
+  '            print("PAI_CHECKPOINT FILE " + F)',
+  '            return',
   '        if not reason:',
   '            order = ([run] if run else []) + [r for r in recs if r.get("kind") == "finding"] + [r for r in recs if r.get("kind") != "finding"]',
   '            print("PAI_CHECKPOINT RESUME %d record(s) from an interrupted earlier run of this seat; %d unreadable line(s) skipped" % (len(order), bad))',
@@ -733,11 +747,12 @@ const READER_PY = [
   '        while os.path.lexists("%s.prev-%d" % (F, n)):',
   '            n += 1',
   '        os.rename(F, "%s.prev-%d" % (F, n))',
-  '        print("PAI_CHECKPOINT FRESH previous file kept as %s.prev-%d (reason: %s)" % (NAME, n, reason))',
+  '        msg = "PAI_CHECKPOINT FRESH previous file kept as %s.prev-%d (reason: %s)" % (NAME, n, reason)',
   '    else:',
-  '        print("PAI_CHECKPOINT FRESH")',
+  '        msg = "PAI_CHECKPOINT FRESH"',
   '    with os.fdopen(create(F), "w", encoding="utf-8") as fh:',
   '        fh.write(json.dumps({"kind": "header", "v": 2, "seatDigest": SEAT, "artifactSha": art, "label": LABEL}) + "\\n")',
+  '    print(msg)',
   '    print("PAI_CHECKPOINT FILE " + F)',
 ].join('\n')
 
@@ -781,13 +796,17 @@ const INIT_PY = [
   '    print("PAI_ARGS SAVED " + path)',
 ].join('\n')
 
-// One-line record commands. RECORD reads ONE JSON object from stdin and appends it only if its
-// kind is finding|checked (write-time validation, so a malformed record is rejected on the spot
-// instead of silently skipped on resume). MARK appends a fixed-shape record: `done`, or
+// One-line record commands. RECORD reads ONE JSON object from stdin and appends it only if it is
+// a finding with a non-empty title and body, or a checked item with a non-empty item. Every other
+// input — not JSON, not UTF-8, empty stdin, the wrong shape — prints REJECTED and exits 0, so the
+// prompt's "REJECTED → fix it; any other failure → checkpointing stopped" split holds for the
+// commonest slip, a JSON typo in a long body (#103 verify r6). Records are written ASCII-only
+// (json.dumps default): a lone surrogate cannot fail the encode, and C1 controls, DEL and bidi
+// overrides quoted from the artifact never sit raw in a file a caller may print in a terminal. MARK appends a fixed-shape record: `done`, or
 // `codex-run <id>`. `-I`: the seat's cwd is the reviewed repo, and a json.py there must not be
 // imported (#103 verify r1).
 const RECORD_CMD =
-  `python3 -I -c 'import json,os,sys; os.umask(0o077); r=json.loads(sys.stdin.buffer.read()); ok=isinstance(r,dict) and r.get("kind") in ("finding","checked"); fd=ok and os.open(sys.argv[1],os.O_RDWR|os.O_APPEND|os.O_CREAT|getattr(os,"O_NOFOLLOW",0),0o600); n=ok and os.fstat(fd).st_size; ok and os.write(fd,(b"\\n" if n and os.pread(fd,1,n-1)!=b"\\n" else b"")+(json.dumps(r,ensure_ascii=False)+"\\n").encode("utf-8")); print("recorded" if ok else "REJECTED: need one JSON object whose kind is finding or checked")'`
+  `python3 -I -c 'import json,os,sys; os.umask(0o077); exec("try:\\n r=json.loads(sys.stdin.buffer.read())\\nexcept ValueError as e:\\n r=e"); s=lambda x: isinstance(x,str) and x.strip()!=""; k=isinstance(r,dict) and r.get("kind"); ok=(k=="finding" and s(r.get("title")) and s(r.get("body"))) or (k=="checked" and s(r.get("item"))); fd=ok and os.open(sys.argv[1],os.O_RDWR|os.O_APPEND|os.O_CREAT|getattr(os,"O_NOFOLLOW",0),0o600); n=ok and os.fstat(fd).st_size; ok and os.write(fd,(b"\\n" if n and os.pread(fd,1,n-1)!=b"\\n" else b"")+(json.dumps(r)+"\\n").encode("ascii")); print("recorded" if ok else ("REJECTED: not valid JSON (%s); fix the line and run it again" % str(r)[:200]) if isinstance(r,Exception) else "REJECTED: need one JSON object: kind finding with a non-empty title and body, or kind checked with a non-empty item")'`
 const MARK_CMD =
   `python3 -I -c 'import json,os,sys; os.umask(0o077); a=sys.argv; r={"kind":a[2]}; r.update({"id":a[3]} if len(a)>3 else {}); fd=os.open(a[1],os.O_RDWR|os.O_APPEND|os.O_CREAT|getattr(os,"O_NOFOLLOW",0),0o600); n=os.fstat(fd).st_size; os.write(fd,(b"\\n" if n and os.pread(fd,1,n-1)!=b"\\n" else b"")+(json.dumps(r)+"\\n").encode("utf-8")); print("recorded")'`
 
@@ -933,9 +952,9 @@ function codexPrompt(profile, A, ck) {
       ]
     : []
   const ckRecord = ck
-    ? ` Then record the id: \`${MARK_CMD} ${ck.file(ckName)} codex-run '<id>'\`.`
+    ? ` Then record the id: \`${MARK_CMD} ${ck.file(ckName)} codex-run '<id>'\`. If that record command fails, the detach still succeeded: skip the remaining checkpoint steps and go on to step 2.`
     : ''
-  const ckDone = ck ? ` Just before you return, run \`${MARK_CMD} ${ck.file(ckName)} done\`, and set \`checkpointState\` to FRESH, RESUME or DISABLED: what step 0 printed.` : ''
+  const ckDone = ck ? ` Just before you return, run \`${MARK_CMD} ${ck.file(ckName)} done\` (if it fails, go on — it does not change your findings), and set \`checkpointState\` to FRESH, RESUME or DISABLED: what step 0 printed.` : ''
   return [
     `You are the cross-model verifier in a ${profile.title} ensemble. Use Codex (${codexModel}, a different model family) as a BLIND reviewer, then convert its output into findings. Do NOT mention the Claude reviewers or feed Codex their findings — Codex stays a blind cross-model vote.`,
     DATA_GUARD,
@@ -999,8 +1018,8 @@ try {
 const VALID_DISPATCH_MODELS = ['sonnet', 'opus', 'haiku', 'fable'] // maintenance point: keep in sync with the runtime's Agent-tool enum
 if (A.agentModel != null && A.agentModel !== '' && !VALID_DISPATCH_MODELS.includes(A.agentModel)) {
   // JSON.stringify escapes newlines/quotes so a hostile value cannot pollute the error line.
-  // The engine has two out-of-band exits, both arg-CONTRACT violations that abort before any
-  // dispatch: this one and a malformed checkpointDir / checkpointRun (below). Unknown-profile and
+  // The engine has three out-of-band exits, all arg-CONTRACT violations that abort before any
+  // dispatch: this one, a malformed checkpointDir / checkpointRun, and a non-boolean checkpoint (below). Unknown-profile and
   // empty-lens return findings-shaped guards instead.
   throw new Error(
     `invalid agentModel ${JSON.stringify(A.agentModel)} — accepted: ${VALID_DISPATCH_MODELS.join(' | ')} (unset/null/'' = opus)`
@@ -1058,9 +1077,9 @@ const CKPT = (() => {
     file: (n) => `"$HOME/${rel}/${n}"`,
   }
 })()
-const ckStats = (initResult, resumedSeats = []) =>
+const ckStats = (initResult, resumedSeats = [], disabledSeats = []) =>
   CKPT
-    ? { enabled: true, dir: CKPT.display, argsDigest: ARGS_DIGEST, argsFile: CKPT.argsName, initDispatched: !!initResult, argsSaved: !!(initResult && initResult.saved), resumedSeats }
+    ? { enabled: true, dir: CKPT.display, argsDigest: ARGS_DIGEST, argsFile: CKPT.argsName, initDispatched: !!initResult, argsSaved: !!(initResult && initResult.saved), resumedSeats, disabledSeats }
     : { enabled: false, argsDigest: ARGS_DIGEST }
 
 // Guard an unknown profile. (The empty-lens case — including profile:"custom" which ships no
@@ -1178,7 +1197,7 @@ for (const l of activeLenses) {
       })
         .then((r) => (r == null
           ? { lens: l.key, findings: [], ok: false }                                   // user-skipped → fail-closed
-          : { lens: l.key, findings: (r.findings || []).map((f) => ({ ...f, lens: l.key })), ok: true, label: reviewLabel(l, k, replicas), resumed: r.checkpointState === 'RESUME' }))
+          : { lens: l.key, findings: (r.findings || []).map((f) => ({ ...f, lens: l.key })), ok: true, label: reviewLabel(l, k, replicas), resumed: r.checkpointState === 'RESUME', disabled: r.checkpointState === 'DISABLED' }))
         .catch(() => ({ lens: l.key, findings: [], ok: false }))
     )
   }
@@ -1188,7 +1207,7 @@ const codexThunk = codexOn
       agent(codexPrompt(profile, A, CKPT), { schema: CKPT ? CK_FINDINGS_SCHEMA : FINDINGS_SCHEMA, label: 'codex', phase: 'review', model: AGENT_MODEL })
         .then((r) => (r == null
           ? { lens: 'codex', findings: [], ok: false }                                 // user-skipped → surfaced as process gap
-          : { lens: 'codex', findings: (r.findings || []).map((f) => ({ ...f, lens: 'codex' })), ok: true, label: 'codex', resumed: r.checkpointState === 'RESUME' }))
+          : { lens: 'codex', findings: (r.findings || []).map((f) => ({ ...f, lens: 'codex' })), ok: true, label: 'codex', resumed: r.checkpointState === 'RESUME', disabled: r.checkpointState === 'DISABLED' }))
         .catch(() => ({ lens: 'codex', findings: [], ok: false }))
   : null
 // #103: rides the same barrier, LAST in the array. The journal's cache key chains over the calls in
@@ -1226,7 +1245,7 @@ phase('adversarial')
 const da = await agent(daPrompt(profile, reviewerResults, A, CKPT), { schema: CKPT ? CK_FINDINGS_SCHEMA : FINDINGS_SCHEMA, label: 'devils-advocate', phase: 'adversarial', model: AGENT_MODEL })
   .then((r) => (r == null
     ? { findings: [], ok: false }                                                      // user-skipped DA → fail-closed
-    : { findings: (r.findings || []).map((f) => ({ ...f, lens: 'devils-advocate' })), ok: true, resumed: r.checkpointState === 'RESUME' }))
+    : { findings: (r.findings || []).map((f) => ({ ...f, lens: 'devils-advocate' })), ok: true, resumed: r.checkpointState === 'RESUME', disabled: r.checkpointState === 'DISABLED' }))
   .catch(() => ({ findings: [], ok: false }))
 
 // Phase 3: merge + dedup (pure JS; no agent, no FS). FAIL-CLOSED — a core lens (every base lens
@@ -1273,7 +1292,11 @@ const stats = {
   integrity: integrity.length,
   dispatchModel: AGENT_MODEL,
   lensProvenance,
-  checkpoint: ckStats(initResult, [...round1.filter((r) => r.resumed).map((r) => r.label), ...(da.resumed ? ['devils-advocate'] : [])]),
+  checkpoint: ckStats(
+    initResult,
+    [...round1.filter((r) => r.resumed).map((r) => r.label), ...(da.resumed ? ['devils-advocate'] : [])],
+    [...round1.filter((r) => r.disabled).map((r) => r.label), ...(da.disabled ? ['devils-advocate'] : [])],
+  ),
 }
 log(`pai-ensemble[${A.profile}]: ${stats.agents} agents (model: ${AGENT_MODEL}) → ${merged.length} merged finding(s) → ${verdict}` + (integrity.length ? ` (${integrity.length} integrity/process-gap)` : ''))
 return { findings: merged, verdict, stats }
