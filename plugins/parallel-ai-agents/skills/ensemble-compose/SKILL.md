@@ -123,6 +123,8 @@ FILE_OR_DIR      — 審閱對象（缺則問使用者）
 
 ### Phase 2: 組裝 + 派發（Workflow）
 
+> **存檔（#103）**：engine 預設把每個席次的進度存到 `~/.cache/pai-ensemble/`，永久保留、要清就手動刪。中斷後以 `resumeFromRunId` 接回時，沒跑完的席次會從檔案接著做；以同一組輸入開新的 run 也會接著做（要全新一輪就換 `checkpointRun`）。另外會多派一個 `checkpoint-init` agent 存 args。`contextBlock` 的第一行寫 `artifact sha256: <artifact 的雜湊>`（檔案用 `shasum -a 256`；目錄用 commit id 加 `git status --porcelain` 與 `git diff` 的雜湊）：中斷之後 artifact 被改過，所有席次的 prompt 跟著變，接回不會沿用舊版本的結論（#103 r7）。協定見 `references/checkpoint-protocol.md`；不要存檔就在 args 加 `"checkpoint": false`。
+
 1. 解析 harness 絕對路徑 `${CLAUDE_PLUGIN_ROOT}/workflows/ensemble-workflow.js`；wrapper `${CLAUDE_PLUGIN_ROOT}/bin/codex-call`。
 2. 把 flag 解析成 args：
    - `--base` → `profile`（預設 `"custom"`）

@@ -57,6 +57,8 @@ Arguments:
 
 #### Backend A — Workflow（預設）
 
+> **存檔（#103）**：engine 預設把每個席次的進度存到 `~/.cache/pai-ensemble/`，永久保留、要清就手動刪。中斷後以 `resumeFromRunId` 接回時，沒跑完的席次會從檔案接著做；以同一組輸入開新的 run 也會接著做（要全新一輪就換 `checkpointRun`）。另外會多派一個 `checkpoint-init` agent 存 args。`contextBlock` 的第一行寫 `artifact sha256: <artifact 的雜湊>`（檔案用 `shasum -a 256`；目錄用 commit id 加 `git status --porcelain` 與 `git diff` 的雜湊）：中斷之後 artifact 被改過，所有席次的 prompt 跟著變，接回不會沿用舊版本的結論（#103 r7）。協定見 `references/checkpoint-protocol.md`；不要存檔就在 args 加 `"checkpoint": false`。紀錄會引用逐字稿的片段（第三方的原話），永久留在本機；不想留就關掉存檔。
+
 1. 解析 harness 絕對路徑：`${CLAUDE_PLUGIN_ROOT}/workflows/ensemble-workflow.js`。
 2. **蒐集 lens 層 ②③**（#29）：`python3 "${CLAUDE_PLUGIN_ROOT}/bin/pai-collect-lens-layers" lecture` → `lenses` **原樣**（含 `override` 與 `needsSrt` 欄）進 `args.customLenses`；`layers` / `warnings` 留給 Phase 4 的 provenance 行。完整契約見 [`references/lens-layers.md`](../../references/lens-layers.md)。⚠️ **`profile` 維持 `"lecture"`，不可改成 `"custom"`**。外部 lens 同樣可標 `needsSrt` —— 沒有 SRT 時 harness 會照既有規則處理。
 3. 解析 dispatch model（#20）：`PAI_AGENT_MODEL` 未設 → `opus`；設了但不在 `sonnet|opus|haiku|fable` → **abort with usage error**（fail-loud，不靜默換模型；engine 對顯式非法值亦會於派發前 throw 作第二層）。解析值經 `args.agentModel` 傳入。接著呼叫 `Workflow` tool，傳 `scriptPath`（上述絕對路徑）+ `args`：

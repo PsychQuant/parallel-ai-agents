@@ -186,6 +186,8 @@ TaskCreate: "Final: merge all rounds"
 
 #### Backend A — Workflow（預設）
 
+> **存檔（#103）**：engine 預設把每個席次的進度存到 `~/.cache/pai-ensemble/`，永久保留、要清就手動刪。中斷後以 `resumeFromRunId` 接回時，沒跑完的席次會從檔案接著做；以同一組輸入開新的 run 也會接著做（要全新一輪就換 `checkpointRun`）。另外會多派一個 `checkpoint-init` agent 存 args。`contextBlock` 的第一行寫 `artifact sha256: <artifact 的雜湊>`（檔案用 `shasum -a 256`；目錄用 commit id 加 `git status --porcelain` 與 `git diff` 的雜湊）：中斷之後 artifact 被改過，所有席次的 prompt 跟著變，接回不會沿用舊版本的結論（#103 r7）。協定見 `references/checkpoint-protocol.md`；不要存檔就在 args 加 `"checkpoint": false`。
+
 每一輪這樣呼叫：
 
 1. 解析 harness 絕對路徑 `${CLAUDE_PLUGIN_ROOT}/workflows/ensemble-workflow.js`；wrapper 絕對路徑 `${CLAUDE_PLUGIN_ROOT}/bin/codex-call`。並依 [`references/codex-governance.md`](../../references/codex-governance.md) 解析 `CODEX_MODEL`/`CODEX_EFFORT`（#23，codex-pro 契約；缺席 fail-fast）。
@@ -205,9 +207,12 @@ TaskCreate: "Final: merge all rounds"
      "codexEffort": "<同上>",
      "replicas": 1,
      "disableLenses": [],
-     "priors": {}
+     "priors": {},
+     "checkpointRun": "<審閱識別碼>-round-{N}"
    }
    ```
+
+   - **`checkpointRun`（#103）**：`<審閱識別碼>-round-{N}`。審閱識別碼在這一次審閱開始時決定一次（例如開始時的臺北時間 `YYYYMMDD-HHMM`），記在這次審閱的工作筆記裡，之後每一輪與接回都沿用（session 中斷而筆記不在時，從 checkpoint 目錄的 `args.json` 讀回 `checkpointRun`，找法見協定的呼叫端契約）；對同一份稿子重新開一次獨立審閱時換一個新的。輪次部分每一輪不同（`round-1`、`round-2`…）：mix 的第 1 輪與第 3 輪 args 完全相同，不分開的話，第 1 輪中斷在一半的席次會把部分結果交給第 3 輪。審閱識別碼則讓上一次審閱中斷在一半的席次，不會被新的審閱接著做。單輪模式照樣給 `<審閱識別碼>-round-1`；接回中斷的那一輪時沿用同一個值。
 
    - **`disableLenses`**（對應 reviewer 開關）：`--no-numeric` → `["number-verifier"]`；`--no-references` → `["reference-verifier"]`；兩者皆給 → 退化為 methodology + writing + DA + Codex。methodology/writing 永遠在。
    - **`priors`（hybrid 輪才填 —— 這是資訊不對稱的控制點）**：`{"reference-verifier": "<前輪可疑文獻 watch-list>", "da": "<所有前輪完整結果>"}`。**methodology / writing / number-verifier / codex 一律不放進 map** → 它們看不到前輪（避免 anchoring bias；number-verifier 每輪必從 ground-truth 重跑）。**independent 輪 `priors: {}`**。
