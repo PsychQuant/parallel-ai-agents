@@ -2482,8 +2482,31 @@ class ValidateTest(unittest.TestCase):
             else: os.environ["ORACLE_LINT"] = keep
         self.assertNotEqual(a, b, "ORACLE_LINT 不同，key 必須不同")
         tv = M.tool_versions()
-        for fact in ("proc=", "sh=", "python3="):
-            self.assertIn(fact, tv, "執行環境的指紋要含 %s" % fact)
+        # R62 H5（R61 logic LOW／DA）：原本 `assertIn("python3=", tv)` 對整串字串做子字串比對——`usr-bin-python3=`、`sh-runs=` 這類行就滿足了它，整個守衛是空的（`sh=` 在 R60 之前就是空的）。
+        # 改成『有一行以它開頭』；`proc=` 在 `platform=` 那一行裡面，另外查。
+        lines = tv.split("\n")
+        for fact in ("platform=", "sh=", "python3=", "usr-bin-python3=", "sandbox-exec=", "sh-runs=", "TMPDIR=", "TEMP=", "TMP="):
+            self.assertTrue(any(l.startswith(fact) for l in lines), "執行環境的指紋要有一行以 %s 開頭" % fact)
+        self.assertIn(" proc=", next(l for l in lines if l.startswith("platform=")))
+
+    def test_sandbox_exec_state_distinguishes_five_states(self):
+        """R62 Codex 預審 LOW：`_sandbox_exec_state` 的五個狀態各有直接的單元測試（前一版只驗『指紋裡有一行以 `sandbox-exec=` 開頭』，狀態對不對沒人看）。
+        用假的 `sandbox-exec`（一支 shell 腳本）：不存在→`absent`；跑得起來（rc=0）→`usable`；跑了但失敗（rc≠0）→`unusable`；跑得比逾時久→`timeout`；存在但不可執行（`OSError`）→`error`。
+        正常路徑給寬鬆的逾時（機器忙的時候新寫出的小腳本首次執行可能超過 1 秒）；只有逾時那一案用 1 秒。"""
+        sys.path.insert(0, str(HERE)); import mutation_check as M
+        with tempfile.TemporaryDirectory() as td:
+            def fake(name, body, mode=0o755):
+                q = pathlib.Path(td) / name
+                q.parent.mkdir(exist_ok=True)
+                q.write_text("#!/bin/sh\n" + body + "\n")
+                q.chmod(mode)
+                return str(q)
+            for want, path, timeout in (("absent", str(pathlib.Path(td) / "missing" / "sandbox-exec"), 15),
+                                        ("usable", fake("ok-sandbox-exec", "exit 0"), 15),
+                                        ("unusable", fake("bad-sandbox-exec", "exit 1"), 15),
+                                        ("timeout", fake("slow-sandbox-exec", "sleep 5"), 1),
+                                        ("error", fake("noexec-sandbox-exec", "exit 0", mode=0o644), 15)):
+                self.assertEqual(M._sandbox_exec_state(path, timeout=timeout), want, "假 sandbox-exec 應判 %s" % want)
 
     def test_mutation_cache_fingerprint_follows_every_oracle_env_var(self):
         """R51 DA（R52 C5）：神諭讀的每一個 `ORACLE_*` 環境變數都會改變判定，指紋就得記它——R50 新增的 `ORACLE_STREAM_CAP` 沒進指紋，

@@ -180,6 +180,19 @@ def inputs_digest(spec, exclude=frozenset()):
 BASH_CANDIDATES = ("/opt/homebrew/bin/bash", "/usr/local/bin/bash", "/bin/bash", "/usr/bin/bash")
 
 
+def _sandbox_exec_state(path="/usr/bin/sandbox-exec", timeout=20):
+    """`sandbox-exec` 的狀態，給指紋用：`absent`／`usable`／`unusable`／`timeout`／`error`（R62 H5）。"""
+    if not os.path.exists(path):
+        return "absent"
+    try:
+        r = subprocess.run([path, "-p", "(version 1)(allow default)", "/usr/bin/true"], capture_output=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return "timeout"
+    except (OSError, subprocess.SubprocessError):
+        return "error"
+    return "usable" if r.returncode == 0 else "unusable"
+
+
 def tool_versions():
     """執行環境的指紋——換了就不沿用。版本：python（跑本工具的）、PATH 上的 python3（驗證指令用的）、bash、PyYAML。
     環境（#33 verify R39 第 4 列）：神諭依 `/proc/self/fd` 是否存在改變 KNOWN_DISAGREE、`/bin/sh` 是 bash 還是 dash 會改變
@@ -188,8 +201,8 @@ def tool_versions():
     realpath 恆為 `/bin/sh`，看不出它轉到哪一個 shell——R41 verify 第 16 列）。"""
     def run(cmd):
         try:
-            return subprocess.run(cmd, capture_output=True, text=True).stdout.strip().split("\n")[0]
-        except OSError:
+            return subprocess.run(cmd, capture_output=True, text=True, timeout=20).stdout.strip().split("\n")[0]
+        except (OSError, subprocess.SubprocessError):      # R62 H5（Codex #4）：逾時與執行失敗不讓整個指紋取得例外，記成 `missing`
             return "missing"
     v = [sys.version]
     for b in BASH_CANDIDATES + (shutil.which("bash") or "none",):
@@ -204,8 +217,9 @@ def tool_versions():
     v.append("platform=%s proc=%s" % (sys.platform, os.path.isdir("/proc/self/fd")))
     # R60（R59 logic LOW）：`oracle_selfcheck` 的第 105 項（真沙箱 SB1–SB8）只在 `sandbox-exec` 存在而且跑得起來時才跑，探針又以絕對路徑呼叫 `/usr/bin/python3`——兩者都改變判定，
     # 快取被帶到跑不了沙箱的環境時，若有只被第 105 項殺掉的靶，會被記成『殺掉』（現有靶的點名殺手都同時含可攜的第 103 項，所以這是防日後出現只靠第 105 項殺掉的靶，未實測）。
-    # 這裡的可用性檢查與 selfcheck 的 `tool_usable` 不完全相同：沒有 20 秒逾時，也不接 OSError／SubprocessError（跑不起來時整個 `tool_versions()` 會例外，而不是記成 `unusable`）。
-    v.append("sandbox-exec=%s" % ("usable" if os.path.exists("/usr/bin/sandbox-exec") and subprocess.run(["/usr/bin/sandbox-exec", "-p", "(version 1)(allow default)", "/usr/bin/true"], capture_output=True).returncode == 0 else "unusable"))
+    # R62 H5（R61 Codex #4／regression LOW）：探測有 20 秒逾時、接 `OSError`／`SubprocessError`，狀態分開記：`absent`（不存在）、`usable`、`unusable`（跑了但非零）、`timeout`、`error`（執行失敗）——不再把『不存在』與『跑了但失敗』都寫成 `unusable`，
+    # 也不讓探測本身讓整個指紋例外。macOS 上 `usable`／`unusable` 的字串與 R60 相同（既有的快取 key 不變）。
+    v.append("sandbox-exec=%s" % _sandbox_exec_state())
     v.append("usr-bin-python3=%s" % (run(["/usr/bin/python3", "--version"]) if os.path.exists("/usr/bin/python3") else "absent"))
     v.append("sh=%s" % os.path.realpath("/bin/sh"))
     try:
@@ -1803,7 +1817,7 @@ MUTATIONS += [
     ('oracle: `ORACLE_INJECT` 不指到 cwd 哨兵（退回 R56 的 `<priv>/i`；寫不到 `/tmp` 的求值者看不到 E 組；R57 第 12 格 → selfcheck 103、105〔macOS〕）',
      'env["ORACLE_INJECT"] = cwd_env if cwd_sent_on else sent', 'env["ORACLE_INJECT"] = sent', 'oracle-inverted'),
     ('oracle: E 組只試 cwd 目標、不再試 `<priv>/i`（求值者寫不進 cwd、寫得進 `/tmp` 時比 `6490b57` 還弱；R58 宣稱查核 C 組第 1 列 → selfcheck 103 的 R5、R6、105 的 SB7、SB8〔macOS〕）',
-     '        else:\n            targets = ("cwd", "priv")', '        else:\n            targets = ("cwd",)', 'oracle-inverted'),
+     '        else:\n            targets = ["cwd", "priv"]', '        else:\n            targets = ["cwd"]', 'oracle-inverted'),
     ('oracle: `inject_to` 被忽略（每一次注入都建 cwd 哨兵並導出指到它；E 組的 priv 那一次沒有 priv 可指，R5、R6、SB7、SB8 判一致，非 E 組的注入執行也多出 `.orc-XXXX/`，R7 判一致；A2 的 M15 → selfcheck 103 的 R5～R7、105 的 SB7、SB8〔macOS〕）',
      '            if inject_to in ("cwd", "cwd-abs"):\n                _ph, abs_ok = _cwd_sentinel(d)', '            if True:\n                _ph, abs_ok = _cwd_sentinel(d)', 'oracle-inverted'),
     ('oracle: `TMPDIR` 含空白時 cwd 哨兵一律用絕對路徑（不加引號的 `$ORACLE_INJECT` 變成 ambiguous redirect，算術脈絡的 E 組寫不進去；R58 張貼前查核 → --selftest-aud）',
@@ -1811,13 +1825,13 @@ MUTATIONS += [
     ('oracle: 加引號的 E 組也改用相對路徑（`_cwd_env_value` 的引號分支拿掉；求值者先 `cd` 到別處再求值時相對路徑 ENOENT，`5b5a46d` 的 `echo M >> "$ORACLE_INJECT"` 用絕對路徑寫得進去；R58 張貼前的第二次查核 → --selftest-aud）',
      "    if '\"$ORACLE_INJECT\"' in payload or force_abs:", '    if force_abs:', 'oracle-inverted'),
     ('oracle: 非 E 組的注入執行也試 cwd 目標（多建一個 `.orc-XXXX/`，檢查 cwd 有沒有點檔的步驟提早結束；A2 的 M15 → selfcheck 103 的 R7〔釘 payload #1：不然 E 組的 priv 那一次救回判定，只剩編號不同〕）',
-     '            targets = ("priv",)\n        elif spaced', '            targets = ("cwd",)\n        elif spaced', 'oracle-inverted'),
+     '            targets = ["priv"]\n        elif spaced', '            targets = ["cwd"]\n        elif spaced', 'oracle-inverted'),
     ('oracle: `more()` 不讀 cwd 哨兵（E 組寫進去的標記沒人看；R57 第 12 格 → selfcheck 103）',
      'inj_cwd, _why = _read_regular(cwd_sent, label="注入哨兵檔（cwd）")', 'inj_cwd = b""', 'oracle-inverted'),
     ('oracle: 判定不看 cwd 哨兵的內容（`or INJECT_MARKER.encode() in inj_cwd` 拿掉；R57 第 12 格 → selfcheck 103）',
      ' or INJECT_MARKER.encode() in inj_cwd,', ',', 'oracle-inverted'),
     ('oracle: cwd 哨兵不預先建檔（求值者只准改既有的檔、不准建新檔時，E 組的 `>>` 建不出來；`5b5a46d` 預先建檔；R58 宣稱查核 B 組 → selfcheck 103 的 R4、105 的 SB5／SB6〔macOS〕）',
-     '                open(cwd_sent, "w").close()', '                pass', 'oracle-inverted'),
+     '                cwd_sent = os.path.join(cwd_dir, "inject")\n                open(cwd_sent, "w").close()', '                cwd_sent = os.path.join(cwd_dir, "inject")\n                pass', 'oracle-inverted'),
     ('oracle: cwd 哨兵路徑不檢查字元（`TMPDIR` 含空白時 `>>$ORACLE_INJECT` 變成 ambiguous redirect；R58 F1 → --selftest-aud）',
      '    if _env_expansion_ok(path):\n        return path, True\n    _warn_cwd_sentinel_unavailable()', '    if True:\n        return path, True\n    _warn_cwd_sentinel_unavailable()', 'oracle-inverted'),
     ('oracle: `_env_expansion_ok` 不擋空白、tab、換行（含空白的絕對路徑不加引號展開會 `ambiguous redirect`，卻被當成可用；R58 張貼前的第二次查核 → --selftest-aud）',
@@ -1848,7 +1862,7 @@ MUTATIONS += [
      '-*) exit 2;; *) mode=drain;; esac; fi; break 2;', '*) mode=drain;; esac; fi; break 2;', 'oracle-inverted'),
     ('oracle: stub 對旗標群結尾 `-` 之後的單獨 `-` 不讀 stdin（`-u- -` 在真 CPython 把 stdin 當程式、rc=1，stdout 沒有東西，來源行或其中的名字印到 stderr〔NameError／SyntaxError〕；R57 logic LOW → --selftest-aud）',
      'case "$1" in -) :;; -*)', 'case "$1" in -*)', 'oracle-inverted'),
-    # ── R60 G1／G2（#33 verify R59）：注入設定的聯集由構造保證單調（舊樹的 `legacy`、R58 的 `all`、逐鍵各是獨立的一次執行）；暫存目錄含空白時，不加引號的 E 組多試絕對路徑（`cwd-abs`）──
+    # ── R60 G1／G2（#33 verify R59）：注入的鍵設定各是獨立的一次執行（舊樹的 `legacy`、R58 的 `all`、逐鍵；執行集合的包含關係，不是對所有舊樹的行為單調）；暫存目錄含空白時，不加引號的 E 組多試絕對路徑（`cwd-abs`）──
     ('oracle: `legacy` 模式也污染額外的鍵（舊樹的設定消失，step 先驗證另一個 PR 欄位再執行 `PR_TITLE` 的閘門又被擋掉；R59 regression／logic／DA → selfcheck 106、--selftest-aud）',
      '    if mode == "legacy":\n        return {k: inject for k in base}', '    if mode == "legacy":\n        return {**{k: inject for k in base}, **extra}', 'oracle-inverted'),
     ('oracle: 注入設定清單沒有 `legacy`（只剩 R58 的 `all`；sibling-gate 的 SG1～SG4 判一致；R59 → selfcheck 106、--selftest-aud）',
@@ -1862,26 +1876,89 @@ MUTATIONS += [
     ('oracle: 呼叫端只跑 `all` 一種模式（舊樹的設定與逐鍵模式整個不跑；R59 → selfcheck 106）',
      'for mode in _inject_key_modes(yenv) for pl, to', 'for mode in ("all",) for pl, to', 'oracle-inverted'),
     ('oracle: `_inject_runs` 在暫存目錄含空白時不多試絕對路徑 `cwd-abs`（POSIX 模式的 shell 先 `cd` 再求值，`5b5a46d` 判繞過、R58 判一致；R59 第 13 格 → selfcheck 107、--selftest-aud）',
-     'targets = ("cwd", "cwd-abs", "priv")', 'targets = ("cwd", "priv")', 'oracle-inverted'),
+     'targets = ["cwd", "cwd-abs", "priv"]', 'targets = ["cwd", "priv"]', 'oracle-inverted'),
     ('oracle: 加引號的 E 組在暫存目錄含空白時也多試 `cwd-abs`（多餘的一次執行，目標序列和 R58 不同；R60 → --selftest-aud）',
      "elif spaced and '\"$ORACLE_INJECT\"' not in pl:", 'elif spaced:', 'oracle-inverted'),
     ('oracle: `_cwd_env_value` 忽略 `force_abs`（`cwd-abs` 仍然給相對路徑；R59 第 13 格 → selfcheck 107、--selftest-aud）',
      "or force_abs:", ":", 'oracle-inverted'),
     ('oracle: `run_script` 不把 `cwd-abs` 傳成 `force_abs`（`cwd-abs` 與 `cwd` 同義；R59 第 13 格 → selfcheck 107、--selftest-aud）',
      'force_abs=(inject_to == "cwd-abs")', 'force_abs=False', 'oracle-inverted'),
-    ('oracle: `run_script` 對 `cwd-abs` 不建 cwd 哨兵（`ORACLE_INJECT` 退回 `<priv>/i`；R59 第 13 格 → selfcheck 107；`--selftest-aud` 殺不掉：aud 的 `spaced_tmpdir_posix_cd` 在 `/tmp` 底下的私有哨兵仍寫得進去）',
+    ('oracle: `run_script` 對 `cwd-abs` 不建 cwd 哨兵（`ORACLE_INJECT` 退回 `<priv>/i`；R59 第 13 格 → selfcheck 107 PX6〔R62 量測時存活：PX1～PX5 都另有 `cwd-vis-abs` 寫得進去〕；`--selftest-aud` 殺不掉：aud 的 `spaced_tmpdir_posix_cd` 在 `/tmp` 底下的私有哨兵仍寫得進去）',
      'if inject_to in ("cwd", "cwd-abs"):', 'if inject_to == "cwd":', 'oracle-inverted'),
     ('oracle: `_tmpdir_spaced` 永遠回 False（暫存目錄含空白時不多試 `cwd-abs`；R59 第 13 格 → selfcheck 107）',
      '    return not _env_expansion_ok(tempfile.gettempdir())', '    return False', 'oracle-inverted'),
     ('oracle: 呼叫端不問暫存目錄含不含空白（`spaced` 恆為 False；R59 第 13 格 → selfcheck 107）',
-     '                spaced = _tmpdir_spaced()', '                spaced = False', 'oracle-inverted'),
+     '                spaced, tmpdir_priv = _tmpdir_spaced(), _tmpdir_priv_ok()', '                spaced, tmpdir_priv = False, _tmpdir_priv_ok()', 'oracle-inverted'),
     ('oracle: `run_script` 的 `inject_to` 預設改回 `"cwd"`（日後只傳 `inject=` 的呼叫者會讓非 E 組的注入執行也多建 `.orc-XXXX/`，A2 的 M15 回來；R59 logic LOW → --selftest-aud）',
      'inject=None, inject_to="priv", inject_keys="all"):', 'inject=None, inject_to="cwd", inject_keys="all"):', 'oracle-inverted'),
     # ── R60 G5（R59 Codex 3、logic LOW）：`tool_usable` 的網 ──
     ('selfcheck: `tool_usable` 永遠回 False（第 105 項在 macOS 上整個被跳過、selfcheck 仍綠；R59 Codex 3 → `--selftest-matcher`）',
      '    if not os.path.exists(path):\n        return False\n    if os.path.basename(path) == "sandbox-exec":', '    return False\n    if os.path.basename(path) == "sandbox-exec":', 'selfcheck-matcher'),
     ('selfcheck: `tool_usable` 只擋被信號終止（負的結束碼）、不看一般的非零結束碼（`== 0` → `>= 0`；外層沙箱擋掉它時仍當成可用，第 105 項八格全判一致而紅，看起來像神諭回歸；R59 Codex 3 的非零退出案 → `--selftest-matcher`）',
-     'capture_output=True, timeout=20).returncode == 0', 'capture_output=True, timeout=20).returncode >= 0', 'selfcheck-matcher'),
+     'capture_output=True, timeout=timeout).returncode == 0', 'capture_output=True, timeout=timeout).returncode >= 0', 'selfcheck-matcher'),
+    # ── R62 H1／H2（R61 的哨兵位置軸：`32d45ff` 的 `TMPDIR` 私有目錄、`28ec8c3` 的 cwd 頂層哨兵）──
+    ('oracle: `_inject_runs` 不加 `cwd-vis` 目標（cwd 頂層的可見哨兵；R50 移除、R61 logic 第 14 格，`28ec8c3` 判繞過、R60 判一致 → selfcheck 108 PB1／PB2、109 SP5／SP6、哨兵位置 manifest）',
+     '        if is_e:\n            targets.append("cwd-vis")', '        if False:\n            targets.append("cwd-vis")', 'oracle-inverted'),
+    ('oracle: `_inject_runs` 不加 `priv-tmpdir` 目標（預設 `TMPDIR` 底下的私有目錄；R54 搬到 `/tmp`、R61 的 blocking，`32d45ff` 判繞過、R60 判一致 → selfcheck 108 PA1／PA2、109 SP1～SP4、哨兵位置 manifest）',
+     '        if tmpdir_priv and (is_e or INJECT_PATH_TOKEN in pl):', '        if False and (is_e or INJECT_PATH_TOKEN in pl):', 'oracle-inverted'),
+    ('oracle: `priv-tmpdir` 只給 E 組、不給含字面路徑的 payload（P 組；PA1 的求值者 `env -i`，E 組讀不到 `$ORACLE_INJECT` → selfcheck 108 PA1／PA2）',
+     '(is_e or INJECT_PATH_TOKEN in pl):\n            targets.append("priv-tmpdir")', 'is_e:\n            targets.append("priv-tmpdir")', 'oracle-inverted'),
+    ('oracle: `cwd-vis` 排在序列最前面（R60 的目標序列不再是前綴，報出來的 payload 編號與歸因會變 → 哨兵位置 manifest 的前綴檢查）',
+     '        if is_e:\n            targets.append("cwd-vis")', '        if is_e:\n            targets.insert(0, "cwd-vis")', 'oracle-inverted'),
+    ('oracle: `_tmpdir_priv_ok` 永遠回 False（`priv-tmpdir` 整個不跑；R61 → selfcheck 108 PA1／PA2、--selftest-aud）',
+     '    return _inject_path_ok(os.path.join(tempfile.gettempdir(), "oxxxxxxxx", PRIV_TMPDIR_SENTINEL))', '    return False', 'oracle-inverted'),
+    ('oracle: `_tmpdir_priv_ok` 在 `TMPDIR=/tmp` 時排除 `priv-tmpdir`（回到 R62 前一版：Linux CI 上只放行基名 `inject` 的求值者，`32d45ff` 命中而 `priv` 〔檔名 `i`〕不命中；Codex 第二次核對 #5 → --selftest-aud 的 `_tmpdir_priv_ok` 案）',
+     '    return _inject_path_ok(os.path.join(tempfile.gettempdir(), "oxxxxxxxx", PRIV_TMPDIR_SENTINEL))', '    return os.path.realpath(tempfile.gettempdir()) != os.path.realpath("/tmp") and _inject_path_ok(os.path.join(tempfile.gettempdir(), "oxxxxxxxx", PRIV_TMPDIR_SENTINEL))', 'oracle-inverted'),
+    ('oracle: 呼叫端不問預設 `TMPDIR` 底下的私有目錄行不行（`tmpdir_priv` 恆為 False；R61 → selfcheck 108 PA1／PA2）',
+     '                spaced, tmpdir_priv = _tmpdir_spaced(), _tmpdir_priv_ok()', '                spaced, tmpdir_priv = _tmpdir_spaced(), False', 'oracle-inverted'),
+    ('oracle: `run_script` 對 `priv-tmpdir` 仍把私有目錄放在 `/tmp`（目標存在、位置沒變；R61 → selfcheck 108 PA1／PA2、109）',
+     '(_Scratch(prefix="o") if inject_to == "priv-tmpdir" else _priv_scratch())', '_priv_scratch()', 'oracle-inverted'),
+    ('oracle: `run_script` 沒有 `cwd-vis` 分支（`ORACLE_INJECT` 退回 `<priv>/i`；R61 logic 第 14 格 → selfcheck 108 PB1／PB2、109 SP5／SP6）',
+     '            elif inject_to in ("cwd-vis", "cwd-vis-abs"):', '            elif False:', 'oracle-inverted'),
+    # ── R62 Codex 預審處置（M1 歷史檔名、M2 cwd-vis 的絕對路徑、M3 manifest 四個條件組合、LOW：cwd-vis 預建檔）──
+    ('oracle: `priv-tmpdir` 的哨兵檔名退回 `i`（`32d45ff` 的檔名是 `inject`，路徑形狀也是歷史位置的一部分；Codex 預審 M1 → selfcheck 109 SP9／SP10 〔拒寫 `TMPDIR` 但放行基名 `inject` 的沙箱〕）',
+     'PRIV_TMPDIR_SENTINEL = "inject"', 'PRIV_TMPDIR_SENTINEL = "i"', 'oracle-inverted'),
+    ('oracle: `_inject_runs` 不加 `cwd-vis-abs` 目標（暫存目錄含空白時 `cwd-vis` 只給相對路徑，求值者先 `cd` 別處就 ENOENT；`28ec8c3` 一律給絕對路徑；Codex 預審 M2 → selfcheck 107 PX5、哨兵位置 manifest）',
+     """            if spaced and '"$ORACLE_INJECT"' not in pl:
+                targets.append("cwd-vis-abs")""", """            if False and '"$ORACLE_INJECT"' not in pl:
+                targets.append("cwd-vis-abs")""", 'oracle-inverted'),
+    ('oracle: `cwd-vis-abs` 仍給相對路徑（目標存在、`ORACLE_INJECT` 的形狀沒變；Codex 預審 M2 → selfcheck 107 PX5）',
+     'force_abs=(inject_to == "cwd-vis-abs")', 'force_abs=False', 'oracle-inverted'),
+    ('oracle: `cwd-vis` 不預先建 `<cwd>/inject`（只准改既有檔、不准建新檔的求值者，`>>` 建不出來；Codex 預審 LOW → selfcheck 109 SP11／SP12）',
+     '                cwd_sent = os.path.join(d, "inject")\n                open(cwd_sent, "w").close()', '                cwd_sent = os.path.join(d, "inject")', 'oracle-inverted'),
+    ('selfcheck: manifest 只驗 `tmpdir_priv` 為真的組合（`for tp in (False, True)` → `(True,)`；基底格什麼都不跑的假產生器過得了；Codex 預審 M3 → --selftest-matcher 的 `empty-base` 案）',
+     '        for tp in (False, True):', '        for tp in (True,):', 'selfcheck-matcher'),
+    ('selfcheck: manifest 只驗 `spaced` 為假的組合（`for spaced in (False, True)` → `(False,)`；條件接反或綁錯的假產生器過得了；Codex 預審 M3 → --selftest-matcher 的 `swap`、`and` 案）',
+     '    for spaced in (False, True):', '    for spaced in (False,):', 'selfcheck-matcher'),
+    ('selfcheck: manifest 把條件 `"spaced"` 評估成永遠為真（條件當標籤、沒有真的拿布林去評估；Codex 預審 M3 → --selftest-matcher 的完整序列案）',
+     '"spaced": lambda sp, tp: sp,', '"spaced": lambda sp, tp: True,', 'selfcheck-matcher'),
+    ('selfcheck: manifest 不抓沒登記的目標（序列裡多出 manifest 沒有的位置也過；新增位置不必同步改 manifest；Codex 預審 M3 → --selftest-matcher 的 `extra-target` 案）',
+     '                if extra:\n                    probs.append', '                if False:\n                    probs.append', 'selfcheck-matcher'),
+    ('selfcheck: manifest 檢查的 `needs()` 永遠回 False（沒有任何位置被要求；R62 H2 → --selftest-matcher）',
+     'return {"all": True, "lit-or-env": is_e or token in pl, "env": is_e, "env-unquoted": is_e and \'"$ORACLE_INJECT"\' not in pl}[kind]', 'return False', 'selfcheck-matcher'),
+    ('selfcheck: manifest 檢查不比對 R60 的序列是不是前綴（新目標插在最前面也過；R62 H2 → --selftest-matcher 的 `front` 案）',
+     '        if got[:len(old)] != old:', '        if False:', 'selfcheck-matcher'),
+    ('selfcheck: manifest 檢查不抓『有條件的目標變成無條件』（`cwd-abs`、`priv-tmpdir` 在條件不成立時也出現；R62 H2 → --selftest-matcher 的 `uncond` 案）',
+     '                    if not want and target in got:', '                    if False and target in got:', 'selfcheck-matcher'),
+    ('selfcheck: manifest 檢查不抓缺少的目標（條件成立時某位置沒有對應的目標；R62 H2 → --selftest-matcher 的各 `drop` 案）',
+     '                    if want and target not in got:', '                    if False and target not in got:', 'selfcheck-matcher'),
+    ('selfcheck: `tool_usable` 在逾時或執行失敗時回 True（`except … return False` → `return True`；沙箱跑不起來的環境第 105、109 項仍當成可跑而紅，看起來像神諭回歸；R61 logic LOW → --selftest-matcher 的逾時與 `OSError` 案）',
+     '        except (OSError, subprocess.SubprocessError):\n            return False\n    return True', '        except (OSError, subprocess.SubprocessError):\n            return True\n    return True', 'selfcheck-matcher'),
+    ('selfcheck: `tool_usable` 不把 `timeout` 參數傳給 `subprocess.run`（逾時固定為預設的 20 秒以上，卡住的 `sandbox-exec` 讓整個 selfcheck 卡住；R61 logic LOW → --selftest-matcher 的逾時案）',
+     'capture_output=True, timeout=timeout).returncode == 0', 'capture_output=True, timeout=3600).returncode == 0', 'selfcheck-matcher'),
+    ('selfcheck: `main()` 不呼叫對真的 `oracle.py` 的 manifest 檢查（R62 H2 → --selftest-matcher 的原始碼檢查）',
+     '    for x in sentinel_manifest_problems_real():\n        print("✗ 歷史哨兵位置 manifest：" + x)\n        bad += 1\n', '', 'selfcheck-matcher'),
+    # R62 量測後：第 110 項的 XR 探針原本讀時鐘（30 秒過期）、用固定檔名，判定會隨環境翻，讓 `oracle-inverted` 靶的『殺掉』不可信；`xrun_probe_problems` 守住修法（封閉的固定寫法），這五個靶守它自己。
+    ('selfcheck: XR 探針的結構檢查不擋時間、stat 與動態 import 的寫法（R62 量測後、Codex 第三次核對 1 → --selftest-matcher 的「讀時鐘」兩案）',
+     '        hit = _XRUN_FORBIDDEN_RE.search(code)', '        hit = None', 'selfcheck-matcher'),
+    ('selfcheck: XR 探針的結構檢查不限制 import 的模組（R62 量測後 → --selftest-matcher 的「import time」案）',
+     '        if bad_imports:', '        if False:', 'selfcheck-matcher'),
+    ('selfcheck: XR 探針的結構檢查不要求狀態檔名照固定的鍵運算式（R62 量測後、Codex 第三次核對 2 → --selftest-matcher 的「寫死」「常數尾碼」「沒有用 PATH」三案）',
+     '        elif n_keyed != n_state:', '        elif False:', 'selfcheck-matcher'),
+    ('selfcheck: XR 探針的結構檢查把 bash 註解也當行為（Codex 第三次核對 3 → --selftest-matcher 的「註解提到 time.time()」案）',
+     'if not l.lstrip().startswith("#"))   # 註解行', 'if True)   # 註解行', 'selfcheck-matcher'),
+    ('selfcheck: `main()` 不呼叫對真的 XR 探針的結構檢查（R62 量測後 → --selftest-matcher 的原始碼檢查）',
+     '    for x in xrun_probe_problems_real():\n        print("✗ XR 探針（第 110 項）的結構：" + x)\n        bad += 1\n', '', 'selfcheck-matcher'),
 ]
 
 EXPECTED_SURVIVE = {

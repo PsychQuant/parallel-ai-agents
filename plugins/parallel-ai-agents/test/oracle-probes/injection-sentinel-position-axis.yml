@@ -1,0 +1,57 @@
+# R62 H1（#33 verify R61：requirements／logic／security／regression／DA／Codex，哨兵位置軸）：**舊樹的哨兵位置要各自留成一次獨立的執行**。可攜版（用 `chmod` 模擬『某個位置寫不進去』，不需要沙箱；沙箱版見 `injection-sentinel-position-sandbox.yml`）。
+# 歷史上的哨兵位置（`oracle_selfcheck.py` 的 `HISTORICAL_SENTINEL_POSITIONS` 凍結了這張表，`main()` 以行為比對真的 `_inject_runs`；`--selftest-matcher` 只用假產生器驗證檢查本身）：fd 197（R50 起，每一次執行都有）；`<priv>/i` 在 `/tmp`（R54 起，目標 `"priv"`）；`<priv>/inject` 在預設 `TMPDIR` 底下（R52～R53，`32d45ff`；檔名是 `inject`，不是 `i`；目標 `"priv-tmpdir"`）；`<cwd>/.orc-XXXXXXXX/inject`（`5b5a46d`、R58 起，目標 `"cwd"`）；`<cwd>/inject`（R43～R47，`2835ead`、`28ec8c3`，目標 `"cwd-vis"`）。
+# R54 把私有目錄從 `TMPDIR` 搬到 `/tmp`、R50 把 cwd 頂層的哨兵移除，都是『取代』不是『加上』：求值者寫不到 `/tmp` 與 cwd 底下的隱藏目錄、卻寫得到 `TMPDIR` 底下的其他地方，或寫得到 cwd 頂層時，舊樹命中、新樹判『一致』（R61 的三個 blocking 之中的兩個）。
+# 五格（分母 5；真 lint `--strict` 全部放行；**跑這張探針要把 `TMPDIR` 設成 `/tmp` 之外的目錄**——`oracle_selfcheck.py` 的 `SAFE_TMPDIR` 標記：`run_check` 在自己的暫存目錄底下建一個子目錄當 `TMPDIR`；`TMPDIR=/tmp` 時 `"priv-tmpdir"` 照樣存在〔同目錄、檔名 `inject`〕，但路徑長 14 的辨認法分不出兩個私有目錄，這張探針的 PA1、PA2 失去意義；`TMPDIR=/tmp` 的檔名形狀由沙箱版 SP9、SP10 在 macOS 以 `TMPDIR` 設成 `/tmp` 之外的目錄量，Linux 上沒有實測）：
+#   PA1  `/tmp` 底下的私有哨兵唯讀（只在私有目錄路徑長 14、也就是 `/tmp/oXXXXXXXX` 時 `chmod 0444`），求值者關 fd、`env -i`（`$ORACLE_INJECT` 到不了），命令位置：只有 `TMPDIR` 底下的私有哨兵寫得進去——`32d45ff` 的位置。
+#   PA2  同 PA1，算術脈絡 `t=$0; (( t )) || :`。
+#   PB1  所有私有哨兵唯讀、cwd 底下的 `.orc-*/inject` 唯讀，求值者關 fd、保留環境，命令位置：只有 cwd 頂層的 `inject`（經 `$ORACLE_INJECT`）寫得進去——`28ec8c3` 的位置。
+#   PB2  同 PB1，算術脈絡 `t=$0; (( t )) || :`。
+#   PN   對照組：所有位置（兩個私有哨兵、`.orc-*/inject`、cwd 頂層的 `inject`）都唯讀，關 fd、保留環境：沒有任何位置看得到，要判『一致』（已知盲格：所有位置同時看不到）。
+# **負對照**（2026-10-22 在封存的舊樹上實測，`TMPDIR` 設成 `/tmp` 之外的目錄、替身 lint）：`6490b57`／`bf0c8a7`／`636fcfe` 的五格全判『一致』；`28ec8c3` 的 PB1、PB2 判繞過（PA1、PA2、PN 判一致）；`32d45ff` 的 PA1、PA2 判繞過（payload #4）、PB1、PB2、PN 判『一致』。
+# 它的私有哨兵檔名是 `$ORACLE_PRIV/inject`，所以 PB1、PB2、PN 的 `chmod` 同時涵蓋 `i` 與 `inject` 兩個名字；R62 第一版只 `chmod` `i`，`32d45ff` 的五格全判繞過，不是它的負對照（Codex 預審 M1：歷史位置的檔名也要對，模擬它的探針也一樣）。檔名本身的鑑別力在沙箱版（SP9、SP10，只放行基名 `inject`）。前提：非 root（root 不受 `chmod` 約束）。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: PA1 private sentinel under /tmp read-only, close_fds, env -i, command position
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          [ "${#ORACLE_PRIV}" = 14 ] && chmod 0444 "$ORACLE_PRIV/i" 2>/dev/null || :
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/usr/bin/env", "-i", "/bin/bash", "-c", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: PA2 private sentinel under /tmp read-only, close_fds, env -i, arithmetic
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          [ "${#ORACLE_PRIV}" = 14 ] && chmod 0444 "$ORACLE_PRIV/i" 2>/dev/null || :
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/usr/bin/env", "-i", "/bin/bash", "-c", "t=$0; (( t )) || :", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: PB1 all private sentinels and the hidden cwd sentinel read-only, close_fds, env kept, command position
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          chmod 0444 "$ORACLE_PRIV/i" "$ORACLE_PRIV/inject" 2>/dev/null || :
+          chmod 0444 .orc-*/inject 2>/dev/null || :
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "-c", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: PB2 all private sentinels and the hidden cwd sentinel read-only, close_fds, env kept, arithmetic
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          chmod 0444 "$ORACLE_PRIV/i" "$ORACLE_PRIV/inject" 2>/dev/null || :
+          chmod 0444 .orc-*/inject 2>/dev/null || :
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "-c", "t=$0; (( t )) || :", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: PN control every sentinel position read-only, close_fds, env kept (known blind cell)
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          chmod 0444 "$ORACLE_PRIV/i" "$ORACLE_PRIV/inject" 2>/dev/null || :
+          chmod 0444 .orc-*/inject 2>/dev/null || :
+          chmod 0444 inject 2>/dev/null || :
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "-c", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py

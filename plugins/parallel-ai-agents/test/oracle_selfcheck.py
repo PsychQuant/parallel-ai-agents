@@ -15,8 +15,8 @@ R37 時有兩件事它驗不到——要驗它們，未突變的神諭在 fixtur
 
 批次與編號（編號＝下面 `CHECKS` 的順序；每一項的內容在它自己的說明欄，這裡不再複述一份會過期的描述——R43 第 21 列：
 前一版的 docstring 逐批列舉、數字加起來少一項，而且寫著「二十六項」「三十項」卻沒有一個地方真的數過）：
-  R37 1–2；R39 3–8；R40 9–10；R42 11–15；R42 WP7 16–19；R42 WP8 20–26；R44 27–31；R46 32–38；R48 39–45；R50 46–72；R52 73–95；R54 96–99；R56 100–102；R58 103–105；R60 106–107。
-共 107 項。守衛：`main()` 開頭比對這一行的總數與批次區間的終點是否等於 `len(CHECKS)`，不等就 rc=1——數字與清單不是兩份各自維護的東西。
+  R37 1–2；R39 3–8；R40 9–10；R42 11–15；R42 WP7 16–19；R42 WP8 20–26；R44 27–31；R46 32–38；R48 39–45；R50 46–72；R52 73–95；R54 96–99；R56 100–102；R58 103–105；R60 106–107；R62 108–110。
+共 110 項。守衛：`main()` 開頭比對這一行的總數與批次區間的終點是否等於 `len(CHECKS)`，不等就 rc=1——數字與清單不是兩份各自維護的東西。
 
 用法：test/oracle_selfcheck.py      rc=0：每一項都照預期；rc=1：至少一項沒有（或上面的數字與 `CHECKS` 不符）。
 """
@@ -33,6 +33,7 @@ PROBES = HERE / "oracle-probes"
 LINT = HERE / "lint-ci-log-filter.sh"
 
 SPACED_TMPDIR = "<含空白的暫存目錄>"   # `extra` 裡 `TMPDIR` 的這個值：`run_check` 在自己的暫存目錄底下建一個名字含空白的目錄並設成 `TMPDIR`（R60 G2）
+SAFE_TMPDIR = "<非 /tmp 的暫存目錄>"   # `extra` 裡 `TMPDIR` 的這個值：`run_check` 在自己的暫存目錄底下建一個子目錄（`safe-tmp`）並設成 `TMPDIR`，所以 `tempfile.gettempdir()` 不是 `/tmp`、`oracle.py` 的 `"priv-tmpdir"` 目標在這裡是 macOS 預設的形狀（R62 H1；`TMPDIR=/tmp` 時它也存在，但那時 PA1、PA2 的 `chmod` 辨認法〔私有目錄路徑長 14〕分不出兩個私有目錄，所以這張探針要在 `/tmp` 之外的 `TMPDIR` 跑）
 
 
 def INJ(n):
@@ -307,32 +308,46 @@ CHECKS = [
      "負對照：`6490b57` 的 SB1～SB3 判『一致』、SB4 判繞過；cwd 哨兵不預先建檔時 SB5、SB6 判『一致』（`5b5a46d` 的 SB1～SB6 判繞過、SB7、SB8 判『一致』：它的哨兵在被拒寫的 cwd 底下）；`$ORACLE_INJECT` 只指 cwd 時 SB7、SB8 判『一致』（`6490b57` 判繞過）", {},
      [PROBES / "injection-fs-restricted.yml"], 1, INJ(8)),
     # R60 G1（#33 verify R59 regression／logic／DA，F2 的『所有 PR 可控鍵同時注入』不是舊樹的行為超集）。
-    ("**注入設定的聯集由構造保證單調：舊樹的設定、所有鍵同時、逐鍵各一次**（R60 G1，R59 regression／logic／DA）：step 先驗證 PR 的另一個欄位——第二個 `${{ …title }}` 鍵的長度閘門、`>` 閘門、`head_ref` 的 `>` 閘門、"
+    ("**注入的鍵設定各是獨立的一次執行：舊樹的設定、所有鍵同時、逐鍵各一次**（R60 G1，R59 regression／logic／DA）：step 先驗證 PR 的另一個欄位——第二個 `${{ …title }}` 鍵的長度閘門、`>` 閘門、`head_ref` 的 `>` 閘門、"
      "純 bash 的 `[[ $0 =~ … ]] && exec` 閘門——再執行 `PR_TITLE`，加上 sink 是非 `PR_TITLE` 的鍵（`TITLE`）、閘門是 `REF` 的 SG6，真 lint `--strict` 全部放行，SG1～SG4 與 SG6 要判『不一致：繞過（注入）』；SG5 是對照組（閘門就是 `PR_TITLE` 自己，L1 類），要判『一致』。"
      "負對照：R58（`ecb77d9`～`bf0c8a7`）的 SG1～SG4 與 SG6 判『一致』（payload 同時塞進閘門鍵，閘門把它擋掉、sink 不執行）；`6490b57`、`5b5a46d` 的 SG1～SG4 判繞過、SG6 判一致（污染不到 `TITLE`）", {},
      [PROBES / "injection-sibling-gate.yml"], 1,
      ["一致 1、不一致 5", ("不一致：繞過（注入", 5)] + [re.compile(r"\bSG%d\b[^\n]*oracle=\S+\s+不一致：繞過（注入" % n, re.M) for n in (1, 2, 3, 4, 6)] + [re.compile(r"\bSG5\b[^\n]*oracle=\S+\s+一致$", re.M)]),
     # R60 G2（第 13 格）：暫存目錄含空白時，POSIX 模式的 shell 不切開重導向的目標詞，絕對路徑寫得進去。
     ("**第 13 格：`TMPDIR` 含空白 ∧ 求值者的 shell 不切開重導向的目標詞 ∧ 求值者先離開步驟 cwd**（R60 G2，R59 requirements／logic／regression／DA／Codex）：`bash --posix` 先 `cd /`（PX1）、`bash --posix` 由 `subprocess` 換 cwd（PX2）、"
-     "`IFS` 不含空白的 bash 先 `cd /`（PX3）三格要判『不一致：繞過（注入）』（私有哨兵用 `chmod 0444` 模擬寫不進去，只有不加引號的 E 組經 cwd 底下的 `$ORACLE_INJECT` 的**絕對路徑**寫得進去）；PX4 是對照組（一般模式的 bash、預設 `IFS`、`cd /`：絕對路徑 `ambiguous redirect`、相對路徑 ENOENT），要判『一致』。"
-     "負對照：R58 的 `76bd0f9`／`bf0c8a7` 對 PX1～PX3 判『一致』（不加引號的 E 組的 `ORACLE_INJECT` 改成相對路徑〔加引號的仍用絕對路徑〕，求值者換了 cwd 就 ENOENT；`ecb77d9` 則是停用 cwd 哨兵、退回 `<priv>/i`，私有哨兵唯讀所以也寫不進去）；`5b5a46d`（一律絕對路徑）對這張探針本身判『量不到（儀器不可信）』——步驟文字提到 `ORACLE_PRIV`——，把 `chmod` 那行換成 `:` 的變體則 PX1～PX3 判繞過、PX4 判『一致』。`run_check` 在自己的暫存目錄底下建一個名字含空白的目錄並設成 `TMPDIR`", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh"), "TMPDIR": SPACED_TMPDIR},
+     "`IFS` 不含空白的 bash 先 `cd /`（PX3）三格，加上 PX5（同 PX1，另把 `.orc-*/inject` 也設成唯讀，只剩 cwd 頂層 `inject` 的**絕對路徑**寫得進去：`cwd-vis-abs` 目標，Codex 預審 M2）與 PX6（同 PX1，另把 cwd 頂層的 `inject` 也設成唯讀，只剩 `.orc-*/inject` 的絕對路徑寫得進去：`cwd-abs` 目標，R62 量測的突變靶 #597）共五格要判『不一致：繞過（注入）』（私有哨兵用 `chmod 0444` 模擬寫不進去，只有不加引號的 E 組經 cwd 底下的 `$ORACLE_INJECT` 的**絕對路徑**寫得進去）；PX4 是對照組（一般模式的 bash、預設 `IFS`、`cd /`：絕對路徑 `ambiguous redirect`、相對路徑 ENOENT），要判『一致』。"
+     "負對照：R58 的 `76bd0f9`／`bf0c8a7` 對 PX1～PX3 判『一致』（不加引號的 E 組的 `ORACLE_INJECT` 改成相對路徑〔加引號的仍用絕對路徑〕，求值者換了 cwd 就 ENOENT；`ecb77d9` 則是停用 cwd 哨兵、退回 `<priv>/i`，私有哨兵唯讀所以也寫不進去）；`5b5a46d`（一律絕對路徑）對這張探針本身判『量不到（儀器不可信）』——步驟文字提到 `ORACLE_PRIV`——，把 `chmod` 那行換成 `:` 的變體則 PX1～PX3 判繞過、PX4 判『一致』。PX6 的負對照（2026-10-28）：`636fcfe` 判 PX6 繞過（`cwd-abs` 的絕對路徑）、`28ec8c3`／`bf0c8a7`／`6490b57` 判『一致』；套上突變靶 #597 的副本只有 PX6 改判『一致』。`run_check` 在自己的暫存目錄底下建一個名字含空白的目錄並設成 `TMPDIR`", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh"), "TMPDIR": SPACED_TMPDIR},
      [PROBES / "injection-posix-spaced-tmpdir.yml"], 1,
-     ["一致 1、不一致 3", ("不一致：繞過（注入", 3)] + [re.compile(r"\bPX%d\b[^\n]*oracle=\S+\s+不一致：繞過（注入" % n, re.M) for n in (1, 2, 3)] + [re.compile(r"\bPX4\b[^\n]*oracle=\S+\s+一致$", re.M)]),
+     ["一致 1、不一致 5", ("不一致：繞過（注入", 5)] + [re.compile(r"\bPX%d\b[^\n]*oracle=\S+\s+不一致：繞過（注入" % n, re.M) for n in (1, 2, 3, 5, 6)] + [re.compile(r"\bPX4\b[^\n]*oracle=\S+\s+一致$", re.M)]),
+    # R62 H1（#33 verify R61：requirements／logic／security／regression／DA／Codex，哨兵位置軸）：舊樹的哨兵位置要各自留成一次獨立的執行。
+    ("**哨兵位置軸（可攜版）**（R62 H1，R61 的兩個 blocking）：求值者只寫得到 `TMPDIR` 底下的私有目錄（`/tmp` 底下的私有哨兵唯讀、`env -i`、關 fd；PA1 命令位置、PA2 算術脈絡）時，`32d45ff` 的位置（`\"priv-tmpdir\"` 目標）命中；"
+     "所有私有哨兵與 cwd 底下的 `.orc-*/inject` 都唯讀、只有 cwd 頂層的 `inject` 寫得進去（PB1、PB2）時，`28ec8c3` 的位置（`\"cwd-vis\"` 目標）命中；PN 是對照組（所有位置都唯讀：已知盲格，判『一致』）。`TMPDIR` 設成 `/tmp` 之外的目錄（`SAFE_TMPDIR`），替身 lint（一律放行）。"
+     "負對照（2026-10-22 在封存的舊樹上實測）：`6490b57`／`bf0c8a7`／`636fcfe` 的五格全判『一致』；`28ec8c3` 的 PB1、PB2 判繞過；`32d45ff` 的 PA1、PA2 判繞過、PB1、PB2、PN 判『一致』（它的私有哨兵檔名是 `$ORACLE_PRIV/inject`，PB／PN 的 `chmod` 同時涵蓋 `i` 與 `inject`；檔名本身的鑑別力在沙箱版 SP9、SP10）。非 root 才成立", {"ORACLE_LINT": str(PROBES / "lint-pass-all.sh"), "TMPDIR": SAFE_TMPDIR},
+     [PROBES / "injection-sentinel-position-axis.yml"], 1,
+     ["一致 1、不一致 4", ("不一致：繞過（注入", 4)] + [re.compile(r"\b%s\b[^\n]*oracle=\S+\s+不一致：繞過（注入[^\n]*payload #%d" % (c, n), re.M) for c, n in (("PA1", 5), ("PA2", 5), ("PB1", 13), ("PB2", 13))] + [re.compile(r"\bPN\b[^\n]*oracle=\S+\s+一致$", re.M)]),
+    ("**哨兵位置軸（真沙箱版，只在 macOS）**（R62 H1，R61 requirements／logic／security／regression／DA／Codex）：SP1、SP2（拒寫 `/private/tmp`、關 fd、`env -i`）、SP3、SP4（拒寫 `/private/tmp` 與 cwd 子樹、**環境保留**——Codex 的變體）、SP5、SP6（拒寫 `/private/tmp` 與隱藏目錄、環境保留）、"
+     "SP7（Python `env={}`）、SP9、SP10（拒寫 `/private/tmp` 與整個 `TMPDIR`、**只放行基名 `inject`**——`32d45ff` 的私有哨兵檔名也是歷史位置的一部分，Codex 預審 M1）、SP11、SP12（只放行對**既有**的 `<cwd>/inject` 做資料寫入、不放行建立——`cwd-vis` 預先建檔，Codex 預審 LOW）要判『不一致：繞過（注入）』，SP8 是對照組（只拒寫 `/private/tmp`、fd 保留）。真 lint `--strict` 全部放行。負對照（2026-10-22 在封存的舊樹上實測）：`6490b57`／`bf0c8a7`／`636fcfe` 只有 SP8 判繞過、其餘十一格判『一致』；`32d45ff` 判 SP1～SP10 繞過（payload #4；SP8 是 #1）、SP11／SP12 判『一致』；`28ec8c3` 判 SP5、SP6、SP8、SP11、SP12 繞過、其餘判『一致』", {"TMPDIR": SAFE_TMPDIR},
+     [PROBES / "injection-sentinel-position-sandbox.yml"], 1,
+     INJ(12) + [re.compile(r"\bSP%d\b[^\n]*oracle=\S+\s+不一致：繞過（注入" % n, re.M) for n in range(1, 13)]),
+    # R62 H3（R61 DA）：跨執行持久狀態是已知盲點（性質聲明 (ii) 的成員、停止規則的第三個豁免類）——這一項是**現況的棘輪**：三格都判『一致』；日後神諭有了封閉的執行，這一項會紅，那時要更新探針與停止規則。
+    ("**跨執行持久狀態（已知盲點，棘輪）**（R62 H3，R61 DA 的 TG1／CG1／DT1）：step 把狀態（taint 檔、計數器、工作區衛生檢查的 taint）留在共用的 `/tmp`、並依它決定要不要執行 `PR_TITLE`——神諭對同一個 step 的多次執行共用同一台主機，先跑的執行把後跑的吃掉，三格判『一致』"
+     "（真 lint `--strict` 放行；真 runner 對同一個 step 在一次 workflow run 裡只執行一次，攻擊者給合法的分支名、標題就被執行；神諭的多次反事實執行之間不重置共用的主機狀態）。DA 的鴿籠論證：任何執行順序都無法同時保住所有舊設定，所以列為豁免類而不是缺陷。狀態檔名帶神諭這次呼叫的 `PATH` 雜湊、不讀時鐘（結構由 `xrun_probe_problems` 守）", {},
+     [PROBES / "injection-cross-run-state-known-blind-spots.yml"], 0, "一致 3"),
 ]
 
 # 需要平台工具才跑得了的項目（探針檔名 → 必須存在的執行檔）：沒有就在 `main()` 印『跳過』，不算通過也不算失敗（Linux 上沒有 `sandbox-exec`）。
 # **沒有任何 CI job 會跑第 105 項**：ubuntu job 沒有 `sandbox-exec`、macOS job 不跑 `oracle_selfcheck`（R59 G5 要求納入 CI；`.github/` 是這個 PR 的閘門本身，加一步會改變『閘門相對 `6490b57` 沒有變』這個前提，R60 沒有做，列在 CHANGELOG 的〈沒有處理的〉）——這一項只在開發機上跑。
-REQUIRES = {"injection-fs-restricted.yml": "/usr/bin/sandbox-exec"}
+REQUIRES = {"injection-fs-restricted.yml": "/usr/bin/sandbox-exec", "injection-sentinel-position-sandbox.yml": "/usr/bin/sandbox-exec"}
 
 
-def tool_usable(path):
+def tool_usable(path, timeout=20):
     """執行檔存在；若是 `sandbox-exec`，另外實跑一個最小 profile（20 秒逾時）確認跑得起來，其他執行檔只看存在。`sandbox-exec` 在外層沙箱裡（`(deny process-exec …)`）存在但執行不了，八格全判『一致』、第 105 項紅，訊息會讓人以為神諭退步（R58 A2）；
     跑一次最小的 profile 確認它可用，不可用就和『不存在』一樣印『跳過』。"""
     if not os.path.exists(path):
         return False
     if os.path.basename(path) == "sandbox-exec":
         try:
-            return subprocess.run([path, "-p", "(version 1)(allow default)", "/usr/bin/true"], capture_output=True, timeout=20).returncode == 0
+            return subprocess.run([path, "-p", "(version 1)(allow default)", "/usr/bin/true"], capture_output=True, timeout=timeout).returncode == 0
         except (OSError, subprocess.SubprocessError):
             return False
     return True
@@ -361,6 +376,10 @@ def run_check(extra, files, mut):
             dst.write_text(src, encoding="utf-8")
         if env.get("TMPDIR") == SPACED_TMPDIR:
             sp = pathlib.Path(d) / "sp ace"
+            sp.mkdir()
+            env["TMPDIR"] = str(sp)
+        elif env.get("TMPDIR") == SAFE_TMPDIR:
+            sp = pathlib.Path(d) / "safe-tmp"
             sp.mkdir()
             env["TMPDIR"] = str(sp)
         try:
@@ -417,20 +436,228 @@ def matcher_problems():
     # R60（R59 Codex 3；logic LOW 另外指出第 105 項不在 CI、指紋沒記 `sandbox-exec` 可用性）：`tool_usable` 也有單元測試——把它改成永遠回 False，第 105 項在 macOS 上整個被跳過、selfcheck 仍然綠（R59 凍結樹 `bf0c8a7` 時沒有任何靶殺它；R60 起 `mutation_check.py` 有兩個 `tool_usable` 靶）。
     # 用假的 `sandbox-exec`（一支 shell 腳本）涵蓋：跑得起來、執行失敗、不存在、以及非 `sandbox-exec` 的一般執行檔（只看存在）。
     with tempfile.TemporaryDirectory(prefix="tool-usable-") as td:
-        def fake(name, body):
+        def fake(name, body, mode=0o755):
             q = pathlib.Path(td) / name
             q.parent.mkdir(exist_ok=True)
             q.write_text("#!/bin/sh\n" + body + "\n")
-            q.chmod(0o755)
+            q.chmod(mode)
             return str(q)
         for what, path, exp in (("假 sandbox-exec 成功（rc=0）→ 可用", fake("ok/sandbox-exec", "exit 0"), True),
                                 ("假 sandbox-exec 失敗（rc≠0；真實的外層沙箱 `deny process-exec` 實測為 rc=71，這裡用 1 代表任何非零）→ 不可用", fake("bad/sandbox-exec", "exit 1"), False),
                                 ("路徑不存在 → 不可用", str(pathlib.Path(td) / "missing" / "sandbox-exec"), False),
-                                ("不是 sandbox-exec 的執行檔，存在就算可用", fake("other/tool", "exit 1"), True)):
-            got = tool_usable(path)
+                                ("不是 sandbox-exec 的執行檔，存在就算可用", fake("other/tool", "exit 1"), True),
+                                # R62 H5（R61 logic LOW）：逾時與執行失敗兩個例外分支（`except → return False`；把它改成 `return True` 的突變體在 R60 時存活）
+                                ("假 sandbox-exec 跑得比逾時久（睡 5 秒、逾時 1 秒）→ 不可用", fake("slow/sandbox-exec", "sleep 5"), False),
+                                ("假 sandbox-exec 存在但不可執行（`OSError`）→ 不可用", fake("noexec/sandbox-exec", "exit 0", mode=0o644), False)):
+            # 正常路徑給寬鬆的逾時：機器忙的時候（其他工作階段在跑測試）新寫出的小腳本首次執行可能超過 1 秒，1 秒的逾時會讓『成功→可用』這一案偶爾判不可用（2026-10-22 負載 10～17 時實際發生一次）；只有『跑得比逾時久』這一案用 1 秒——它預期判不可用，不會因負載而變。
+            got = tool_usable(path, timeout=1 if path.endswith("slow/sandbox-exec") else 15)
             if got != exp:
                 problems.append("tool_usable：%s：期待 %s、實際 %s" % (what, exp, got))
+    # R62 H2：歷史哨兵位置 manifest 的檢查本身有單元測試（假的 `_inject_runs`）：完整的序列在四個 (spaced, tmpdir_priv) 組合都要全過；缺任何一個目標都要被抓到；有條件的目標變成無條件也要被抓到；
+    # 條件寫錯的假產生器（只在對角格正確：交換、`and`、基底格什麼都不跑、只缺混合格）也要被抓到——Codex 預審 M3：前一版只驗 (True, True) 與 (False, False) 兩個對角格，條件寫成 `tmpdir_priv and spaced` 或基底格整個空掉都過得了；
+    # manifest 的列數寫死是 6（有人悄悄刪一列，這裡紅）。
+    if len(HISTORICAL_SENTINEL_POSITIONS) != 6:
+        problems.append("HISTORICAL_SENTINEL_POSITIONS 有 %d 列，要是 6（封閉列舉；拿掉一列要有書面理由）" % len(HISTORICAL_SENTINEL_POSITIONS))
+    pays, runs = _fake_runs()
+    if sentinel_manifest_problems(pays, "@@TOK@@", runs):
+        problems.append("manifest 檢查：完整的假序列被判有問題：%s" % sentinel_manifest_problems(pays, "@@TOK@@", runs))
+    for drop in MANIFEST_DROPS:
+        pays, runs = _fake_runs(drop)
+        if not sentinel_manifest_problems(pays, "@@TOK@@", runs):
+            problems.append("manifest 檢查：缺 %s 的假序列沒有被抓到" % drop)
+    for variant in MANIFEST_VARIANTS:
+        pays, runs = _fake_runs(variant=variant)
+        if not sentinel_manifest_problems(pays, "@@TOK@@", runs):
+            problems.append("manifest 檢查：條件寫錯的假序列（%s）沒有被抓到" % variant)
+    # `main()` 真的呼叫了對真的 `oracle.py` 的 manifest 檢查（拿掉那個呼叫，沒有任何一項會紅——`oracle-inverted` 的突變體靠第 108 項殺，但這個呼叫本身要有人守）：文字檢查，簡單但夠用。
+    import inspect
+    if "sentinel_manifest_problems_real()" not in inspect.getsource(main):
+        problems.append("main() 沒有呼叫 sentinel_manifest_problems_real()")
+    # R62 量測後（XR 探針的時間依賴）：結構檢查本身的四案——正確的寫法要過；讀時鐘、檔名寫死、沒用 `PATH` 當鍵各要被抓到。
+    for what, fake_run, want_bad in XRUN_CASES:
+        body = "\n".join("      " + l for l in fake_run.replace("{K}", _XRUN_KEY_EXPR).split("\n"))
+        got = bool(xrun_probe_problems("steps:\n  - name: x\n    run: |\n" + body + "\n"))
+        if got != want_bad:
+            problems.append("XR 探針檢查：%s：期待%s、實際%s" % (what, "有問題" if want_bad else "通過", "有問題" if got else "通過"))
+    if "xrun_probe_problems_real()" not in inspect.getsource(main):
+        problems.append("main() 沒有呼叫 xrun_probe_problems_real()")
     return problems
+
+
+XRUN_CASES = (   # (說明, 假的 run 內容, 是否應該被判有問題)；`_XRUN_KEY_EXPR` 定義在下面，這裡在呼叫時才取
+    ("固定寫法：import 白名單、狀態檔名接 PATH 雜湊", "python3 -c 'import os, sys, hashlib, subprocess; t = \"/tmp/orc-known-xrun-taint-\" + {K}; sys.exit(0) if os.path.exists(t) else None'", False),
+    ("固定寫法，加一行提到 time.time() 的 bash 註解（註解不算行為）", "# 不准用 time.time()\npython3 -c 'import os, sys, hashlib; t = \"/tmp/orc-known-xrun-taint-\" + {K}'", False),
+    ("讀時鐘（import time、30 秒過期）", "python3 -c 'import os, time, hashlib; t = \"/tmp/orc-known-xrun-taint-\" + {K}; time.time() - os.path.getmtime(t) < 30'", True),
+    ("讀時鐘（from time import time as now、os.stat 的 st_ctime）", "python3 -c 'from time import time as now; import os, hashlib; t = \"/tmp/orc-known-xrun-taint-\" + {K}; now() - os.stat(t).st_ctime < 30'", True),
+    ("只讀 stat（`os` 在允許清單內，只有禁用寫法那一道抓得到）", "python3 -c 'import os, sys, hashlib; t = \"/tmp/orc-known-xrun-taint-\" + {K}; sys.exit(0) if os.path.exists(t) and os.stat(t).st_ctime > 0 else None'", True),
+    ("import uuid（`uuid1()` 帶時間戳；文字裡沒有禁用字，只有 import 允許清單那一道抓得到）", "python3 -c 'import os, hashlib, uuid; t = \"/tmp/orc-known-xrun-taint-\" + {K}; k = uuid.uuid1().hex'", True),
+    ("檔名寫死成完整字串（含連字號）、PATH 只是算了沒用", "python3 -c 'import os, hashlib; k = {K}; t = \"/tmp/orc-known-xrun-taint-shared\"'", True),
+    ("檔名接了常數尾碼、PATH 只是算了沒用", "python3 -c 'import os; unused = os.environ[\"PATH\"]; t = \"/tmp/orc-known-xrun-taint-\" + \"shared\"'", True),
+    ("沒有用 PATH 當鍵", "python3 -c 'import os; t = \"/tmp/orc-known-xrun-taint-\" + str(os.getuid())'", True),
+)
+
+
+# 歷史上的注入哨兵位置——**凍結的 manifest**（R62 H2，R61 requirements／logic／DA／Codex：『由構造保證單調』沒有機械檢查，R54 把私有目錄搬到 `/tmp`、R50 移除 cwd 頂層哨兵都是『取代』卻沒有任何東西變紅）。
+# 它放在這個檔案、不放在 `oracle.py`：manifest 與被檢查的函式不在同一個檔案裡，改函式的人要另外改 manifest。每一列是 (名字, 歷史, `_inject_runs` 裡負責它的目標, 哪些 payload 要有這個目標, 目標存在的條件)。
+# 封閉列舉，只有這六列；新增位置要在這裡加一列（讓檢查變嚴），**拿掉一列要有書面理由**。fd 197（R50 起）不是 `_inject_runs` 的目標——它隨每一次執行存在，不在這張表裡。
+# **這張表守的範圍**：`_inject_runs(spaced, tmpdir_priv)` 的輸出——哪些 payload 在哪個條件下試哪些目標、目標的順序。它**不**守：(1) 路徑形狀（檔名 `inject` 或 `i`、絕對或相對）——`_inject_runs` 的輸出裡沒有，由探針守
+# （`priv-tmpdir` 的檔名：沙箱版的 SP9、SP10；`cwd-vis` 與 `cwd-vis-abs` 的絕對路徑：PX5；`cwd-abs`：PX6——R62 加了 `cwd-vis-abs` 之後 PX1～PX3 也寫得進 cwd 頂層的 `inject`，不再單獨守 `cwd-abs`）；(2) `run_script` 真的履行每個目標（同上，由探針與突變靶守）；(3) `_inject_key_modes`（鍵模式軸，由 aud 的值比較守）；(4) payload 集合本身——檢查只巡訪傳入的 payload 清單（真檢查傳 `oracle.INJECT_PAYLOADS`，不是獨立凍結的歷史 payload 清單），清單外的 payload 輸出的目標不檢查。
+# 表裡的 `cond` 是 `None`、`"spaced"`（暫存目錄的路徑含空白）或 `"tmpdir_priv"`（`_tmpdir_priv_ok()`）之一，檢查時真的拿這兩個布林去評估（不是當標籤）。
+HISTORICAL_SENTINEL_POSITIONS = (
+    ("priv-tmp",        "R54 起：`/tmp/oXXXXXXXX/i`（`_short_tmp()`）",                                                       "priv",        "all",          None),
+    ("priv-tmpdir",     "R52～R53（`32d45ff`）：預設 `TMPDIR` 底下的 `<priv>/inject`（R54 取代；檔名也是歷史形狀的一部分）",   "priv-tmpdir", "lit-or-env",   "tmpdir_priv"),
+    ("cwd-hidden",      "`5b5a46d`、R58 起：`<cwd>/.orc-XXXXXXXX/inject`",                                                    "cwd",         "env",          None),
+    ("cwd-visible",     "R43～R47（`2835ead`、`28ec8c3`）：`<cwd>/inject`（R50 移除、R58 加回的是隱藏目錄的那個）",           "cwd-vis",     "env",          None),
+    ("cwd-abs",         "R60：含空白的絕對路徑（`5b5a46d` 的設定；只有不加引號的 E 組）",                                     "cwd-abs",     "env-unquoted", "spaced"),
+    ("cwd-visible-abs", "R62：`<cwd>/inject` 的絕對路徑，含空白時（`28ec8c3` 一律給絕對路徑；只有不加引號的 E 組）",           "cwd-vis-abs", "env-unquoted", "spaced"),
+)
+MANIFEST_DROPS = ("priv", "priv-tmpdir", "cwd", "cwd-vis", "cwd-abs", "cwd-vis-abs", "uncond", "front")      # 假產生器拿掉的目標（`uncond`：有條件的目標變成無條件；`front`：新目標插在最前面）
+MANIFEST_VARIANTS = ("empty-base", "swap", "and", "mixed-miss", "extra-target", "uncond-tmpdir", "uncond-vis-abs")                               # 條件寫錯的假產生器，見 `_fake_runs`
+MANIFEST_CASE_COUNT = 1 + len(MANIFEST_DROPS) + len(MANIFEST_VARIANTS) + 1                                    # 完整序列 1 ＋ 拿掉 ＋ 寫錯 ＋ 列數寫死 1（`--selftest-matcher` 的輸出用）
+
+
+def sentinel_manifest_problems(payloads, token, runs_fn):
+    """`runs_fn(spaced, tmpdir_priv)`（`oracle._inject_runs`）產生的 (payload, 目標) 序列，是否涵蓋 `HISTORICAL_SENTINEL_POSITIONS` 的每一列。**四個 (spaced, tmpdir_priv) 組合各檢查一次**（Codex 預審 M3：前一版只驗兩個對角格），每個組合、每個 payload：
+    (1) manifest 的每一列，條件評估為真且該 payload 屬於這一列的種類時，目標要在序列裡；條件評估為假（或種類不符）時，目標**不**能在序列裡（不是無條件多跑、也不是條件綁錯）；
+    (2) 序列裡的每個目標都要在 manifest 裡（封閉：多一個沒登記的目標也紅，逼著新增位置時同步改 manifest），且同一個目標在同一個 payload 的序列裡只出現一次；
+    (3) R60 的序列（`cwd`〔含空白時再 `cwd-abs`〕、`priv`；非 E 組只有 `priv`）是新序列的**前綴**——新目標只能加在每個 payload 自己的序列末端：R60 判得出繞過的 step 仍判得出（前提：新增的執行不經共用主機狀態影響後面的執行，見 H3）；報出來的 payload 編號可能變小（某個 payload 經新目標較早命中），不是『歸因不變』。
+    基底格（兩個條件都不成立，絕大多數環境）整個沒有注入執行時，(1) 的『該有』檢查就會抓到（`priv` 對每個 payload 都該有），所以不另設『序列不能為空』的檢查（那個檢查的突變體必然存活，R62 試過、拿掉）。
+    回傳問題清單（空＝全過）。這個函式接受 `runs_fn` 與 `payloads`，所以單元測試（`matcher_problems`）可以餵假的產生器、確認缺任何一列與條件寫錯都會被抓到。"""
+    probs = []
+    conds = {None: lambda sp, tp: True, "spaced": lambda sp, tp: sp, "tmpdir_priv": lambda sp, tp: tp}
+    known = {row[2] for row in HISTORICAL_SENTINEL_POSITIONS}
+
+    def needs(kind, pl):
+        is_e = "$ORACLE_INJECT" in pl
+        return {"all": True, "lit-or-env": is_e or token in pl, "env": is_e, "env-unquoted": is_e and '"$ORACLE_INJECT"' not in pl}[kind]
+    for spaced in (False, True):
+        for tp in (False, True):
+            here = "spaced=%s,tmpdir_priv=%s" % (spaced, tp)
+            by = {}
+            for pl, to in runs_fn(spaced, tp):
+                by.setdefault(pl, []).append(to)
+            for pl in payloads:
+                got = by.get(pl, [])
+                for name, _why, target, kind, cond in HISTORICAL_SENTINEL_POSITIONS:
+                    want = needs(kind, pl) and conds[cond](spaced, tp)
+                    if want and target not in got:
+                        probs.append("[%s] 哨兵位置 %s：目標 %r 不在 payload %r 的序列裡（%s）" % (here, name, target, pl[:30], got))
+                    if not want and target in got:
+                        probs.append("[%s] 哨兵位置 %s：條件 %r 評估為假（或這個 payload 不屬於它）時目標 %r 仍然出現：payload %r，序列 %s" % (here, name, cond, target, pl[:30], got))
+                extra = [t for t in got if t not in known]
+                if extra:
+                    probs.append("[%s] payload %r 的序列有 manifest 沒登記的目標 %s（新增位置要在 manifest 加一列）" % (here, pl[:30], extra))
+                if len(got) != len(set(got)):
+                    probs.append("[%s] payload %r 的序列有重複的目標：%s" % (here, pl[:30], got))
+                is_e = "$ORACLE_INJECT" in pl
+                old = (["cwd"] + (["cwd-abs"] if spaced and '"$ORACLE_INJECT"' not in pl else []) + ["priv"]) if is_e else ["priv"]
+                if got[:len(old)] != old:
+                    probs.append("[%s] R60 的目標序列 %s 不是 payload %r 的新序列 %s 的前綴" % (here, old, pl[:30], got))
+    return probs
+
+
+def load_oracle():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("oracle_under_check", ORACLE)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def sentinel_manifest_problems_real():
+    mod = load_oracle()
+    return sentinel_manifest_problems(mod.INJECT_PAYLOADS, mod.INJECT_PATH_TOKEN, mod._inject_runs)
+
+
+# R62 量測抓到（2026-10-25）：第 110 項的 XR 探針原本用固定檔名 `/tmp/orc-known-xrun-*` 加『30 秒後視為過期』。XR1、XR3 的 taint 只在第一次寫入，之後的執行看它的**年齡**；
+# XR2 每次執行都重寫計數檔，要**相鄰兩次執行的間隔**超過 30 秒才會重置。所以機器變慢時判定可能從『一致』翻成『繞過』（窗口改成 0 秒實測三格都判繞過；
+# 慢到什麼程度才翻沒有量）；平行的神諭（突變全輪 `--jobs 8`）又共用同一組固定檔名，一方的 taint 會吃掉另一方的執行。兩者都讓第 110 項的判定隨環境改變
+# （2026-10-25 的前置驗證就紅過一次，當時校準正常，成因沒有分辨），突變全輪的 `oracle-inverted` 靶因此可能被記成『殺掉』而不是被突變殺掉（本來會存活的靶看不出來）。
+# 修法：狀態檔名接上神諭這次呼叫的 `PATH` 雜湊（`PATH` 由 `run_script` 以 `stub_bin` 蓋寫，`stub_bin` 是 `main()` 每次呼叫 mkdtemp 一次、整個行程共用；XR 探針的 YAML `env:` 沒有 `PATH`）。
+# **這裡的檢查是刻意的封閉結構約束，不是『不讀時鐘』的證明**（R62 Codex 第三次核對 1–3：黑名單版擋不住 `from time import time as now`、`os.stat(t).st_ctime`、接了常數尾碼的檔名）：
+# 每個 `run:`（先去掉 bash 的註解行）必須 (1) 只 import `os`、`sys`、`hashlib`、`subprocess`（不准 `from … import`、`__import__`、`importlib`），(2) 不出現 `_XRUN_FORBIDDEN_RE` 列的時間、stat 與
+# 檔案時間類寫法（Python 與 bash 兩邊），(3) 每一個 `/tmp/orc-known-xrun` 都恰好是 `"/tmp/orc-known-xrun-<種類>-" + <_XRUN_KEY_EXPR>` 這個形狀，且至少一個。
+# 語義相同的其他寫法（例如 `os.environ.get("PATH", "")`）也會被判不符——改探針的人要同時改這裡，訊息會說是『不符合固定寫法』。
+XRUN_PROBE = PROBES / "injection-cross-run-state-known-blind-spots.yml"
+_XRUN_KEY_EXPR = 'hashlib.sha1(os.environ["PATH"].encode()).hexdigest()[:16]'
+_XRUN_STATE_RE = re.compile(r'"/tmp/orc-known-xrun-[a-z]+-" \+ ' + re.escape(_XRUN_KEY_EXPR))
+_XRUN_ALLOWED_IMPORTS = frozenset({"os", "sys", "hashlib", "subprocess"})
+_XRUN_IMPORT_RE = re.compile(r"\bimport\s+([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)")
+_XRUN_FORBIDDEN_RE = re.compile(r"\bfrom\s+\w+\s+import\b|__import__|\bimportlib\b|\bdatetime\b|\btime\b|stat\b|\bst_\w*time|\bget[amc]time\b|\btimes\b|\bscandir\b"
+                                r"|\bdate\b|\bEPOCH\w*|\bSECONDS\b|%\(|-m(?:min|time)\b|-newer")
+
+
+def xrun_probe_problems(text):
+    """XR 探針的結構檢查：回傳問題清單（空清單＝通過）。規則見上面的註解（封閉的固定寫法，不是『不讀時鐘』的證明）。"""
+    import yaml   # 神諭本身就依賴 PyYAML（`oracle.py`）；用解析器取每個 `run:` 的值，不用正規式切縮排（前一版的正規式把後面的 step 併進第一個 run）
+
+    def walk(node):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if k == "run" and isinstance(v, str):
+                    yield v
+                else:
+                    yield from walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                yield from walk(v)
+    runs = list(walk(yaml.safe_load(text)))
+    if not runs:
+        return ["探針裡找不到任何 `run:` 區塊"]
+    problems = []
+    for i, r in enumerate(runs, 1):
+        code = "\n".join(l for l in r.split("\n") if not l.lstrip().startswith("#"))   # 註解行裡的字不算行為（R62 Codex 第三次核對 3）
+        hit = _XRUN_FORBIDDEN_RE.search(code)
+        if hit:
+            problems.append("第 %d 個 run 不符合固定寫法：用到不允許的 `%s`（時間、stat、檔案時間或動態 import 一律不准，判定不能隨時間改變）" % (i, hit.group(0)))
+        bad_imports = sorted({m for g in _XRUN_IMPORT_RE.findall(code) for m in re.split(r"\s*,\s*", g)} - _XRUN_ALLOWED_IMPORTS)
+        if bad_imports:
+            problems.append("第 %d 個 run 不符合固定寫法：import 了允許清單以外的模組 %s（只准 os、sys、hashlib、subprocess）" % (i, "、".join(bad_imports)))
+        n_state, n_keyed = code.count("/tmp/orc-known-xrun"), len(_XRUN_STATE_RE.findall(code))
+        if n_state == 0:
+            problems.append("第 %d 個 run 沒有 `/tmp/orc-known-xrun-…` 狀態檔" % i)
+        elif n_keyed != n_state:
+            problems.append("第 %d 個 run 不符合固定寫法：`/tmp/orc-known-xrun` 出現 %d 次，只有 %d 次是 `\"/tmp/orc-known-xrun-<種類>-\" + %s`（寫死或接了別的尾碼的檔名會讓平行的神諭與上一次呼叫的殘檔共用狀態）" % (i, n_state, n_keyed, _XRUN_KEY_EXPR))
+    return problems
+
+
+def xrun_probe_problems_real():
+    return xrun_probe_problems(XRUN_PROBE.read_text(encoding="utf-8"))
+
+
+def _fake_runs(drop=None, variant=None):
+    """單元測試用的假 `_inject_runs`：實作 manifest 要求的完整序列。`drop` 指定拿掉的目標（`MANIFEST_DROPS`；`uncond`：有條件的目標變成無條件；`front`：新目標插在最前面）。
+    `variant`（`MANIFEST_VARIANTS`）是**條件寫錯**的假產生器——都在 (True, True)、有的在 (False, False) 也正確，只有四個組合都驗才抓得到（Codex 預審 M3）：
+    `empty-base` 兩個條件都不成立時整個不跑（正常環境完全沒有注入執行）；`swap` 兩個條件接反（`cwd-abs` 看 tmpdir_priv、`priv-tmpdir` 看 spaced）；
+    `and` `priv-tmpdir` 的條件寫成 `tmpdir_priv and spaced`（安全且無空白的 TMPDIR 上這個目標消失）；`mixed-miss` 只在 (spaced=True, tmpdir_priv=False) 缺 `cwd`；`extra-target` 多一個沒登記的目標；`uncond-tmpdir`、`uncond-vis-abs` 只讓**一個**目標（`priv-tmpdir`、`cwd-vis-abs`）變成無條件——它們加在序列末端，R60 的前綴檢查看不到，只有『條件為假時目標不能出現』這一條抓得到（`drop="uncond"` 同時讓 `cwd-abs` 無條件，會被前綴檢查先抓走，那一條檢查的突變體因此存活，R62 抽測抓到）。"""
+    pays = ("S", "P @@TOK@@", "E $ORACLE_INJECT", 'Q "$ORACLE_INJECT"')
+
+    def runs(spaced, tp):
+        if variant == "empty-base" and not spaced and not tp:
+            return
+        sp_abs, tp_cond = (tp, spaced) if variant == "swap" else (spaced, tp)         # swap：兩個條件接反
+        if variant == "and":
+            tp_cond = tp and spaced
+        for pl in pays:
+            e = "$ORACLE_INJECT" in pl
+            unq = e and '"$ORACLE_INJECT"' not in pl
+            tg = ["priv"] if not e else (["cwd", "cwd-abs", "priv"] if (sp_abs or drop == "uncond") and unq else ["cwd", "priv"])
+            if e:
+                tg.append("cwd-vis")
+                if (sp_abs or drop == "uncond" or variant == "uncond-vis-abs") and unq:
+                    tg.append("cwd-vis-abs")
+            if (tp_cond or drop == "uncond" or variant == "uncond-tmpdir") and (e or "@@TOK@@" in pl):
+                tg.append("priv-tmpdir")
+            if drop == "front" and e:
+                tg = ["cwd-vis"] + [x for x in tg if x != "cwd-vis"]     # 新目標插在最前面：R60 的序列不再是前綴，報出來的 payload 編號與歸因會變
+            if variant == "mixed-miss" and spaced and not tp:
+                tg = [x for x in tg if x != "cwd"]
+            if variant == "extra-target":
+                tg.append("cwd-mystery")
+            for to in tg:
+                if to != drop:
+                    yield pl, to
+    return pays, runs
 
 
 def doc_count_mismatch():
@@ -450,11 +677,17 @@ def main():
         for x in probs:
             print("✗ " + x)
         if not probs:
-            print("matcher ok（12 案＋tool_usable 4 案）")
+            print("matcher ok（12 案＋tool_usable 6 案＋哨兵位置 manifest %d 案＋XR 探針 %d 案）" % (MANIFEST_CASE_COUNT, len(XRUN_CASES)))
         return 1 if probs else 0
     bad = 0
     for x in matcher_problems():
         print("✗ 比對器單元測試：" + x)
+        bad += 1
+    for x in sentinel_manifest_problems_real():
+        print("✗ 歷史哨兵位置 manifest：" + x)
+        bad += 1
+    for x in xrun_probe_problems_real():
+        print("✗ XR 探針（第 110 項）的結構：" + x)
         bad += 1
     why = doc_count_mismatch()
     if why:
