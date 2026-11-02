@@ -430,7 +430,9 @@ const readerOf = (p) => fenced(p, "python3 -I - <<'PAI_PY'")
 const sh = (script, home, extra = {}) => {
   const env = { ...process.env, HOME: home, ...(extra.env || {}) }
   for (const [k, v] of Object.entries(extra.env || {})) if (v === undefined) delete env[k]
-  const r = spawnSync('bash', ['-c', script], { env, cwd: extra.cwd, encoding: 'utf8', timeout: extra.timeout || 20000 })
+  // 腳本走 stdin：放在單一 -c 引數裡，Linux 上超過約 128 KiB（macOS 約 1 MiB）就 E2BIG，python 根本沒跑到。
+  const r = spawnSync('bash', ['-s'], { input: script, env, cwd: extra.cwd, encoding: 'utf8', timeout: extra.timeout || 20000 })
+  if (r.error && r.error.code !== 'ETIMEDOUT') throw r.error
   return { out: (r.stdout || '') + (r.stderr || ''), code: r.status, timedOut: !!(r.error && r.error.code === 'ETIMEDOUT') }
 }
 const tmpHome = () => mkdtempSync(join(tmpdir(), 'pai-ckpt-'))
@@ -604,9 +606,7 @@ test('#103 讀檔器：鍵不符、壞行、U+2028 不拆紀錄、finding 優先
   const fin = JSON.stringify({ kind: 'finding', severity: 'HIGH', title: '尾端的 finding', body: 'b'.repeat(400) })
   writeFileSync(file, [head, big, ...checked, fin].join('\n') + '\n')
   s = sh(reader, home)
-  // 接回的輸出以 ASCII 印出（r8），非 ASCII 字元是 \uXXXX 跳脫
-  const esc = (t) => t.replace(/[^\x00-\x7f]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'))
-  assert.ok(s.out.includes(esc('尾端的 finding')), '排在最後的 finding 沒有印出')
+  assert.ok(s.out.includes('尾端的 finding'), '排在最後的 finding 沒有印出')
   assert.match(s.out, /PAI_CHECKPOINT TRUNCATED \d+ record\(s\) not shown; read them from the file below/)
   assert.ok(s.out.includes('i0x'), '超大紀錄之後的紀錄一筆都沒印')
   assert.ok(!s.out.includes('y'.repeat(9000)), '超大紀錄被印出')
@@ -707,7 +707,7 @@ test('#103 codex：detach 後記 run id、接回時先 poll 讀檔器印出的 i
   assert.ok(/only the most recent one/.test(p), '沒有說明只印最新的 id')
 })
 
-test('#103 r3：相對路徑的 artifact 在不同 repo（cwd）裡不會沿用彼此的紀錄', async () => {
+test('#103 相對路徑的 artifact 在不同 repo（cwd）裡解析成不同的檔，不會沿用彼此的紀錄', async () => {
   const home = tmpHome()
   const r = await promptsFor({ ...BASE, diffFile: 'review.diff' })
   const reader = readerOf(r.seen.get('review:architecture'))
@@ -718,13 +718,34 @@ test('#103 r3：相對路徑的 artifact 在不同 repo（cwd）裡不會沿用�
   assert.match(sh(rec, home, { cwd: join(home, 'repoA') }).out, /recorded/)
   s = sh(reader, home, { cwd: join(home, 'repoB') })
   assert.match(s.out, /reason: artifact-changed/, '另一個 repo 的同名同內容 diff 沿用了紀錄')
-  // 同一個絕對路徑的 diff，在兩個 repo 裡審（周邊程式不同）也不沿用
-  const shared = join(home, 'shared.diff')
-  writeFileSync(shared, 'same bytes\n')
-  const ra = await promptsFor({ ...BASE, diffFile: shared })
-  const ra1 = readerOf(ra.seen.get('review:architecture'))
-  assert.match(sh(ra1, home, { cwd: join(home, 'repoA') }).out, /PAI_CHECKPOINT FRESH/)
-  assert.match(sh(ra1, home, { cwd: join(home, 'repoB') }).out, /reason: artifact-changed/, '同一個 diff 換了 repo 仍沿用紀錄')
+  rmSync(home, { recursive: true, force: true })
+})
+
+test('#103 讀檔器的雜湊不看席次的工作目錄：先 cd 再跑 step 0 不會丟掉紀錄', async () => {
+  const home = tmpHome()
+  for (const d of ['cwdA', 'cwdB']) mkdirSync(join(home, d))
+  const A = { cwd: join(home, 'cwdA') }
+  const B = { cwd: join(home, 'cwdB') }
+  // 絕對路徑的檔案、絕對路徑的目錄
+  const diff = join(home, 'shared.diff')
+  writeFileSync(diff, 'same bytes\n')
+  const tree = join(home, 'tree')
+  mkdirSync(tree)
+  writeFileSync(join(tree, 'f.txt'), 'x\n')
+  for (const args of [{ ...BASE, diffFile: diff }, { profile: 'code', file: tree, codexEnabled: false }]) {
+    const p = (await promptsFor(args)).seen.get('review:architecture')
+    assert.match(sh(readerOf(p), home, A).out, /PAI_CHECKPOINT FRESH/)
+    assert.match(sh(recordWith(p, '{"kind":"checked","item":"x"}'), home, A).out, /^recorded/m)
+    assert.match(sh(readerOf(p), home, B).out, /PAI_CHECKPOINT RESUME 1 record/, 'bytes 相同，換了工作目錄卻不接回')
+    assert.match(sh(readerOf(p), home, A).out, /PAI_CHECKPOINT RESUME 1 record/)
+  }
+  // 相對路徑從兩個目錄解析成同一個檔（經 symlink）：實際路徑相同，照樣接回
+  spawnSync('ln', ['-s', diff, join(home, 'cwdA', 'r.diff')])
+  spawnSync('ln', ['-s', diff, join(home, 'cwdB', 'r.diff')])
+  const rel = (await promptsFor({ ...BASE, diffFile: 'r.diff' })).seen.get('review:architecture')
+  assert.match(sh(readerOf(rel), home, A).out, /PAI_CHECKPOINT FRESH/)
+  assert.match(sh(recordWith(rel, '{"kind":"checked","item":"x"}'), home, A).out, /^recorded/m)
+  assert.match(sh(readerOf(rel), home, B).out, /PAI_CHECKPOINT RESUME 1 record/)
   rmSync(home, { recursive: true, force: true })
 })
 
@@ -791,13 +812,13 @@ test('#103 r3：DA 的鍵隨 contextBlock 變；diffFile 與 file 都進 artifac
   assert.ok(!/still saved/.test(note(err)), 'init 的環境錯誤仍說部分結果有存')
 })
 
-test('#103 r4：沒有 artifact 檔（只有 contextBlock）時，工作目錄也進雜湊', async () => {
+test('#103 沒有 artifact 檔（只有 contextBlock）時，鍵只有 prompt：換工作目錄照樣接回（協定的已知限制）', async () => {
   const home = tmpHome()
-  const r = await promptsFor({ profile: 'code', contextBlock: '只有 context', codexEnabled: false })
-  const reader = readerOf(r.seen.get('review:architecture'))
+  const p = (await promptsFor({ profile: 'code', contextBlock: '只有 context', codexEnabled: false })).seen.get('review:architecture')
   for (const d of ['repoA', 'repoB']) mkdirSync(join(home, d))
-  assert.match(sh(reader, home, { cwd: join(home, 'repoA') }).out, /PAI_CHECKPOINT FRESH/)
-  assert.match(sh(reader, home, { cwd: join(home, 'repoB') }).out, /reason: artifact-changed/, '只有 contextBlock 時換 repo 仍沿用紀錄')
+  assert.match(sh(readerOf(p), home, { cwd: join(home, 'repoA') }).out, /PAI_CHECKPOINT FRESH/)
+  assert.match(sh(recordWith(p, '{"kind":"checked","item":"x"}'), home, { cwd: join(home, 'repoA') }).out, /^recorded/m)
+  assert.match(sh(readerOf(p), home, { cwd: join(home, 'repoB') }).out, /PAI_CHECKPOINT RESUME 1 record/)
   rmSync(home, { recursive: true, force: true })
 })
 
@@ -1121,6 +1142,12 @@ test('#103 r8：紀錄命令對極深的巢狀 JSON、NaN／Infinity 也印 REJE
     assert.equal(s.code, 0, `exit 不是 0：${j.slice(0, 80)}`)
   }
   assert.equal(readFileSync(file, 'utf8'), before, '被拒的輸入仍寫進了檔案')
+  // 壞的 UTF-8：訊息要說得出是什麼問題
+  const rec = fenced(p, "<<'PAI_EOF_")
+  const bad = sh("printf '\\377' | " + rec.slice(0, rec.lastIndexOf(" <<'")), home)
+  assert.match(bad.out, /^REJECTED: not valid JSON or UTF-8/m, bad.out.slice(0, 300))
+  assert.equal(bad.code, 0)
+  assert.equal(readFileSync(file, 'utf8'), before, '壞的 UTF-8 仍寫進了檔案')
   rmSync(home, { recursive: true, force: true })
 })
 
@@ -1162,24 +1189,73 @@ test('#103 r8：finding 紀錄的 severity 要在 schema 的五個值內、file�
   rmSync(home, { recursive: true, force: true })
 })
 
-test('#103 r8：接回時印出的紀錄只含 ASCII（C1 控制字元與雙向覆寫字元不會原樣印到 terminal）', async () => {
+test('#103 接回時印出的紀錄：一般文字原樣印出，控制、格式與雙向字元、行分隔符、代理字元、私用與未指派的碼位都跳脫', async () => {
   const home = tmpHome()
   const r = await promptsFor(BASE)
   const p = r.seen.get('review:architecture')
-  sh(readerOf(p), home)
-  const body = 'c1\u009b bidi\u202e del\u007f ls\u2028 nel\u0085 zw\u200b end'
-  assert.match(sh(recordWith(p, JSON.stringify({ kind: 'finding', severity: 'LOW', title: 't', body })), home).out, /^recorded/m)
+  const file = sh(readerOf(p), home).out.match(/PAI_CHECKPOINT FILE (.+)/)[1].trim()
+  const ch = (n) => String.fromCodePoint(n)
+  // 不可以原樣到達 terminal 的：C1、DEL、NUL 以外的 C0、雙向覆寫、零寬、行與段落分隔、私用區、未指派
+  const banned = [0x9b, 0x7f, 0x1b, 0x202e, 0x2066, 0x200b, 0xfeff, 0x2028, 0x2029, 0x85, 0xe000, 0x100000, 0x378]
+  const body = '中文 é ' + ch(0x1f600) + ' ' + banned.map(ch).join('x') + ' end'
+  assert.match(sh(recordWith(p, JSON.stringify({ kind: 'finding', severity: 'LOW', title: '標題', body })), home).out, /^recorded/m)
+  // 手改的檔裡的孤立代理字元（json.loads 收得下）也不原樣印出
+  appendFileSync(file, '{"kind":"checked","item":"lone \\ud800 surrogate"}\n')
+  assert.ok(![...readFileSync(file)].some((b) => b > 0x7e && b !== 0x0a), '紀錄檔不是純 ASCII')
   const env = { ...process.env, HOME: home }
-  const out = spawnSync('bash', ['-c', readerOf(p)], { env, encoding: 'buffer' }).stdout
-  assert.match(out.toString('latin1'), /PAI_CHECKPOINT RESUME 1 record/)
-  assert.ok(![...out].some((b) => b > 0x7e && b !== 0x0a), '接回的輸出含非 ASCII 位元組')
+  const raw = spawnSync('bash', ['-s'], { input: Buffer.from(readerOf(p)), env }).stdout
+  const out = raw.toString('utf8')
+  assert.match(out, /PAI_CHECKPOINT RESUME 2 record/)
+  assert.ok(raw.equals(Buffer.from(out, 'utf8')), '輸出不是合法的 UTF-8')
+  for (const n of banned) assert.ok(!out.includes(ch(n)), `U+${n.toString(16)} 原樣印出了`)
+  assert.ok(![...raw].some((b) => b === 0x7f), 'DEL 原樣印出了')
+  assert.ok(!/\ud800/i.test(out.replace(/\\ud800/gi, '')), '孤立的代理字元原樣印出了')
+  assert.ok(out.includes('中文 é ' + ch(0x1f600)), '一般文字沒有原樣印出')
+  // 印出來的每一行紀錄都還是 JSON，解開之後與原文相同
+  const line = out.split('\n').find((l) => l.includes('"finding"'))
+  assert.equal(JSON.parse(line).body, body)
+  rmSync(home, { recursive: true, force: true })
+})
+
+test('#103 接回時中文紀錄不被跳脫放大：40 筆全部印出；單筆超過舊上限換算（約 1,333 字）也印得出來', async () => {
+  const home = tmpHome()
+  const r = await promptsFor(BASE)
+  const p = r.seen.get('review:architecture')
+  const file = sh(readerOf(p), home).out.match(/PAI_CHECKPOINT FILE (.+)/)[1].trim()
+  const head = readFileSync(file, 'utf8').split('\n')[0]
+  const rec = (i, n) => JSON.stringify({ kind: 'finding', severity: 'LOW', title: `第 ${i} 筆`, file: null, line: null, body: '審閱內容'.repeat(n) })
+  writeFileSync(file, [head, ...Array.from({ length: 40 }, (_, i) => rec(i, 100))].join('\n') + '\n')
+  let s = sh(readerOf(p), home)
+  assert.match(s.out, /PAI_CHECKPOINT RESUME 40 record/)
+  assert.ok(!/PAI_CHECKPOINT TRUNCATED/.test(s.out), `40 筆中文紀錄放不下：${s.out.slice(0, 200)}`)
+  for (let i = 0; i < 40; i++) assert.ok(s.out.includes(`第 ${i} 筆`), `第 ${i} 筆沒有印出`)
+  assert.ok(s.out.length < 30000, `輸出 ${s.out.length} 字元，超過 Bash 工具的截斷點`)
+  writeFileSync(file, [head, rec(0, 500)].join('\n') + '\n') // 2,000 個中文字
+  s = sh(readerOf(p), home)
+  assert.ok(!/PAI_CHECKPOINT TRUNCATED/.test(s.out), '一筆 2,000 字的中文紀錄印不出來')
+  // 上限以印出的字元計：放不下的仍然指向檔案，prompt 交代檔案裡的字串要解碼
+  writeFileSync(file, [head, ...Array.from({ length: 40 }, (_, i) => rec(i, 500))].join('\n') + '\n')
+  s = sh(readerOf(p), home)
+  assert.match(s.out, /PAI_CHECKPOINT TRUNCATED \d+ record\(s\) not shown/)
+  assert.ok(s.out.length < 30000, `輸出 ${s.out.length} 字元，超過 Bash 工具的截斷點`)
+  assert.ok(p.includes('decode the ' + String.fromCharCode(92) + 'uXXXX escapes'), 'prompt 沒有交代要解碼檔案裡的字串')
+  rmSync(home, { recursive: true, force: true })
+})
+
+test('#103 測試的 sh()：腳本走 stdin（超過單一引數上限也跑得到），spawn 的錯誤不會被吞掉', () => {
+  const home = tmpHome()
+  const big = '# ' + 'x'.repeat(2 * 1024 * 1024) + '\necho reached\n'
+  assert.match(sh(big, home).out, /^reached$/m, '2 MiB 的腳本沒有跑到')
+  // stdout 超過 spawnSync 的 maxBuffer 是 ENOBUFS：先前被當成空輸出吞掉
+  assert.throws(() => sh("head -c 3000000 /dev/zero | tr '\\0' x", home), /ENOBUFS/)
+  assert.equal(sh('sleep 5', home, { timeout: 100 }).timedOut, true, '逾時仍回報成 timedOut，不是例外')
   rmSync(home, { recursive: true, force: true })
 })
 
 test('#103 r8：plugin 原始碼裡沒有原樣的雙向覆寫字元（以跳脫序列寫）', async () => {
   const bidi = /[\u202a-\u202e\u2066-\u2069]/
   const root = join(__dirname, '..')
-  const files = ['workflows/ensemble-workflow.js', 'test/ensemble-workflow.test.mjs', 'references/checkpoint-protocol.md', 'CHANGELOG.md']
+  const files = ['workflows/ensemble-workflow.js', 'test/ensemble-workflow.test.mjs', 'test/pai-artifact-fingerprint.test.mjs', 'bin/pai-artifact-fingerprint', 'references/checkpoint-protocol.md', 'CHANGELOG.md']
   for (const f of files) {
     const lines = readFileSync(join(root, f), 'utf8').split('\n')
     const hit = lines.findIndex((l) => bidi.test(l))

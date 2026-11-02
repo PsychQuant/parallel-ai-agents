@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [2.26.0] - 2026-10-20
+## [2.26.0] - 2026-11-02
 
 ### Added
 
@@ -21,20 +21,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **codex 席次**：detach 後記下 run id；沒做完的 codex 席次接回時先 `--poll` 最新的那一個，worker 還在跑或已經完成就不再開新的、不重付額度。已經做完、但排在第一個沒有快取的呼叫之後的 codex 席次會從頭做，開新的 codex-call，額度再付一次，結論也可能不同（協定的已知限制）。
   - **args 存檔**：新的 `checkpoint-init` 席次把 args 寫成 `args.json`（這個目錄最近一次的那一份）與 `args-<argsDigest>.json`（同一目錄不同 args 並存）。args 以 base64 交給它（contextBlock 可能是不受信任的內容，照抄命令的席次不應讀到其中可讀的文字），它對解碼後的位元組重算雜湊，與 engine 算的比對；不符只多一則 INFO `checkpoint: args.json not saved`，不影響 verdict，也不算進 `stats.integrity`。它在 barrier 裡最後派發（journal 的快取鍵依派發順序串接，而它的 prompt 帶著整份 args），不算在 `stats.agents` 與 `maxAgents` 裡。
   - **檔案是私有的**：目錄 0700、檔案 0600，目錄必須是本人擁有的絕對路徑真目錄；通往它的路徑照 kernel 的方式逐層解析（symlink 從目標路徑重走），每一個做查找的目錄都要由 root 或本人擁有、不能讓他人寫入（sticky 的 `/tmp` 與本人專屬群組除外），否則存檔停用。席次被交代不要把秘密的值寫進紀錄。所有命令以 `python3 -I` 執行，席次工作目錄（被審的 repo）裡的 `json.py` 之類不會被載入。紀錄命令的 heredoc 分隔符取自席次的鍵，被審內容裡的分隔符行無法提早結束它。
-  - **artifact 雜湊含工作目錄**：同一份 diff 在另一個 repo 裡審，不會沿用紀錄（沒有 artifact 檔、只有 `contextBlock` 時也一樣）；`diffFile` 與 `file` 都給時兩個都算。artifact 是目錄時雜湊整棵樹的 metadata：每個目錄（含根目錄）的相對路徑與權限，每個檔案與 symlink 的相對路徑、權限、大小、修改時間與連結目標；artifact 路徑是指向目錄的 symlink 時，雜湊它指到的目錄與那個目錄的實際路徑。所以檔案變動、只改目錄權限、多一個空目錄、symlink 改指都不接回。checkpoint 目錄本身與 `.git`、`node_modules` 等一組依賴目錄（依名稱、任何深度）不算；其餘超過 20,000 個項目（目錄也算）或讀不了時，讀檔器回 `DISABLED`，這一席這一輪不存檔，列在 `stats.checkpoint.disabledSeats`。
-  - **中斷之後改過 artifact 就不接回**：由 journal 回答的席次不重新檢查 artifact，engine 讀不到檔案、發現不了版本混用，所以由呼叫端處理。五個審閱 skill 在 `contextBlock` 第一行寫 artifact 指紋（`artifact sha256: …`，雜湊每個輸入的內容；目錄是審閱範圍內每個檔的路徑與位元組，含未追蹤與已暫存的改動，不含被 git 忽略的檔），接回之前從目前的檔案重算、和存下的 args 比對，不同就開新的 run。重算比對過的呼叫端不會沿用舊版本的結論；直接拿存下的 args 接回的呼叫端會。算法與實測見協定的「artifact 指紋」。
+  - **artifact 雜湊看實際路徑與內容，不看席次的工作目錄**：路徑解析成實際的絕對路徑，席次先 `cd` 再跑讀檔器也接得回；相對路徑解析成別的檔、symlink 改指都不接回。`diffFile` 與 `file` 都給時兩個都算。artifact 是目錄時雜湊整棵樹的 metadata（每個目錄的相對路徑與權限，每個檔案與 symlink 的相對路徑、權限、大小、修改時間與連結目標）。checkpoint 目錄本身與 `.git`、`node_modules` 等一組依賴目錄（依名稱、任何深度）不算；其餘超過 20,000 個項目（目錄也算）或讀不了時，讀檔器回 `DISABLED`，這一席這一輪不存檔，列在 `stats.checkpoint.disabledSeats`。
+  - **中斷之後改過 artifact 就不接回**：由 journal 回答的席次不重新檢查 artifact，engine 讀不到檔案、發現不了版本混用，所以由呼叫端處理。五個審閱 skill 在 `contextBlock` 第一行寫 `artifact sha256: <hash> inputs: <給工具的參數>`，hash 來自新的 `bin/pai-artifact-fingerprint`（雜湊內容與權限，不看修改時間；任何失敗都是 stdout 空、exit 非零，沒有「什麼都沒算到」的常數；在被審的目錄裡不執行 repo 設定的程式）。接回之前照 `inputs:` 重算、和存下的 args 比對，不同就開新的 run。重算比對過的呼叫端不會沿用舊版本的結論；直接拿存下的 args 接回的呼叫端會。
   - **派發順序**：開啟 checkpoint 時是各 lens、codex、`checkpoint-init`、devil's-advocate（配合 journal 的串接快取）；`checkpoint: false` 時維持 codex 在前。回傳結果一律排回 codex 在前，所以 `stats.reviewers` 的順序與並列重複的 finding 的歸屬不受存檔開關影響，只有開始的先後不同。
   - **init 沒成功時的 INFO**：只有 init 席次被略過、出錯，或回 `PAI_ARGS MISMATCH`（含 base64 抄錯）時，才說各席次的部分結果仍存著；其餘情形說可能每個席次都沒存檔。
-  - **接回時的輸出有上限**：先印最新的 run id 與 finding，以 ASCII 印出，總量 20,000 字元；放不下的，prompt 要席次自己從檔案讀。只有檔頭、沒有任何紀錄的檔印 `FRESH` 並沿用，不算接回。
-  - **紀錄命令只收形狀正確的一行**：finding 的形狀與 schema 的 finding 相同（`severity` 是五個值之一、非空的 `title` 與 `body`、`file` 是字串或 null、`line` 是整數或 null、可另給 `lens`，沒有其他鍵），checked 只有非空的 `item`。不是 JSON、不是 UTF-8、空的、巢狀深到無法解析、形狀不對或有多餘的鍵，都印 `REJECTED`、exit 0、不寫入，席次修好再寫；NaN 與 Infinity 也寫不進去。紀錄以 ASCII 寫入（非 ASCII 以 `\uXXXX` 跳脫），從 artifact 引來的控制字元與雙向覆寫字元不會原樣留在檔案裡，也不會在接回時原樣印出。
+  - **接回時的輸出有上限**：先印最新的 run id 與 finding，總量 20,000 字元；一般文字（含中文）原樣印出，控制、格式、雙向等字元依 Unicode 類別跳脫。放不下的，prompt 要席次自己從檔案讀。只有檔頭、沒有任何紀錄的檔印 `FRESH` 並沿用，不算接回。
+  - **紀錄命令只收形狀正確的一行**：finding 的形狀與 schema 的 finding 相同（`severity` 是五個值之一、非空的 `title` 與 `body`、`file` 是字串或 null、`line` 是整數或 null、可另給 `lens`，沒有其他鍵），checked 只有非空的 `item`。不是 JSON、不是 UTF-8、空的、巢狀深到無法解析、形狀不對或有多餘的鍵，都印 `REJECTED`、exit 0、不寫入，席次修好再寫；NaN 與 Infinity 也寫不進去。紀錄以 ASCII 寫入（非 ASCII 以 `\uXXXX` 跳脫），從 artifact 引來的控制字元與雙向覆寫字元不會原樣留在檔案裡。
   - `stats.checkpoint = { enabled, dir, argsDigest, argsFile, initDispatched, argsSaved, resumedSeats, disabledSeats }`，early-return 的結果也帶；開局 `log()` 印出目錄。`resumedSeats` 列出在回傳裡自報 `checkpointState: RESUME` 的席次（接回時讀到至少一筆紀錄），`disabledSeats` 列出自報 `DISABLED` 的席次（這一輪沒有存檔）；開啟存檔時 schema 多 `checkpointState` 這一個選填欄位。
-  - 協定（檔案格式、接回規則、journal 快取怎麼對應的實測、呼叫端契約、artifact 指紋、已知限制）：`references/checkpoint-protocol.md`。五個審閱 skill（academic、code、compose、lecture、minutes）的 Backend A 段說明預設存檔的行為，args 範本的 `contextBlock` 第一行是 artifact 指紋，接回之前重算比對，報告裡寫出 `stats.checkpoint` 的接回席次、停用席次與 args 沒存的情形。
+  - 協定（檔案格式、接回規則、journal 快取怎麼對應的實測、呼叫端契約、artifact 指紋、已知限制）：`references/checkpoint-protocol.md`。五個審閱 skill（academic、code、compose、lecture、minutes）的 Backend A 段說明預設存檔的行為，args 範本的 `contextBlock` 第一行是 artifact 指紋，報告裡寫出 `stats.checkpoint` 的接回席次、停用席次與 args 沒存的情形。
   - `ensemble-eval` 的 K 次 run 各給自己的 `checkpointDir`；`ensemble-academic-review` 每一輪給自己的 `checkpointRun`。兩者都是為了不讓第 i+1 次接著第 i 次中斷的部分結果做。
 
 ### Changed
 
 - **所有席次的 prompt 都多了 checkpoint 段**（`checkpoint: false` 時除外）。升級後第一輪，舊版 run 的 journal 快取一律對不上，接回舊 run 會從頭跑。
-- **預設開啟時多派一個 agent**（`checkpoint-init`），每個席次的 prompt 多約 12,600 字元（內嵌的讀檔器與紀錄命令），並多跑一個讀檔命令與幾個紀錄命令；args 很大時 init 的成本也大（協定的已知限制）。
+- **預設開啟時多派一個 agent**（`checkpoint-init`），每個席次的 prompt 變長（內嵌的讀檔器與紀錄命令），並多跑一個讀檔命令；席次每記一筆就要輸出一次紀錄命令。args 很大時 init 的成本也大。實測都在協定的已知限制。
+- **`bin/pai-build-diff` 不再執行被審 repo 設定的程式**：加上 `-c core.fsmonitor=false`、`--no-ext-diff`、`--no-textconv`。使用者自己設定的 textconv 與外部 diff 也因此不套用，輸出一律是 git 原生的 unified diff。filter 的 clean 仍會在 `--diff` 模式執行：關掉它，LFS 這類合法 filter 的 diff 就失真。
 - **`ensemble-eval` 量的 reviewer prompt 也變了**：存檔開啟時每個 reviewer 多了上面那段 prompt，並被要求邊審邊記錄，所以 2.26.0 前後量到的偵測率不能直接比較。eval 的每次 run 仍各給自己的 `checkpointDir`。
 - external-consumer contract 的派發前 throw 從一種（`agentModel`）變成三種（另加不合法的 `checkpointDir`／`checkpointRun`，以及不是布林值的 `checkpoint`，`null` 也算）。
 

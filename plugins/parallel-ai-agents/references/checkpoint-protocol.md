@@ -43,11 +43,11 @@ checkpoint 目錄最好放在被審的 repo 之外。放在裡面時要把它加
 - devil's-advocate 的 prompt 含各 reviewer 的結果摘要，所以 reviewer 結論不同的新一輪，不會沿用上一輪 DA 針對舊結論做的反駁。
 - engine 升級改了內建 lens 或 DA 的指示文字，key 也跟著變。
 
-`artifactSha` 涵蓋席次讀的檔與席次所在的工作目錄：`diffFile`、`file`（lens 與 DA 兩個都給時兩個都算；codex 席次只算它交給 codex-call 的那一個，有 `diffFile` 就是 `diffFile`），需要逐字稿的 lens 再加 `srtFile`。路徑先解析成絕對路徑，工作目錄也算進去，所以同一份 diff 在另一個 repo 裡審時不會沿用紀錄（沒有 artifact 檔、只給 `contextBlock` 時也一樣）。artifact 是目錄時，雜湊的是解析後的目錄：artifact 路徑若是指向目錄的 symlink，算的是它指到的目錄，連同那個目錄的實際路徑，所以 symlink 改指到另一個目錄也不接回。雜湊每個項目的相對路徑與型態權限；檔案與 symlink 另加大小、修改時間與 symlink 目標。一般目錄（含根目錄）只算路徑與權限，不算修改時間：略過的目錄裡有變動時，上層目錄的修改時間會跟著變，算進去就讓略過失效。這是 metadata，不是內容：大小、修改時間或權限沒變的內容改動偵測不到。不算進去的有：checkpoint 目錄本身（放在被審目錄裡也不會讓自己的紀錄失效），以及固定一組依賴與快取目錄（`.git`、`node_modules`、`.build`、`.venv`、`venv`、`__pycache__`、`.tox`、`.mypy_cache`、`.pytest_cache`、`.gradle`、`DerivedData`）。略過是依目錄名稱，任何深度都算，同名的 symlink 也略過；呼叫端沒有辦法關掉或縮小這份清單。其餘項目（目錄、檔案、symlink）超過 20,000 個或讀不了時，讀檔器回 `DISABLED`：這個席次這一輪不存檔，先前的檔不動，席次自報的 `DISABLED` 讓它列在 `stats.checkpoint.disabledSeats`。
+`artifactSha` 涵蓋席次讀的檔：`diffFile`、`file`（lens 與 DA 兩個都給時兩個都算；codex 席次只算它交給 codex-call 的那一個，有 `diffFile` 就是 `diffFile`），需要逐字稿的 lens 再加 `srtFile`。路徑先解析成實際的絕對路徑，連同內容一起雜湊：席次的工作目錄不算（先 `cd` 再跑讀檔器也接得回），相對路徑在另一個目錄解析成別的檔就不接回，symlink 改指也不接回。沒有 artifact 檔、只給 `contextBlock` 時，鍵只有 prompt（見已知限制）。artifact 是目錄時，雜湊每個項目的相對路徑與型態權限；檔案與 symlink 另加大小、修改時間與 symlink 目標。一般目錄（含根目錄）只算路徑與權限，不算修改時間：略過的目錄裡有變動時，上層目錄的修改時間會跟著變，算進去就讓略過失效。這是 metadata，不是內容：大小、修改時間或權限沒變的內容改動偵測不到。不算進去的有：checkpoint 目錄本身（放在被審目錄裡也不會讓自己的紀錄失效），以及固定一組依賴與快取目錄（`.git`、`node_modules`、`.build`、`.venv`、`venv`、`__pycache__`、`.tox`、`.mypy_cache`、`.pytest_cache`、`.gradle`、`DerivedData`）。略過是依目錄名稱，任何深度都算，同名的 symlink 也略過；呼叫端沒有辦法關掉或縮小這份清單。其餘項目（目錄、檔案、symlink）超過 20,000 個或讀不了時，讀檔器回 `DISABLED`：這個席次這一輪不存檔，先前的檔不動，席次自報的 `DISABLED` 讓它列在 `stats.checkpoint.disabledSeats`。
 
 這個雜湊只有跑讀檔器的席次用得到。由 journal 回答的席次不跑讀檔器，它們靠的是呼叫端寫在 `contextBlock` 第一行的 artifact 指紋（見「artifact 指紋」）。
 
-紀錄以 ASCII 寫入，非 ASCII 字元以 `\uXXXX` 跳脫：孤立的代理字元不會讓寫入失敗，從 artifact 引來的 C1 控制字元、DEL 與雙向覆寫字元也不會原樣留在檔案裡。接回時印出的紀錄同樣只有 ASCII，這些字元不會原樣印到 terminal；代價是一個中文字印成 6 個字元，下方 20,000 字元的上限裝得下的中文較少，放不下的由席次自己讀檔。讀檔器只以 `\n` 切行，手改或外部工具寫入的行若原樣含 U+2028／U+2029／U+0085，不會被拆成兩半。
+紀錄以 ASCII 寫入，非 ASCII 字元以 `\uXXXX` 跳脫：孤立的代理字元不會讓寫入失敗，從 artifact 引來的 C1 控制字元、DEL 與雙向覆寫字元也不會原樣留在檔案裡。接回時一般文字（含中文）原樣印出，依 Unicode 類別跳脫的只有控制、格式（含雙向）、代理、私用、未指派的字元與行、段落分隔符，這些不會原樣印到 terminal。讀檔器只以 `\n` 切行，手改或外部工具寫入的行若原樣含 U+2028／U+2029／U+0085，不會被拆成兩半。
 
 ## 接回與重跑
 
@@ -62,11 +62,11 @@ checkpoint 目錄最好放在被審的 repo 之外。放在裡面時要把它加
 | 讀檔器自己出錯（目錄建不起來、路徑不安全、沒有 `HOME`、檔案位置不是一般檔案、檔案建不起來），或 artifact 無法雜湊（目錄超過 20,000 個項目或讀不了） | `DISABLED`：席次照常審閱、不存檔，已有的檔不動。`FRESH` 只在檔案建好之後才印，所以不會同時看到兩者 |
 | 命令沒有印出任何 `PAI_CHECKPOINT` 行（例如沒有 python3） | prompt 交代視同 `DISABLED` |
 
-紀錄命令的 heredoc 分隔符取自席次的鍵（`PAI_EOF_<12 碼>`）：紀錄內容常引用被審的 artifact，固定的分隔符可能被內容裡的同一行提早結束，後面的文字就會被當成 shell 執行。這個鍵是可以算出來的雜湊，不是秘密：要事先算出它，得知道席次完整的 prompt（含呼叫端的 `contextBlock`），artifact 的作者通常不知道。紀錄命令回 `REJECTED` 表示這一行不對，修好再寫：不是 JSON、不是 UTF-8、空的、巢狀深到無法解析、形狀不對、有多餘的鍵，都印 `REJECTED`、exit 0，不寫入。finding 的形狀與 schema 的 finding 相同：`severity` 是 CRITICAL、HIGH、MEDIUM、LOW、INFO 之一，`title` 與 `body` 是非空字串，`file` 是字串或 null，`line` 是整數或 null，可另給 `lens`（字串或 null），此外只有 `kind`；checked 只有 `kind` 與非空字串的 `item`。多餘的鍵拒收，不丟掉：接回時紀錄原樣經 schema 帶回，schema 不收多餘的鍵；丟掉則席次寫下的東西無聲消失。json 模組接受、嚴格 JSON 不接受的 NaN 與 Infinity 寫不進檔案，因為允許的值只有字串、整數與 null。其他失敗（沒有 python3、權限錯誤）表示存檔壞了，prompt 交代席次停止之後所有的存檔步驟、照常審閱。codex 席次 step 0 回 `DISABLED` 時，step 1 的 run id 紀錄與 step 3 的 done 也一併略過；run id 紀錄或 done 命令失敗時，detach 的結果不受影響，略過其餘存檔步驟、照常 poll。紀錄命令寫入前，如果檔尾沒有換行（上一筆寫到一半被打斷），會先補一個換行，所以被截斷的那一行不會吃掉下一筆。
+紀錄命令的 heredoc 分隔符取自席次的鍵（`PAI_EOF_<12 碼>`）：紀錄內容常引用被審的 artifact，固定的分隔符可能被內容裡的同一行提早結束，後面的文字就會被當成 shell 執行。這個鍵是可以算出來的雜湊，不是秘密：要事先算出它，得知道席次完整的 prompt（含呼叫端的 `contextBlock`），artifact 的作者通常不知道。紀錄命令回 `REJECTED` 表示這一行不對，修好再寫：不是 JSON、不是 UTF-8、空的、巢狀深到無法解析、形狀不對、有多餘的鍵，都印 `REJECTED`、exit 0，不寫入。finding 的形狀與 schema 的 finding 相同：`severity` 是 CRITICAL、HIGH、MEDIUM、LOW、INFO 之一，`title` 與 `body` 是非空字串，`file` 是字串或 null，`line` 是整數或 null，可另給 `lens`（字串或 null），此外只有 `kind`；checked 只有 `kind` 與非空字串的 `item`。多餘的鍵拒收，不丟掉：接回時 finding 的欄位（`kind` 以外）經 schema 帶回，schema 不收多餘的鍵；丟掉則席次寫下的東西無聲消失。json 模組接受、嚴格 JSON 不接受的 NaN 與 Infinity 寫不進檔案，因為允許的值只有字串、整數與 null。其他失敗（沒有 python3、權限錯誤）表示存檔壞了，prompt 交代席次停止之後所有的存檔步驟、照常審閱。codex 席次 step 0 回 `DISABLED` 時，step 1 的 run id 紀錄與 step 3 的 done 也一併略過；run id 紀錄或 done 命令失敗時，detach 的結果不受影響，略過其餘存檔步驟、照常 poll。紀錄命令寫入前，如果檔尾沒有換行（上一筆寫到一半被打斷），會先補一個換行，所以被截斷的那一行不會吃掉下一筆。
 
 席次被交代不要把秘密的值（token、密碼、金鑰）寫進紀錄，只寫出它在哪裡，因為檔案會一直留在磁碟上。這一條也是 prompt 層的要求。
 
-`RESUME` 的輸出先印最新的 `codex-run`，再印 finding，最後印其餘紀錄，全部是 ASCII。總量以 20,000 字元為上限（Bash 工具的輸出在 30,000 字元附近會被截斷），單筆超過 8,000 字元的不印，但不擋住後面的紀錄。有沒印出來的就印 `PAI_CHECKPOINT TRUNCATED`，prompt 要席次自己從 `PAI_CHECKPOINT FILE` 那一行指出的檔案讀其餘紀錄。
+`RESUME` 的輸出先印最新的 `codex-run`，再印 finding，最後印其餘紀錄。總量以 20,000 字元為上限（Bash 工具的輸出在 30,000 字元附近會被截斷），單筆超過 8,000 字元的不印，但不擋住後面的紀錄；字元數量的是印出來的樣子，中文一個字算一個。有沒印出來的就印 `PAI_CHECKPOINT TRUNCATED`，prompt 要席次自己從 `PAI_CHECKPOINT FILE` 那一行指出的檔案讀其餘紀錄，並把檔案裡的 `\uXXXX` 解碼之後再回傳。
 
 **為什麼看到 `done` 就從頭做**：會看到 `done` 的情形有三種。(1) 同一組輸入的新的一輪：新的一輪不沿用上一輪的結論，舊檔留存為 `.prev-N`。(2) 接回時排在第一個沒有快取的呼叫之後、已經做完的席次（見下一段）：它被重新派發，看到自己的 `done`，就從頭做。(3) 寫完 `done`、結果還沒進 journal 就中斷的席次（見已知限制）。讀檔器分不出這三種，只能一律當成新的一輪，否則 (1) 會沿用上一輪的結論；(2) 與 (3) 是代價，那一輪的工作白做。
 
@@ -86,53 +86,42 @@ checkpoint 目錄最好放在被審的 repo 之外。放在裡面時要把它加
 - 部分結果**不是報告**：不得當成 verify 結果貼出去，也不得據此推進任何狀態。
 - 要接回中斷的 run：`Workflow({scriptPath, resumeFromRunId, args})`。只給 `resumeFromRunId` 不夠，Workflow 仍要 args；`args.json` 是讓呼叫端有一份可以讀回的副本，沒有讓接回省掉 args（issue #103 的 Expected 3 只做到這一步）。args 從呼叫端自己的紀錄取，或從 checkpoint 目錄的 `args.json` 取。目錄最可靠的出處是 run 開頭的 log 行 `pai-ensemble: checkpoint → <目錄>`：`args.json` 由 init 寫，init 排在最後，run 在它之前中斷時還沒有這個檔。`args.json` 與席次寫的檔在同一個目錄，被 artifact 誘導的席次可以改寫它；重用前核對 `codexCallPath`、`diffFile`、`file`，或用呼叫端自己的副本。檔名裡的雜湊不防竄改。預設位置用 `find ~/.cache/pai-ensemble -name args.json -exec ls -t {} +` 依時間列出（涵蓋 `run-*/` 子目錄），由 args 裡的 `diffFile` 等欄位辨認是哪一輪；給了 `checkpointDir` 的就看那個目錄（與它底下的 `run-*/`）。
 - 同一組輸入要跑成彼此獨立的多輪時，各輪給不同的 `checkpointRun`（或不同的 `checkpointDir`）。
-- **接回之前重算 artifact 指紋**（理由見上方「由 journal 回答的席次不會重新檢查 artifact」）。開啟 checkpoint 時，`contextBlock` 的第一行寫 `artifact sha256: <指紋>`（算法見「artifact 指紋」）。以 `resumeFromRunId` 接回之前，從目前的 artifact 重算指紋，和存下的 args（自己的紀錄或 `args.json`）裡 `contextBlock` 的第一行比對：相同才接回；不同就不要接回，用重算的那一行組 args，開新的 run（另給新的 `checkpointRun` 或 `checkpointDir`）。這一行不得從 `args.json` 抄：抄來的永遠和存下的相同，比對就沒有意義。重算比對過、或開了新 run 的呼叫端，不會沿用舊版本的結論；直接拿存下的 args 接回的呼叫端，會。本 plugin 的五個審閱 skill（academic、code、compose、lecture、minutes）都寫這一行並照這一條接回。`ensemble-eval` 不寫：被審的 fixture 是 plugin 裡固定的檔，每次 run 又給自己的 `checkpointDir`，中斷到接回之間 artifact 不會變。
-- 出現過 `RESUME` 的 run，結論有一部分建立在前一次中斷的紀錄上，不等於全新一輪的結論。哪些席次接回了，列在 `stats.checkpoint.resumedSeats`：接回時讀到至少一筆紀錄的席次（只有檔頭的檔印 `FRESH`，不算）。回 `DISABLED` 的席次列在 `stats.checkpoint.disabledSeats`，它們這一輪沒有存檔，中斷了也接不回（目錄型 artifact 超過 20,000 個項目時就是這樣）。兩份清單都來自席次在回傳裡自報的 `checkpointState`，沒報的不計。本 plugin 的五個審閱 skill 在報告裡寫出這兩份清單非空的情形，以及 `argsSaved` 為 false 的情形。要全新一輪，就換 `checkpointRun` 或 `checkpointDir`。
+- **接回之前重算 artifact 指紋**（理由見上方「由 journal 回答的席次不會重新檢查 artifact」，做法見「artifact 指紋」）。本 plugin 的五個審閱 skill（academic、code、compose、lecture、minutes）都寫這一行並照做。`ensemble-eval` 不寫：被審的 fixture 是 plugin 裡固定的檔，每次 run 又給自己的 `checkpointDir`，中斷到接回之間 artifact 不會變。
+- 出現過 `RESUME` 的 run，結論有一部分建立在前一次中斷的紀錄上，不等於全新一輪的結論。哪些席次接回了，列在 `stats.checkpoint.resumedSeats`：接回時讀到至少一筆紀錄的席次（只有檔頭的檔印 `FRESH`，不算）。回 `DISABLED` 的席次列在 `stats.checkpoint.disabledSeats`，它們這一輪沒有存檔，中斷了也接不回。兩份清單都來自席次在回傳裡自報的 `checkpointState`，沒報的不計；`stats` 只有 run 跑完才有，中斷的 run 沒有這個訊號。本 plugin 的五個審閱 skill 在報告裡寫出這兩份清單非空的情形，以及 `argsSaved` 為 false 的情形。要全新一輪，就換 `checkpointRun` 或 `checkpointDir`。
 - `checkpoint` 只收 `true`／`false`；`"false"`、`0`、`null` 這類值在派發前 throw，不會被當成開啟。
 - 開啟 checkpoint 時，run 會多派一個 `checkpoint-init` 席次，不算在 `maxAgents` 與 `stats.agents` 裡，以 `stats.checkpoint.initDispatched` 表示。
 
 ## artifact 指紋（呼叫端寫在 `contextBlock` 第一行）
 
 ```
-artifact sha256: <指紋>
+artifact sha256: <hash> inputs: <給工具的參數>
 ```
 
-指紋涵蓋席次讀的每一個輸入，用來判斷接回時 artifact 有沒有變。它雜湊的是內容，不是 metadata。
+`<hash>` 是 `bin/pai-artifact-fingerprint` 的輸出（雜湊什麼寫在它的檔頭），`inputs:` 照 shell 的引號寫下給它的參數，含 `--exclude`（checkpoint 目錄放在被審目錄裡時要排除它）。code-review 的 diff 模式寫建出 diff 的 `pai-build-diff` 參數。工具失敗時 stdout 是空的、exit 非零：停下來告訴使用者，不要用別的方法寫這一行。被 git 忽略的檔與 submodule、巢狀 repo 的內容不在目錄的範圍內，審的內容住在那裡時，把它們另外列成輸入。
 
-- **檔案**：`shasum -a 256 <檔案> | cut -d' ' -f1`。
-- **目錄**：雜湊審閱範圍內每個檔案的相對路徑與工作目錄裡的位元組。在 git work tree 裡，用 `git ls-files` 列出追蹤中的檔與沒被忽略的未追蹤檔；已刪除、還在 index 裡的檔照樣列出，記成「不存在」，不會讓命令失敗。不是 git work tree 時改用 `find`（只略過 `.git`）。macOS 的 bash 與 zsh 都能直接跑：
+接回之前，照 `inputs:` 重算，和存下的 args（自己的紀錄或 `args.json`）裡這一行比對：相同才接回；不同就不接回，用重算的那一行組 args，開新的 run（另給新的 `checkpointRun` 或 `checkpointDir`）。hash 不得從 `args.json` 抄：抄來的永遠相同。`args.json` 席次寫得到，比對不會認證它的 `inputs:` 與其他欄位，從它讀回時先核對（見呼叫端契約）。
 
-  ```bash
-  DIR=<目錄的絕對路徑>
-  { git -C "$DIR" ls-files -z --cached --others --exclude-standard 2>/dev/null || (cd "$DIR" && find . -name .git -prune -o \( -type f -o -type l \) -print0); } | python3 -I -c 'import hashlib,os,sys; d=os.fsencode(sys.argv[1]); h=hashlib.sha256(); [h.update(p+b"\0"+(b"L"+os.readlink(q) if os.path.islink(q) else b"F"+hashlib.sha256(open(q,"rb").read()).digest() if os.path.isfile(q) else b"D" if os.path.isdir(q) else b"-")+b"\0") for p in sorted(set(sys.stdin.buffer.read().split(b"\0"))-{b""}) for q in [os.path.join(d,p)]]; print(h.hexdigest())' "$DIR"
-  ```
-
-  只改修改時間、不改內容，指紋不變；檔案權限不算。symlink 記它的目標字串；submodule 只記路徑，裡面的變動不算。被 git 忽略的檔不算，整個目錄都被忽略時清單是空的，這時改用 `find` 那一支。
-- **多個輸入**（逐字稿、`--docs` 的檔、ground-truth 檔）：一個雜湊涵蓋全部。每個輸入各算一行，依固定的順序串起來再算一次：`{ shasum -a 256 <檔案1> <檔案2> …; <目錄的命令>; } | shasum -a 256 | cut -d' ' -f1`。`shasum` 的輸出帶路徑，所以重算時用和第一次相同的寫法（絕對路徑）；寫法不同只會讓比對失敗、開新的 run，不會沿用舊的結論。
-
-2026-11-02 在 scratch git repo 實測（bash 與 zsh、python 3.9 與 3.13 得到相同的指紋）：已暫存的檔再改再暫存、改未追蹤的檔、刪除追蹤中的檔（暫存與否）、改名（`git mv` 與 `mv`）都讓指紋改變；只改被忽略的檔、只改修改時間，指紋不變；目錄是 repo 的子目錄時，子目錄外的改動不影響它。
-
-指紋只保護呼叫端照上一節做的接回。engine 核對不到呼叫端有沒有寫這一行、有沒有重算。
+engine 核對不到呼叫端有沒有寫這一行、有沒有重算；直接拿存下的 args 接回的呼叫端，會沿用舊版本的結論。
 
 ## 已知限制
 
-- **接回只看席次的 prompt 與 artifact 的內容**。席次另外讀的東西不在雜湊裡：diff 模式下自己去讀的周邊程式碼、`contextBlock` 點名的參考檔（ensemble-eval 的 results.csv、academic 的分析檔）。這些東西在 prompt 與 artifact 都不變時改了，接回的席次會沿用舊的紀錄。被審內容可能這樣變的呼叫端，要把參考檔一起算進指紋（「artifact 指紋」的多個輸入），或把 commit id、tree id 寫進 `contextBlock`，這樣它一變，所有席次的 key 就跟著變。
+- **接回只看席次的 prompt 與 artifact 的內容**。席次另外讀的東西不在雜湊裡：diff 模式下自己去讀的周邊程式碼、`contextBlock` 點名的參考檔（ensemble-eval 的 results.csv、academic 的分析檔）。這些東西在 prompt 與 artifact 都不變時改了，接回的席次會沿用舊的紀錄。被審內容可能這樣變的呼叫端，要把參考檔也給指紋工具，或把 commit id、tree id 寫進 `contextBlock`，這樣它一變，所有席次的 key 就跟著變。
 - **args 很大時 init 的成本也大**：init 席次要逐字抄出 base64 的 args，它的 prompt 約是 args 位元組數的 1.35 倍再加 4.1 KB。contextBlock 為 4 KB 時約 9.7 千字元，30 KB 約 4.5 萬，100 KB 約 13.9 萬（2026-10-20 實測）。
-- **每個席次的 prompt 多了約 12,600 字元**，大多是內嵌的讀檔器與紀錄命令（2026-11-02 實測：沒有 contextBlock 時 reviewer prompt 從 879 字元變成 13,445 字元，devil's-advocate 從 943 變成 13,493，codex 從 3,619 變成 13,866）。init 抄錯只會出 INFO，但輸出 token 已經付了。
+- **每個席次的 prompt 變長**，大多是內嵌的讀檔器與紀錄命令（2026-11-02 實測，沒有 contextBlock：reviewer 879 → 13,621 字元，devil's-advocate 943 → 13,669，codex 3,643 → 13,988）。席次每記一筆就要輸出一次紀錄命令（1,680 字元，另加紀錄本身）。init 抄錯只會出 INFO，但輸出 token 已經付了。
 - **寫下 `done` 到結果進 journal 之間有一段空窗**：席次寫完 `done` 之後才回傳結果。session 若剛好在這中間中斷，接回時這個席次沒有快取可用，會重新派發；它看到自己的 `done`，就從頭做。結果仍然正確，但那一輪的工作白做。這段空窗是席次寫下 `done` 之後產生最終回傳（全部 finding）的時間，長度沒有量過，在高 effort 下可能是數十秒。2026-10-22 實際發生過一次：一個 lens 席次寫完 `done` 之後，最後一次模型請求失敗，這個呼叫在 journal 裡記為失敗。
 - **接回時，快取只保留到派發順序中第一個沒有快取的呼叫之前**（見上方「journal 快取怎麼對應」）。第一個沒有快取的呼叫可以是改過 args 的那一個，也可以是上一次被打斷或出錯的那一個。排在它之後、上一次已經做完的席次全部從頭做：看到自己的 `done`，把檔改名為 `.prev-N`，重新審閱。只有沒做完的席次從檔案接回。這是最常見的中斷形狀：派發順序中排第三的 lens 沒做完，排在它之後的 lens 與 codex 即使已經做完，也整份重做。
 - **做完的 codex 席次在這種位置會再付一次額度**：它從頭做時開一個新的 codex-call，額度再付一次，結論也可能與第一次不同（2026-10-21 的實例少了一則 HIGH）。開啟存檔時 codex 排在所有 lens 之後，所以任何一個 lens 上一次沒有結果，就會發生這件事；`checkpoint: false` 時 codex 排在最前面，沒有這個代價，也沒有存檔。
 - **同一組輸入同時跑兩個 run 會共用目錄**，兩邊的席次可能讀到彼此的部分結果，或互相把對方的檔改名為 `.prev-N`。需要各自獨立的呼叫端請給不同的 `checkpointRun` 或 `checkpointDir`。
 - **目錄雜湊的略過清單會藏住同名的被審內容**：略過依名稱、任何深度、含同名 symlink。被審的東西若剛好叫 `venv`（例如 CPython 的 `Lib/venv`）、`.build`、`DerivedData`，或審的是 vendored 的 `node_modules/<套件>`，它改了之後接回的席次偵測不到，沿用舊的 `checked`。反過來，清單外的建置輸出目錄（`target`、`dist`、`build`、`vendor`、`.next`、`coverage`）照樣算，裡面很大時讀檔器回 `DISABLED`，這一輪不存檔。沒有逐次呼叫的覆寫；需要時用 `checkpoint: false`，或改審 `diffFile`。
 - **開啟存檔時 codex 排在所有 lens 之後**：席次數超過並行上限時，codex（通常是最慢的一席）要等 lens 釋放名額才開始，總時間約是 lens 加 codex，而不是兩者取大。額度的代價見上方「做完的 codex 席次在這種位置會再付一次額度」。
-- **席次自己在被審目錄裡寫的東西會讓接回失效**：跑測試產生的檔、coverage、改權限之類，只要不在上面那組略過的目錄裡，都會改變目錄雜湊，接回時從頭做。
+- **席次自己在被審目錄裡寫的東西會讓接回失效**：跑測試產生的檔、coverage、改權限之類，只要不在上面那組略過的目錄裡，都會改變目錄雜湊，接回時從頭做；沒被 git 忽略的也會改變呼叫端的指紋，比對不同就要開新的 run。
 - **接回的席次把紀錄當成已確立**：紀錄裡的 finding 原樣帶回，checked 的項目不再重查。紀錄若記錯，或記錄時被 artifact 的內容誤導，接回之後不會被重驗；記下的 finding 也沒有撤回的方法。
 - **協定是 prompt 層的要求，engine 核對不到兩件事**：(1) 接回的席次有沒有把紀錄裡的 finding 帶回最終回傳——沒照做時，中斷前記下的 finding 會從結果消失；(2) 席次有沒有寫 `done`——沒寫就結束時，呼叫端以同一組輸入開的新 run（不是接回）會沿用那份部分結果。要獨立的新一輪，就給不同的 `checkpointRun`。
 - **init 排在 barrier 最後的代價**：席次數超過並行上限（`min(16, CPU 數 − 2)`）時，init 要等前面某個席次做完才開始，`args.json` 會晚寫；在那之前中斷，接回要靠呼叫端自己的 args。
-- **預設目錄的鍵不含工作目錄**：兩個 repo 用同樣的共用輸入（例如同一個 `contextBlock`、同一個 artifact 路徑）會落在同一個目錄。artifact 雜湊含工作目錄，所以不會沿用彼此的紀錄，但會互相把對方的檔改名為 `.prev-N`。
+- **鍵不含工作目錄**：兩個 repo 用同樣的共用輸入（例如同一個 `contextBlock`、同一個 artifact 路徑）會落在同一個目錄。相對路徑解析成不同的檔時不沿用彼此的紀錄，但會互相把對方的檔改名為 `.prev-N`。同一個絕對路徑的 artifact，以及只有 `contextBlock`、沒有 artifact 檔的席次，會沿用：審閱範圍取決於席次所在目錄的呼叫端（`contextBlock` 寫「審目前的 repo」），要把路徑寫進 `contextBlock` 或給不同的 `checkpointRun`。
 - 目錄擁有者的檢查（別人擁有的目錄或路徑項目回 `DISABLED`）沒有自動化測試，因為要另一個使用者才建得出那種目錄；他人可寫入的路徑那一條有測試。
 - **init 沒有成功時的 INFO**：init 的命令先檢查目錄、再比對 base64，所以目錄不能用時回 `PAI_ARGS ERROR`，不會被抄錯蓋掉。只有引擎認得的情形（init 席次被略過、出錯、沒回傳，或命令回 `PAI_ARGS MISMATCH`，含 base64 抄錯）說「各席次的部分結果仍存著」；這是「init 的失敗與席次無關」的意思，席次自己的存檔是否正常，看它們的 `PAI_CHECKPOINT` 行。其餘情形（`PAI_ARGS ERROR`、沒有 python3、traceback、席次轉述的文字）說「可能是同一個原因讓每個席次都沒存檔，先看席次的 `PAI_CHECKPOINT` 行」。
-- **接回的鍵與目錄名，與使用者裁決的字面不同（待使用者確認）**：2026-10-19 的裁決寫「args 雜湊與 artifact 雜湊都相同才沿用」，也就是 args 有任何不同就什麼都不沿用、全部重跑；2026-10-20 寫預設目錄以 args 雜湊命名。實作改成每個席次以自己的輸入為鍵，目錄以共用輸入的 `dirKey` 命名。以「沿用了多少」來比：只改到某些席次的參數時，派發順序中排在第一個改變的呼叫之前的席次由 journal 沿用，還沒做完、自己的輸入沒變的席次沿用檔案裡的紀錄，所以**實作沿用得比裁決多**（裁決是一律不沿用）；排在它之後、已經做完的席次從頭做，與裁決相同；同一份 diff 換了工作目錄時一律不沿用，**實作沿用得比裁決少**。同樣待確認的還有兩點：接回不看 prompt 與 artifact 位元組以外、席次自己讀的程式碼（第一條已知限制）；args 很大時 init 的成本（第二條已知限制）。
+- **接回的鍵與目錄名，與使用者裁決的字面不同（待使用者確認）**：2026-10-19 的裁決寫「args 雜湊與 artifact 雜湊都相同才沿用」，也就是 args 有任何不同就什麼都不沿用、全部重跑；2026-10-20 寫預設目錄以 args 雜湊命名。實作改成每個席次以自己的輸入為鍵，目錄以共用輸入的 `dirKey` 命名。以「沿用了多少」來比：只改到某些席次的參數時，派發順序中排在第一個改變的呼叫之前的席次由 journal 沿用，還沒做完、自己的輸入沒變的席次沿用檔案裡的紀錄，所以**實作沿用得比裁決多**（裁決是一律不沿用）；排在它之後、已經做完的席次從頭做，與裁決相同；目錄型 artifact 超過項目上限時不接回、只改修改時間也從頭做，**實作沿用得比裁決少**。同樣待確認的還有兩點：接回不看 prompt 與 artifact 位元組以外、席次自己讀的程式碼（第一條已知限制）；args 很大時 init 的成本（第二條已知限制）。
 
 ## 隱私與清理
 

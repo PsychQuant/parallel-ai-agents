@@ -1,0 +1,233 @@
+#!/bin/sh
+''''exec python3 -I "$0" "$@" # '''
+# pai-artifact-fingerprint — 審閱對象的內容指紋（單一真相源）
+#
+# 呼叫端把它的輸出寫進 contextBlock 第一行，接回之前重算比對
+# （references/checkpoint-protocol.md 的「artifact 指紋」）。
+#
+# 用法：pai-artifact-fingerprint [--exclude PATH]... [--] INPUT...
+#
+# 輸出：成功時 stdout 一行 64 碼 hex，exit 0。任何失敗都是 stdout 沒有東西、stderr 一行原因、
+# exit 非零（1 輸入有問題；2 用法錯）。沒有「什麼都沒算到」的常數：不存在的路徑、空字串、讀不了的檔、
+# 0 byte 的檔、列不出任何項目的目錄都算失敗。
+#
+# 雜湊的內容：
+#   * 多個 INPUT 合成一個雜湊，順序照給的。INPUT 自己的路徑不算（diff 重建到新的暫存檔，內容相同就相同）。
+#   * 檔案：內容。
+#   * 目錄：每個項目的相對路徑、型態與權限位元（lstat），加上檔案內容或 symlink 目標；項目上層的每個目錄
+#     （含 INPUT 本身）也算權限。修改時間不算。
+#     在 git work tree 裡，項目是 git 列出的範圍：追蹤中的檔加沒被忽略的未追蹤檔，只限這個目錄底下；追蹤中但
+#     工作目錄裡沒有的檔記成不存在，不算失敗。submodule 與未追蹤的巢狀 repo 只算路徑與權限。
+#     git 列不出任何東西（整個目錄被忽略、空 repo）或不在 git 裡時，走訪目錄，略過名單同 engine 的讀檔器
+#     （workflows/ensemble-workflow.js 的 READER_PY；有測試比對兩邊相等）。沒有任何檔案與 symlink 就算失敗。
+#   * --exclude：拿掉那個路徑與它底下的一切（放在被審目錄裡的 checkpoint 目錄）。路徑還不存在也可以，
+#     所以第一次與接回時算出來一樣。
+#
+# 被審的目錄視為不可信（設計重點，全部住這）：
+#   * git 以 argv 執行（不經 shell）、帶 -c core.fsmonitor=false、拿掉環境裡的 GIT_* 變數。
+#     git ls-files 只會被 core.fsmonitor 叫去執行別的程式（有測試）。
+#   * python3 -I：被審目錄與工作目錄裡的 json.py 之類不會被載入。
+#   * 檔案以 O_NOFOLLOW、O_NONBLOCK 開啟，分塊讀取：FIFO 不會卡住，大檔不會整個讀進記憶體。
+#     沒有大小上限，目錄很大時就讀得久。
+#   * 上層被換成 symlink 的路徑記成不存在，不會跟著讀到目錄外。
+import hashlib
+import os
+import stat
+import subprocess
+import sys
+
+SKIP = {".git", "node_modules", ".build", ".venv", "venv", "__pycache__", ".tox", ".mypy_cache", ".pytest_cache", ".gradle", "DerivedData"}
+SKIP_BYTES = {x.encode("ascii") for x in SKIP}
+CHUNK = 1 << 20
+GIT_TIMEOUT = 600
+USAGE = "usage: pai-artifact-fingerprint [--exclude PATH]... [--] INPUT..."
+
+
+class Refused(Exception):
+    pass
+
+
+class UsageError(Exception):
+    pass
+
+
+def show(path):
+    return ascii(os.fsdecode(path))
+
+
+def field(h, value):
+    h.update(b"%d:" % len(value))
+    h.update(value)
+
+
+def content_digest(path, flags=0):
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0) | flags)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise Refused("not a regular file: " + show(path))
+        digest = hashlib.sha256()
+        size = 0
+        while True:
+            chunk = os.read(fd, CHUNK)
+            if not chunk:
+                return digest.digest(), size
+            digest.update(chunk)
+            size += len(chunk)
+    finally:
+        os.close(fd)
+
+
+def git(root, *args):
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    return subprocess.run(
+        [b"git", b"-c", b"core.fsmonitor=false", b"-C", root] + list(args),
+        env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=GIT_TIMEOUT,
+    )
+
+
+def git_listed(root):
+    """git 列出的項目；不在 work tree 裡（或沒有 git）回 None。"""
+    try:
+        inside = git(root, b"rev-parse", b"--is-inside-work-tree")
+    except FileNotFoundError:
+        return None
+    if inside.returncode != 0 or inside.stdout.strip() != b"true":
+        return None
+    listed = git(root, b"ls-files", b"-z", b"--cached", b"--others", b"--exclude-standard")
+    if listed.returncode != 0:
+        reason = listed.stderr.decode("utf-8", "backslashreplace").strip().split("\n")[0]
+        raise Refused("git ls-files failed in %s: %s" % (show(root), ascii(reason)))
+    return {p.rstrip(b"/") for p in listed.stdout.split(b"\0") if p}
+
+
+def walked(root, excluded):
+    def fail(e):
+        raise e
+
+    found = set()
+    for d, dirs, files in os.walk(root, onerror=fail):
+        dirs[:] = sorted(
+            x for x in dirs
+            if x not in SKIP_BYTES
+            and not excluded(os.path.join(d, x))
+            and not excluded(os.path.realpath(os.path.join(d, x)))
+        )
+        for x in files + [x for x in dirs if os.path.islink(os.path.join(d, x))]:
+            q = os.path.join(d, x)
+            if not excluded(q):
+                found.add(os.path.relpath(q, root))
+    return found
+
+
+def parents(rel):
+    """上層目錄，由外往內；含 INPUT 本身（b"."）。"""
+    parts = rel.split(b"/")[:-1]
+    return [b"."] + [b"/".join(parts[:i + 1]) for i in range(len(parts))]
+
+
+def record(full):
+    try:
+        st = os.lstat(full)
+    except (FileNotFoundError, NotADirectoryError):
+        return b"absent"
+    mode = b"%o" % stat.S_IMODE(st.st_mode)
+    if stat.S_ISLNK(st.st_mode):
+        return b"link\0" + mode + b"\0" + os.readlink(full)
+    if stat.S_ISREG(st.st_mode):
+        return b"file\0" + mode + b"\0" + content_digest(full, getattr(os, "O_NOFOLLOW", 0))[0]
+    if stat.S_ISDIR(st.st_mode):
+        return b"dir\0" + mode
+    return b"special\0%o" % st.st_mode
+
+
+def hash_directory(h, root, excluded):
+    names = git_listed(root)
+    if names is not None:
+        names = {p for p in names if not excluded(os.path.join(root, p))}
+    if not names:
+        names = walked(root, excluded)
+    if not names:
+        raise Refused("nothing to hash in directory: " + show(root))
+    entries = {}
+
+    def reachable(rel):
+        # 上層不是真目錄（不見了、換成 symlink）：這個路徑在工作目錄裡不存在，不要跟著走出去。
+        for parent in parents(rel):
+            if parent not in entries:
+                entries[parent] = record(os.path.join(root, parent))
+            if not entries[parent].startswith(b"dir\0"):
+                return False
+        return True
+
+    for rel in names:
+        entries[rel] = record(os.path.join(root, rel)) if reachable(rel) else b"absent"
+    field(h, b"dir")
+    field(h, b"%d" % len(entries))
+    for rel in sorted(entries):
+        field(h, rel)
+        field(h, entries[rel])
+
+
+def hash_input(h, path, excluded):
+    st = os.stat(path)
+    if stat.S_ISREG(st.st_mode):
+        real = os.path.realpath(path)
+        if excluded(real):
+            raise Refused("input is excluded: " + show(path))
+        digest, size = content_digest(real)
+        if size == 0:
+            raise Refused("nothing to hash, empty file: " + show(path))
+        field(h, b"file")
+        h.update(digest)
+    elif stat.S_ISDIR(st.st_mode):
+        hash_directory(h, os.path.realpath(path), excluded)
+    else:
+        raise Refused("not a file or directory: " + show(path))
+
+
+def parse(argv):
+    inputs, excludes = [], []
+    i = 0
+    options = True
+    while i < len(argv):
+        a = argv[i]
+        i += 1
+        if options and a == "--":
+            options = False
+        elif options and a == "--exclude":
+            if i >= len(argv):
+                raise UsageError("--exclude needs a path")
+            excludes.append(argv[i])
+            i += 1
+        else:
+            inputs.append(a)
+    if not inputs:
+        raise UsageError("no INPUT given")
+    if "" in inputs or "" in excludes:
+        raise Refused("empty path argument (an unset variable?)")
+    return [os.fsencode(p) for p in inputs], [os.fsencode(p) for p in excludes]
+
+
+def main(argv):
+    inputs, excludes = parse(argv)
+    dropped = {os.path.realpath(e) for e in excludes} | {os.path.abspath(e) for e in excludes}
+
+    def excluded(p):
+        return any(p == e or p.startswith(e.rstrip(b"/") + b"/") for e in dropped)
+
+    h = hashlib.sha256(b"pai-artifact-fingerprint v1\0")
+    for path in inputs:
+        hash_input(h, path, excluded)
+    return h.hexdigest()
+
+
+if __name__ == "__main__":
+    try:
+        digest = main(sys.argv[1:])
+    except UsageError as e:
+        sys.stderr.write("pai-artifact-fingerprint: %s\n%s\n" % (e, USAGE))
+        sys.exit(2)
+    except Exception as e:
+        sys.stderr.write("pai-artifact-fingerprint: %s\n" % (e,))
+        sys.exit(1)
+    print(digest)

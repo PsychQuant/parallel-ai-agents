@@ -71,16 +71,15 @@ DA 專門盯三種安靜的偏移：把個別發言寫成全體共識、把條�
 
 > **存檔（#103）**：engine 預設把每個席次的進度存到 `~/.cache/pai-ensemble/`，永久保留、要清就手動刪。中斷後以 `resumeFromRunId` 接回時，沒跑完的席次會從檔案接著做；以同一組輸入開新的 run 也會接著做（要全新一輪就換 `checkpointRun`）。另外會多派一個 `checkpoint-init` agent 存 args。協定見 `references/checkpoint-protocol.md`；不要存檔就在 args 加 `"checkpoint": false`。紀錄會引用逐字稿的片段（第三方的原話），永久留在本機；不想留就關掉存檔。
 >
-> - **artifact 指紋**：args 範本裡 `contextBlock` 的第一行是 `artifact sha256: <指紋>`，涵蓋 `file`（會議記錄）、`srtFile`（逐字稿）與 `contextBlock` 列出的每一個佐證文件。算法見協定的「artifact 指紋」：檔案用 `shasum -a 256`，目錄雜湊審閱範圍內每個檔的路徑與內容，多個輸入合成一個雜湊。
-> - **接回之前重算**：要以 `resumeFromRunId` 接回時，先從目前的檔案重算指紋，和存下的 args（自己的紀錄或 checkpoint 目錄的 `args.json`）裡 `contextBlock` 的第一行比對。相同才接回；不同就不要接回，用重算的那一行開新的 run（另給新的 `checkpointRun` 或 `checkpointDir`）。這一行不要從 `args.json` 抄。直接拿存下的 args 接回而不比對時，由 journal 回答的席次會保留舊版本的結論。
-> - **在報告裡寫出存檔狀態**：Workflow 回傳後看 `stats.checkpoint`。`resumedSeats` 非空時，寫出這一輪接回了哪些席次（它們的結論有一部分來自中斷前的紀錄）；`disabledSeats` 非空時，寫出哪些席次這一輪沒有存檔（例如目錄超過 20,000 個項目）；`argsSaved` 為 false 時，寫出 `args.json` 沒存。都沒有就不必提。
+> - **artifact 指紋**：`contextBlock` 的第一行是 `artifact sha256: <hash> inputs: <給工具的參數>`。hash 是 `"${CLAUDE_PLUGIN_ROOT}/bin/pai-artifact-fingerprint" "$FILE" "$SRT_FILE" "$DOC_1" …` 的輸出，輸入是 `file`（會議記錄）、`srtFile`（逐字稿）與 `contextBlock` 列出的每一個佐證文件。工具失敗就停下來告訴使用者，不要用別的方法寫這一行。接回之前照協定的「artifact 指紋」重算比對。
+> - **在報告裡寫出存檔狀態**：Workflow 回傳後看 `stats.checkpoint`（run 中斷時沒有回傳，也就沒有這些）。`resumedSeats` 非空時，寫出這一輪接回了哪些席次（它們的結論有一部分來自中斷前的紀錄）；`disabledSeats` 非空時，寫出哪些席次這一輪沒有存檔；`argsSaved` 為 false 時，寫出 `args.json` 沒存。都沒有就不必提。
 
 ```javascript
 Workflow({ name: "parallel-ai-agents:pai-ensemble", args: {
   profile: "minutes",
   file: "<會議記錄絕對路徑>",
   srtFile: "<逐字稿絕對路徑>",
-  contextBlock: "artifact sha256: <會議記錄、逐字稿與佐證文件的指紋>\n<Phase 1 組好的內容>",
+  contextBlock: "artifact sha256: <工具的輸出> inputs: <給工具的參數>\n<Phase 1 組好的內容>",
   agentModel: "sonnet",
   replicas: 1,
   codexEnabled: false

@@ -19,6 +19,7 @@ ensemble-* 的程式表面看似都是「LLM 驅動的編排」，不可測。�
 |------|------|
 | `pai-build-diff.bats` | `../bin/pai-build-diff`（ensemble-code-review 的 diff 模式建構器）|
 | `ensemble-workflow.test.mjs` | `../workflows/ensemble-workflow.js`（共用 harness，4 個 skill 的底層）|
+| `pai-artifact-fingerprint.test.mjs` | `../bin/pai-artifact-fingerprint`（審閱對象的內容指紋）：在拋棄式 repo 上真的執行，斷言哪些變動讓指紋改變、哪些不會，失敗時 stdout 空且 exit 非零，以及不執行被審 repo 設定的程式 |
 | `pai-parse-lens-csv.bats` | `../bin/pai-parse-lens-csv`（ensemble-compose 的 `--lens-file` CSV 解析器）|
 | `pai-parse-verdict.bats` | `../bin/pai-parse-verdict`（ensemble-academic-review `--auto-iterate` 的 verdict tag 解析器）|
 | `pai-iterate-decide.test.mjs` | `../bin/pai-iterate-decide`（`--auto-iterate` 主迴圈的純狀態機：halt / 套 fix / mode 交替 / focus-rotation）|

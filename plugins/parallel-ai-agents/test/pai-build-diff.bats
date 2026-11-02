@@ -179,6 +179,70 @@ dirty() { printf 'wip\n' >> "$REPO/a.txt"; }
   [[ "$output" == *"需正整數"* ]]
 }
 
+# ── 被審的 repo 不可信：它的設定不能讓這支 script 執行別的程式 ─────
+# 帶自己 .git/config 的 repo（解壓縮的 tarball、複製來的目錄）是可達的情形。
+
+# 建一個會留下標記檔的 hook；標記檔放在 repo 外。
+hostile_hook() {
+  MARKER="${BATS_TEST_TMPDIR}/marker"
+  HOOK="${BATS_TEST_TMPDIR}/hook.sh"
+  printf '#!/bin/sh\ntouch "%s"\n' "$MARKER" > "$HOOK"
+  chmod +x "$HOOK"
+}
+
+# 同一個設定，直接跑 git diff 會觸發：這個測試的前提是真的。
+assert_premise_fires() {
+  rm -f "$MARKER"
+  ( cd "$REPO" && git diff HEAD >/dev/null 2>&1 </dev/null )
+  [ -e "$MARKER" ]
+  rm -f "$MARKER"
+}
+
+@test "不可信的 repo：core.fsmonitor 不被執行（--diff 與 untracked）" {
+  hostile_hook; dirty; printf 'new\n' > "$REPO/u.txt"
+  git -C "$REPO" config core.fsmonitor "$HOOK"
+  assert_premise_fires
+  run "$BIN" -C "$REPO" --diff
+  [ "$status" -eq 0 ]
+  [ ! -e "$MARKER" ]
+  [[ "$output" == *"+wip"* ]]
+}
+
+@test "不可信的 repo：diff.external 不被執行，輸出仍是 unified diff" {
+  hostile_hook; dirty
+  git -C "$REPO" config diff.external "$HOOK"
+  assert_premise_fires
+  run "$BIN" -C "$REPO" --diff
+  [ "$status" -eq 0 ]
+  [ ! -e "$MARKER" ]
+  [[ "$output" == *"+wip"* ]]
+}
+
+@test "不可信的 repo：diff.<driver>.command 與 textconv 不被執行（工作樹與 commit 之間的模式都一樣）" {
+  hostile_hook; dirty
+  printf '* diff=d\n' > "$REPO/.gitattributes"
+  git -C "$REPO" add .gitattributes
+  git -C "$REPO" commit -qm attrs
+  printf 'more\n' >> "$REPO/a.txt"
+  for key in diff.d.command diff.d.textconv; do
+    git -C "$REPO" config "$key" "$HOOK"
+    assert_premise_fires
+    run "$BIN" -C "$REPO" --diff
+    [ "$status" -eq 0 ]
+    [ ! -e "$MARKER" ]
+    run "$BIN" -C "$REPO" --commits 2
+    [ "$status" -eq 0 ]
+    [ ! -e "$MARKER" ]
+    run "$BIN" -C "$REPO" --since HEAD~2
+    [ "$status" -eq 0 ]
+    [ ! -e "$MARKER" ]
+    run "$BIN" -C "$REPO" --base HEAD~2
+    [ "$status" -eq 0 ]
+    [ ! -e "$MARKER" ]
+    git -C "$REPO" config --unset "$key"
+  done
+}
+
 # ── 用法 / 未知 mode ────────────────────────────────────────
 
 @test "未知 mode --bogus → exit 1 且印『未知 MODE』（多位元組 regression）" {
