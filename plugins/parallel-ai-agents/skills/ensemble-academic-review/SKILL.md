@@ -186,7 +186,11 @@ TaskCreate: "Final: merge all rounds"
 
 #### Backend A — Workflow（預設）
 
-> **存檔（#103）**：engine 預設把每個席次的進度存到 `~/.cache/pai-ensemble/`，永久保留、要清就手動刪。中斷後以 `resumeFromRunId` 接回時，沒跑完的席次會從檔案接著做；以同一組輸入開新的 run 也會接著做（要全新一輪就換 `checkpointRun`）。另外會多派一個 `checkpoint-init` agent 存 args。`contextBlock` 的第一行寫 `artifact sha256: <artifact 的雜湊>`（檔案用 `shasum -a 256`；目錄用 commit id 加 `git status --porcelain` 與 `git diff` 的雜湊）：中斷之後 artifact 被改過，所有席次的 prompt 跟著變，接回不會沿用舊版本的結論（#103 r7）。協定見 `references/checkpoint-protocol.md`；不要存檔就在 args 加 `"checkpoint": false`。
+> **存檔（#103）**：engine 預設把每個席次的進度存到 `~/.cache/pai-ensemble/`，永久保留、要清就手動刪。中斷後以 `resumeFromRunId` 接回時，沒跑完的席次會從檔案接著做；以同一組輸入開新的 run 也會接著做（要全新一輪就換 `checkpointRun`）。另外會多派一個 `checkpoint-init` agent 存 args。協定見 `references/checkpoint-protocol.md`；不要存檔就在 args 加 `"checkpoint": false`。
+>
+> - **artifact 指紋**：args 範本裡 `contextBlock` 的第一行是 `artifact sha256: <指紋>`，涵蓋 `file`（稿件）與 `contextBlock` 點名的每一個 ground-truth 檔。算法見協定的「artifact 指紋」：檔案用 `shasum -a 256`，目錄雜湊審閱範圍內每個檔的路徑與內容，多個輸入合成一個雜湊。每一輪開始時重算（auto-iterate 每一輪會改稿）。
+> - **接回之前重算**：要以 `resumeFromRunId` 接回時，先從目前的檔案重算指紋，和存下的 args（自己的紀錄或 checkpoint 目錄的 `args.json`）裡 `contextBlock` 的第一行比對。相同才接回；不同就不要接回，用重算的那一行開新的 run（另給新的 `checkpointRun` 或 `checkpointDir`）。這一行不要從 `args.json` 抄。直接拿存下的 args 接回而不比對時，由 journal 回答的席次會保留舊版本的結論。
+> - **在報告裡寫出存檔狀態**：Workflow 回傳後看 `stats.checkpoint`。`resumedSeats` 非空時，寫出這一輪接回了哪些席次（它們的結論有一部分來自中斷前的紀錄）；`disabledSeats` 非空時，寫出哪些席次這一輪沒有存檔（例如目錄超過 20,000 個項目）；`argsSaved` 為 false 時，寫出 `args.json` 沒存。都沒有就不必提。
 
 每一輪這樣呼叫：
 
@@ -200,7 +204,7 @@ TaskCreate: "Final: merge all rounds"
      "agentModel": "<PAI_AGENT_MODEL 解析值（預設 opus，#20）>",
      "file": "<FILE 絕對路徑>",
      "customLenses": "<pai-collect-lens-layers 的 lenses（層 ②③）；無則省略>",
-     "contextBlock": "<全文/文獻列表/ground-truth artifact 清單/focus>",
+     "contextBlock": "artifact sha256: <稿件與 ground-truth 檔的指紋>\n<全文/文獻列表/ground-truth artifact 清單/focus>",
      "codexEnabled": true,
      "codexCallPath": "${CLAUDE_PLUGIN_ROOT}/bin/codex-call",
      "codexModel": "<依 references/codex-governance.md 解析（codex-pro 契約；#23）>",

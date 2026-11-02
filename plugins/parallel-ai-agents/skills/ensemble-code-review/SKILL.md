@@ -131,7 +131,11 @@ esac
 
 #### Backend A — Workflow（預設）
 
-> **存檔（#103）**：engine 預設把每個席次的進度存到 `~/.cache/pai-ensemble/`，永久保留、要清就手動刪。中斷後以 `resumeFromRunId` 接回時，沒跑完的席次會從檔案接著做。本 skill 開新的 run 不會接著做：每次的 diff 都寫到新的暫存路徑。另外會多派一個 `checkpoint-init` agent 存 args。`contextBlock` 的第一行寫 `artifact sha256: <artifact 的雜湊>`（檔案用 `shasum -a 256`；目錄用 commit id 加 `git status --porcelain` 與 `git diff` 的雜湊）：中斷之後 artifact 被改過，所有席次的 prompt 跟著變，接回不會沿用舊版本的結論（#103 r7）。協定見 `references/checkpoint-protocol.md`；不要存檔就在 args 加 `"checkpoint": false`。本 skill 每次把 diff 寫到新的暫存路徑，所以每個 run 都在 `~/.cache/pai-ensemble/` 留一個新目錄；diff 含秘密時，finding 引用的片段也會留在那裡，這種情形請關掉存檔。
+> **存檔（#103）**：engine 預設把每個席次的進度存到 `~/.cache/pai-ensemble/`，永久保留、要清就手動刪。中斷後以 `resumeFromRunId` 接回時，沒跑完的席次會從檔案接著做。本 skill 開新的 run 不會接著做：每次的 diff 都寫到新的暫存路徑。另外會多派一個 `checkpoint-init` agent 存 args。協定見 `references/checkpoint-protocol.md`；不要存檔就在 args 加 `"checkpoint": false`。本 skill 每次把 diff 寫到新的暫存路徑，所以每個 run 都在 `~/.cache/pai-ensemble/` 留一個新目錄；diff 含秘密時，finding 引用的片段也會留在那裡，這種情形請關掉存檔。
+>
+> - **artifact 指紋**：args 範本裡 `contextBlock` 的第一行是 `artifact sha256: <指紋>`，涵蓋審閱的對象：diff 模式是 `$DIFF_FILE`，路徑模式是 FILE_OR_DIR。算法見協定的「artifact 指紋」：檔案用 `shasum -a 256`，目錄雜湊審閱範圍內每個檔的路徑與內容，多個輸入合成一個雜湊。diff 模式接回之前，用同一個模式再跑一次 `pai-build-diff` 產生新的 diff、算它的指紋來比對（工作樹改過，diff 就不同）；`$DIFF_FILE` 已經刪掉時不能接回。
+> - **接回之前重算**：要以 `resumeFromRunId` 接回時，先從目前的檔案重算指紋，和存下的 args（自己的紀錄或 checkpoint 目錄的 `args.json`）裡 `contextBlock` 的第一行比對。相同才接回；不同就不要接回，用重算的那一行開新的 run（另給新的 `checkpointRun` 或 `checkpointDir`）。這一行不要從 `args.json` 抄。直接拿存下的 args 接回而不比對時，由 journal 回答的席次會保留舊版本的結論。
+> - **在報告裡寫出存檔狀態**：Workflow 回傳後看 `stats.checkpoint`。`resumedSeats` 非空時，寫出這一輪接回了哪些席次（它們的結論有一部分來自中斷前的紀錄）；`disabledSeats` 非空時，寫出哪些席次這一輪沒有存檔（例如目錄超過 20,000 個項目）；`argsSaved` 為 false 時，寫出 `args.json` 沒存。都沒有就不必提。
 
 1. 解析 harness 絕對路徑：`${CLAUDE_PLUGIN_ROOT}/workflows/ensemble-workflow.js`。
 2. **解析 codex 治理**（#23，codexEnabled=true 必經）：依 [`references/codex-governance.md`](../../references/codex-governance.md) 從 codex-pro 契約解析 `CODEX_MODEL`/`CODEX_EFFORT`（缺席 fail-fast + 安裝指令）。
@@ -146,7 +150,7 @@ esac
      "file": "<路徑模式：FILE_OR_DIR 絕對路徑>",
      "diffFile": "<diff 模式：Phase 1 的 $DIFF_FILE 絕對路徑>",
      "customLenses": "<pai-collect-lens-layers 的 lenses（層 ②③）；無則省略>",
-     "contextBlock": "<focus + 內容類型 emphasis（見 Phase 1 表）>",
+     "contextBlock": "artifact sha256: <diff 檔或 FILE_OR_DIR 的指紋>\n<focus + 內容類型 emphasis（見 Phase 1 表）>",
      "codexEnabled": true,
      "codexCallPath": "${CLAUDE_PLUGIN_ROOT}/bin/codex-call",
      "codexModel": "<依 references/codex-governance.md 解析（codex-pro 契約；#23）>",

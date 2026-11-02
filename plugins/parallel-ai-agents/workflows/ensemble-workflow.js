@@ -629,15 +629,18 @@ const CKDIR_PY = [
 //   header matches, no done mark, ≥1 record  → RESUME, print the earlier records (bounded)
 //   no/other header, seat inputs or artifact
 //   bytes changed, or a done mark            → keep the old file as .prev-N, FRESH
-// A done mark means the seat FINISHED in an earlier run. A resume with unchanged args does not
-// re-run a finished seat (the journal answers it), so a done mark is seen by a NEW run with the
-// same inputs — which must not inherit an earlier run's conclusions — and, as a cost, by a finished
-// seat re-dispatched after an args edit or one that was cut off between writing done and the
-// harness journaling its answer (references/checkpoint-protocol.md, known limits). Any exception → DISABLED, exit 0, and the
-// prompt treats "no PAI_CHECKPOINT line at all" (python3 missing) the same way.
+//   artifact cannot be hashed (a directory
+//   over 20,000 entries, or unreadable)      → DISABLED, the old file untouched (#103 verify r7)
+// A done mark means the seat FINISHED in an earlier run. It is seen by a NEW run with the same
+// inputs — which must not inherit an earlier run's conclusions — and, as a cost, by a finished seat
+// re-dispatched on resume: the journal is a prefix cache, so every call issued after the first call
+// with no cached result (an args edit, or a call that was interrupted or errored) runs again, and a
+// seat cut off between writing done and the harness journaling its answer has no cached result
+// itself (references/checkpoint-protocol.md, known limits). Any exception → DISABLED, exit 0, and
+// the prompt treats "no PAI_CHECKPOINT line at all" (python3 missing) the same way.
 // FRESH is printed only after the file exists, so a failing create shows DISABLED alone.
-// Records are split on "\n" only: files written before r7 hold U+2028/U+2029/U+0085 raw, and
-// splitlines() would cut such a record in two (#103 verify r1).
+// Records are split on "\n" only, so a hand-edited line holding a raw U+2028/U+2029/U+0085 is not
+// cut in two (#103 verify r1). RESUME prints records ASCII-only, like the file (#103 verify r7).
 const READER_PY = [
   'SKIP = {".git", "node_modules", ".build", ".venv", "venv", "__pycache__", ".tox", ".mypy_cache", ".pytest_cache", ".gradle", "DerivedData"}',
   'def sha(paths, skip):',
@@ -652,10 +655,11 @@ const READER_PY = [
   '                    f.update(chunk)',
   '            h.update(f.digest())',
   '        elif os.path.isdir(p):',
-  '            t = tree(p, skip)',
+  '            rp = os.path.realpath(p)',
+  '            t = tree(rp, skip)',
   '            if t is None:',
-  '                return "unhashable-" + os.urandom(8).hex()',
-  '            h.update(b"<dir>" + t)',
+  '                return None',
+  '            h.update(b"<dir>" + rp.encode("utf-8", "surrogateescape") + b"\\0" + t)',
   '        else:',
   '            h.update(b"<missing>")',
   '    return h.hexdigest()',
@@ -685,6 +689,8 @@ const READER_PY = [
   '    ckdir(D)',
   '    F = os.path.join(D, NAME)',
   '    art = sha(ARTS, {os.path.realpath(B), os.path.realpath(D)})',
+  '    if art is None:',
+  '        raise RuntimeError("the artifact cannot be hashed (a directory with more than 20,000 entries, or unreadable), so this seat cannot be resumed; no checkpoint this run")',
   '    recs, run, bad, reason = [], None, 0, None',
   '    if os.path.lexists(F):',
   '        if not stat.S_ISREG(os.lstat(F).st_mode):',
@@ -699,8 +705,6 @@ const READER_PY = [
   '            reason = "no-header"',
   '        elif head.get("seatDigest") != SEAT:',
   '            reason = "inputs-changed"',
-  '        elif art.startswith("unhashable-"):',
-  '            reason = "artifact-unhashable (a directory with more than 20,000 entries, or unreadable)"',
   '        elif head.get("artifactSha") != art:',
   '            reason = "artifact-changed"',
   '        else:',
@@ -734,7 +738,7 @@ const READER_PY = [
   '            print("PAI_CHECKPOINT RESUME %d record(s) from an interrupted earlier run of this seat; %d unreadable line(s) skipped" % (len(order), bad))',
   '            shown, size = 0, 0',
   '            for r in order:',
-  '                s = json.dumps(r, ensure_ascii=False)',
+  '                s = json.dumps(r)',
   '                if len(s) > 8000 or size + len(s) > 20000:',
   '                    continue',
   '                print("  " + s)',
@@ -797,16 +801,46 @@ const INIT_PY = [
 ].join('\n')
 
 // One-line record commands. RECORD reads ONE JSON object from stdin and appends it only if it is
-// a finding with a non-empty title and body, or a checked item with a non-empty item. Every other
-// input — not JSON, not UTF-8, empty stdin, the wrong shape — prints REJECTED and exits 0, so the
-// prompt's "REJECTED → fix it; any other failure → checkpointing stopped" split holds for the
-// commonest slip, a JSON typo in a long body (#103 verify r6). Records are written ASCII-only
-// (json.dumps default): a lone surrogate cannot fail the encode, and C1 controls, DEL and bidi
-// overrides quoted from the artifact never sit raw in a file a caller may print in a terminal. MARK appends a fixed-shape record: `done`, or
-// `codex-run <id>`. `-I`: the seat's cwd is the reviewed repo, and a json.py there must not be
-// imported (#103 verify r1).
-const RECORD_CMD =
-  `python3 -I -c 'import json,os,sys; os.umask(0o077); exec("try:\\n r=json.loads(sys.stdin.buffer.read())\\nexcept ValueError as e:\\n r=e"); s=lambda x: isinstance(x,str) and x.strip()!=""; k=isinstance(r,dict) and r.get("kind"); ok=(k=="finding" and s(r.get("title")) and s(r.get("body"))) or (k=="checked" and s(r.get("item"))); fd=ok and os.open(sys.argv[1],os.O_RDWR|os.O_APPEND|os.O_CREAT|getattr(os,"O_NOFOLLOW",0),0o600); n=ok and os.fstat(fd).st_size; ok and os.write(fd,(b"\\n" if n and os.pread(fd,1,n-1)!=b"\\n" else b"")+(json.dumps(r)+"\\n").encode("ascii")); print("recorded" if ok else ("REJECTED: not valid JSON (%s); fix the line and run it again" % str(r)[:200]) if isinstance(r,Exception) else "REJECTED: need one JSON object: kind finding with a non-empty title and body, or kind checked with a non-empty item")'`
+// a finding shaped like a schema finding (severity in the schema's enum, non-empty title and body,
+// file a string or null, line an integer or null, lens a string or null, no keys besides these and
+// kind) or a checked item (kind and a non-empty item, nothing else). Every other input — not JSON,
+// not UTF-8, empty stdin, JSON nested too deep to parse, the wrong shape, an extra key — prints
+// REJECTED and exits 0, so the prompt's "REJECTED → fix it; any other failure → checkpointing
+// stopped" split holds (#103 verify r6, r7). A resumed record goes back through the findings schema
+// unchanged, so it must already fit it. NaN and Infinity, which json.loads accepts, cannot reach
+// the file: every value an accepted record holds is a string, an integer or null. Records are
+// written ASCII-only (json.dumps default): a lone surrogate cannot fail the encode, and C1
+// controls, DEL and bidi overrides quoted from the artifact never sit raw in a file a caller may
+// print in a terminal. MARK appends a fixed-shape record: `done`, or `codex-run <id>`. `-I`: the
+// seat's cwd is the reviewed repo, and a json.py there must not be imported (#103 verify r1).
+const RECORD_PY = [
+  'S = ("CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO")',
+  'K = ("kind", "severity", "title", "body", "file", "line", "lens")',
+  't = lambda x: isinstance(x, str) and x.strip() != ""',
+  'o = lambda x: x is None or isinstance(x, str)',
+  'try:',
+  '    r = json.loads(sys.stdin.buffer.read())',
+  '    k = isinstance(r, dict) and r.get("kind")',
+  '    if k == "finding":',
+  '        ok = all(x in K for x in r) and r.get("severity") in S and t(r.get("title")) and t(r.get("body")) and o(r.get("file")) and o(r.get("lens")) and (r.get("line") is None or type(r.get("line")) is int)',
+  '    else:',
+  '        ok = k == "checked" and set(r) == {"kind", "item"} and t(r.get("item"))',
+  '    m = None if ok else "REJECTED: need one JSON object: kind finding with only the keys kind, severity (CRITICAL, HIGH, MEDIUM, LOW or INFO), title and body (non-empty strings), file (string or null), line (integer or null) and lens (string or null); or kind checked with only the keys kind and item (a non-empty string)"',
+  '    b = ok and (json.dumps(r) + "\\n").encode("ascii")',
+  'except (ValueError, RecursionError) as e:',
+  '    m = "REJECTED: not valid JSON, or nested too deep (%s); fix the line and run it again" % str(e)[:200]',
+  'if m is None:',
+  '    fd = os.open(sys.argv[1], os.O_RDWR | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)',
+  '    n = os.fstat(fd).st_size',
+  '    os.write(fd, (b"\\n" if n and os.pread(fd, 1, n - 1) != b"\\n" else b"") + b)',
+  'print(m or "recorded")',
+].join('\n')
+// A python program as one double-quoted python string literal, for exec() inside a single-quoted
+// shell argument: the program itself must contain no single quote (checked by a test).
+function pyProgram(src) {
+  return '"' + src.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n') + '"'
+}
+const RECORD_CMD = `python3 -I -c 'import json,os,sys; os.umask(0o077); exec(${pyProgram(RECORD_PY)})'`
 const MARK_CMD =
   `python3 -I -c 'import json,os,sys; os.umask(0o077); a=sys.argv; r={"kind":a[2]}; r.update({"id":a[3]} if len(a)>3 else {}); fd=os.open(a[1],os.O_RDWR|os.O_APPEND|os.O_CREAT|getattr(os,"O_NOFOLLOW",0),0o600); n=os.fstat(fd).st_size; os.write(fd,(b"\\n" if n and os.pread(fd,1,n-1)!=b"\\n" else b"")+(json.dumps(r)+"\\n").encode("utf-8")); print("recorded")'`
 
@@ -898,7 +932,7 @@ function checkpointSection(ck, label, artifacts, seat) {
     '{"kind":"finding","severity":"MEDIUM","title":"…","file":null,"line":null,"body":"…"}',
     eof,
     '```',
-    `For an item checked with no defect, the line is \`{"kind":"checked","item":"<what you checked>"}\`. \`REJECTED …\` means the JSON was wrong — fix it and run it again. Any other failure (no python3, a permission error) means checkpointing stopped working: skip every later checkpoint step and keep reviewing. The file is kept on disk until the user deletes it: never copy a secret value (token, password, key) into a record — name where it is instead.`,
+    `A finding line has only the keys shown (plus an optional \`lens\`, a string or null): severity one of CRITICAL, HIGH, MEDIUM, LOW, INFO; non-empty title and body; file a string or null; line an integer or null; no other keys. For an item checked with no defect, the line is \`{"kind":"checked","item":"<what you checked>"}\`, no other keys. \`REJECTED …\` means the line was wrong — fix it and run it again. Any other failure (no python3, a permission error) means checkpointing stopped working: skip every later checkpoint step and keep reviewing. The file is kept on disk until the user deletes it: never copy a secret value (token, password, key) into a record — name where it is instead.`,
     `Just before you return: run \`${MARK_CMD} ${F} done\`, then return ALL findings — the ones recorded before the interruption and the new ones — via the schema, and set \`checkpointState\` to FRESH, RESUME or DISABLED: what step 0 printed.`,
   ].join('\n')
 }
@@ -1210,13 +1244,15 @@ const codexThunk = codexOn
           : { lens: 'codex', findings: (r.findings || []).map((f) => ({ ...f, lens: 'codex' })), ok: true, label: 'codex', resumed: r.checkpointState === 'RESUME', disabled: r.checkpointState === 'DISABLED' }))
         .catch(() => ({ lens: 'codex', findings: [], ok: false }))
   : null
-// #103: rides the same barrier, LAST in the array. The journal's cache key chains over the calls in
-// dispatch order (measured 2026-10-20: on resume after an edit, every call issued after the first
-// changed one ran again even with an unchanged prompt; after an interruption with unchanged args,
-// completed calls issued after the interrupted one were still answered from the cache). The init
+// #103: rides the same barrier, LAST in the array. The journal is a prefix cache over the calls in
+// dispatch order: the longest unchanged prefix returns cached results, and the first edited, new,
+// interrupted or errored call and every call after it run again, even with an unchanged prompt
+// (Workflow primitive docs; measured 2026-10-20 after an args edit, and 2026-11-02 in a resumed
+// run whose already-answered codex and init calls ran again behind lens calls that had failed). The init
 // prompt carries the whole args, so it changes with ANY edit; placing it last keeps an edit from
 // invalidating the reviewers. Codex goes after the lenses for the same reason (codexModel /
-// codexEffort / codexCallPath only reach it). It is not a reviewer: it is not counted in
+// codexEffort / codexCallPath only reach it); the cost is that a finished codex seat runs again,
+// and pays for a new codex-call, whenever a lens call before it has no cached result. It is not a reviewer: it is not counted in
 // stats.agents / maxAgents / integrity — with checkpointing on, the run dispatches stats.agents + 1
 // agents (stats.checkpoint.initDispatched).
 const initThunk = CKPT

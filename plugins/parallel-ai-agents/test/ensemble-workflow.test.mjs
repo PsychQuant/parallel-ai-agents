@@ -604,7 +604,9 @@ test('#103 讀檔器：鍵不符、壞行、U+2028 不拆紀錄、finding 優先
   const fin = JSON.stringify({ kind: 'finding', severity: 'HIGH', title: '尾端的 finding', body: 'b'.repeat(400) })
   writeFileSync(file, [head, big, ...checked, fin].join('\n') + '\n')
   s = sh(reader, home)
-  assert.ok(s.out.includes('尾端的 finding'), '排在最後的 finding 沒有印出')
+  // 接回的輸出以 ASCII 印出（r8），非 ASCII 字元是 \uXXXX 跳脫
+  const esc = (t) => t.replace(/[^\x00-\x7f]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'))
+  assert.ok(s.out.includes(esc('尾端的 finding')), '排在最後的 finding 沒有印出')
   assert.match(s.out, /PAI_CHECKPOINT TRUNCATED \d+ record\(s\) not shown; read them from the file below/)
   assert.ok(s.out.includes('i0x'), '超大紀錄之後的紀錄一筆都沒印')
   assert.ok(!s.out.includes('y'.repeat(9000)), '超大紀錄被印出')
@@ -877,8 +879,7 @@ test('#103 r5：目錄型 artifact 的內容變了就不接回；超過 20000 �
   mkdirSync(join(src, '.git')); writeFileSync(join(src, '.git', 'index'), 'x')
   assert.match(sh(readerOf(p), home).out, /PAI_CHECKPOINT RESUME/, '.git 變動不該讓紀錄失效')
   spawnSync('python3', ['-c', 'import os,sys\nd=sys.argv[1]\nos.makedirs(d)\nfor i in range(20001): open(os.path.join(d,"f%d"%i),"w").close()', join(src, 'big')])
-  sh(readerOf(p), home)
-  assert.match(sh(readerOf(p), home).out, /reason: artifact-unhashable/, '超過上限仍被當成同一份內容')
+  assert.match(sh(readerOf(p), home).out, /PAI_CHECKPOINT DISABLED .*cannot be hashed/, '超過上限仍被當成同一份內容')
   assert.ok(existsSync(file))
   rmSync(home, { recursive: true, force: true })
 })
@@ -995,7 +996,7 @@ test('#103 r7：紀錄命令遇到任何壞輸入都印 REJECTED 且 exit 0；fi
   }
   const empty = fenced(p, "<<'PAI_EOF_").replace(/\n[^\n]*\n(PAI_EOF_[0-9a-f]{12})$/, '\n$1')
   assert.match(sh(empty, home).out, /^REJECTED/m, '空輸入沒有印 REJECTED')
-  const surrogate = sh(recordWith(p, '{"kind":"finding","title":"s","body":"lone \\ud800 surrogate"}'), home)
+  const surrogate = sh(recordWith(p, '{"kind":"finding","severity":"LOW","title":"s","body":"lone \\ud800 surrogate"}'), home)
   assert.match(surrogate.out, /^recorded/m, '孤立代理對應該寫得進去（以 ASCII 跳脫）')
   rmSync(home, { recursive: true, force: true })
 })
@@ -1005,8 +1006,8 @@ test('#103 r7：紀錄檔只含 ASCII，C1 控制字元、DEL、雙向覆寫不�
   const r = await promptsFor(BASE)
   const p = r.seen.get('review:architecture')
   const file = sh(readerOf(p), home).out.match(/PAI_CHECKPOINT FILE (.+)/)[1].trim()
-  const body = 'esc\u001b[31m c1\u009b del\u007f bidi‮ end'
-  assert.match(sh(recordWith(p, JSON.stringify({ kind: 'finding', title: 't', body })), home).out, /^recorded/m)
+  const body = 'esc\u001b[31m c1\u009b del\u007f bidi\u202e end'
+  assert.match(sh(recordWith(p, JSON.stringify({ kind: 'finding', severity: 'LOW', title: 't', body })), home).out, /^recorded/m)
   const raw = readFileSync(file)
   assert.ok(![...raw].some((b) => b > 0x7e && b !== 0x0a), '檔案裡有非 ASCII 位元組')
   assert.equal(JSON.parse(raw.toString('utf8').split('\n')[1]).body, body)
@@ -1055,7 +1056,7 @@ test('#103 r7：目錄型 artifact 的一般目錄也進雜湊：只改目錄權
   assert.match(sh(readerOf(p), home).out, /reason: artifact-changed/, '多一個空目錄仍接回')
   spawnSync('python3', ['-c', 'import os,sys\nfor i in range(20001): os.makedirs(os.path.join(sys.argv[1],"d%d"%i))', join(src, 'many')])
   assert.match(sh(recordWith(p, '{"kind":"checked","item":"x"}'), home).out, /recorded/)
-  assert.match(sh(readerOf(p), home).out, /reason: artifact-unhashable/, '兩萬個空目錄沒有算進上限')
+  assert.match(sh(readerOf(p), home).out, /PAI_CHECKPOINT DISABLED .*cannot be hashed/, '兩萬個空目錄沒有算進上限')
   rmSync(home, { recursive: true, force: true })
 })
 
@@ -1097,6 +1098,133 @@ test('#103 r7：codex 的紀錄或 done 命令失敗不影響 detach 結果；st
   const on = await promptsFor(BASE, reply)
   assert.deepEqual(on.out.stats.checkpoint.disabledSeats, ['review:security'])
   assert.deepEqual(on.out.stats.checkpoint.resumedSeats, [])
+})
+
+test('#103 r8：紀錄命令對極深的巢狀 JSON、NaN／Infinity 也印 REJECTED、exit 0、不寫入', async () => {
+  const home = tmpHome()
+  const r = await promptsFor(BASE)
+  const p = r.seen.get('review:architecture')
+  const file = sh(readerOf(p), home).out.match(/PAI_CHECKPOINT FILE (.+)/)[1].trim()
+  const before = readFileSync(file, 'utf8')
+  const deep = '['.repeat(100000) + ']'.repeat(100000)
+  const inputs = [
+    deep,
+    `{"kind":"finding","severity":"LOW","title":"t","body":"b","x":${deep}}`,
+    '{"kind":"finding","severity":"LOW","title":"t","body":"b","line":NaN}',
+    '{"kind":"checked","item":"x","n":Infinity}',
+    '{"kind":"checked","item":-Infinity}',
+  ]
+  for (const j of inputs) {
+    const s = sh(recordWith(p, j), home)
+    assert.match(s.out, /^REJECTED/m, `沒有印 REJECTED：${j.slice(0, 80)}\n${s.out.slice(0, 300)}`)
+    assert.ok(!/Traceback/.test(s.out), `印了 traceback：${j.slice(0, 80)}`)
+    assert.equal(s.code, 0, `exit 不是 0：${j.slice(0, 80)}`)
+  }
+  assert.equal(readFileSync(file, 'utf8'), before, '被拒的輸入仍寫進了檔案')
+  rmSync(home, { recursive: true, force: true })
+})
+
+test('#103 r8：finding 紀錄的 severity 要在 schema 的五個值內、file／line／lens 型別要對、不收多餘的鍵', async () => {
+  const home = tmpHome()
+  const r = await promptsFor(BASE)
+  const p = r.seen.get('review:architecture')
+  const file = sh(readerOf(p), home).out.match(/PAI_CHECKPOINT FILE (.+)/)[1].trim()
+  const before = readFileSync(file, 'utf8')
+  const bad = [
+    '{"kind":"finding","title":"t","body":"b"}',
+    '{"kind":"finding","severity":"BANANA","title":"t","body":"b"}',
+    '{"kind":"finding","severity":"high","title":"t","body":"b"}',
+    '{"kind":"finding","severity":["HIGH"],"title":"t","body":"b"}',
+    '{"kind":"finding","severity":"LOW","title":"t","body":"b","line":"x"}',
+    '{"kind":"finding","severity":"LOW","title":"t","body":"b","line":true}',
+    '{"kind":"finding","severity":"LOW","title":"t","body":"b","line":1.5}',
+    '{"kind":"finding","severity":"LOW","title":"t","body":"b","file":5}',
+    '{"kind":"finding","severity":"LOW","title":"t","body":"b","lens":{"a":1}}',
+    '{"kind":"finding","severity":"LOW","title":"t","body":"b","zzz":[1,2,3]}',
+    '{"kind":"checked","item":"x","extra":1}',
+  ]
+  for (const j of bad) {
+    const s = sh(recordWith(p, j), home)
+    assert.match(s.out, /^REJECTED/m, `沒有印 REJECTED：${j}\n${s.out}`)
+    assert.equal(s.code, 0, j)
+  }
+  assert.equal(readFileSync(file, 'utf8'), before, '形狀不對的紀錄仍寫進了檔案')
+  const good = [
+    '{"kind":"finding","severity":"HIGH","title":"t","body":"b","file":"a.js","line":3,"lens":"logic"}',
+    '{"kind":"finding","severity":"INFO","title":"t","body":"b"}',
+    '{"kind":"finding","severity":"LOW","title":"t","body":"b","file":null,"line":null,"lens":null}',
+    '{"kind":"checked","item":"x"}',
+  ]
+  for (const j of good) assert.match(sh(recordWith(p, j), home).out, /^recorded/m, j)
+  assert.match(fenced(p, "<<'PAI_EOF_").split('\n')[0], /^python3 -I -c '[^']*' \S+ <<'PAI_EOF_[0-9a-f]{12}'$/, '紀錄命令的 python 程式裡有單引號，會提早結束 shell 引號')
+  assert.match(p, /severity one of CRITICAL, HIGH, MEDIUM, LOW, INFO/, 'prompt 沒有說 severity 的值域')
+  assert.match(p, /no other keys/, 'prompt 沒有說不收多餘的鍵')
+  rmSync(home, { recursive: true, force: true })
+})
+
+test('#103 r8：接回時印出的紀錄只含 ASCII（C1 控制字元與雙向覆寫字元不會原樣印到 terminal）', async () => {
+  const home = tmpHome()
+  const r = await promptsFor(BASE)
+  const p = r.seen.get('review:architecture')
+  sh(readerOf(p), home)
+  const body = 'c1\u009b bidi\u202e del\u007f ls\u2028 nel\u0085 zw\u200b end'
+  assert.match(sh(recordWith(p, JSON.stringify({ kind: 'finding', severity: 'LOW', title: 't', body })), home).out, /^recorded/m)
+  const env = { ...process.env, HOME: home }
+  const out = spawnSync('bash', ['-c', readerOf(p)], { env, encoding: 'buffer' }).stdout
+  assert.match(out.toString('latin1'), /PAI_CHECKPOINT RESUME 1 record/)
+  assert.ok(![...out].some((b) => b > 0x7e && b !== 0x0a), '接回的輸出含非 ASCII 位元組')
+  rmSync(home, { recursive: true, force: true })
+})
+
+test('#103 r8：plugin 原始碼裡沒有原樣的雙向覆寫字元（以跳脫序列寫）', async () => {
+  const bidi = /[\u202a-\u202e\u2066-\u2069]/
+  const root = join(__dirname, '..')
+  const files = ['workflows/ensemble-workflow.js', 'test/ensemble-workflow.test.mjs', 'references/checkpoint-protocol.md', 'CHANGELOG.md']
+  for (const f of files) {
+    const lines = readFileSync(join(root, f), 'utf8').split('\n')
+    const hit = lines.findIndex((l) => bidi.test(l))
+    assert.equal(hit, -1, `${f}:${hit + 1} 含原樣的雙向覆寫字元`)
+  }
+})
+
+test('#103 r8：artifact 是指向目錄的 symlink 時，雜湊的是解析後的目錄（只改目標根目錄權限、改指到另一個同樣的目錄都不接回）', async () => {
+  const home = tmpHome()
+  const real = join(home, 'real'); mkdirSync(join(real, 'sub'), { recursive: true })
+  writeFileSync(join(real, 'sub', 'a.txt'), 'x\n')
+  chmodSync(real, 0o755)
+  const link = join(home, 'link')
+  spawnSync('ln', ['-s', real, link])
+  const r = await promptsFor({ profile: 'code', file: link, codexEnabled: false })
+  const p = r.seen.get('review:architecture')
+  const prime = () => { sh(readerOf(p), home); assert.match(sh(recordWith(p, '{"kind":"checked","item":"x"}'), home).out, /^recorded/m) }
+  prime()
+  assert.match(sh(readerOf(p), home).out, /PAI_CHECKPOINT RESUME/, '什麼都沒變卻不接回')
+  chmodSync(real, 0o777)
+  assert.match(sh(readerOf(p), home).out, /reason: artifact-changed/, '只改 symlink 目標根目錄的權限仍接回')
+  chmodSync(real, 0o755)
+  prime()
+  const copy = join(home, 'copy'); spawnSync('cp', ['-Rp', real, copy])
+  spawnSync('ln', ['-sfn', copy, link])
+  assert.match(sh(readerOf(p), home).out, /reason: artifact-changed/, 'symlink 改指到另一個目錄仍接回')
+  rmSync(home, { recursive: true, force: true })
+})
+
+test('#103 r8：目錄 artifact 超過上限時讀檔器回 DISABLED、不建檔、舊檔不動（席次自報 DISABLED，列在 stats）', async () => {
+  const home = tmpHome()
+  const src = join(home, 'src'); mkdirSync(src)
+  writeFileSync(join(src, 'a.txt'), 'x\n')
+  const r = await promptsFor({ profile: 'code', file: src, codexEnabled: false })
+  const p = r.seen.get('review:architecture')
+  const file = sh(readerOf(p), home).out.match(/PAI_CHECKPOINT FILE (.+)/)[1].trim()
+  assert.match(sh(recordWith(p, '{"kind":"checked","item":"x"}'), home).out, /^recorded/m)
+  const before = readFileSync(file, 'utf8')
+  spawnSync('python3', ['-c', 'import os,sys\nd=sys.argv[1]\nos.makedirs(d)\nfor i in range(20001): open(os.path.join(d,"f%d"%i),"w").close()', join(src, 'big')])
+  const s = sh(readerOf(p), home)
+  assert.match(s.out, /^PAI_CHECKPOINT DISABLED .*cannot be hashed/m, s.out)
+  assert.ok(!/PAI_CHECKPOINT FRESH/.test(s.out), `超過上限仍印 FRESH：${s.out}`)
+  assert.equal(readFileSync(file, 'utf8'), before, '舊檔被改動')
+  assert.ok(!existsSync(file + '.prev-1'), '舊檔被改名')
+  rmSync(home, { recursive: true, force: true })
 })
 
 // ── runner ── 新案請加在這條線之上；迴圈之後註冊的 test() 不會執行。
