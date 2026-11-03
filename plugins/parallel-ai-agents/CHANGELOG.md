@@ -35,7 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **所有席次的 prompt 都多了 checkpoint 段**（`checkpoint: false` 時除外）。升級後第一輪，舊版 run 的 journal 快取一律對不上，接回舊 run 會從頭跑。
 - **預設開啟時多派一個 agent**（`checkpoint-init`），每個席次的 prompt 變長（內嵌的讀檔器與紀錄命令），並多跑一個讀檔命令；席次每記一筆就要輸出一次紀錄命令。args 很大時 init 的成本也大。實測都在協定的已知限制。
-- **`bin/pai-build-diff` 不執行被審 repo 的 core.fsmonitor、hook、外部 diff 與 textconv**：加上 `-c core.fsmonitor=false`、`-c core.hooksPath=/dev/null`、`--no-ext-diff`、`--no-textconv`。使用者自己設定的 textconv 與外部 diff 也因此不套用，輸出一律是 git 原生的 unified diff。filter 的 clean 與 process 仍會在 `--diff` 模式執行：關掉它們，LFS 這類合法 filter 的 diff 就失真。`--diff` 遇到 stat 過期的檔時，會和 `git diff` 一樣改寫被審 repo 的 `.git/index`。
+- **`bin/pai-build-diff` 不執行被審 repo 的 core.fsmonitor、hook、外部 diff、textconv 與 transport 設定**：加上 `-c core.fsmonitor=false`、`-c core.hooksPath=/dev/null`、`-c protocol.allow=never`、`GIT_NO_LAZY_FETCH=1`（partial clone 缺物件時不 lazy fetch，也就不經 transport 呼叫 `core.gitProxy`）、`--no-ext-diff`、`--no-textconv`。使用者自己設定的 textconv 與外部 diff 也因此不套用，輸出一律是 git 原生的 unified diff。filter 的 clean 與 process 仍會在 `--diff` 模式執行：關掉它們，LFS 這類合法 filter 的 diff 就失真。`--diff` 遇到 stat 過期的檔時，會和 `git diff` 一樣改寫被審 repo 的 `.git/index`。
 - **`ensemble-eval` 量的 reviewer prompt 也變了**：存檔開啟時每個 reviewer 多了上面那段 prompt，並被要求邊審邊記錄，所以 2.26.0 前後量到的偵測率不能直接比較。eval 的每次 run 仍各給自己的 `checkpointDir`。
 - external-consumer contract 的派發前 throw 從一種（`agentModel`）變成三種（另加不合法的 `checkpointDir`／`checkpointRun`，以及不是布林值的 `checkpoint`，`null` 也算）。
 

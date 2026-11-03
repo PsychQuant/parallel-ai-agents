@@ -277,6 +277,27 @@ assert_index_hook_not_run() {
   assert_index_hook_not_run
 }
 
+# partial clone 缺 blob 時，git diff 走 lazy fetch，經 transport 呼叫 repo 設定的 core.gitProxy（R10 DA 實測）。
+@test "不可信的 repo：partial clone 缺 blob 時 lazy fetch 不執行 core.gitProxy（--diff 與 --commits）" {
+  hostile_hook
+  git -C "$REPO" config core.repositoryformatversion 1
+  git -C "$REPO" config extensions.partialClone origin
+  git -C "$REPO" config remote.origin.url git://127.0.0.1:9/x
+  git -C "$REPO" config remote.origin.promisor true
+  git -C "$REPO" config core.gitProxy "$HOOK"
+  local blob; blob="$(git -C "$REPO" rev-parse HEAD:a.txt)"
+  rm -f "$REPO/.git/objects/${blob:0:2}/${blob:2}"
+  dirty
+  # 前提：直接跑 git diff 會觸發（物件拿不到，git 本身以非零結束，這裡只看標記）
+  ( cd "$REPO" && git diff HEAD >/dev/null 2>&1 </dev/null ) || true
+  [ -e "$MARKER" ]
+  rm -f "$MARKER"
+  run "$BIN" -C "$REPO" --diff
+  [ ! -e "$MARKER" ]
+  run "$BIN" -C "$REPO" --commits 1
+  [ ! -e "$MARKER" ]
+}
+
 # ── 用法 / 未知 mode ────────────────────────────────────────
 
 @test "未知 mode --bogus → exit 1 且印『未知 MODE』（多位元組 regression）" {

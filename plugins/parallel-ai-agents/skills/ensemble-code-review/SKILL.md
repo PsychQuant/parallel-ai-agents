@@ -131,7 +131,7 @@ esac
 
 #### Backend A — Workflow（預設）
 
-> **存檔（#103）**：engine 預設把每個席次的進度存到 `~/.cache/pai-ensemble/`，永久保留、要清就手動刪。中斷後以 `resumeFromRunId` 接回時，沒跑完的席次會從檔案接著做。本 skill 開新的 run 不會接著做：每次的 diff 都寫到新的暫存路徑。另外會多派一個 `checkpoint-init` agent 存 args。協定見 `references/checkpoint-protocol.md`；不要存檔就在 args 加 `"checkpoint": false`。本 skill 每次把 diff 寫到新的暫存路徑，所以每個 run 都在 `~/.cache/pai-ensemble/` 留一個新目錄；diff 含秘密時，finding 引用的片段也會留在那裡，這種情形請關掉存檔。
+> **存檔（#103）**：engine 預設把每個席次的進度存到 `~/.cache/pai-ensemble/`，永久保留、要清就手動刪。中斷後以 `resumeFromRunId` 接回時，沒跑完的席次會從檔案接著做。本 skill 開新的 run 不會接著做：diff 模式每次把 diff 寫到新的暫存路徑；路徑模式每次的 `file` 相同，所以要傳 `checkpointRun`（見下方 args）。另外會多派一個 `checkpoint-init` agent 存 args。協定見 `references/checkpoint-protocol.md`；不要存檔就在 args 加 `"checkpoint": false`。因此每個 run 都在 `~/.cache/pai-ensemble/` 留一個新目錄；diff 含秘密時，finding 引用的片段也會留在那裡，這種情形請關掉存檔。
 >
 > - **artifact 指紋**：`checkpoint: false` 時沒有這一行，也不跑工具。其餘情形 `contextBlock` 的第一行是 `artifact sha256: <hash> inputs: <來源>`。路徑模式：hash 是 `"${CLAUDE_PLUGIN_ROOT}/bin/pai-artifact-fingerprint" "$FILE_OR_DIR"` 的輸出，`inputs:` 寫那個路徑。diff 模式：hash 是同一個工具對 `"$DIFF_FILE"` 的輸出，`inputs:` 寫 `pai-build-diff -C <repo 的絕對路徑> <mode> <ref 或 N>`；重算時以這些參數把 diff 建到新的 `mktemp` 暫存檔（權限也算在 hash 裡）、算它的 hash、刪掉它（exit 3 表示現在沒有變更，算不同）；`$DIFF_FILE` 已經刪掉時不能接回。工具失敗（含沒有 python3）時審閱照跑：這一輪改用 `"checkpoint": false`，報告裡寫出這一輪沒有接回保護。接回之前照協定的「artifact 指紋」重算比對。
 > - **在報告裡寫出存檔狀態**：Workflow 回傳後看 `stats.checkpoint`（run 中斷時沒有回傳，也就沒有這些）。`resumedSeats` 非空時，寫出這一輪接回了哪些席次（它們的結論有一部分來自中斷前的紀錄）；`disabledSeats` 非空時，寫出哪些席次這一輪沒有存檔；`argsSaved` 為 false 時，寫出 `args.json` 沒存。都沒有就不必提。
@@ -148,6 +148,7 @@ esac
      "agentModel": "<PAI_AGENT_MODEL 解析值（預設 opus，#20）>",
      "file": "<路徑模式：FILE_OR_DIR 絕對路徑>",
      "diffFile": "<diff 模式：Phase 1 的 $DIFF_FILE 絕對路徑>",
+     "checkpointRun": "<路徑模式：這次審閱開始時的臺北時間 YYYYMMDD-HHMM；diff 模式省略>",
      "customLenses": "<pai-collect-lens-layers 的 lenses（層 ②③）；無則省略>",
      "contextBlock": "artifact sha256: <工具的輸出> inputs: <給工具的參數>\n<focus + 內容類型 emphasis（見 Phase 1 表）>",
      "codexEnabled": true,
@@ -158,6 +159,7 @@ esac
    }
    ```
 
+   - **`checkpointRun`（路徑模式）**：審閱開始時決定一次，記在這次審閱的工作筆記；以 `resumeFromRunId` 接回時照原 args 傳同一個值。對同一個路徑重新審就換一個新值，否則會接著上一次中斷的席次做。
    - **path 模式傳 `file`、diff 模式傳 `diffFile`（擇一，不要兩個都傳）**。harness 的 `code` lens 與 Codex 都會用 file-read tool 讀 `diffFile` 並當 diff 審；`--replicas` 帶入時覆蓋預設 1。
 
    - `codexEnabled: true` → Codex（gpt-5.x）作為 barrier 內第 4 個 agent，shell 出去呼 `codexCallPath`（**絕不** `codex exec`），fail-soft：timeout/error 只回 1 個 INFO finding（不阻擋 Claude-lens verdict）。
