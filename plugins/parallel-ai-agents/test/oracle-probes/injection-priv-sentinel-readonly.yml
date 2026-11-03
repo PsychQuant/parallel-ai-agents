@@ -1,6 +1,6 @@
 # R58 F1（#33 verify R57 logic M／regression M／DA M，第 12 格）：**兩個哨兵位置只有一個寫得進去（私有哨兵 `<priv>/i` 唯讀 ∧ cwd 可寫，或反過來）**——這一格的可攜版本。
 # 真實的形狀是「求值者在只准寫 cwd，或寫不到 `/tmp` 的沙箱裡」（macOS 的 `sandbox-exec`，或 Linux 上只掛載工作區的 `bwrap` 這類；Linux 的 `PrivateTmp` 在 cwd 也位於 `/tmp` 底下時連 cwd 哨兵一起藏掉，不是這個形狀；真沙箱版見 `injection-fs-restricted.yml`，只在 macOS 跑）；
-# 這裡用 `chmod 0444 "$ORACLE_PRIV/i"` 模擬「私有哨兵寫不進去」，非 root 的環境（CI runner、開發機）都成立，所以 Linux 上也跑得了。
+# 這裡用 `chmod 0444 "$ORACLE_PRIV/i" "$ORACLE_PRIV/inject"` 模擬「私有哨兵寫不進去」（R64：R62 的 `priv-tmpdir` 那一次私有哨兵叫 `inject`，只改 `i` 的權限時 R1～R4 改由那一次命中〔#5〕、不再經隱藏 cwd 哨兵〔#13〕，這張探針因此失去區分力——R63 logic），非 root 的環境（CI runner、開發機）都成立，所以 Linux 上也跑得了。
 # **這是用步驟自己動儀器的手法去模擬一個沙箱的效果**：它不是在測「步驟弄瞎儀器」（那是停止規則的 PASS 類），而是在測『哨兵不能只有一個位置』——`5b5a46d` 的哨兵在步驟 cwd 底下；R50 改成只走 fd、R52 加上 `TMPDIR` 底下的私有路徑、R54 搬到 `/tmp/oXXXXXXXX/i`，
 # 搬家之後寫不到 `/tmp` 的求值者就看不到（R57 第 12 格）；R58 讓 E 組的 `$ORACLE_INJECT` 對 cwd 底下預先建好的哨兵與 `<priv>/i` 各試一次，`more()` 與 fd 197、`<priv>/i` 取 OR。第一版只指 cwd 是『搬走』不是『加上』（R5、R6）。
 # 以 root 執行時 `chmod` 擋不住寫入，各格因此仍判『繞過』而通過、但沒有量到東西（推論，沒有以 root 實跑）。
@@ -27,28 +27,28 @@ jobs:
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
-          chmod 0444 "$ORACLE_PRIV/i" 2>/dev/null || :
+          chmod 0444 "$ORACLE_PRIV/i" "$ORACLE_PRIV/inject" 2>/dev/null || :
           { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "-c", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
       - name: R2 arithmetic, close_fds, env kept, private sentinel read-only
         shell: bash
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
-          chmod 0444 "$ORACLE_PRIV/i" 2>/dev/null || :
+          chmod 0444 "$ORACLE_PRIV/i" "$ORACLE_PRIV/inject" 2>/dev/null || :
           { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "-c", "t=$0; (( t )) || :", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
       - name: R3 IFS-empty eval, close_fds, env kept, private sentinel read-only
         shell: bash
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
-          chmod 0444 "$ORACLE_PRIV/i" 2>/dev/null || :
+          chmod 0444 "$ORACLE_PRIV/i" "$ORACLE_PRIV/inject" 2>/dev/null || :
           { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "-c", "IFS=; eval \"$0\"", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
       - name: R4 private sentinel read-only and cwd read-only (no new files), close_fds, env kept
         shell: bash
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
-          chmod 0444 "$ORACLE_PRIV/i" 2>/dev/null || :
+          chmod 0444 "$ORACLE_PRIV/i" "$ORACLE_PRIV/inject" 2>/dev/null || :
           chmod 0555 . 2>/dev/null || :
           { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "-c", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
           chmod 0755 . 2>/dev/null || :

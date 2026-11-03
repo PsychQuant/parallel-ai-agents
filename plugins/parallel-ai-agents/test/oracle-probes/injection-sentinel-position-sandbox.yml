@@ -7,7 +7,7 @@
 #   SP6  同 SP5，算術脈絡。
 #   SP7  Python `env={}` 代替 `env -i`（regression 的 B3）：沙箱拒寫 `/private/tmp`、關 fd，命令位置。
 #   SP8  對照組：沙箱只拒寫 `/private/tmp`、fd 保留（所有樹都命中）。
-#   SP9  沙箱拒寫 `/private/tmp` 與整個 `TMPDIR`，**只放行基名為 `inject` 的檔案**，再拒寫 cwd 子樹，關 fd、環境保留，命令位置——`32d45ff` 的私有哨兵 `<TMPDIR>/oXXXXXXXX/inject` 的**檔名**也是歷史位置的一部分（Codex 預審 M1：R62 第一版的 `priv-tmpdir` 用 `<priv>/i`，SP1～SP7 的沙箱只擋目錄、看不出檔名，全綠）。
+#   SP9  沙箱拒寫 `/private/tmp` 與整個 `TMPDIR`，**只放行基名為 `inject` 的檔案**，再拒寫 cwd 子樹，關 fd、環境保留，命令位置——`32d45ff` 的私有哨兵 `<TMPDIR>/tmpXXXXXXXX/inject`（R64 更正：前一版寫成 `oXXXXXXXX`）的**檔名**也是歷史位置的一部分（Codex 預審 M1：R62 第一版的 `priv-tmpdir` 用 `<priv>/i`，SP1～SP7 的沙箱只擋目錄、看不出檔名，全綠）。
 #   SP10 同 SP9，算術脈絡。
 #   SP11 沙箱拒寫 `/private/tmp` 與整個 `TMPDIR`，只放行對**既有**的 `<cwd>/inject` 做資料寫入（`file-write-data`；不放行建立），關 fd、環境保留，命令位置——`cwd-vis` 預先建好那個檔案才寫得進去（Codex 預審 LOW：拿掉預先建檔的突變體沒有其他格抓得到）。
 #   SP12 同 SP11，算術脈絡。

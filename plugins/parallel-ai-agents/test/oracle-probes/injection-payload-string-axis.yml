@@ -1,0 +1,44 @@
+# R64（#33 verify R63 第 2 列，requirements 的『第四個軸』）：**payload 字串軸的可攜版**。四格（真 lint `--strict` 全部放行，全部要判『不一致：繞過（注入）』）：
+#   PL1  求值者只在標題含 `;` 時才執行它（Python `subprocess`，關 fd、保留環境），命令位置——`32d45ff` 的 #4～#7 是複合寫法、含 `;`，R54 起神諭的 payload 沒有一組含 `;`。
+#   PL2  求值者只在標題**不計路徑**的長度 ≥ 70 時才執行它——不計路徑時，非複合 payload 最長 63 字（#15），`32d45ff` 的複合組 #17～#19 是 72／75／81 字（#20 是 62 字，不達門檻）。
+#        不能用原始長度：路徑長度隨平台變（`TMPDIR=/tmp` 時 `/tmp/tmpXXXXXXXX/inject` 23 字，macOS 預設 `TMPDIR` 約 67 字）。這張探針的第一版用原始長度 ≥ 120，在 macOS 過、在 `TMPDIR=/tmp`（Linux CI）判『一致』（複合組只有 96～118 字），第 111 項在 ubuntu 會紅；發 commit 前的宣稱查核抓到，本機以 `TMPDIR=/tmp` 重現。
+#   PL3  同 PL1，算術脈絡。
+#   PL0  對照組：不把關，所有樹都命中。
+# R64 把 `32d45ff` 的四組加回 `INJECT_PAYLOADS` 末端（#17～#20），凍結表與檢查在 `oracle_history.py`（`HISTORICAL_PAYLOADS`）；這張探針是那張表的行為面。
+# **負對照**（2026-11-03，這張探針放進各棵樹、用各樹自己的神諭與 lint `--strict`，macOS 預設 `TMPDIR` 與 `TMPDIR=/tmp` 各一次，兩者結果相同）：`32d45ff` 判四格繞過（payload #4）；`636fcfe` 與 `8292d86`（R62）判 PL1～PL3『一致』、PL0 繞過（#5）。
+
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: PL1 evaluator runs the title only when it contains a semicolon, close_fds, env kept, command position
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import sys, subprocess; t = sys.argv[1]; ";" in t and subprocess.run(["/bin/bash", "-c", t])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: PL2 evaluator runs the title only when it is at least 70 characters not counting paths, close_fds, env kept, command position
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import re, sys, subprocess; t = sys.argv[1]; len(re.sub("/[^ ;$)>]*", "", t)) >= 70 and subprocess.run(["/bin/bash", "-c", t])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: PL3 same gate as PL1, arithmetic context
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import sys, subprocess; t = sys.argv[1]; ";" in t and subprocess.run(["/bin/bash", "-c", "t=$0; (( t )) || :", t])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: PL0 control no gate, close_fds, env kept, command position
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "-c", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py

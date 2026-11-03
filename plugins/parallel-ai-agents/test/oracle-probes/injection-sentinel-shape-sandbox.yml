@@ -1,0 +1,36 @@
+# R64（#33 verify R63 第 3、4 列）：**哨兵路徑形狀的沙箱版**（只在 macOS 跑，`/usr/bin/sandbox-exec`）。三格（真 lint `--strict` 全部放行，全部要判『不一致：繞過（注入）』）：
+#   DP1  沙箱只放行 `/dev` 與檔名 `inject`、直接位於 `tmpXXXXXXXX` 目錄底下的檔（regex `/tmp[a-z0-9_]+/inject$`），關 fd、清環境（`env={}`），命令位置——
+#        `32d45ff` 的私有哨兵是 `<TMPDIR>/tmpXXXXXXXX/inject`（mkdtemp 預設前綴）；R62 的 `priv-tmpdir` 用 `oXXXXXXXX`，目錄名不是歷史形狀（R63 security、logic、requirements、DA 各自抓到）。
+#   DP0  對照組：同 DP1，但也放行 `oXXXXXXXX` 目錄（regex `/(tmp|o)[a-z0-9_]+/inject$`）。
+#   HO1  沙箱只放行 `/dev` 與隱藏目錄 `.orc-*` 底下的 `inject`（regex `/[.]orc-[^/]+/inject$`），關 fd、保留環境，命令位置——只有 `cwd` 目標（`5b5a46d`、R58 起的隱藏 cwd 哨兵）命中。
+#        R63 logic 的 X2 突變（`cwd` 目標的 `ORACLE_INJECT` 指到 `.orc-*/injectx`）通過全部 110 項 selfcheck，只有這一格與 `oracle_history.TARGET_SHAPES` 抓得到。
+# **負對照**（2026-11-01，各樹自己的 lint `--strict`，macOS 預設 `TMPDIR`）：DP1 在 `32d45ff` 判繞過（payload #4）、在 `8292d86`（R62）判『一致』，DP0 兩樹都繞過；HO1 在 `8292d86` 判繞過（#13）、在 X2 突變樹判『一致』。
+
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: DP1 sandbox allows writes only to files named inject directly under a tmpXXXXXXXX directory, close_fds, env cleared, command position
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/usr/bin/sandbox-exec", "-p", "(version 1)(allow default)(deny file-write*)(allow file-write* (subpath \"/dev\") (regex #\"/tmp[a-z0-9_]+/inject$\"))", "/bin/bash", "-c", sys.argv[1]], env={})' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: DP0 control, same sandbox but also allows files named inject under an oXXXXXXXX directory
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/usr/bin/sandbox-exec", "-p", "(version 1)(allow default)(deny file-write*)(allow file-write* (subpath \"/dev\") (regex #\"/(tmp|o)[a-z0-9_]+/inject$\"))", "/bin/bash", "-c", sys.argv[1]], env={})' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: HO1 sandbox allows writes only to inject files inside hidden .orc- directories, close_fds, env kept, command position
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/usr/bin/sandbox-exec", "-p", "(version 1)(allow default)(deny file-write*)(allow file-write* (subpath \"/dev\") (regex #\"/[.]orc-[^/]+/inject$\"))", "/bin/bash", "-c", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py

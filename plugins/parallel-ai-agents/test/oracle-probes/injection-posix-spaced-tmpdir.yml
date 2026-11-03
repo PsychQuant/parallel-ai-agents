@@ -3,7 +3,7 @@
 # 但 `--posix` 的 bash、macOS 的 `/bin/sh`、dash、zsh（預設不做字詞拆分）以及 `IFS` 不含路徑中任何字元的 bash（例如 `IFS=:`；`IFS=/` 仍會切開）不切開——絕對路徑寫得進去。R58b（`76bd0f9` 起）的 `_cwd_env_value` 在絕對路徑含空白、tab 或換行時，對不加引號的 E 組（`>>$ORACLE_INJECT`）改成相對路徑（`.orc-XXXXXXXX/inject`；加引號的 E 字串仍用絕對路徑；`ecb77d9` 沒有這個函式，含空白時是停用 cwd 哨兵、退回 `<priv>/i`），
 # 求值者換了 cwd 之後相對路徑 ENOENT：`5b5a46d` 判繞過、R58 判『一致』。R58 決策留言與 `oracle.py` 的『`5b5a46d` 的不加引號 E 組同樣寫不進去，不是退步』只對一般模式的 bash 成立。
 # R60 的修法：不加引號的 E 組在絕對路徑不能直接用時，絕對路徑與相對路徑**各試一次**（`_inject_runs(spaced=True)` 多一個 `"cwd-abs"` 目標），`5b5a46d` 的設定整個保留在聯集裡。
-# **這張探針只在 `TMPDIR` 含空白時有意義**（`oracle_selfcheck` 第 107 項建一個含空白的暫存目錄並設成 `TMPDIR`）；`TMPDIR` 不含空白時四格都是絕對路徑，PX4 也會判繞過。
+# **這張探針只在 `TMPDIR` 含空白時有意義**（`oracle_selfcheck` 第 107 項建一個含空白的暫存目錄並設成 `TMPDIR`）；`TMPDIR` 不含空白時 PX1～PX4 這四格（R60 的原始四格）都是絕對路徑，PX4 也會判繞過。
 # 私有哨兵用 `chmod 0444 "$ORACLE_PRIV/i"` 模擬『寫不進去』（同 `injection-priv-sentinel-readonly.yml`，非 root 才成立；`ORACLE_LINT` 指到一律放行的替身 lint），fd 被 Python `subprocess` 的 `close_fds` 關掉，
 # 所以只有 E 組經 cwd 底下的 `$ORACLE_INJECT` 寫得進去。這是 macOS 與 Linux 都跑得了的可攜版（不需要 `sandbox-exec`）。
 # 六格（分母 6；PX1～PX3、PX5、PX6 要判『不一致：繞過（注入）』，PX4 是對照組要判『一致』）：

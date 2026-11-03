@@ -69,6 +69,7 @@ PAI = PACK.parent / "parallel-ai-agents"
 LINT = PAI / "test" / "lint-ci-log-filter.sh"
 ORACLE = PAI / "test" / "oracle.py"
 SELFCHECK = PAI / "test" / "oracle_selfcheck.py"
+HISTORY = PAI / "test" / "oracle_history.py"   # R64：歷史注入設定的凍結表與逐目標履行檢查（`oracle_selfcheck` 匯入）
 def oracle_env_names(src):
     """`oracle.py` 原始碼的 AST 裡**任何 str／bytes 常數節點（含 f-string 的字面片段、隱式串接後的整串、跳脫解開後的值）、而且完全符合 `ORACLE_[A-Z0-9_]+`** 的名字（R52，#33 verify R51 宣稱查核 B、D 組；bytes 常數 R56 起收）——不管它怎麼被讀（`os.environ.get`／`os.getenv`／`os.environ[…]`／單引號／帶數字的名稱／`from os import environ`／`os.environb`）。
     這是**以性質定義**的，不是列舉：parser 會把隱式串接（`"ORACLE_" "X"`，含跨行）摺成一個常數，所以那種寫法抓得到；**不符合這個性質的都抓不到**。已知抓不到的例子（**不是完整列舉**；R56 第一版寫成『封閉列舉四類』，C 組找到七個反例而推翻）：
@@ -114,13 +115,15 @@ SUITES = {
     # R58 F3（#33 verify R57 Codex 1）：`oracle_selfcheck.py` 的比對器 `text_ok`（R56 起負責『原因比對』）自己的單元測試。其他守備單位的靶動的是 `oracle.py`、lint、`validate.py`、`neutralise.py`，沒有一個動 `oracle_selfcheck.py`，正向的 selfcheck 在比對器被改成永遠接受時
     # 不可能變紅——只有這個 suite 會。被突變的檔是 `oracle_selfcheck.py`，驗證指令是它的 `--selftest-matcher`（不跑神諭，秒級）。
     "selfcheck-matcher": (SELFCHECK, lambda: [sys.executable, "test/oracle_selfcheck.py", "--selftest-matcher"], PAI),
+    # R64（#33 verify R63 第 2～4 列）：`oracle_history.py` 的檢查本身。被突變的檔是它，驗證指令同上（`--selftest-matcher` 以假輸入逐案驗證三個檢查）。
+    "history-matcher": (HISTORY, lambda: [sys.executable, "test/oracle_selfcheck.py", "--selftest-matcher"], PAI),
     # R58 F3（#33 verify R57 regression LOW）：`oracle.py` 第 2 行的 coding cookie 在 Python 3.9 上是承重的（R55 的 `SyntaxError`）；守住它的是 `test_validate` 的 `test_non_ascii_test_scripts_declare_utf8`，
     # 這個 suite 讓『拿掉 cookie』變成一個會被殺的靶（被突變的檔是 `oracle.py`，驗證指令只跑那一條測試）。
     "oracle-cookie": (ORACLE, lambda: [sys.executable, str(TESTS), "-k", "test_non_ascii_test_scripts_declare_utf8"], PACK),
 }
 
 # ── 結果快取（R39，使用者提議：沒改變就沿用 JSON 記錄）──────────────────────────────────
-# 每個守備單位的驗證指令讀得到的**輸入檔**（被突變的那個檔另外以正規化內容計入 key）。封閉列舉，只有這七組（`selfcheck-matcher` 只讀 `oracle_selfcheck.py`；`oracle-cookie` 同 `validate`，整個 repo）：
+# 每個守備單位的驗證指令讀得到的**輸入檔**（被突變的那個檔另外以正規化內容計入 key）。封閉列舉，只有這八組（`selfcheck-matcher` 與 R64 的 `history-matcher` 讀 `oracle_selfcheck.py` 與它匯入的 `oracle_history.py`；`oracle-cookie` 同 `validate`，整個 repo）：
 #   · `lint`：selftest 只讀 fixture。
 #   · `oracle`／`oracle-inverted`：神諭讀 fixture、反向探針與假 lint，並執行 lint 本身（lint 以原文計入，見 `source_for_key`）。
 #   · `validate`／`neutralise`：`test_validate.py` 讀的範圍很廣（整個 `plugins/`、`.github/workflows/test.yml`、skills、bin
@@ -136,12 +139,13 @@ _NOT_READ = frozenset({str(_PAI_TEST.parent / "CHANGELOG.md")})
 SUITE_INPUTS = {
     "lint": [(REPO_ROOT, [str(_PAI_TEST / "fixtures" / "*")])],
     "oracle": [(REPO_ROOT, [str(_PAI_TEST / "fixtures" / "*"), str(_PAI_TEST / "oracle-probes" / "**" / "*"),
-                            str(_PAI_TEST / "oracle_selfcheck.py"), str(_PAI_TEST / "lint-ci-log-filter.sh")])],
+                            str(_PAI_TEST / "oracle_selfcheck.py"), str(_PAI_TEST / "oracle_history.py"), str(_PAI_TEST / "lint-ci-log-filter.sh")])],
     "validate": [(REPO_ROOT, ["**/*"], _NOT_READ)],
     "neutralise": [(REPO_ROOT, ["**/*"], _NOT_READ)],
 }
 SUITE_INPUTS["oracle-inverted"] = SUITE_INPUTS["oracle"]
-SUITE_INPUTS["selfcheck-matcher"] = [(REPO_ROOT, [str(_PAI_TEST / "oracle_selfcheck.py")])]
+SUITE_INPUTS["selfcheck-matcher"] = [(REPO_ROOT, [str(_PAI_TEST / "oracle_selfcheck.py"), str(_PAI_TEST / "oracle_history.py")])]
+SUITE_INPUTS["history-matcher"] = SUITE_INPUTS["selfcheck-matcher"]
 SUITE_INPUTS["oracle-cookie"] = SUITE_INPUTS["validate"]
 
 
@@ -1736,7 +1740,7 @@ MUTATIONS += [
     ('oracle: 程式碼行 Dc 不寫 fd 197（只有 dash ∧ `IFS=` 之後的 `eval` ∧ 刪目錄；R53 Codex 1 → selfcheck 98 的第二個 step）',
      '"echo " + INJECT_MARKER + " >/dev/fd/197 || :",\n', '"echo " + INJECT_MARKER + " >/dev/null || :",\n', 'oracle-inverted'),
     ('oracle: payload D 又用 `>&197`（dash 把兩位數的 fd 重導向當語法錯誤，整段 payload 不執行；R51 E 組 → selfcheck 98 的第一個 step）',
-     '">/dev/fd/197||:)"', '">&197||:)"', 'oracle-inverted'),
+     '_INJECT_D = "$(echo${IFS}" + INJECT_MARKER + ">/dev/fd/197||:)"', '_INJECT_D = "$(echo${IFS}" + INJECT_MARKER + ">&197||:)"', 'oracle-inverted'),
     ('oracle: 注入哨兵不收 fd 197（刪掉私有目錄就把哨兵弄瞎；R51 DA → selfcheck 81）',
      'INJECT_MARKER.encode() in data[FD_INJECT] or', 'False or', 'oracle-inverted'),
     ('oracle: bare `-` 往上走只跨註解行、不跨空行（R51 requirements 6／security／regression → selfcheck 83、84）',
@@ -1800,7 +1804,7 @@ MUTATIONS += [
     ('oracle: 拿掉三組 `PWD[…$ORACLE_INJECT…]` payload E（算術脈絡截到 54–55／`-v` 57–58／`-n -o -v` 63–64 字、換斜線的算術；R55 requirements M → selfcheck 100、--selftest-aud）',
      '                   "PWD[" + _INJECT_E + "]",\n                   "-v PWD[" + _INJECT_E + "]",\n                   "-n -o -v PWD[" + _INJECT_E + "]",\n', '', 'oracle-inverted'),
     ('oracle: 拿掉 `5b5a46d` 的程式碼行 `echo M >> "$ORACLE_INJECT"`（`IFS=` 之後的 `eval` ∧ 換斜線 ∧ 關 fd ∧ 保留環境，只有字面空白的 #16 命中；R55 requirements M → selfcheck 100 的 U2 格、--selftest-aud 的字面守衛；A1／A3／SL 由 #13 先命中，不靠它）',
-     '                   "echo " + INJECT_MARKER + \' >> "$ORACLE_INJECT"\')', '                   "echo " + INJECT_MARKER + " >/dev/null")', 'oracle-inverted'),
+     '                   "echo " + INJECT_MARKER + \' >> "$ORACLE_INJECT"\',', '                   "echo " + INJECT_MARKER + " >/dev/null",', 'oracle-inverted'),
     ('oracle: 注入探針那一次不導出 `ORACLE_INJECT`（四組 E payload 都寫不到哨兵；R55 requirements M → selfcheck 100）',
      '            env["ORACLE_INJECT"] = cwd_env if cwd_sent_on else sent\n', '', 'oracle-inverted'),
     # ── R56 E4：私有路徑的長度旋鈕（`prefix` 與 `dir=_short_tmp()`）。R54 的守衛量寫死的假路徑，這兩個旋鈕沒有網（R55 logic M）；現在 `--selftest-aud` 量 `_priv_scratch()` 實際建出的路徑，selfcheck 101 在邊界截斷處量行為 ──
@@ -1814,9 +1818,9 @@ MUTATIONS += [
     ('oracle: 私有目錄不放 `/tmp`（`dir=_short_tmp()` → 預設 `TMPDIR`；macOS 約 49 字，Linux 的 `TMPDIR` 未設時等價——守衛把 `TMPDIR` 設成長目錄，所以兩個平台都殺；R55 logic M → --selftest-aud、selfcheck 101〔macOS〕）',
      'return _Scratch(prefix="o", dir=_short_tmp())', 'return _Scratch(prefix="o", dir=None)', 'oracle-inverted'),
     # ── R58 F1（#33 verify R57 第 12 格）：`$ORACLE_INJECT` 指到步驟 cwd 底下另建的哨兵（`5b5a46d` 的位置），`more()` 與 fd 197、`<priv>/i` 取 OR。字串補回來了、位置沒有——求值者寫不到 `/tmp` 或只准寫 cwd 時 R54～R57 看不到 ──
-    ('oracle: `ORACLE_INJECT` 不指到 cwd 哨兵（退回 R56 的 `<priv>/i`；寫不到 `/tmp` 的求值者看不到 E 組；R57 第 12 格 → selfcheck 103、105〔macOS〕）',
+    ('oracle: `ORACLE_INJECT` 不指到 cwd 哨兵（退回 R56 的 `<priv>/i`；寫不到 `/tmp` 的求值者看不到 E 組；R57 第 12 格 → 原註明 selfcheck 103、105〔macOS〕；R63 指出原註明的殺手在 R62 失去區分力（`priv-tmpdir` 那一次讓 103／105 改由 #5 命中）——R64 讓 103 的唯讀模擬涵蓋 `inject`、另加逐目標履行檢查，實際殺手記在 R64 量測紀錄的殺手欄）',
      'env["ORACLE_INJECT"] = cwd_env if cwd_sent_on else sent', 'env["ORACLE_INJECT"] = sent', 'oracle-inverted'),
-    ('oracle: E 組只試 cwd 目標、不再試 `<priv>/i`（求值者寫不進 cwd、寫得進 `/tmp` 時比 `6490b57` 還弱；R58 宣稱查核 C 組第 1 列 → selfcheck 103 的 R5、R6、105 的 SB7、SB8〔macOS〕）',
+    ('oracle: E 組只試 cwd 目標、不再試 `<priv>/i`（求值者寫不進 cwd、寫得進 `/tmp` 時比 `6490b57` 還弱；R58 宣稱查核 C 組第 1 列 → 原註明 selfcheck 103 的 R5、R6、105 的 SB7、SB8〔macOS〕；R63 指出原註明的殺手在 R62 失去區分力（`priv-tmpdir` 那一次讓 103／105 改由 #5 命中）——R64 讓 103 的唯讀模擬涵蓋 `inject`、另加逐目標履行檢查，實際殺手記在 R64 量測紀錄的殺手欄）',
      '        else:\n            targets = ["cwd", "priv"]', '        else:\n            targets = ["cwd"]', 'oracle-inverted'),
     ('oracle: `inject_to` 被忽略（每一次注入都建 cwd 哨兵並導出指到它；E 組的 priv 那一次沒有 priv 可指，R5、R6、SB7、SB8 判一致，非 E 組的注入執行也多出 `.orc-XXXX/`，R7 判一致；A2 的 M15 → selfcheck 103 的 R5～R7、105 的 SB7、SB8〔macOS〕）',
      '            if inject_to in ("cwd", "cwd-abs"):\n                _ph, abs_ok = _cwd_sentinel(d)', '            if True:\n                _ph, abs_ok = _cwd_sentinel(d)', 'oracle-inverted'),
@@ -1826,11 +1830,11 @@ MUTATIONS += [
      "    if '\"$ORACLE_INJECT\"' in payload or force_abs:", '    if force_abs:', 'oracle-inverted'),
     ('oracle: 非 E 組的注入執行也試 cwd 目標（多建一個 `.orc-XXXX/`，檢查 cwd 有沒有點檔的步驟提早結束；A2 的 M15 → selfcheck 103 的 R7〔釘 payload #1：不然 E 組的 priv 那一次救回判定，只剩編號不同〕）',
      '            targets = ["priv"]\n        elif spaced', '            targets = ["cwd"]\n        elif spaced', 'oracle-inverted'),
-    ('oracle: `more()` 不讀 cwd 哨兵（E 組寫進去的標記沒人看；R57 第 12 格 → selfcheck 103）',
+    ('oracle: `more()` 不讀 cwd 哨兵（E 組寫進去的標記沒人看；R57 第 12 格 → 原註明 selfcheck 103；R63 指出原註明的殺手在 R62 失去區分力（`priv-tmpdir` 那一次讓 103／105 改由 #5 命中）——R64 讓 103 的唯讀模擬涵蓋 `inject`、另加逐目標履行檢查，實際殺手記在 R64 量測紀錄的殺手欄）',
      'inj_cwd, _why = _read_regular(cwd_sent, label="注入哨兵檔（cwd）")', 'inj_cwd = b""', 'oracle-inverted'),
-    ('oracle: 判定不看 cwd 哨兵的內容（`or INJECT_MARKER.encode() in inj_cwd` 拿掉；R57 第 12 格 → selfcheck 103）',
+    ('oracle: 判定不看 cwd 哨兵的內容（`or INJECT_MARKER.encode() in inj_cwd` 拿掉；R57 第 12 格 → 原註明 selfcheck 103；R63 指出原註明的殺手在 R62 失去區分力（`priv-tmpdir` 那一次讓 103／105 改由 #5 命中）——R64 讓 103 的唯讀模擬涵蓋 `inject`、另加逐目標履行檢查，實際殺手記在 R64 量測紀錄的殺手欄）',
      ' or INJECT_MARKER.encode() in inj_cwd,', ',', 'oracle-inverted'),
-    ('oracle: cwd 哨兵不預先建檔（求值者只准改既有的檔、不准建新檔時，E 組的 `>>` 建不出來；`5b5a46d` 預先建檔；R58 宣稱查核 B 組 → selfcheck 103 的 R4、105 的 SB5／SB6〔macOS〕）',
+    ('oracle: cwd 哨兵不預先建檔（求值者只准改既有的檔、不准建新檔時，E 組的 `>>` 建不出來；`5b5a46d` 預先建檔；R58 宣稱查核 B 組 → 原註明 selfcheck 103 的 R4、105 的 SB5／SB6〔macOS〕；R63 指出原註明的殺手在 R62 失去區分力（`priv-tmpdir` 那一次讓 103／105 改由 #5 命中）——R64 讓 103 的唯讀模擬涵蓋 `inject`、另加逐目標履行檢查，實際殺手記在 R64 量測紀錄的殺手欄）',
      '                cwd_sent = os.path.join(cwd_dir, "inject")\n                open(cwd_sent, "w").close()', '                cwd_sent = os.path.join(cwd_dir, "inject")\n                pass', 'oracle-inverted'),
     ('oracle: cwd 哨兵路徑不檢查字元（`TMPDIR` 含空白時 `>>$ORACLE_INJECT` 變成 ambiguous redirect；R58 F1 → --selftest-aud）',
      '    if _env_expansion_ok(path):\n        return path, True\n    _warn_cwd_sentinel_unavailable()', '    if True:\n        return path, True\n    _warn_cwd_sentinel_unavailable()', 'oracle-inverted'),
@@ -1897,23 +1901,23 @@ MUTATIONS += [
     ('selfcheck: `tool_usable` 只擋被信號終止（負的結束碼）、不看一般的非零結束碼（`== 0` → `>= 0`；外層沙箱擋掉它時仍當成可用，第 105 項八格全判一致而紅，看起來像神諭回歸；R59 Codex 3 的非零退出案 → `--selftest-matcher`）',
      'capture_output=True, timeout=timeout).returncode == 0', 'capture_output=True, timeout=timeout).returncode >= 0', 'selfcheck-matcher'),
     # ── R62 H1／H2（R61 的哨兵位置軸：`32d45ff` 的 `TMPDIR` 私有目錄、`28ec8c3` 的 cwd 頂層哨兵）──
-    ('oracle: `_inject_runs` 不加 `cwd-vis` 目標（cwd 頂層的可見哨兵；R50 移除、R61 logic 第 14 格，`28ec8c3` 判繞過、R60 判一致 → selfcheck 108 PB1／PB2、109 SP5／SP6、哨兵位置 manifest）',
+    ('oracle: `_inject_runs` 不加 `cwd-vis` 目標（cwd 頂層的可見哨兵；R50 移除、R61 logic 第 14 格，`28ec8c3` 判繞過、R60 判一致 → 歷史哨兵位置 manifest；原註明的 selfcheck 108 PB1／PB2、109 SP5／SP6 在 R62 失去區分力，實際殺手見 R64 量測紀錄的殺手欄）',
      '        if is_e:\n            targets.append("cwd-vis")', '        if False:\n            targets.append("cwd-vis")', 'oracle-inverted'),
     ('oracle: `_inject_runs` 不加 `priv-tmpdir` 目標（預設 `TMPDIR` 底下的私有目錄；R54 搬到 `/tmp`、R61 的 blocking，`32d45ff` 判繞過、R60 判一致 → selfcheck 108 PA1／PA2、109 SP1～SP4、哨兵位置 manifest）',
      '        if tmpdir_priv and (is_e or INJECT_PATH_TOKEN in pl):', '        if False and (is_e or INJECT_PATH_TOKEN in pl):', 'oracle-inverted'),
     ('oracle: `priv-tmpdir` 只給 E 組、不給含字面路徑的 payload（P 組；PA1 的求值者 `env -i`，E 組讀不到 `$ORACLE_INJECT` → selfcheck 108 PA1／PA2）',
      '(is_e or INJECT_PATH_TOKEN in pl):\n            targets.append("priv-tmpdir")', 'is_e:\n            targets.append("priv-tmpdir")', 'oracle-inverted'),
-    ('oracle: `cwd-vis` 排在序列最前面（R60 的目標序列不再是前綴，報出來的 payload 編號與歸因會變 → 哨兵位置 manifest 的前綴檢查）',
+    ('oracle: `cwd-vis` 排在序列最前面（R60 的目標序列不再是每個 payload 內的前綴 → 哨兵位置 manifest 的前綴檢查；報出來的 payload 編號不會變——命中的是 payload 本身、目標不印出來，R63 logic 更正前一版『編號與歸因會變』）',
      '        if is_e:\n            targets.append("cwd-vis")', '        if is_e:\n            targets.insert(0, "cwd-vis")', 'oracle-inverted'),
     ('oracle: `_tmpdir_priv_ok` 永遠回 False（`priv-tmpdir` 整個不跑；R61 → selfcheck 108 PA1／PA2、--selftest-aud）',
-     '    return _inject_path_ok(os.path.join(tempfile.gettempdir(), "oxxxxxxxx", PRIV_TMPDIR_SENTINEL))', '    return False', 'oracle-inverted'),
+     '    return _inject_path_ok(os.path.join(tempfile.gettempdir(), "tmpxxxxxxxx", PRIV_TMPDIR_SENTINEL))', '    return False', 'oracle-inverted'),
     ('oracle: `_tmpdir_priv_ok` 在 `TMPDIR=/tmp` 時排除 `priv-tmpdir`（回到 R62 前一版：Linux CI 上只放行基名 `inject` 的求值者，`32d45ff` 命中而 `priv` 〔檔名 `i`〕不命中；Codex 第二次核對 #5 → --selftest-aud 的 `_tmpdir_priv_ok` 案）',
-     '    return _inject_path_ok(os.path.join(tempfile.gettempdir(), "oxxxxxxxx", PRIV_TMPDIR_SENTINEL))', '    return os.path.realpath(tempfile.gettempdir()) != os.path.realpath("/tmp") and _inject_path_ok(os.path.join(tempfile.gettempdir(), "oxxxxxxxx", PRIV_TMPDIR_SENTINEL))', 'oracle-inverted'),
+     '    return _inject_path_ok(os.path.join(tempfile.gettempdir(), "tmpxxxxxxxx", PRIV_TMPDIR_SENTINEL))', '    return os.path.realpath(tempfile.gettempdir()) != os.path.realpath("/tmp") and _inject_path_ok(os.path.join(tempfile.gettempdir(), "tmpxxxxxxxx", PRIV_TMPDIR_SENTINEL))', 'oracle-inverted'),
     ('oracle: 呼叫端不問預設 `TMPDIR` 底下的私有目錄行不行（`tmpdir_priv` 恆為 False；R61 → selfcheck 108 PA1／PA2）',
      '                spaced, tmpdir_priv = _tmpdir_spaced(), _tmpdir_priv_ok()', '                spaced, tmpdir_priv = _tmpdir_spaced(), False', 'oracle-inverted'),
     ('oracle: `run_script` 對 `priv-tmpdir` 仍把私有目錄放在 `/tmp`（目標存在、位置沒變；R61 → selfcheck 108 PA1／PA2、109）',
-     '(_Scratch(prefix="o") if inject_to == "priv-tmpdir" else _priv_scratch())', '_priv_scratch()', 'oracle-inverted'),
-    ('oracle: `run_script` 沒有 `cwd-vis` 分支（`ORACLE_INJECT` 退回 `<priv>/i`；R61 logic 第 14 格 → selfcheck 108 PB1／PB2、109 SP5／SP6）',
+     '(_Scratch() if inject_to == "priv-tmpdir" else _priv_scratch())', '_priv_scratch()', 'oracle-inverted'),
+    ('oracle: `run_script` 沒有 `cwd-vis` 分支（`ORACLE_INJECT` 退回 `<priv>/i`；R61 logic 第 14 格 → 逐目標履行檢查；原註明的 selfcheck 108 PB1／PB2、109 SP5／SP6 在 R62 失去區分力，實際殺手見 R64 量測紀錄的殺手欄）',
      '            elif inject_to in ("cwd-vis", "cwd-vis-abs"):', '            elif False:', 'oracle-inverted'),
     # ── R62 Codex 預審處置（M1 歷史檔名、M2 cwd-vis 的絕對路徑、M3 manifest 四個條件組合、LOW：cwd-vis 預建檔）──
     ('oracle: `priv-tmpdir` 的哨兵檔名退回 `i`（`32d45ff` 的檔名是 `inject`，路徑形狀也是歷史位置的一部分；Codex 預審 M1 → selfcheck 109 SP9／SP10 〔拒寫 `TMPDIR` 但放行基名 `inject` 的沙箱〕）',
@@ -1959,6 +1963,37 @@ MUTATIONS += [
      'if not l.lstrip().startswith("#"))   # 註解行', 'if True)   # 註解行', 'selfcheck-matcher'),
     ('selfcheck: `main()` 不呼叫對真的 XR 探針的結構檢查（R62 量測後 → --selftest-matcher 的原始碼檢查）',
      '    for x in xrun_probe_problems_real():\n        print("✗ XR 探針（第 110 項）的結構：" + x)\n        bad += 1\n', '', 'selfcheck-matcher'),
+    # ── R64（#33 verify R63 第 2～4 列）：歷史注入設定的凍結表（payload 字串軸）、逐目標履行（路徑形狀、預先建檔、偵測）──
+    ('oracle: `cwd` 目標的 `ORACLE_INJECT` 指到 `.orc-*/injectx`（R63 logic 的 X2：目標名稱還在、路徑壞了，R62 時通過全部 110 項 → selfcheck 的逐目標履行檢查、112 的 HO1〔macOS〕）',
+     'cwd_env = _cwd_env_value(cwd_sent, abs_ok, inject, os.path.join(os.path.basename(cwd_dir), "inject"), force_abs=(inject_to == "cwd-abs"))',
+     'cwd_env = _cwd_env_value(cwd_sent, abs_ok, inject, os.path.join(os.path.basename(cwd_dir), "inject"), force_abs=(inject_to == "cwd-abs")) + ("x" if inject_to == "cwd" and abs_ok else "")', 'oracle-inverted'),
+    ('oracle: `priv-tmpdir` 的私有目錄前綴回到 `o`（R62 的錯：`32d45ff` 是 mkdtemp 預設的 `tmp`，R63 第 3 列 → selfcheck 的逐目標履行檢查、112 的 DP1〔macOS〕）',
+     '(_Scratch() if inject_to == "priv-tmpdir" else _priv_scratch())', '(_Scratch(prefix="o") if inject_to == "priv-tmpdir" else _priv_scratch())', 'oracle-inverted'),
+    ('oracle: 拿掉 `32d45ff` 的複合程式碼行（`echo M >><路徑>; echo M >/dev/fd/197 || :`；R63 第 2 列 → selfcheck 的歷史 payload 凍結表）',
+     '                   "-n -o -v PWD[" + _INJECT_L + "]",\n                   "echo " + INJECT_MARKER + " >>" + INJECT_PATH_TOKEN + "; echo " + INJECT_MARKER + " >/dev/fd/197 || :")',
+     '                   "-n -o -v PWD[" + _INJECT_L + "]")', 'oracle-inverted'),
+    ('oracle: 拿掉 `32d45ff` 的第一組複合 payload（`PWD[$(…>>路徑;…>/dev/fd/197||:)]`；R63 第 2 列 → selfcheck 的歷史 payload 凍結表）',
+     '                   "PWD[" + _INJECT_L + "]",\n', '', 'oracle-inverted'),
+    ('history: 凍結表的字串不在 `INJECT_PAYLOADS` 也不報（R64 → --selftest-matcher 的「缺 `32d45ff` 的第 4 組」等案）',
+     '            if s not in have:', '            if False:', 'history-matcher'),
+    ('history: 凍結表的樹與封閉清單不一致也不報（R64 → --selftest-matcher 的「封閉清單多一棵樹」案）',
+     '    if tuple(sorted(HISTORICAL_PAYLOADS)) != tuple(sorted(CLOSED_TREES)):', '    if False:', 'history-matcher'),
+    ('history: 重抽比對不比較內容（R64 → --selftest-matcher 的「少一組」案）',
+     '    if got != want:\n        return [', '    if False:\n        return [', 'history-matcher'),
+    ('history: 逐目標形狀不比對 `$ORACLE_INJECT`（R64 → --selftest-matcher 的 X2「injectx」、「cwd-abs 給了相對路徑」等案）',
+     '    if not re.fullmatch(shape["oi"], kv.get("OI", "")):', '    if False:', 'history-matcher'),
+    ('history: 逐目標形狀不要求預先建檔（R64 → --selftest-matcher 的「突變靶 572」案）',
+     '    if kv.get("PRE") != "1":', '    if False:', 'history-matcher'),
+    ('history: 逐目標形狀不比對私有目錄名（R64 → --selftest-matcher 的「priv-tmpdir 前綴是 o」案）',
+     '        if not re.fullmatch(shape["pb"], kv.get("PB", "")):', '        if False:', 'history-matcher'),
+    ('history: 逐目標形狀不比對私有目錄的上一層（R64 → --selftest-matcher 的「priv-tmpdir 放在 /tmp」案）',
+     '        if os.path.realpath(kv.get("PP", "") or "/nonexistent-parent") != os.path.realpath(want):', '        if False:', 'history-matcher'),
+    ('history: 逐目標形狀不要求偵測到注入（R64 → --selftest-matcher 的「寫進去之後神諭沒偵測到」案）',
+     '    if not hit:\n        probs.append("目標 %s：寫進', '    if False:\n        probs.append("目標 %s：寫進', 'history-matcher'),
+    ('selfcheck: `main()` 不呼叫歷史 payload 凍結表的檢查（R64 → --selftest-matcher 的原始碼檢查）',
+     '    for x in payload_history_problems_real():\n        print("✗ 歷史 payload 凍結表：" + x)\n        bad += 1\n', '', 'selfcheck-matcher'),
+    ('selfcheck: `main()` 不呼叫逐目標履行檢查（R64 → --selftest-matcher 的原始碼檢查）',
+     '    for x in target_fulfillment_problems_real():\n        print("✗ 逐目標履行：" + x)\n        bad += 1\n', '', 'selfcheck-matcher'),
 ]
 
 EXPECTED_SURVIVE = {
@@ -2171,6 +2206,16 @@ def main():
     return rc
 
 
+def _killer_evidence(out, err):
+    """被殺的靶的殺手證據（R64，#33 verify R63 DA：前一版只記 rc≠0，『殺掉』不記是哪一項殺的，負載敏感的項目假紅時分不出來）：
+    驗證輸出裡前三行失敗訊息（`✗`、`FAIL`、`not ok` 開頭），沒有就取最後一行非空輸出；每行截到 160 字，去掉 tab 與換行（`RESULT` 行是單行、以 tab 分欄）。"""
+    lines = [l.strip() for l in (out + "\n" + err).splitlines()]
+    hits = [l for l in lines if l.startswith(("✗", "FAIL", "not ok"))][:3]
+    if not hits:
+        hits = [l for l in lines if l][-1:]
+    return " ‖ ".join(h[:160] for h in hits).replace("\t", " ")
+
+
 def run_serial(sel, emit):
     """就地改寫本樹、逐一跑驗證指令，回傳 {索引: (結果, 說明)}。`emit`：每個靶另印 `RESULT` 行（`--only`／worker 用）。"""
     results = {}
@@ -2195,13 +2240,13 @@ def run_serial(sel, emit):
                 else:
                     target.write_text(mutated, encoding="utf-8")
                     try:
-                        rc = subprocess.run(cmd(), cwd=cwd, capture_output=True, text=True, stdin=subprocess.DEVNULL).returncode
+                        r = subprocess.run(cmd(), cwd=cwd, capture_output=True, text=True, stdin=subprocess.DEVNULL)
                     finally:
                         target.write_text(original, encoding="utf-8")
-                    results[i] = ("survived" if rc == 0 else "killed", "")
+                    results[i] = ("survived", "") if r.returncode == 0 else ("killed", _killer_evidence(r.stdout, r.stderr))
             kind, why = results[i]
             print({"killed": "  殺掉 ", "survived": "  存活 "}.get(kind, "  靶壞 ") + name
-                  + (" | " + why if kind == "broken" else ""), flush=True)
+                  + (" | " + why if why else ""), flush=True)
             if emit:
                 print(f"RESULT\t{i}\t{kind}" + ("\t" + why if why else ""), flush=True)
     except BaseException:
@@ -2264,7 +2309,7 @@ def run_parallel(sel, jobs):
                 results[i] = (kind, why)
                 name = MUTATIONS[i][0]
                 print({"killed": "  殺掉 ", "survived": "  存活 "}.get(kind, "  靶壞 ") + name
-                      + (" | " + why if kind == "broken" else ""), flush=True)
+                      + (" | " + why if why else ""), flush=True)
                 print(f"RESULT\t{i}\t{kind}" + ("\t" + why if why else ""), flush=True)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

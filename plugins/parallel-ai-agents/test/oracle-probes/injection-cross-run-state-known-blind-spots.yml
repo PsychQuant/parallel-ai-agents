@@ -1,13 +1,14 @@
 # R62 H3（#33 verify R61，DA 的 TG1／CG1／DT1）：**跨執行持久狀態——已知盲點**。神諭對同一個 step 跑很多次（每個 payload × 注入鍵模式 × 哨兵目標），這些執行**共用同一台主機**；step 若把狀態留在共用的主機位置（字面的 `/tmp` 路徑）、
 # 並且依狀態決定要不要執行 `PR_TITLE`，先跑的執行就會把後跑的吃掉：真 runner 上每個 job 只跑一次，攻擊者給一個合法的分支名、標題就被執行；神諭在第一次污染之後的每一次執行都被拒絕，判『一致』（lint `--strict` 放行）。
 # **這是性質聲明 (ii)（神諭的 runner 模型與真 runner 的差異）的成員，不是缺陷**：神諭對同一個 step 的多次反事實執行之間不重置共用的主機狀態，做不到封閉（hermetic）的執行——字面的 `/tmp` 在 macOS 上沒有 namespace；真 runner 對同一個 step 在一次 workflow run 裡只執行一次（這不等於『乾淨的主機』：同一個 job 的 step 共用工作區，self-hosted runner 也不保證乾淨）。R61 的 DA 用鴿籠論證證明：只要 step 會在共用主機狀態留下跨執行的狀態，
-# 『任何舊樹命中、新樹判一致都算 FAIL』沒有任何執行順序能同時滿足（兩個舊設定都必須排在第 K 次以內才保得住）。**停止規則因此列了第三個豁免類（R62，協調者決定、可由使用者撤銷；見 CHANGELOG「verify R61」）：步驟經共用主機狀態在多次執行之間傳遞狀態的格子，判已知限制，不算 FAIL。**
-# 三格（分母 3，真 lint `--strict` 全部放行，神諭全部判『一致』——這是**現況的棘輪**：日後神諭有了封閉的執行，這三格會變成『繞過』，那時要更新這個檔與 `oracle_selfcheck.py` 第 110 項）：
+# 『任何舊樹命中、新樹判一致都算 FAIL』沒有任何執行順序能同時滿足（兩個舊設定都必須排在第 K 次以內才保得住）。**停止規則因此列了第三個豁免類（R61 規定由使用者決定；R62 由協調者擅自採用、R63 判定那次無效；使用者 2026-11-01 同意，以性質成立，條文與五類共用位置的封閉列舉見 `oracle.py`〈已知限制〉(9)）：步驟經神諭沒有重置的主機狀態在多次執行之間傳遞資訊的格子，判已知限制，不算 FAIL。**
+# 四格（分母 4，真 lint `--strict` 全部放行，神諭全部判『一致』——這是**現況的棘輪**：日後神諭有了封閉的執行，這四格會變成『繞過』，那時要更新這個檔與 `oracle_selfcheck.py` 第 110 項）：
 #   XR1  （DA 的 TG1）step 驗證 `head_ref`，發現 `>` 就在共用 `/tmp` 留一個 taint 檔、之後（同一次神諭呼叫內）一律拒絕，否則執行 `PR_TITLE`。`all` 模式的執行先污染 `head_ref`、留下 taint，`legacy` 模式的執行被吃掉：`6490b57`、`5b5a46d`、`32d45ff`、`28ec8c3` 判繞過，`8b45659`、`bf0c8a7`、R60（`636fcfe`）、R62 判『一致』。
 #   XR2  （DA 的 CG1）共用 `/tmp` 的計數器，滿 10 次就拒絕：`6490b57`、`5b5a46d`、`32d45ff`、`28ec8c3` 判繞過，`8b45659`、`bf0c8a7`、R60、R62 判『一致』——**任何執行順序都救不了**（單一序列做不到兩個舊設定都排在前 10 次以內）。
 #   XR3  （DA 的 DT1）cwd 底下有任何點開頭的項目就在共用 `/tmp` 留 taint 檔：E 組的 `cwd` 目標那次執行建出 `.orc-*/`，之後的 `priv` 目標執行被吃掉（R58 起）：`6490b57`、`28ec8c3` 判繞過，`5b5a46d`、`32d45ff`、`8b45659`、`bf0c8a7`、R60、R62 判『一致』。
-#   負對照：2026-10-26 以本版探針在封存的七棵舊樹上實測（上面三行）；另以前一版探針（固定檔名、30 秒過期）在 `32d45ff`、`28ec8c3`、`5b5a46d`、`8b45659` 上對照，12 格判定與本版相同——以 `PATH` 為鍵沒有在舊樹上造出差異。
-# taint 與計數檔放在字面的 `/tmp`，檔名是 `/tmp/orc-known-xrun-<taint|count|dot>-<鍵>`，**鍵是 `PATH` 的 SHA-1 前 16 碼**：`PATH` 的第一段是整個神諭行程共用、每次呼叫都新建的 stub 目錄（`$TMPDIR/oracle-*/bin`，在 `_OWN_ENV` 裡、不會被注入），所以同一次呼叫的多次執行共用狀態、不同呼叫互不相干，**不讀時鐘**（`oracle_selfcheck.py` 的 `xrun_probe_problems` 守這兩件事）。
+#   XR4  （R63 logic、regression 的工作區衛生檢查格）cwd 頂層有名為 `inject` 的可見檔就在共用 `/tmp` 留 taint 檔，否則以 `IFS=; eval` 執行換掉斜線的 `PR_TITLE`（只有 #16 命中）：R62 的 `cwd-vis` 目標在 #13 那幾次就預先建好可見的 `inject`，#16 的執行全被吃掉。這一格是 R62 **自己造出**的：`636fcfe` 判繞過（#16），R62（`8292d86`）與 R64 判『一致』（2026-11-01 協調者在兩棵樹上重現；拿掉 `cwd-vis` 的突變回到繞過）。R63 DA 證明不存在免費的順序，所以列在這裡、不改順序。
+#   負對照：2026-10-26 以本版探針在封存的七棵舊樹上實測（XR1～XR3 那三行）；另以前一版探針（固定檔名、30 秒過期）在 `32d45ff`、`28ec8c3`、`5b5a46d`、`8b45659` 上對照，12 格判定與本版相同——以 `PATH` 為鍵沒有在舊樹上造出差異。
+# taint 與計數檔放在字面的 `/tmp`，檔名是 `/tmp/orc-known-xrun-<taint|count|dot>-<鍵>`，**鍵是 `PATH` 的 SHA-1 前 16 碼**：`PATH` 的第一段是整個神諭行程共用、每次呼叫都新建的 stub 目錄（`$TMPDIR/oracle-*/bin`，在 `_OWN_ENV` 裡、不會被注入），所以同一次呼叫的多次執行共用狀態、不同呼叫通常互不相干（stub 目錄名隨機；殘檔、名稱重用與截短的雜湊不是數學上不可能——R63 Codex），**不讀時鐘**（`oracle_selfcheck.py` 的 `xrun_probe_problems` 守這兩件事）。
 # 前一版用固定檔名加『30 秒後視為過期』：XR1、XR3 的 taint 只寫一次，之後的執行看它的年齡；XR2 每次執行都重寫計數檔，要相鄰兩次執行的間隔超過 30 秒才重置。整份探針在 load 約 12 時跑 33 秒（每格約 11 秒），所以機器變慢時判定可能翻成『繞過』（窗口改成 0 秒實測三格都判繞過；慢到什麼程度才翻沒有量）；平行的神諭（突變全輪 `--jobs 8` 同時跑好幾份 selfcheck）又共用同一組固定檔名，一方留下的 taint 會吃掉另一方的執行。R62 的量測鏈 2026-10-25 11:10 的前置驗證裡第 110 項變紅，當時校準只有 13～19 秒（不是單純的慢）；是哪一個成因這次沒有分辨，本版兩個都去掉。
 # 殘檔：每次呼叫最多三個空檔／小數字檔留在 `/tmp`（不清；與 `test/README.md` (iii) 列的 F5 固定檔名同一類的開發機工具問題，不是 CI 閘門問題）。
 # LINT-ARGS: --strict
@@ -40,3 +41,10 @@ jobs:
         run: |
           set -o pipefail
           { /usr/bin/python3 -c 'import os, sys, hashlib, subprocess; t = "/tmp/orc-known-xrun-dot-" + hashlib.sha1(os.environ["PATH"].encode()).hexdigest()[:16]; sys.exit(0) if os.path.exists(t) else None; (open(t, "w").close(), sys.exit(0)) if any(n.startswith(".") for n in os.listdir(".")) else subprocess.run(["/bin/bash", "-c", sys.argv[1].replace("/", "_")])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: XR4 visible-file hygiene check taints the machine when cwd has a file named inject (per oracle run); evaluator IFS-empty eval with slashes replaced
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import os, sys, hashlib, subprocess; t = "/tmp/orc-known-xrun-vis-" + hashlib.sha1(os.environ["PATH"].encode()).hexdigest()[:16]; sys.exit(0) if os.path.exists(t) else None; (open(t, "w").close(), sys.exit(0)) if "inject" in os.listdir(".") else subprocess.run(["/bin/bash", "-c", "IFS=; eval \"$0\"", sys.argv[1].replace("/", "_")])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py

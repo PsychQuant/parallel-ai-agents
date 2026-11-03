@@ -1,988 +1,1048 @@
 {
 "results": {
-"005d8ab0ea631c5f1686fba4f2b0d78f9c0fa04823753aaa69b212dd0f728794": [
+"00d3944078187e9ae1c65305d184ffc24ff772832960f15b4c10eff15f5acded": [
 "killed",
-""
+"✗ 通道檔換成指向含 PR 文字之檔案的符號連結（宣告 step）：真 runner 跟隨符號連結，判『繞過（跨 step 通道）』，不是『一致』（R52，R51 regression M1）：rc=0（期待 1）、「跨 step 通道」沒有出現"
 ],
 "00f24e3414ee75fe21c04653d7029ca8c746a8d151f88a06ebfcb3b4f55dd15e": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r37t8-escaped-char-in-safe-target.yml:9: RULE: step 's' 靠管線過濾，卻有 `>/dev/nul  ` 寫到 /dev 或 /proc 底下（去引號後是 `/dev/nul$…$…`）——那些文字不經"
 ],
 "0157c1a6a89d2fd89f3c9df16c984a31c3b7c2926b44bc093aa3cf1a974dc0eb": [
 "killed",
-""
+"test/fixtures/ci-log-filter-bypass-r37o-cmdsub_end_case-backtick-paren-inside-case-cmd.yml:32: PARSE: 雙引號裡的命令替換到 run 區塊結尾都沒收——那一行在 bash 是語法錯誤、不會執行，本 lint 不解析"
 ],
-"0322ccbe5d55518f61c2ee6828b3e21e20d6887cd1143d911a63aee1211cb552": [
+"02a2e293b2006a4c003142d992a751964479fa2cefc7e0fac820a8b599f9cae6": [
 "killed",
-""
+"✗ 字串不在輸出裡：期待 False、實際 True ‖ ✗ (字串, n) 少一次：期待 False、實際 True ‖ ✗ (字串, n) 多一次：期待 False、實際 True"
 ],
-"0329e370e8d6c4b0094b91321f1bbd166156b8873359d454750902af77df254c": [
+"03d7d2e01469a9ec04383ecd613e088759d83ba0334ce49ff126142447ac6852": [
 "killed",
-""
-],
-"03b797aebf6634d64ee18a90e6d10b79d36052f7fe1b07f736c67c6e70fe007c": [
-"killed",
-""
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現"
 ],
 "04196ea3492c71964b7476c1520b28aa0106a873419b376088d0e6dc1b2be7a8": [
 "killed",
-""
-],
-"044e11ac1bedad52e929b7e60c152bf627a23b4809925d463cf2180d9ff4e70e": [
-"killed",
-""
-],
-"04505b66f277325260fc84133c808c10b481f2500693e0b1f43dd806dc999078": [
-"killed",
-""
-],
-"045548e0c22f57d2761fec99f74d04b43e8ad1eb17f6bb747cb8c832e05a7db4": [
-"killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37c-comment-in-param-cmdsub.yml 宣告 parse-red，實測 pass"
 ],
 "04788f1eca2f1a35c7bf9fe1248aa4760ae5133b4995e1eaddc078c4664cf937": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r37o-shell_scan-bare-paren-arith-exclusion.yml:39: PARSE: run 區塊結尾時 `((`／`$[`／`[[`／`$(`／反引號／裸 `(` 有未收尾的（arith=0 brk=0 cond=Fals"
 ],
 "0500996dabc7706b6173fa5abf1f4d2ef75021960b9e8e6bbe2b2dcaa578a5d6": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r37p-strict-pipefail-template-set-prefix.yml:60: RULE: [--strict] step 'bash template without trailing placeholder still recogn"
+],
+"0551201dfd386d7dbe650f0bffbfb3949a70d90a9c2aa5c3ead4de044b400de1": [
+"killed",
+"✗ 已知類別 S-2 被與外流無關的原因擋下：rc=1（期待 1）、「原因與外流無關」沒有出現"
 ],
 "056830ce70a4229de9851b23783107ca60b022f389ac836631d5ece29732e55f": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r37t8-set-dq-escaped-dollar.yml:9: RULE: step 's' 靠管線過濾，卻有 `set` 的參數不是字面（`set -$X`…）——開了什麼看不出來——那些文字不經過管線（帶了 `2>&1` 也一樣：重導向由左到右"
 ],
-"05834147a4af532ca9c8c0a948e759beff079efcbf109145714784aa38611cac": [
+"057ed623ce535beaa62fc49340c1c2dac60b66991fc21771fc308f5fbe32c188": [
 "killed",
-""
+"✗ 已知類別 G 被與外流無關的原因擋下：rc=0（期待 1）、「原因與外流無關」沒有出現 ‖ ✗ 已知類別 S-2 被與外流無關的原因擋下：rc=0（期待 1）、「原因與外流無關」沒有出現 ‖ ✗ 深目錄樹建在全程序共用的 stub 目錄（`PATH` 的第一段）：神諭離開 `main()` 清理時不崩潰，判定表照印（R50 第五輪 L1，K1 的漏網之魚；Python ≤3.12 才重現）：rc=1（期待 0）、「一致 1」沒有出現"
+],
+"0649de90e007ffbed35222625ed2d0e904fce8964ab6790c58cfea8288fc3960": [
+"killed",
+"FAILED (errors=2)"
 ],
 "06ed67a3a0084d11a0567dfb537201cf73671477770f59f50c5d4b26decde7d6": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37b-fd-in-param-cmdsub.yml 宣告 rule-red，實測 pass"
 ],
 "07030c909ad298f746bb3d0d194c5b53bd4db2a3e8692a0a899a9fa15c675e59": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r37o-dqbrace-clamp-fd-dup-ansic.yml:20: RULE: step 'probe' 靠管線過濾，卻有 `>&       ` 複製到看不出值的 fd——那些文字不經過管線（帶了 `2>&1` 也一樣：重導向由左到右套用；"
 ],
 "0729ee94d1d959c49ad555be6c283909292716bc5f2ddb9ad048dbfd654b8277": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-restrict-r44-env-sets-a-trusted-variable.yml 宣告 rule-red，實測 pass"
 ],
-"07708b587a146eab3819b9101554cc20787944d733f336d260a110919a251633": [
+"0839b629bdee9124fa4fef925260a7b45d83209e4dd88f1de67bf191ce06bc10": [
 "killed",
-""
-],
-"07e1a75c952be2d39713a41ab4ebacde3789908a7d83fe4ae69196100ff66d16": [
-"killed",
-""
-],
-"08031633bed6ae452994524504c3d5eb8308e8e7f1650039e1483bdd406f87bc": [
-"killed",
-""
-],
-"0842c3261fb9b056c2cd153ef17640077f462b14ff539db143c9fbf90bebdc50": [
-"killed",
-""
-],
-"08cb7965719221052810f37cb55c21ed013939584ee4c66b6ec6f534876d9529": [
-"killed",
-""
+"✗ 逐目標履行：目標 cwd：$ORACLE_INJECT 是 ''，不符合 (?:<TMP>/)?\\.orc-[A-Za-z0-9_]{8}/inject ‖ ✗ 逐目標履行：目標 cwd：哨兵檔沒有預先建好（PRE=0） ‖ ✗ 逐目標履行：目標 cwd：寫進 $ORACLE_INJECT 之後神諭沒有偵測到注入"
 ],
 "08d1e968fb0fa24addc19a4e683d57f10d2108d5be6e75aedaaa080cd87f4940": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37m-quoted-command-word-cond.yml 宣告 rule-red，實測 pass"
 ],
 "08db48ffc7bed742b02f622efcb12f1f5c118720ad81dc566867d6e590fd0953": [
 "killed",
-""
+"test/fixtures/ci-log-filter-restrict-r42-flat-command-edges4.yml:41: RULE: [--strict] step 'printf with no argument' 靠管線過濾，而 run 區塊不在 `--strict` 的正面文法裡：`printf`"
 ],
 "08fb7ae70fe6207eae6aa2f896ebed4a5409bcbf5cddc5a38b2c8f5420eda54f": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37d-delim-param-midword.yml 宣告 parse-red，實測 pass"
 ],
-"0a73a7b366c3a67caeee8919bb6ac42fac8b1b747b82414a9fa6d1018e5e0a93": [
+"09022c5833d1a98b742ca5e685f65475120e0851ee106989e174c87a713e95d7": [
 "killed",
-""
+"✗ 逐目標履行：目標 cwd：寫進 $ORACLE_INJECT 之後神諭沒有偵測到注入 ‖ ✗ 逐目標履行：目標 cwd-abs：寫進 $ORACLE_INJECT 之後神諭沒有偵測到注入 ‖ ✗ 逐目標履行：目標 cwd-vis：寫進 $ORACLE_INJECT 之後神諭沒有偵測到注入"
+],
+"094b55af6d227a19cc69a998431948bf311def5f19a6f9f9e6d35a2bffa48801": [
+"killed",
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現"
+],
+"09d2b576ebaf22f72ab16dea0a56527dd1b4f1b9edbbafd339844d85182431b6": [
+"killed",
+"✗ KNOWN_DISAGREE 之外的不一致（lint 與 runner 對同一個 step 說不同的話）： ‖ ✗ KNOWN_DISAGREE 裡的項目現在一致了、或已經量不到（理由不再成立，移除它）："
+],
+"0a906a8ec1ba2e5e3a9feb19ac5bb79252e6e3ca62adf33a72bcd095c322955c": [
+"killed",
+"✗ manifest 檢查：條件寫錯的假序列（extra-target）沒有被抓到"
+],
+"0ab0dc955501e635a18bf3c2ca76893acb5355b9936d3e48fcc714b5a14ea58d": [
+"killed",
+"✗ 歷史哨兵位置 manifest：[spaced=False,tmpdir_priv=False] 哨兵位置 priv-tmp：目標 'priv' 不在 payload 'PWD[$(echo${IFS}ORACLE-INJECT-' 的序列裡（['cwd']） ‖ ✗ 歷史哨兵位置 manifest：[spaced=False,tmpdir_priv=False] 哨兵位置 cwd-hidden：條件 None 評估為假（或這個 payload 不屬於它）時目標 'cwd' 仍然出現：payload 'PWD[$(echo${IFS}ORACLE-INJECT-'，序列 ['cw ‖ ✗ 歷史哨兵位置 manifest：[spaced=False,tmpdir_priv=False] R60 的目標序列 ['priv'] 不是 payload 'PWD[$(echo${IFS}ORACLE-INJECT-' 的新序列 ['cwd'] 的前綴"
 ],
 "0adc7f230ef31b53d658cd532e177830b8cb841ebf333b8c44ac1c1fd6d334e8": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-flow-explicit-key.yml 宣告 parse-red，實測 pass"
 ],
 "0b16a4f5a64e21309ef04687da10db84d5535fcc1eec100aea993a9f1888c7c3": [
 "killed",
-""
-],
-"0b26e5b622c7a467e366849e95e52510e9a172bec460244d5d37e392a206a236": [
-"killed",
-""
+"test/fixtures/ci-log-filter-bypass-r37o-case_head-in-prefix-of-longer-word.yml:24: RULE: [--strict] step 'cmdsub-case-head-in-prefix-of-longer-word' 靠管線過濾，而 run"
 ],
 "0b4d5d138b117b8243f87ac5abfca21146ac284ac8f07f71f3973d8592395c3c": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37o-module-misc-root-env-nonflow-colon-value.yml 宣告 rule-red，實測 pass"
 ],
-"0c32309ccfe38820c3f3fc57ca9b0d1ed5c91976f462187d4aa6e35052ef527f": [
+"0c8e32d5b8f9da2487533ca995b11b8c3eed7181a59fa263a2f09a538c6f0833": [
 "killed",
-""
+"✗ 歷史 payload 凍結表：`32d45ff` 的第 4 組 payload 不在 INJECT_PAYLOADS：'PWD[$(echo${IFS}ORACLE-INJECT-MARKER>>@@ORACLE-INJECT-PATH@@;echo${IFS}ORACLE-INJECT-MARKE' ‖ ✗ **payload 字串軸（可攜版）**（R64，R63 第 2 列）：求值者只在標題含 `;`（PL1、PL3 算術）或不計路徑的長度 ≥ 70（PL2）時才執行它——`32d45ff` 的四組複合 payload（R54 拆掉、R64 加回 #17～#20）才命中；PL0 是不把關的對照組。負對照：`32d45"
+],
+"0c9a6ea8a6f253662ae020e07f6f49eb05904ca0ffe91d1111fd04ef9bca2ae1": [
+"killed",
+"✗ KNOWN_DISAGREE 之外的不一致（lint 與 runner 對同一個 step 說不同的話）： ‖ ✗ 神諭把 step 歸進了已知類別、檔頭卻沒有對應的 `# KNOWN-CLASS:`（歸了類卻沒宣告——已知類別不是免檢區，每一條都要有人在檔頭簽名）： ‖ ✗ 已知類別 文法外 在 fixture 集上是 292 條，預期恰好 264（改動已知類別的 fixture 請同步改 FIXTURE_CLASS_TOTALS）"
 ],
 "0cb44994254e0a2e6d1dbeec6694ca4506bd3000d035cc88d8e496b040d0a91d": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r44-dev-stdout-stderr-targets.yml:11: RULE: [--strict] step 'redirect to the standard streams by name' 靠管線過濾，而 run 區塊不在 `--stri"
 ],
-"0d2080cba5440e8abd4c466a6847b6f1d3af5f3d33aae17aca62ed7b4bac0e6d": [
+"0d1545f054049bcb64b2669ec2838797c91b4e7813e9006d6853473183e4629f": [
 "killed",
-""
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現 ‖ ✗ **第 13 格：`TMPDIR` 含空白 ∧ 求值者的 shell 不切開重導向的目標詞 ∧ 求值者先離開步驟 cwd**（R60 G2，R59 requirements／logic／regression／DA／Codex）：`bash --posix` 先 `cd /`（PX1）、`bash --posix` "
 ],
-"0d8f3840c4dbc6eb2ecb11689b2131730f403e6e8b0b15ba9b6cc62294577f97": [
+"0d396dcb5a91c179dcaed9c73c60f539bf7f6596d6229ee405818827ac6232da": [
 "killed",
-""
+"✗ S-2 的機制差分：補 `2>&1` 不消失的 stderr 外流：rc=0（期待 1）、「不是 S-2」沒有出現 ‖ ✗ 深目錄樹建在全程序共用的 stub 目錄（`PATH` 的第一段）：神諭離開 `main()` 清理時不崩潰，判定表照印（R50 第五輪 L1，K1 的漏網之魚；Python ≤3.12 才重現）：rc=1（期待 0）、「一致 1」沒有出現"
 ],
-"0e5e22a0b2985fbf09b4ad7bbcd478e0759177de1726be63b8251861d011d3b6": [
+"0d45ae2822494ce52f2526052222cbc548189ef9919302c7618cf1e35264bb45": [
 "killed",
-""
+"FAIL: test_plugins_not_a_list_gives_one_clear_error_not_a_cascade (__main__.ValidateTest.test_plugins_not_a_list_gives_one_clear_error_not_a_cascade) ‖ FAILED (failures=1)"
 ],
-"0ee5bc3887f41420734d614ddf6ca34d7ea50be143d328e84ad814c0cbfaa07a": [
+"0d627c002be78091f51a14b6e1bd9f6d8258e9de3f74ad15449aa53835645de2": [
 "killed",
-""
+"✗ 證據優先：違規記錄先寫進去、之後才關掉稽核 fd——已經看到的違規不撤銷（R49 logic M1）：rc=1（期待 1）、「primitive 稽核」沒有出現"
 ],
-"0f8da6bd00a8c907ae30345cc038f84bab35aed2537072ffbac0cc5f9273950b": [
+"0e0c2697c76a215f98f3404305d6b20d224989b70e88498fd1314f279b3e4589": [
 "killed",
-""
+"FAIL: test_external_strings_in_annotations_are_always_wrapped (__main__.ValidateTest.test_external_strings_in_annotations_are_always_wrapped) ‖ FAIL: test_version_strings_entering_annotations_go_through_wc (__main__.ValidateTest.test_version_strings_entering_annotations_go_through_wc) ‖ FAILED (failures=2)"
 ],
-"105c8aed22ecbde2a31a78a502623955f834af6bc98a72eec7060b92818d0bfe": [
+"0e0c793dd65a7920346ccee322fe9744c0679e8161754929a81842cf2a46c136": [
 "killed",
-""
+"✗ 儀器資料流有上限：超過判量不到（儀器不可信）；步驟自己的 stdout／stderr 沒有位元組上限，只受 5 秒逾時限制（`ORACLE_STREAM_CAP` 是神諭自己的環境變數，步驟改不到；R50）：rc=0（期待 0）、「流超過 30 位元組」沒有出現"
+],
+"0f7bc4c398e0b2ac916bd89d240e73f4c87b1d5b76be78d30536e9e3bad45f73": [
+"killed",
+"✗ 逾時之前已經觀察到外流（R40，#33 verify R39 第 8 列）：rc=0（期待 1）、「逾時之前」沒有出現 ‖ ✗ 深目錄樹建在全程序共用的 stub 目錄（`PATH` 的第一段）：神諭離開 `main()` 清理時不崩潰，判定表照印（R50 第五輪 L1，K1 的漏網之魚；Python ≤3.12 才重現）：rc=1（期待 0）、「一致 1」沒有出現"
 ],
 "1074f4d0ee6b9e9a1b6f7afb84a134d8d22c474539e343f4b080c452b0fa4579": [
 "killed",
+"test/fixtures/ci-log-filter-good-r37b-fd-flow-safe-forms.yml:29: RULE: step 'redirects that keep stdout' 靠管線過濾，卻有 `>\"               \"` 的目標看不到原文（本 lint 對不齊這一行）——"
+],
+"10757e3648c7d3bbeeac1c2cd43e2576c7fe2d469ecac344c6933b1836b36562": [
+"survived",
 ""
 ],
 "1079968fd9552152693ddf6048074e8616db1b115c426b5ad5053eb41ad9ff95": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-restrict-r39-cmdsub-case-hash-word-start.yml 宣告 rule-red，實測 pass"
 ],
-"107e40791be3839fcac9873d02efc11e9d9ba5410d65750a6ed91d5088e77be1": [
+"10848f8bdb07f1a5391b71c688ca9336bcc9eb6ebc65dff47ab210503b1b93e3": [
 "killed",
-""
+"✗ 逐目標履行：目標 cwd-abs：$ORACLE_INJECT 是 '<PRIV>/i'，不符合 <TMP>/\\.orc-[A-Za-z0-9_]{8}/inject ‖ ✗ **第 13 格：`TMPDIR` 含空白 ∧ 求值者的 shell 不切開重導向的目標詞 ∧ 求值者先離開步驟 cwd**（R60 G2，R59 requirements／logic／regression／DA／Codex）：`bash --posix` 先 `cd /`（PX1）、`bash --posix` "
 ],
-"10ced9c11d5d069d0b83fea6151494ea2f270eb87f32003b1428a2dfd69f9683": [
+"10fd9b269c8afaaea8b698422138a8baca63e0801e3d7c335338a3170354cbd5": [
 "killed",
-""
+"FAIL: test_missing_root_marketplace_in_ci_is_fail_loud_not_five_silent_skips (__main__.ValidateTest.test_missing_root_marketplace_in_ci_is_fail_loud_not_five_si ‖ FAIL: test_missing_root_marketplace_locally_notes_once_without_false_warning (__main__.ValidateTest.test_missing_root_marketplace_locally_notes_once_without_fal ‖ FAILED (failures=2)"
 ],
-"111cec3b99d50421ca24327a024c8cc49506e6eec8dc519c91cfa54118f33659": [
+"114da5c9c824b5f38ba627c412efaee18606a7b7c39bb10ff27d89cda00faa66": [
 "killed",
-""
+"FAIL: test_emit_collapses_every_separator_the_runner_treats_as_a_new_line (__main__.ValidateTest.test_emit_collapses_every_separator_the_runner_treats_as_a_new_ ‖ FAILED (failures=1)"
 ],
 "1177fbdd932615d948164e8747556ed6e49b3a7d67c053c5e127468bd5562d49": [
 "killed",
-""
+"test/fixtures/ci-log-filter-bypass-r42-flat-fd-dup-3.yml:12: RULE: [--strict] step 'fd 3 dup' 靠管線過濾，而 run 區塊不在 `--strict` 的正面文法裡：重導向 `>` 沒有目標——文法只收 `set` 前綴＋一個群"
 ],
-"121a0c8832c1cad4ae287f08b07da0e994a1d4cc5e8391e67fb6c069bc76be88": [
+"12688c324bc318e0d683f67fb691241768460b64756765fa7223812e831ddd59": [
 "killed",
-""
-],
-"130c0e97d26f5c86ef5d6b94713a5fc84fbcab17e938e464c0b213d997badc65": [
-"killed",
-""
+"✗ S-2 的機制差分：補 `2>&1` 不消失的 stderr 外流：rc=0（期待 1）、「不是 S-2」沒有出現 ‖ ✗ 深目錄樹建在全程序共用的 stub 目錄（`PATH` 的第一段）：神諭離開 `main()` 清理時不崩潰，判定表照印（R50 第五輪 L1，K1 的漏網之魚；Python ≤3.12 才重現）：rc=1（期待 0）、「一致 1」沒有出現"
 ],
 "137b736d030c5e62db05e5f30b3f718dee7b6b34e99cd4055960e7d3643b4991": [
 "killed",
-""
+"test/fixtures/ci-log-filter-bypass-r37c-ansic-in-param-cmdsub.yml:11: RULE: step 'ansic-in-param-cmdsub' 的 run 區塊既沒有經 neutralise.py，也沒有 `# LOG-FILTER:` 註解說明為何不過"
 ],
-"13849dd482818c6d66369983533591a850f373618100c1ac76ce7c3630a2c813": [
+"13a832b083d7d999bbaa7ca49b8dbbf01cc52ca1ae30b5e0d23872772f766be4": [
 "killed",
-""
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現"
 ],
 "13f13a37dd7ea252369560becd05f7dbb29ee1b710f81b5be5cdc0411b31955f": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r39-fd-dollar-dq-target.yml 宣告 rule-red，實測 pass"
 ],
-"13fa37be93c3ccc2dbb2f9c3196c3e87c37a9ef7ef4184e2de8a882d05aeef95": [
-"survived",
-""
-],
-"1502d8468efa30ddf4a6f9ed1567d952d1dd04bbe17839bc3bd064bfffe53816": [
+"1416ef48fd7db650fdaa69242c42af9cd50b8c6a4be20f695f49f3496f10aa45": [
 "killed",
-""
+"✗ 逐目標履行：目標 cwd：哨兵檔沒有預先建好（PRE=0） ‖ ✗ 逐目標履行：目標 cwd-abs：哨兵檔沒有預先建好（PRE=0） ‖ ✗ **哨兵位置軸（可攜版）**（R62 H1，R61 的兩個 blocking）：求值者只寫得到 `TMPDIR` 底下的私有目錄（`/tmp` 底下的私有哨兵唯讀、`env -i`、關 fd；PA1 命令位置、PA2 算術脈絡）時，`32d45ff` 的位置（`\"priv-tmpdir\"` 目標）命中；所有私有哨兵"
 ],
-"152db44d81a4e9aa0c0ed2163ad25cb4a11578417630acb048c1ab6b92735679": [
+"153fe396cdbc973a0ad4c2cef12a14dc29d6d53136faf7e2f719b3d8856d0d4e": [
 "killed",
-""
+"✗ payload 脈絡：註解裡的運算式：rc=0（期待 1）、「繞過」沒有出現 ‖ ✗ payload 脈絡：運算式規則關掉、正面文法接受非字面（突變）：rc=0（期待 1）、「繞過」沒有出現 ‖ ✗ 深目錄樹建在全程序共用的 stub 目錄（`PATH` 的第一段）：神諭離開 `main()` 清理時不崩潰，判定表照印（R50 第五輪 L1，K1 的漏網之魚；Python ≤3.12 才重現）：rc=1（期待 0）、「一致 1」沒有出現"
+],
+"15d4e66f1b479dbaca15e6f403481da645ae53adca8d09b526e6c2e24744bbbb": [
+"killed",
+"FAIL: test_symlink_in_lenses_is_rejected_without_leaking_content (__main__.ValidateTest.test_symlink_in_lenses_is_rejected_without_leaking_content) ‖ FAILED (failures=1)"
+],
+"15ec5f13b689108fab1f7ddaa60cfa751e89559afa1c8928e197cbc8b3756b45": [
+"killed",
+"✗ 儀器不可信只對 lint 放行的 step：lint 已擋下（RULE-red）而神諭看到外流，仍判一致（R50）：rc=1（期待 0）、「一致 1」沒有出現"
+],
+"161f5cfbd6e7682876378b148207eccffcb3851f0ce9d844e7d3910951d4e8ba": [
+"killed",
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現 ‖ ✗ **注入的鍵設定各是獨立的一次執行：舊樹的設定、所有鍵同時、逐鍵各一次**（R60 G1，R59 regression／logic／DA）：step 先驗證 PR 的另一個欄位——第二個 `${{ …title }}` 鍵的長度閘門、`>` 閘門、`head_ref` 的 `>` 閘門、純 bash 的 `[[ $"
 ],
 "171825754982971284cf4f3658f0c2cb5d19fd236d5ba1dce65813503444cb2e": [
 "killed",
-""
-],
-"17227ef709f24397cdc2776aa72a2a49e1dc14dfd843d3b6bbfc2e961d455ba0": [
-"killed",
-""
-],
-"178462e3f024eff1be7be0da17aaca210b845df39d669bdca152581d9866dff3": [
-"killed",
-""
-],
-"17b051d854bebf08137b0c40eb69f5189c71f0a14ece28467a2dd0cd73cdd7a5": [
-"killed",
-""
-],
-"17bfa06c01df1187755f7787851c9be4ea9611514af1faaf9174d40da77341fb": [
-"killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-shallow-continuation-flow-mapping.yml 宣告 parse-red，實測 pass"
 ],
 "184031ceed198c9f79b936fe5f61de33553ba59dad849f6c783743432c8a364c": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-heredoc-opener-continuation.yml:8: RULE: step 'heredoc opener continued onto the next line' 的 run 區塊既沒有經 neutralise.py，也沒有 `# L"
 ],
-"189546b55f08520e5facfcc3b86116a7e188a285a98e92ec99c9231a62a35cf3": [
+"185e432d58055a92ab4fffb696d5e6e6c633379ecf7c2f7412116e19197a041d": [
 "killed",
-""
+"✗ 歷史 payload 凍結表：`8b45659` 的第 1 組 payload 不在 INJECT_PAYLOADS：'PWD[$(echo${IFS}ORACLE-INJECT-MARKER>&197)]' ‖ ✗ 歷史 payload 凍結表：`8b45659` 的第 2 組 payload 不在 INJECT_PAYLOADS：'-v PWD[$(echo${IFS}ORACLE-INJECT-MARKER>&197)]' ‖ ✗ 歷史 payload 凍結表：`8b45659` 的第 3 組 payload 不在 INJECT_PAYLOADS：'-n -o -v PWD[$(echo${IFS}ORACLE-INJECT-MARKER>&197)]'"
 ],
-"18a22b64c14349240d8452a9093efa78c03deaf260eb1012f7ab47a0bd21b36c": [
+"188c306372aa74fce58bbc26a4ac01414ce1f122419abdb8ff816eb7c2d9e1dd": [
 "killed",
-""
+"FAIL ‖ FAIL: test_absolute_and_dotdot_source_are_errors (__main__.ValidateTest.test_absolute_and_dotdot_source_are_errors) (source='/tmp/elsewhere') ‖ FAIL: test_absolute_and_dotdot_source_are_errors (__main__.ValidateTest.test_absolute_and_dotdot_source_are_errors) (source='../elsewhere')"
 ],
-"18cea6432ccaeee8b3f29f3caf21e82297b6f79000c1a3e41ab57d9bc1b503f7": [
+"18ba6d19c1803cca01bfd1b346e654a727dc2378b57ba0c66125a03762f44d4b": [
 "killed",
-""
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現"
 ],
-"19620125fc1b746c2155370d754678af9b8b699fd6b0d61563d55eac234d5424": [
+"191cef0e00d1dd0d47015488e771a1337f72d681b901826219aa682945d73987": [
 "killed",
-""
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現 ‖ ✗ **注入的鍵設定各是獨立的一次執行：舊樹的設定、所有鍵同時、逐鍵各一次**（R60 G1，R59 regression／logic／DA）：step 先驗證 PR 的另一個欄位——第二個 `${{ …title }}` 鍵的長度閘門、`>` 閘門、`head_ref` 的 `>` 閘門、純 bash 的 `[[ $"
 ],
-"1979903bdd7cf14c35fe2d59573f431cf487d0752bc5c821445bc5e88cb19a2a": [
+"19c0bb302e5921be11268cd520dafdb2de5b2d9c2583ac391c5d4731a9ad5b0b": [
 "killed",
-""
+"FAIL: test_ci_pull_request_without_base_is_error (__main__.ValidateTest.test_ci_pull_request_without_base_is_error) ‖ FAIL: test_ci_push_without_base_is_error (__main__.ValidateTest.test_ci_push_without_base_is_error) ‖ FAIL: test_local_run_without_base_is_a_note_not_an_error (__main__.ValidateTest.test_local_run_without_base_is_a_note_not_an_error)"
 ],
-"1a0961ed3314eedb47bec68a74cf743852f0c5abe8e224845acb01378486168b": [
+"1b532e83de37b91a7cd9966f29351d71d56b85d211d3bad2b61ab833e38daf90": [
 "killed",
-""
+"FAIL: test_lenses_dir_with_no_csv_is_error (__main__.ValidateTest.test_lenses_dir_with_no_csv_is_error) ‖ FAILED (failures=1)"
 ],
-"1a437836167a18b0375945764fcd0a941ace68ab1d63cfc1271246bbf3dc2534": [
+"1b556d6961f0af928d03a64a6f2afadc613c7d0714d718da8ef86241a467cc97": [
 "killed",
-""
+"FAIL: test_lenses_containment_holds_even_without_monorepo_root (__main__.ValidateTest.test_lenses_containment_holds_even_without_monorepo_root) ‖ FAIL: test_lenses_dir_itself_cannot_be_a_symlink_out_of_repo (__main__.ValidateTest.test_lenses_dir_itself_cannot_be_a_symlink_out_of_repo) ‖ FAILED (failures=2)"
 ],
-"1a6ac75b64760e50d313ac02f5ecad0e767ad29c185b6f6d489745e88be43991": [
+"1c22c02f3453417fc5e08faf7d6e138ad84d8cfb8ffda8dd96ad68961faf84c8": [
 "killed",
-""
-],
-"1b255029a99e58d928119d4f8600839bbba50356f23bed65cd9b1456240808cf": [
-"killed",
-""
+"✗ 檔頭宣告了已知類別、神諭卻沒把那麼多 step 歸進那一類（KNOWN-CLASS 過期——重判這個 fixture）： ‖ ✗ 神諭把 step 歸進了已知類別、檔頭卻沒有對應的 `# KNOWN-CLASS:`（歸了類卻沒宣告——已知類別不是免檢區，每一條都要有人在檔頭簽名）： ‖ ✗ ci-log-filter-known-r37a-mustfail-s2-strict-not-blocking.yml —— 宣告的理由「不是預設模式獨有的缺口，不是 S-2」沒有出現"
 ],
 "1c41de5004452f536a5e4b5b40725b16ef2314c4a1b3b110da13592efcd71c3f": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r39-github-head-ref-in-run-default.yml 宣告 rule-red，實測 pass"
 ],
 "1cb0286dae2dfd9809531bddf5290114831da4f626d53f4030a82de7c1d6d722": [
 "killed",
-""
-],
-"1ceacfbd54c277ad421725263ba5b521750c7428552f876faca9743c730f1080": [
-"killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-restrict-r46-namedfd-array.yml 宣告 rule-red，實測 pass"
 ],
 "1cf09cf946c3686da7e7e39090f28b048ba651776f96f71d4d67d4b05ccd3f84": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r39-xtrace-prefix-nonliteral-name-o-xtrace.yml 宣告 rule-red，實測 pass"
 ],
-"1d1e502a6e3d529d2cead984a401f4ff56ae421e3b931946dd87caaf7451f12b": [
+"1d4d0c926fc50c3698ba6a22f0133067d7dd46aa862164f4c9a9a61adacca31a": [
 "killed",
-""
+"FAIL: test_prerelease_with_glued_digits_warns (__main__.ValidateTest.test_prerelease_with_glued_digits_warns) ‖ FAILED (failures=1)"
 ],
-"1eab94692ada16ec07fd3c4c4cd82f5857a255764ec97635d0deef4cbaa206a0": [
+"1d736d07b7f7a4316df535c98c1772edbaf75a6d80a41e99128e704af603c0e2": [
 "killed",
+"✗ ci-log-filter-known-r37t8-mustfail-stdout-contribution.yml —— 宣告的理由「接 neutralise 的管線自己把 PR 文字印到 stdout」沒有出現 ‖ ✗ must-fail 探針沒有以宣告的理由失敗（它要量的那個分支沒被走到，或神諭在那裡放行了）："
+],
+"1dd316eddcaa052531efc1cd1443ce7b9b484dcc812cc2449bed70f37053731d": [
+"survived",
 ""
 ],
 "1f3445130ec8f80b7ee1c32e8b460ad54d96807b178f33f30249289179fa4a88": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r37t8-cmdsub-word-starting-with-case.yml:13: PARSE: run 區塊結尾時 `((`／`$[`／`[[`／`$(`／反引號／裸 `(` 有未收尾的（arith=0 brk=0 cond=False csub"
 ],
-"1fbdda46136620ca16f66ee5d027d142311399ff67f50869a2bfbe7da5886ecd": [
+"1f992a8798b7b44549f5d186b8f482ec75df00102cac7cee4a23ad23c033afbf": [
 "killed",
-""
+"✗ KNOWN_DISAGREE 之外的不一致（lint 與 runner 對同一個 step 說不同的話）： ‖ ✗ 檔頭宣告了已知類別、神諭卻沒把那麼多 step 歸進那一類（KNOWN-CLASS 過期——重判這個 fixture）： ‖ ✗ 已知類別 G 在 fixture 集上是 7 條，預期恰好 8（改動已知類別的 fixture 請同步改 FIXTURE_CLASS_TOTALS）"
+],
+"2003518ba666fc1716473399e455db95197ca9980ce5137198dca0c8cfbb5c4a": [
+"killed",
+"✗ `-  # 註解`（註解在 dash 那一行）：dash 行歸給這個 step，不是前一個 step——前一個 step 的 S-2 外流照樣被看到（R52，R51 regression／DA；`5b5a46d` 就有的缺陷）：rc=0（期待 1）、「已知類別 S-2」沒有出現 ‖ ✗ bare `-` 的 dash 行帶行尾註解、其後才是宣告註解：往上走的 dash 正規式要認得帶註解的 dash 行，宣告才算這個 step 的（R52 網）：rc=1（期待 0）、「一致 1」出現"
 ],
 "204dc68b3e23232a954c14352e84058100c95e6531cf20e30652ca021e8f53bb": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r39-xtrace-prefix-time-p.yml 宣告 rule-red，實測 pass"
+],
+"20710cd544a097b8908d185e08e9bb9e77ee6aea6702ea7b6a82a8e305858772": [
+"killed",
+"FAIL: test_duplicate_entry_name_is_error (__main__.ValidateTest.test_duplicate_entry_name_is_error) ‖ FAIL: test_duplicate_entry_name_with_remote_source_is_error (__main__.ValidateTest.test_duplicate_entry_name_with_remote_source_is_error) ‖ FAILED (failures=2)"
+],
+"20a016b617d21a2ffd1c2349dedc31766df9854641c9200550da8fbbdfd9345c": [
+"killed",
+"✗ YAML 層宣告而沒有觸發的 step 不進正面文法，注入探針不跑（`in_grammar(run, yaml_decl_step)` 的呼叫點；R49 logic M2）：rc=1（期待 0）、「一致 1」出現"
+],
+"20ad16c0d14e500b24129a974f713a157c985de8a46018884d35feaeb15856a8": [
+"killed",
+"✗ 歷史 payload 凍結表：`b86bc53` 的第 12 組 payload 不在 INJECT_PAYLOADS：'echo ORACLE-INJECT-MARKER >/dev/fd/197 || :' ‖ ✗ 歷史 payload 凍結表：`6490b57` 的第 12 組 payload 不在 INJECT_PAYLOADS：'echo ORACLE-INJECT-MARKER >/dev/fd/197 || :' ‖ ✗ 歷史 payload 凍結表：`ecb77d9` 的第 12 組 payload 不在 INJECT_PAYLOADS：'echo ORACLE-INJECT-MARKER >/dev/fd/197 || :'"
 ],
 "20ca032dfda3ca6e226b2bd4c96b56bfbafad7ac043c2ff323f9dff763ecfcb1": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r39-run-export-pythonwarnings.yml 宣告 rule-red，實測 pass"
 ],
 "2137115461f21d0344849003472c49d347349e8e27ba3271142ddbce9a171521": [
 "killed",
-""
+"test/fixtures/ci-log-filter-bypass-r37b-shell-template-bundled-o-xtrace.yml:11: RULE: [--strict] step 'bundled xtrace template' 靠管線過濾，而 run 區塊不在 `--strict` 的正面文"
 ],
-"224df3d8036e74ebe168044f9c3b9dc58e64d233a233e40c87e3c4b01db9ac9d": [
+"21439e3f22950484744a7bc599f344eb9acf90a33874f3f3479af3ec18dfeb38": [
 "killed",
-""
+"FAIL: test_description_prefix_regex_survives_cjk_adjacency (__main__.ValidateTest.test_description_prefix_regex_survives_cjk_adjacency) ‖ FAILED (failures=1)"
 ],
-"225dbe5c88868ef0c2c049de465fcd110e6a9cec979214e4151dbab408708118": [
+"2245c0a296a9e67b01101a50453aaa05f9a43789f154510e85d88267c645a2fa": [
 "killed",
-""
+"✗ 已觀察到外流而差分語法壞掉（多行群組）：rc=1（期待 1）、「印到 stdout」沒有出現"
+],
+"225a9c94e8d5f56b0312935c0f68fd0447036febf3f83a1d1c62604bda992ff2": [
+"killed",
+"FAIL: test_emit_recognises_a_command_head_after_leading_whitespace (__main__.ValidateTest.test_emit_recognises_a_command_head_after_leading_whitespace) ‖ FAIL: test_emit_truncates_overlong_lines (__main__.ValidateTest.test_emit_truncates_overlong_lines) ‖ FAIL: test_emit_truncation_keeps_the_command_head_intact (__main__.ValidateTest.test_emit_truncation_keeps_the_command_head_intact)"
+],
+"22827947d6b0ea51875838195d8faffc3c4fb8286264f093e50efce366a5fd83": [
+"killed",
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現 ‖ ✗ 主 shell 自己關掉稽核 fd：寫不出 fin，判量不到（儀器不可信）：rc=0（期待 0）、「主 shell 卻沒有 fin」沒有出現"
 ],
 "229e5061f427840bc236fbc564abda72ec4f94c1f731f100bb3ccf8261906722": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r39-env-pythonwarnings-expression-default.yml 宣告 rule-red，實測 pass"
 ],
 "22df10911bd1edd1b88b2ce8c42f46f09254b42428bb96b640013eba1840f9f9": [
 "killed",
-""
-],
-"2342fc36c1b8c73599b2d74b51a0c3fa08875871b1135e49b286f412dff80e71": [
-"killed",
-""
-],
-"23449eb49db331e0ab1ee1e8ff62f6e26ae4aaa586c466dfe1db102f128ea127": [
-"killed",
-""
+"test/fixtures/ci-log-filter-good-folded-continuation-across-placeholder.yml:14: RULE: step 'line continuation must skip the fold placeholder' 的 run 區塊既沒有經 neutr"
 ],
 "23647e7fcfcbb8607971ac7eec8aee23266df2ff37ffa574b7f9063daad457bb": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r37t8-subshell-line-continuation.yml:13: PARSE: run 區塊結尾時 `((`／`$[`／`[[`／`$(`／反引號／裸 `(` 有未收尾的（arith=0 brk=0 cond=False csub=0 b"
 ],
-"23de2a702c0d02e25ba5785a751828fdcad527063dc691ddb52d8c096ff95ae4": [
+"2385890514dcf3d531d08c73c1bc0714b60f8c626cf425ef23a80f53ecf889b5": [
 "killed",
-""
+"✗ 逐目標形狀檢查：寫進去之後神諭沒偵測到：期待有問題、實際通過"
 ],
 "246f409646238424962119f2f00fce532dffc1d317f73f2b21a4d96ac86b9f13": [
 "killed",
-""
+"test/fixtures/ci-log-filter-bypass-r37c-case-in-param-cmdsub.yml:12: RULE: [--strict] step 'case-in-param-cmdsub' 靠管線過濾，而 run 區塊不在 `--strict` 的正面文法裡：`${X`——文法只收"
+],
+"248b7a275d83133b50a698c24f65c541a79d4b837cfb2bf5b513c6c51304fb07": [
+"killed",
+"FAIL: test_two_entries_pointing_at_the_same_dir_is_error (__main__.ValidateTest.test_two_entries_pointing_at_the_same_dir_is_error) ‖ FAILED (failures=1)"
 ],
 "254f5ea4908d2de9b8fca40086b2a6358d70b6a3312671e2794a8c7e88cb2a93": [
 "killed",
-""
+"test/fixtures/ci-log-filter-bypass-r37o-sh-opts-child-bash-o-nonliteral-name.yml:17: RULE: step 's' 靠管線過濾，卻有 子 shell 的 `-oo …` 開了 trace——那些文字不經過管線（帶了 `2>&1` 也一樣"
 ],
 "25505ebcdc15b5791910f345b4e17768919d52fac59c7e6484c11671b254dcb2": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37t8-arith-then-no-semicolon.yml 宣告 parse-red，實測 pass"
 ],
 "2668d303b1440c9e0d7183c0202fff9f46c2c1933325dc2d8e1888067e733680": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r37p-strict-pipefail-template-set-prefix.yml:61: PARSE: [--strict] step 的 shell 是 '/bin/bash -o pipefail'——本 lint 的詞法是 bash 的，只"
 ],
-"267a1721516b39d9cc060f17a4e694fe2fbc348eb11fd410e20c2a122e6211ab": [
+"26886fb3d91f5cc174184f9a583538ffad2cc0275cf8b0b7a0eb02ed9e19cab2": [
 "killed",
-""
+"FAIL: test_hidden_files_are_triaged_into_three_kinds (__main__.ValidateTest.test_hidden_files_are_triaged_into_three_kinds) ‖ FAILED (failures=1)"
 ],
-"26d23813d80a61586e8f6ec69cac9486ec47fa577bb2fb07c8f57750dc8588bb": [
+"268dd5165ea650f364fa88ceaa94a48fd89f2c5f7b87dbdb68413ae4b006f271": [
 "killed",
-""
+"✗ manifest 檢查：缺 front 的假序列沒有被抓到"
+],
+"26a1692f2433cfac6830f97a070966ad74724ff63db07cda51614a9a6b2ffa7d": [
+"killed",
+"FAIL: test_harness_symlink_outside_repo_is_not_evaluated_or_leaked (__main__.ValidateTest.test_harness_symlink_outside_repo_is_not_evaluated_or_leaked) ‖ FAILED (failures=1)"
+],
+"26cf66ecf3d84896a683d78c66407051172044a8fb0fa18b09c01cf9c7136a38": [
+"killed",
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現"
 ],
 "26d62895e5be7e8c89980f99b7078076275134b64690bc0e3d3f99248e0426d9": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37t8-multiline-dq-hollow-mid-cmdsub.yml 宣告 rule-red，實測 pass"
 ],
-"26ed2a5c5c31cc70394e9ac9de9768e93b9fee56c0df7cbc28c7c6a592604f50": [
+"273b6393be2dc2ae20e157befad60cb395d90c0b4ab3ecca9a869b56cd64092a": [
 "killed",
-""
+"✗ 事件流有解析不出來的行（偽造的 `P fin x`）：判量不到（儀器不可信），不崩潰（R50 第三輪宣稱查核 I 組）：rc=1（期待 0）、「事件流有無法解析的行」沒有出現"
 ],
-"278470d8eb7e27a2f76ef79c5f55ef39b9f693c481b0517dd78eff992fd91b87": [
+"27be27a8f039f22271ba5562f20e9ddfef5b8f81d0913e5143a05f94296438d6": [
 "killed",
-""
+"✗ payload 脈絡：註解裡的運算式：rc=0（期待 1）、「繞過」出現 ‖ ✗ payload 脈絡：運算式規則關掉、正面文法接受非字面（突變）：rc=0（期待 1）、「繞過」出現 ‖ ✗ payload 不依賴前一個命令成功：`false ${{ … }}` 之後仍量得到外流：rc=1（期待 1）、「把 PR 文字印到 stdout」沒有出現"
 ],
-"28022fb09f2d28145fdefbb8e678ecf0fc2c64382498cbcb32c2cca34963a237": [
+"27eeb5213781647cb01ecd6118403e0cd026f1ef75f1f695c1070748d2496da6": [
 "killed",
-""
-],
-"284a8251a7eec9edf515cf3acf6f1c4cf1cd7df68db1a3322731438b24cd0c17": [
-"killed",
-""
+"✗ 逐目標形狀檢查：priv-tmpdir 放在 /tmp（上一層錯）：期待有問題、實際通過"
 ],
 "289117d74b3ef2675c4037936447698c2a72ebe53b56d1ad87c1ca78153f4197": [
 "killed",
-""
+"test/fixtures/ci-log-filter-bypass-r42-flat-restrictions.yml:33: RULE: [--strict] step 'assign TMPDIR' 靠管線過濾，而 run 區塊不在 `--strict` 的正面文法裡：指派 bash 的特殊變數 `TMPDIR`"
 ],
-"28adf6b3478f26497a732d2665ec05aee03e19a9d4717733fe8bb6429e3f27d8": [
+"28920bfbf3229a9e0a5f2f0032f9ba51122dc3383c2b318a572ea1429ae2ee4b": [
 "killed",
-""
+"✗ tool_usable：假 sandbox-exec 成功（rc=0）→ 可用：期待 True、實際 False ‖ ✗ tool_usable：不是 sandbox-exec 的執行檔，存在就算可用：期待 True、實際 False"
+],
+"28c911d7d32836238838c11bbe4ce6e82af6caccb294de399a12d5ed34ebf2a5": [
+"killed",
+"✗ KNOWN_DISAGREE 之外的不一致（lint 與 runner 對同一個 step 說不同的話）： ‖ ✗ 檔頭宣告了已知類別、神諭卻沒把那麼多 step 歸進那一類（KNOWN-CLASS 過期——重判這個 fixture）： ‖ ✗ 已知類別 G 在 fixture 集上是 7 條，預期恰好 8（改動已知類別的 fixture 請同步改 FIXTURE_CLASS_TOTALS）"
 ],
 "28faa423933ca7e409cf893e655e62075d06437199f30355f27831356c8bd25d": [
 "killed",
-""
+"test/fixtures/ci-log-filter-bypass-r37o-delim_align-unterminated-backtick-poisons-redirect.yml:44: PARSE: run 區塊結尾時 `((`／`$[`／`[[`／`$(`／反引號／裸 `(` 有未收尾的（arith=0 "
+],
+"28fe36b43b4614e4041548668d07592c713d2d06546f95da333bbf98bff8d3eb": [
+"killed",
+"✗ 逐目標履行：目標 priv：寫進 $ORACLE_INJECT 之後神諭沒有偵測到注入 ‖ ✗ 逐目標履行：目標 priv-tmpdir：寫進 $ORACLE_INJECT 之後神諭沒有偵測到注入 ‖ ✗ 注入哨兵：PR 文字由不繼承 fd 的孫行程（Python `subprocess` 預設 `close_fds=True`）當程式碼執行——判『繞過（注入）』，不是『一致』（R52，R51 regression M2／DA）：rc=0（期待 1）、「注入」沒有出現"
 ],
 "2910ffd5794081721aff1ba3e1c55b65f23c9df820fe1d618b562b3417eb8ab1": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-leading-pipe-literal.yml 宣告 rule-red，實測 pass"
 ],
-"29f034937aaf103200f423dba10d6d48a82f3be9024bd910ac46f8ecbfed090f": [
+"2916249222631bec8775ea0fa29650af2fc7ba7d4eedc132335ff248e607a589": [
 "killed",
-""
+"✗ 逐目標履行：目標 priv-tmpdir：私有目錄名 'obc2293m5' 不符合 tmp[A-Za-z0-9_]{8} ‖ ✗ **哨兵路徑形狀（沙箱版，只在 macOS）**（R64，R63 第 3、4 列）：DP1 只放行 `tmpXXXXXXXX/inject`（`32d45ff` 的私有目錄名）、DP0 也放行 `oXXXXXXXX`（對照組）、HO1 只放行隱藏 `.orc-*` 底下的 `inject`（`cwd` 目標）。負對"
+],
+"29927eadb203e445c61ac3d259dd9857345f4367b290aae573329c1cca9a7aff": [
+"killed",
+"✗ pipefail 探針被換掉（文法內的 `__orc_want=x`）不關掉獨立的注入探針：同一群組的 `[ -n $PR_TITLE ]` 注入照樣判『繞過（注入）』（R52 `pfu` 閘門；`8b45659` 判『量不到』rc=0；R51 logic LOW）：rc=0（期待 1）、「注入」沒有出現 ‖ ✗ `pfu` 閘門在 lint 擋下（RULE-red）那一側也開：pipefail 探針被換掉的 step 與沒被換掉的對照組，判定相同（一致 2）（R52 宣稱查核 A 組）：rc=0（期待 0）、「一致 2」沒有出現"
+],
+"29a05008512e7ba7b522ee6225ef68dcdffcf8355fca2df3c19ca5d94519ee09": [
+"killed",
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現"
+],
+"29ecccd86ac1ff2bdf8b5e651ce3a78d338853a85d342496dfb5c4b8dc7b7a5a": [
+"killed",
+"FAIL: test_unquoted_comma_in_focus_is_error (__main__.ValidateTest.test_unquoted_comma_in_focus_is_error) ‖ FAILED (failures=1)"
+],
+"29f526ba3889d1d77cce02f0b9a41aed88f616fc5d201f2296eab8d205862ea9": [
+"killed",
+"✗ 通道證據優先：上限之內已寫進 `$GITHUB_ENV` 的 PR 文字是證據——超量另外報，不蓋掉證據（R52，R51 Codex 1／regression M1）：rc=1（期待 1）、「跨 step 通道」沒有出現 ‖ ✗ 宣告 step 寫了 PR 文字再把通道檔灌過上限：證據在上限之內，判『繞過（跨 step 通道）』（R52，R51 regression M1）：rc=0（期待 1）、「跨 step 通道」沒有出現"
 ],
 "2a08c823eceff6aac4e9e4bf7fee985e0adf7b5cd905783c2c68173cb7034722": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r37t8-cmdsub-first-word-arith-shift.yml:9: RULE: step 's' 的 run 區塊既沒有經 neutralise.py，也沒有 `# LOG-FILTER:` 註解說明為何不過濾"
 ],
-"2b21503939c95520f548cf5e51f7977a0cade8c53587ab300d04114b04941dfc": [
+"2abefd96e8ab955b144f78ca5981a5abaab56197a9d1d44993dd335abd73a64e": [
 "killed",
-""
+"✗ 歷史哨兵位置 manifest：[spaced=False,tmpdir_priv=True] 哨兵位置 priv-tmpdir：目標 'priv-tmpdir' 不在 payload 'PWD[$(echo${IFS}ORACLE-INJECT-' 的序列裡（['priv']） ‖ ✗ 歷史哨兵位置 manifest：[spaced=False,tmpdir_priv=True] 哨兵位置 priv-tmpdir：目標 'priv-tmpdir' 不在 payload '-v PWD[$(echo${IFS}ORACLE-INJE' 的序列裡（['priv']） ‖ ✗ 歷史哨兵位置 manifest：[spaced=False,tmpdir_priv=True] 哨兵位置 priv-tmpdir：目標 'priv-tmpdir' 不在 payload '-n -o -v PWD[$(echo${IFS}ORACL' 的序列裡（['priv']）"
+],
+"2c1cfe645ff2a6eeb3b7abb0cc2a71d02b93550d0d0679dbf183b6b8f09a458b": [
+"killed",
+"✗ manifest 檢查：缺 cwd-abs 的假序列沒有被抓到 ‖ ✗ manifest 檢查：缺 cwd-vis-abs 的假序列沒有被抓到 ‖ ✗ manifest 檢查：條件寫錯的假序列（mixed-miss）沒有被抓到"
 ],
 "2c5c4253c88e208cc49d61b83b78637365c1160ca6b1fb2e7e28697a9e53d3be": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r42-default-subshell-cmdsub-case.yml:19: RULE: step 'stderr inside a case arm' 靠管線過濾，卻有 `>&2` 複製 fd（stdout 可能被帶到 stderr 或另存的 fd"
 ],
-"2c7ae39fc7915437ca49f04832dbe9c38ce9d0a7805eff71d4ef116b08f9c389": [
+"2df2dfac9cd5cae5c83fc144a158cf106254d863e3537f1bc2e656bf2af32dcb": [
 "killed",
-""
+"FAIL: test_external_strings_in_annotations_are_always_wrapped (__main__.ValidateTest.test_external_strings_in_annotations_are_always_wrapped) ‖ FAILED (failures=1)"
 ],
-"2c7ff0d8df781a53ee63cf0ef99ecc8da45432eaacd26f225449d9147ed2d9cf": [
+"2e582b4b94778631f8b4988550815fcbdbd15867f576ab16c786a2def6720392": [
 "killed",
-""
-],
-"2db231c37992d943f7d84c24b27c2eb1ea33a6a3620bb90811cb6aacd9ddd4bd": [
-"killed",
-""
-],
-"2fa61aae1f9fe0770ad68636e95a6e4c6875b49d84fd29873a34149c346da3c7": [
-"killed",
-""
+"✗ **注入探針送出的鍵**（R58 F2，R57 security M／DA M）：`env: TITLE: ${{ …title }}`、`env: HEAD_REF: ${{ github.head_ref }}`、`env: X: pre-${{ …title }}-post` 加 `bash -c \"$KEY ‖ ✗ **注入的鍵設定各是獨立的一次執行：舊樹的設定、所有鍵同時、逐鍵各一次**（R60 G1，R59 regression／logic／DA）：step 先驗證 PR 的另一個欄位——第二個 `${{ …title }}` 鍵的長度閘門、`>` 閘門、`head_ref` 的 `>` 閘門、純 bash 的 `[[ $ ‖ ✗ **跨執行持久狀態（已知盲點，棘輪）**（R62 H3，R61 DA 的 TG1／CG1／DT1）：step 把狀態（taint 檔、計數器、工作區衛生檢查的 taint）留在共用的 `/tmp`、並依它決定要不要執行 `PR_TITLE`——神諭對同一個 step 的多次執行共用同一台主機，先跑的執行把後跑的吃掉"
 ],
 "2ff4c7308ee0fa02ef0bbd840bc82e2d33758ace379531fc4509111d396a6c44": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37t8-child-bash-verbose-long.yml 宣告 rule-red，實測 pass"
 ],
 "300f781247a2a9283da173a62d36a16ef65ccbf400ebfaf7be6af3ab62a2a2cc": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r39-env-pythonwarnings-expression-default.yml 宣告 rule-red，實測 pass"
 ],
-"3041f6cf621d5534970d69a3ca38c9d40eccc5e8abafa0dbfed647c65d7916aa": [
+"30b49b52c899c06c0e7cb7e0cf6a499b3ed80358f3bca6bb262e076a8e3fa281": [
 "killed",
-""
+"FAIL: test_pack_rename_is_detected_not_reported_as_new_pack (__main__.ValidateTest.test_pack_rename_is_detected_not_reported_as_new_pack) ‖ FAIL: test_pure_rename_does_not_demand_a_bump (__main__.ValidateTest.test_pure_rename_does_not_demand_a_bump) ‖ FAILED (failures=2)"
 ],
-"30792a106b8ef0504deb593ef2be63f948a827d982a518b30fedb4c7c1e4a30b": [
+"30cb79fce95d2095da1880a25b6251cc635b7f258e5d7a2d4d9c7bdbcc0d3f68": [
 "killed",
-""
+"FAIL: test_non_semver_version_is_error_for_pack_and_main_plugin (__main__.ValidateTest.test_non_semver_version_is_error_for_pack_and_main_plugin) (plugin='paral ‖ FAILED (failures=1)"
+],
+"30e96e646db7b44537ca8cefaf08edfc2b96b327950e9558540e90119b65e76e": [
+"killed",
+"FAIL: test_output_boundary_covers_stdout_and_stderr (__main__.ValidateTest.test_output_boundary_covers_stdout_and_stderr) ‖ FAILED (failures=1)"
 ],
 "311ddfba4f5677d565b472e13eab00c8585fc10346ffcfc237c87fc1e47197da": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37t8-clamp-ansic-in-param-then-redirect.yml 宣告 rule-red，實測 pass"
+],
+"31c7686d7acc8b5f043d08dd473463ee4cafd815ad6243f21824400f373c5d46": [
+"killed",
+"FAIL: test_non_ascii_test_scripts_declare_utf8 (__main__.ValidateTest.test_non_ascii_test_scripts_declare_utf8) ‖ FAILED (failures=1)"
+],
+"31f33eb78c1452676e56afca2f7711ec84b3707ba5c8d4a2616db1322b4d6c19": [
+"killed",
+"✗ 通道上限的網：PR 文字寫在上限**之外**，神諭看不到，不能判『一致』——判『量不到（儀器不可信：通道檔 … 超過）』（R52 網，R51 logic M／G1）：rc=1（期待 1）、「通道檔 GITHUB_ENV 超過 4096 位元組」沒有出現"
 ],
 "320ad0c9df262d82ad0718988dc8221a64b789c217f0004234ffdd042110fcf0": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-param-expansion-escaped-brace.yml 宣告 rule-red，實測 pass"
 ],
 "325dc724b26fd5ea7f193ff528cfc5006b58a14073efe3145ee5756d8a9a1666": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-block-header-comment-digit.yml:10: PARSE: `run: |N` 的內文有一行比顯式縮排指示子淺——YAML 錯誤（PyYAML ParserError），本 lint 不猜"
 ],
-"32f94fcfdb62c157475a6d9eb16b5f6e676917f5cc26cf5d3d586ad0b1154ae7": [
+"32e3ade4960966ab7204e0e9322613eae962738a67dfaea5d8cc7fa59733d9eb": [
 "killed",
-""
+"FAIL: test_dirty_paths_list_entering_annotation_goes_through_wc (__main__.ValidateTest.test_dirty_paths_list_entering_annotation_goes_through_wc) ‖ FAIL: test_uncommitted_lens_change_is_surfaced_not_silently_green (__main__.ValidateTest.test_uncommitted_lens_change_is_surfaced_not_silently_green) ‖ FAILED (failures=2)"
 ],
 "3376123388ef2327a724a46b936c77f3bac31a31e00686e8a4a2915fa40014b0": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r42-flat-opsweep-positives.yml:21: RULE: [--strict] step 'an unquoted literal value in GITHUB_ENV' 有管線，卻沒有跑在 pipefail 之下（shell "
+],
+"337e9d87d27b61d2386432e87edb6017b96cb60a00a2e1b626891d252f0f7ff5": [
+"killed",
+"FAIL: test_external_strings_in_annotations_are_always_wrapped (__main__.ValidateTest.test_external_strings_in_annotations_are_always_wrapped) ‖ FAILED (failures=1)"
 ],
 "339d2941489935e0f68d77945279ae4bf3edab2dc6f5a0e8fbde47ddefde0db6": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37t8-arith-then-no-semicolon.yml 宣告 parse-red，實測 pass"
 ],
 "33ab842ec3a50d3f77c2c6e99669205f8f2b9712c90ad4f6566978c88f953dfb": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r42-ghenv.yml 宣告 EXPECT-EACH-STEP，第 49 行的 step 沒有自己的 RULE 行"
+],
+"33e278f6ca6f9ce94f91afd88f4bddb2cd8ade20071df56538d399c293d4595e": [
+"killed",
+"✗ 宣告 ORACLE-COMPARABLE 的檔有不可比的 step（R40，#33 verify R39 放行條件 12）：rc=0（期待 1）、「ORACLE-COMPARABLE」沒有出現"
 ],
 "349329db04b885de7235bd337216b069cc2483bdd17ee8ffb00ebf7ba4da3ee8": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r37t8-backtick-comment-then-continuation.yml:13: PARSE: run 區塊結尾時 `((`／`$[`／`[[`／`$(`／反引號／裸 `(` 有未收尾的（arith=0 brk=0 cond=False "
 ],
 "34b63d092a2e244f778c5776008f8f534d9a2c31553e5b6ca8bc7382a9a9a967": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37t8-unterm-subshell-around-cmdsub-group.yml 宣告 parse-red，實測 pass"
 ],
-"3521a2a3efa50adb3085999beca13d7f661678d2e98f4a8f410533bb7d23dcb9": [
+"34b84eb2df49bd3e1732d6411ebf74b333d369282b411b760ab4eae9342539d4": [
 "killed",
-""
+"✗ 歷史 payload 凍結表：`b86bc53` 的第 8 組 payload 不在 INJECT_PAYLOADS：'PWD[$(echo${IFS}ORACLE-INJECT-MARKER>/dev/fd/197||:)]' ‖ ✗ 歷史 payload 凍結表：`b86bc53` 的第 9 組 payload 不在 INJECT_PAYLOADS：'-v PWD[$(echo${IFS}ORACLE-INJECT-MARKER>/dev/fd/197||:)]' ‖ ✗ 歷史 payload 凍結表：`b86bc53` 的第 10 組 payload 不在 INJECT_PAYLOADS：'-n -o -v PWD[$(echo${IFS}ORACLE-INJECT-MARKER>/dev/fd/197||:)]'"
+],
+"35630b3e7cadf4102be56922dc2c64be4ea7829a90d417cf91ace25ba6a582a7": [
+"killed",
+"✗ XR 探針檢查：只讀 stat（`os` 在允許清單內，只有禁用寫法那一道抓得到）：期待有問題、實際通過"
 ],
 "3568806a7e9a28fe338d8b004b9a4934d0b89c0d38fb8b130dec9b5df1ab3852": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-folded-blank-separator-empty-delim.yml 宣告 rule-red，實測 pass"
 ],
 "35826d7ab2ab437d2fa5d87606fa48addb41251aeb2547464ac2955df1b5838f": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-restrict-r42-flat-empty-group.yml 宣告 rule-red，實測 pass"
 ],
-"3602374bfb4caef200a23af5bdc2c89746e1994d24c65322940fa8780be2571e": [
+"35de0a32de3cf8460b56187efb8a3fdefb12df824d8111706c087b8ec22b6b16": [
 "killed",
-""
+"FAIL: test_non_semver_version_is_error_for_pack_and_main_plugin (__main__.ValidateTest.test_non_semver_version_is_error_for_pack_and_main_plugin) (plugin='pai-l ‖ FAIL: test_version_strings_entering_annotations_go_through_wc (__main__.ValidateTest.test_version_strings_entering_annotations_go_through_wc) ‖ FAILED (failures=2)"
+],
+"36365b46ce6d0f4620f12faab7a4210d99d0134320fd2194437f427bb7c676d2": [
+"killed",
+"✗ 檔頭宣告了 ORACLE-COMPARABLE，這些 step 卻不可比（神諭對 bash 樣板的解析退化了，或樣板不在封閉清單裡）："
 ],
 "36367a53384d7ca91792cc33d7c7218e8c63fadc3a98e92f5c71fa11a3a14556": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r37t8-dq-arith-nested-cmdsub-quote.yml:9: RULE: step 's' 靠管線過濾，卻有 `2>&1` 複製 fd（stdout 可能被帶到 stderr 或另存的 fd）——那些文字不經過管線（帶了 `2>&1"
 ],
-"3662451ea67d499c1237daea4d94c3d1e5c32455ad86c93674c09b0c66575054": [
+"370c543d7f73fef3c9f4d4d02ef229283767c9d83167abbe113802b606dd20e7": [
 "killed",
-""
-],
-"36afc51bc11b297229f25acc45d10d0295325694b968a33c878a39b496064551": [
-"killed",
-""
-],
-"36d6741071f9f6dee3f98669eb7b22fbfad6d5e38810213e39762cdc613cbf37": [
-"killed",
-""
+"✗ 已知類別 G 被與外流無關的原因擋下：rc=0（期待 1）、「原因與外流無關」沒有出現 ‖ ✗ 已知類別 S-2 被與外流無關的原因擋下：rc=0（期待 1）、「原因與外流無關」沒有出現 ‖ ✗ 深目錄樹建在全程序共用的 stub 目錄（`PATH` 的第一段）：神諭離開 `main()` 清理時不崩潰，判定表照印（R50 第五輪 L1，K1 的漏網之魚；Python ≤3.12 才重現）：rc=1（期待 0）、「一致 1」沒有出現"
 ],
 "3727adf7ba6d80d6f80c330831a04ccd7f1b17540577ca74498f35c21c9d7879": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-restrict-r42-declared-opsweep.yml 宣告 EXPECT-EACH-STEP，第 23 行的 step 沒有自己的 RULE 行"
 ],
 "380b2c29fcbeedfe1ca14cd7bd97779ec65ebb7ea7c0fa162a9c1806a7375682": [
 "killed",
-""
+"test/fixtures/ci-log-filter-bypass-r42-trigger-escaped-pipe.yml:13: RULE: [--strict] step 'escaped pipe' 有寫出來的管線或提到 `$GITHUB_ENV`／`$GITHUB_PATH`，而 run 區塊不在 `--s"
 ],
 "38479b9f303fc3fc4baaa2b2da2eb5d8e6e151407a69e16af2cc4361de9e6bba": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r42-declared-opsweep-positives.yml:48: RULE: step 'a declared single-line scalar that starts with a logical or and ends with a "
+],
+"3863077dbf5a6c03d4702ae0f7cf330e15e2f38cc29e8afdd86850e4b48af11b": [
+"killed",
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現"
+],
+"38c5eb75db99138a97c8f872c95e26e2661028c14e7859c4738f3a985b0d4972": [
+"killed",
+"FAIL: test_every_property_escape_has_its_own_test (__main__.ValidateTest.test_every_property_escape_has_its_own_test) ‖ FAILED (failures=1)"
+],
+"38fff6fc40f6f6ade506df08a95279410347ec05876be62daf2b15347b779dd9": [
+"killed",
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現"
 ],
 "3902d3e91162e3d9085464e4c3a653a37c26ef4002b979a33756a03deba99c1a": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37c-dq-param-legacy-arith-brace.yml 宣告 parse-red，實測 pass"
+],
+"3934ec2dc6825cfd74844ca8f4440089cdb066adeffcd987f5ca9059104e3574": [
+"killed",
+"FAILED (errors=1)"
 ],
 "393b80ed1dd5e89c5bec651a1407d91e0fb5c7f1788e417b406da37adbfe6b36": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37t8-unterm-subshell-around-cmdsub-group.yml 宣告 parse-red，實測 pass"
+],
+"3a5e09e4099a16ffea7d9ce06daf39e01e36736a478a6eec4258eb2040d1d2f1": [
+"killed",
+"✗ KNOWN_DISAGREE 之外的不一致（lint 與 runner 對同一個 step 說不同的話）： ‖ ✗ 檔頭宣告了已知類別、神諭卻沒把那麼多 step 歸進那一類（KNOWN-CLASS 過期——重判這個 fixture）： ‖ ✗ 已知類別 G 在 fixture 集上是 7 條，預期恰好 8（改動已知類別的 fixture 請同步改 FIXTURE_CLASS_TOTALS）"
+],
+"3b1a8ffddbc8750e038e9dbdedab72acb7e51e964f48ccfbd703e72abc3ca499": [
+"killed",
+"✗ pipefail 探針被換掉（文法內的 `__orc_want=x`）不關掉獨立的注入探針：同一群組的 `[ -n $PR_TITLE ]` 注入照樣判『繞過（注入）』（R52 `pfu` 閘門；`8b45659` 判『量不到』rc=0；R51 logic LOW）：rc=0（期待 1）、「注入」沒有出現 ‖ ✗ `pfu` 閘門在 lint 擋下（RULE-red）那一側也開：pipefail 探針被換掉的 step 與沒被換掉的對照組，判定相同（一致 2）（R52 宣稱查核 A 組）：rc=0（期待 0）、「一致 2」沒有出現"
+],
+"3b94fb03cd4b096c897d79ee202908d562d49709dceef23b5aa4c3f4d01bdf10": [
+"killed",
+"FAIL: test_profile_list_in_annotation_is_neutralised_and_bounded (__main__.ValidateTest.test_profile_list_in_annotation_is_neutralised_and_bounded) ‖ FAIL: test_unknown_profile_filename_is_error (__main__.ValidateTest.test_unknown_profile_filename_is_error) ‖ FAILED (failures=2)"
+],
+"3bbe80b0bfe67daf26de3317538d8565b1676158715e4b6bd3a3ee2ef697d739": [
+"killed",
+"FAIL: test_description_drift_warns (__main__.ValidateTest.test_description_drift_warns) ‖ FAILED (failures=1)"
 ],
 "3bd7f10be6c60a4b1d0f0728408a02c69dd9885f794784988ca53e9f85c87f06": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r39-command-v-describes-only.yml:9: RULE: step 'command -v only describes' 靠管線過濾，卻有 `set -x` 開了 xtrace——那些文字不經過管線（帶了 `2>&1` 也一樣"
 ],
-"3c290e855d031b78997ea3e54c13c7098aa19f5485b20ba5e0c5ccba9223b20c": [
+"3c0db9de4c906646cbde83fdc834bfd591b6c4852095a2418c4f2574c6bb8d64": [
 "killed",
-""
+"FAIL: test_wholesale_copied_catalog_header_is_error (__main__.ValidateTest.test_wholesale_copied_catalog_header_is_error) ‖ FAILED (failures=1)"
+],
+"3cbe7c4262dc8f7f0cc9c88c44a9e896bf16076b105d4a81f7f91626b753cfc7": [
+"killed",
+"FAIL: test_collision_with_builtin_without_override_is_error (__main__.ValidateTest.test_collision_with_builtin_without_override_is_error) ‖ FAIL: test_collision_with_override_passes_but_warns (__main__.ValidateTest.test_collision_with_override_passes_but_warns) ‖ FAILED (failures=2)"
+],
+"3d433552eb0d3ae4fd7672d4bb4eccb758a033e0df9ab5114b90ba119f519b98": [
+"killed",
+"✗ (字串, n) 多一次：期待 False、實際 True"
+],
+"3d7f873fd586cdffbe1df494d907d4d4836a6aacf73976d2952df5cbb7b5b1c1": [
+"killed",
+"✗ ci-log-filter-known-r39-mustfail-class-stale-only.yml —— 宣告的理由「KNOWN-CLASS 過期」沒有出現 ‖ ✗ must-fail 探針沒有以宣告的理由失敗（它要量的那個分支沒被走到，或神諭在那裡放行了）："
 ],
 "3d9ca464b000fe3a77a241ee68451d8ba713716f7768aea05b23aa0e930739d8": [
 "killed",
-""
-],
-"3da148814853ae4b10b85c25ca43e81ce70a3cfd74eeecb7bc790615434254f2": [
-"killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-backtick-hash.yml 宣告 rule-red，實測 pass"
 ],
 "3dc6af7ac69b053226bb232382a0c9524080b51f246e72d7ec0acfc1e71864a4": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r37c-param-cmdsub-herestring.yml:11: PARSE: `${…}` 在同一行沒收尾（含裡面的引號、命令替換），或是 bash 5.3 的 `${ cmd; }`／`${| cmd; }`，或裡面有本 lint 不解析的構"
+],
+"3dd5fd44e4f3fd0eccbc1a7660e1d8041ceab6524b6f22d9862999c4e2bb5e80": [
+"killed",
+"✗ ci-log-filter-known-r37a-mustfail-s2-strict-not-blocking.yml —— 宣告的理由「不是預設模式獨有的缺口，不是 S-2」沒有出現 ‖ ✗ must-fail 探針沒有以宣告的理由失敗（它要量的那個分支沒被走到，或神諭在那裡放行了）："
 ],
 "3e768a90fc8f6c8ab4fdf46876689cc3c24213dd6e26e2b98b1401465b6c34cd": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-parse-r40-bash53-valsub-pipe.yml 宣告 parse-red，實測 pass"
 ],
-"3ef54ebea53b5df739ce0dc8f0248763e818e5256b387caa1adf94c6d2743676": [
+"3e8e47d9499b03e1de9258fbc4a230fd8ede1b582181e80ed90089dcf0d8b92f": [
 "killed",
-""
+"FAIL: test_pack_name_containment_keeps_outside_name_out_of_log (__main__.ValidateTest.test_pack_name_containment_keeps_outside_name_out_of_log) ‖ FAIL: test_source_outside_plugins_dir_with_symlinked_claude_plugin_is_blocked (__main__.ValidateTest.test_source_outside_plugins_dir_with_symlinked_claude_plugi ‖ FAILED (failures=2)"
 ],
 "3f57312470180a6dfb36470a9e85e38d126d80e65f78945f99094ea32eca7628": [
 "killed",
-""
-],
-"3fa71d397f003c00acff8e71e8dae0502bbee204c3be0725beb86112a9e49b81": [
-"killed",
-""
-],
-"4026073059c3be3091af40e926c1f5b34842fa6b33f8751a18164ed9ac517a72": [
-"killed",
-""
+"test/fixtures/ci-log-filter-good-r37o-cmdsub_end_case-ansic-legacy-arith-stray-esac.yml:42: RULE: step 'legacy-arith-in-cmdsub-case' 靠管線過濾，卻有 引號或 `${…}` 裡的命令替換對"
 ],
 "40b61d5aa4312a24c2babd021b537a96c8fea2d833b67b469b0fa6c272ccdd0d": [
 "killed",
-""
-],
-"419cf5f8d5f9087b696f3d1238787409d75b47ea5d96438f4b62f6c3b80e1b6d": [
-"killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37p-lex-bare-procsub-word-position.yml 宣告 rule-red，實測 pass"
 ],
 "41b73aec705fe011f9f86e195ea2382fcdee8a11a1c7932c5f1a1764eea80033": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37t8-named-fd-save-stdout.yml 宣告 rule-red，實測 pass"
 ],
-"427a7a45b3d069ef9d423de428787eba24b982b7c0327b1842df02afa6b7e36e": [
+"421092b14e21b4fb7e23ed5861d5e01418056de911958ac74ad397a3558e275a": [
 "killed",
-""
+"✗ 歷史 payload 凍結表：`5b5a46d` 的第 4 組 payload 不在 INJECT_PAYLOADS：'echo ORACLE-INJECT-MARKER >> \"$ORACLE_INJECT\"' ‖ ✗ 歷史 payload 凍結表：`6490b57` 的第 16 組 payload 不在 INJECT_PAYLOADS：'echo ORACLE-INJECT-MARKER >> \"$ORACLE_INJECT\"' ‖ ✗ 歷史 payload 凍結表：`ecb77d9` 的第 16 組 payload 不在 INJECT_PAYLOADS：'echo ORACLE-INJECT-MARKER >> \"$ORACLE_INJECT\"'"
+],
+"4269b99dc4276eb9a77dccdc7a92338f3f52fccadb9d9763753ee2a30fe89ecc": [
+"killed",
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現 ‖ ✗ 主 shell 自己關掉稽核 fd：寫不出 fin，判量不到（儀器不可信）：rc=0（期待 0）、「主 shell 卻沒有 fin」沒有出現"
 ],
 "42817038f8155325b03100a9a3f565370e6546f3b33af78a795dae5656838dd0": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37t8-backtick-cond-regex.yml 宣告 rule-red，實測 pass"
+],
+"42daee5a4c2712a1fc2ecebd10e1bfdf0305da5028c84b5fbdbdf1c21a6cdb94": [
+"killed",
+"FAIL: test_duplicate_key_within_file_is_error (__main__.ValidateTest.test_duplicate_key_within_file_is_error) ‖ FAILED (failures=1)"
 ],
 "42e6d018d6cbad3aa7ab119a3e9afb182c72247f1a208d5ec08e8a7c03c81772": [
 "killed",
-""
+"test/fixtures/ci-log-filter-bypass-r37b-strict-runs-on-quoted-windows.yml:11: RULE: [--strict] step 'windows runner without a shell' 靠管線過濾，而 run 區塊不在 `--strict`"
 ],
 "4344858ffa34925316dae7898fb8b4a1c74b596d3ef2bb4b2cb7d51e7032480d": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r39-xtrace-prefix-eval-dashdash.yml 宣告 rule-red，實測 pass"
 ],
 "4346e26fc1815efe0c73be6253fe36d30d6e2a7cf247aeaed738db8d22aca09f": [
 "killed",
-""
+"test/fixtures/ci-log-filter-bypass-ansi-c-quote-unterminated.yml:14: RULE: step 'unterminated ansi-c quote' 的 run 區塊既沒有經 neutralise.py，也沒有 `# LOG-FILTER:` 註解說明為"
 ],
 "43df2bbf03c495ebc231c6d5cb612f303ba25cd27349682013d9fdc6fd84e18f": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-cond-bracket-without-space.yml 宣告 rule-red，實測 pass"
 ],
-"4436be1d09f5353e0a1838c91a1648ab12b4bd4ff6d25bde5d902c4f2523496d": [
+"4481fc7291502ad094ffa73bfeb00a69f9f7576a799ea2c83d3a2e061c389a67": [
 "killed",
-""
+"✗ step 範圍的兩道防線（欄位錨定的 dash 正規式、鍵已在 dash 行時不往上走）**同時**拿掉就會判錯：前一個 step 的 `with:` 值是多行 plain scalar、續行到單獨一行 `-` 再接更深的 `# LOG-FILTER:` 註解——`-` 是內容、註解是真註解，下一個 step 真實"
 ],
-"44b206a9a839f3b30712fd3dc4f211525ea46cdbd7644971a19d62af71d51982": [
+"454371d1de046c6cac3e5d84ce9d5f1919c52f36bfbd794582baaa342db6aa37": [
 "killed",
-""
+"✗ manifest 檢查：完整的假序列被判有問題：[\"[spaced=False,tmpdir_priv=False] 哨兵位置 cwd-abs：目標 'cwd-abs' 不在 payload 'E $ORACLE_INJECT' 的序列裡（['cwd', 'priv', 'cwd-vis']）\", \"[spaced"
 ],
-"45465dcba90429d4fd2417cecae8e733cd16afd01e1e5176b362810b8040cd52": [
+"455da74d09cb38a0739d7de8f828cccb2c00cc33c4da97462b26c6018cfe03e3": [
 "killed",
-""
+"✗ KNOWN_DISAGREE 之外的不一致（lint 與 runner 對同一個 step 說不同的話）： ‖ ✗ 檔頭宣告了已知類別、神諭卻沒把那麼多 step 歸進那一類（KNOWN-CLASS 過期——重判這個 fixture）： ‖ ✗ 已知類別 G 在 fixture 集上是 7 條，預期恰好 8（改動已知類別的 fixture 請同步改 FIXTURE_CLASS_TOTALS）"
 ],
 "457b8e4b23c4aba1fbef72af02b1b9b542ac29b60b1ce9daa4923382162467c6": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37o-word_lex-interior-subs-backtick.yml 宣告 rule-red，實測 pass"
 ],
 "45960477a0bf061356d50ef6a67a88e8b7ad41d9e28154525448caaff19687a4": [
 "killed",
-""
+"test/fixtures/ci-log-filter-bypass-r37o-cmdsub_end_case-backtick-paren-inside-case-cmd.yml:32: PARSE: 雙引號裡的命令替換到 run 區塊結尾都沒收——那一行在 bash 是語法錯誤、不會執行，本 lint 不解析"
+],
+"45cfb6f4f1608aa77dc3eb0648701b18dc79b0c8092f4dc4e264663a06f100c5": [
+"killed",
+"✗ primitive 稽核：`test {-v,\"$X\"}` 的實際 argv 在文法的三種形狀之外（R46）：rc=1（期待 1）、「primitive 稽核」沒有出現 ‖ ✗ 儀器完整性：改 `ORACLE_*` 環境變數沒有任何作用（`ORACLE_AUD` 等已不存在；僅剩的 `ORACLE_PRIV` 在開頭被複製進 `__orc_priv`，改 `ORACLE_PRIV` 環境變數沒有作用；對 `__orc_priv` 本身的指派屬於 PRELUDE 變數那一類，見第 86 項） ‖ ✗ 儀器完整性：相對路徑重導向截斷不到儀器檔（R48，R47 security）：rc=1（期待 1）、「primitive 稽核」沒有出現"
+],
+"45d6fc060fef6820852293558af14ccbaf581c2d5745ede0a6476479ad538076": [
+"killed",
+"✗ 事件流有解析不出來的行（偽造的 `P fin x`）：判量不到（儀器不可信），不崩潰（R50 第三輪宣稱查核 I 組）：rc=0（期待 0）、「事件流有無法解析的行」沒有出現"
 ],
 "4609142be5d5dec45edeca3e0d0e66a7da3066bbc990e4e66d90d04f4e36b279": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37t8-arith-then-no-semicolon.yml 宣告 parse-red，實測 pass"
 ],
-"4677a2a990a67d9aa7d713ab798174c994dbdc8eee1bd7f2682a024756e3869f": [
+"46616c551a139ba319e09cd7449ca46b480499d2e134eb44e8cdf2f5b3c87d86": [
 "killed",
-""
+"✗ 逐目標履行：目標 cwd-vis：$ORACLE_INJECT 是 '<PRIV>/i'，不符合 (?:<TMP>/)?inject ‖ ✗ 逐目標履行：目標 cwd-vis-abs：$ORACLE_INJECT 是 '<PRIV>/i'，不符合 <TMP>/inject ‖ ✗ **第 13 格：`TMPDIR` 含空白 ∧ 求值者的 shell 不切開重導向的目標詞 ∧ 求值者先離開步驟 cwd**（R60 G2，R59 requirements／logic／regression／DA／Codex）：`bash --posix` 先 `cd /`（PX1）、`bash --posix` "
 ],
 "46a4c0fdb2f672fe70945fae19fe08fff4d6bd6045d5d3a4e8fcf5ed905635de": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-cond-bracket-without-space.yml 宣告 rule-red，實測 pass"
 ],
 "46a8c9a51901b606ceda10c3cf170b004130f1b92c3a4d5cf494cc00677f998a": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37e-ansic-hex-multibyte.yml 宣告 parse-red，實測 pass"
 ],
 "474825f05c6e23e3e5ba096b9fbc3dfb7f9f13840f945d30587ffe15fef13caf": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r39-xtrace-prefix-nonliteral-name-o-xtrace.yml 宣告 rule-red，實測 pass"
 ],
 "47c918137ea9d07faefa925e72a9d12171d67706d41011a6568235e17607c12a": [
 "killed",
-""
+"test/fixtures/ci-log-filter-bypass-r37c-ansic-in-param-cmdsub.yml:11: RULE: step 'ansic-in-param-cmdsub' 靠管線過濾，卻有 引號或 `${…}` 裡的命令替換對不到收尾（或掃描器不解析它）——裡面的重導向看不到，不解"
 ],
 "485dde5ce0d148d6724910b03a5a51cf07151e12f37fc7b6976f09cfa03913c5": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37c-cmdsub-case-esac-argument.yml 宣告 parse-red，實測 pass"
+],
+"486b12caf840e9239ff118269b9c365c6074430e3ca639dc537ac4f389e3b988": [
+"killed",
+"✗ tool_usable：假 sandbox-exec 跑得比逾時久（睡 5 秒、逾時 1 秒）→ 不可用：期待 False、實際 True"
 ],
 "48bf7b14e270b80b1e5865d74086b893f362b6ff955bea68d12e995890db6f7f": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r37p-strict-pipefail-template-set-prefix.yml:61: PARSE: [--strict] step 的 shell 是 '                     '——本 lint 的詞法是 bash 的，只"
 ],
-"48d9574e691304f598df8b92729350b78e3c505da62b95fb84b62246121baf6f": [
+"48f3060c8e8b7988a91b21fa896e8e16e03387effd09b84e7f69474f1a797843": [
 "killed",
-""
+"FAIL: test_profile_gate_fails_loud_when_lister_missing (__main__.ValidateTest.test_profile_gate_fails_loud_when_lister_missing) ‖ FAILED (failures=1)"
+],
+"49043d9aa093e695b0e373567ed9c207c2d86874b7e3097da436a2b0f50183e4": [
+"killed",
+"FAIL: test_dirty_paths_list_entering_annotation_goes_through_wc (__main__.ValidateTest.test_dirty_paths_list_entering_annotation_goes_through_wc) ‖ FAIL: test_external_strings_in_annotations_are_always_wrapped (__main__.ValidateTest.test_external_strings_in_annotations_are_always_wrapped) ‖ FAILED (failures=2)"
 ],
 "4921e577ee2076e785d5a9a6076f08b654fc6cf160cb12cba6048a98aad6f95b": [
 "killed",
-""
-],
-"493c76096a31e7e9ba35083454da6e46f5c295df38e65f084f1dcde311280693": [
-"killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-heredoc-delim-ansic-control-char.yml 宣告 parse-red，實測 pass"
 ],
 "494cdd08304034dca8e89d7afb054221ef1bd4fa06def4991d200f6dcd7a7b58": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37m-escaped-word-before-cond.yml 宣告 rule-red，實測 pass"
 ],
 "496c031cd9598bedf6a4f600297122635e07912af100d77794b54f97ac3d3ef0": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37t8-arith-exp-cmdsub-stderr.yml 宣告 rule-red，實測 pass"
 ],
 "4997196b9e3c4c0dd8c7bc5f8156505ced400eeab676b3c40f4b18e8d5b6f63a": [
 "killed",
-""
-],
-"49a132a5ffa51b93d17dea785596183738df160447af5dc3452417aadfe6aa9d": [
-"killed",
-""
+"test/fixtures/ci-log-filter-good-r37o-shell_scan-arith-command-position-drop.yml:24: RULE: step 'bare-paren-mid-word-arith' 的 run 區塊既沒有經 neutralise.py，也沒有 `# LO"
 ],
 "49f2b2bc211cd8eafa19c8fd075d7f4a67abe2d8fc7e3a91bb756d3b60275f08": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-strict-group-bare-set-prefix.yml 宣告 rule-red，實測 pass"
 ],
-"4a1ecf3c2c89221c4438cd7403555a9a1c46e863b7bbe6c7fafbc719720c1d2f": [
+"4c8b98902cc4c5a4f9a098557d14f99b4fb37d6d05b840dbaa19963b654f8338": [
 "killed",
-""
+"✗ 通道檔被換成 FIFO：神諭不卡住，判量不到（儀器不可信）（R49 Codex 第 3 條）：rc=0（期待 0）、「不是一般檔案」沒有出現 ‖ ✗ 深目錄樹建在全程序共用的 stub 目錄（`PATH` 的第一段）：神諭離開 `main()` 清理時不崩潰，判定表照印（R50 第五輪 L1，K1 的漏網之魚；Python ≤3.12 才重現）：rc=1（期待 0）、「一致 1」沒有出現"
 ],
-"4acf8efd37b2c18ff93b9208eeaf6c9f38a7df96ee96b7d2b89563399d2d5387": [
+"4dd107c954196ecbfc661e6490bb7275e11d54d93dcca2f92c76a0e4e23869ec": [
 "killed",
-""
-],
-"4c16ad2f5f16792cbfeb856425908279944bd9916ba0aec0460d4d7f7a6d8e0a": [
-"killed",
-""
-],
-"4ce76f280896c83e232d2eba450a84e5b699b56c90b6dba1ab6bc01ebef6accb": [
-"killed",
-""
+"✗ 宣告註解寫在 bare `-` 與第一個鍵之間：神諭的 step 範圍涵蓋它（R49 logic LOW）：rc=1（期待 0）、「一致 1」出現 ‖ ✗ bare `-` 後面先空一行、才是宣告註解：lint 認宣告，神諭的 step 範圍往上吞過空行，判一致（R52，R51 requirements 6／security／regression）：rc=1（期待 0）、「一致 1」出現 ‖ ✗ 宣告註解與第一個鍵之間多一個空行：同上，另一個位置（R52，R51 requirements 6）：rc=1（期待 0）、「一致 1」出現"
 ],
 "4e034942752438fc7fa8438b73439e0a502438933bb55c6f716847582da8100b": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-restrict-r46-printf-conversion-n.yml 宣告 rule-red，實測 pass"
+],
+"4e461eaa6c5bde4fa1b4b68c8b8cf8b13f21d1e9026b400786603be2c5101666": [
+"killed",
+"✗ 儀器不可信預設讓神諭 rc=1（不是 rc=0 的吸收器）；--allow-distrust 只給探針用（R49 security 的建議）：rc=0（期待 1）、「儀器不可信（R50）」沒有出現 ‖ ✗ 通道上限的網：PR 文字寫在上限**之外**，神諭看不到，不能判『一致』——判『量不到（儀器不可信：通道檔 … 超過）』（R52 網，R51 logic M／G1）：rc=0（期待 1）、「通道檔 GITHUB_ENV 超過 4096 位元組」出現 ‖ ✗ 逾時路徑的第二次 `communicate` 有時限：逃脫行程（`set -m` 的背景工作）握著 stdout 不放，約 12 秒內結束並判『量不到（儀器不可信：資料流沒有收乾淨）』，不卡到逃脫行程結束（R52 網，R51 logic M／G3）：rc=0（期待 1）、「資料流沒有收乾淨」出現"
 ],
 "4ecc52f2cce45604c1af74781876f78bd4e6d433eb07ef8b57dd1134fc1bb838": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37b-xtrace-set-var.yml 宣告 rule-red，實測 pass"
+],
+"4f5f289c7ed9e2836bc8f8e73b2e9964a0748ee733dff71a2d99b26c6c7b036f": [
+"killed",
+"✗ 歷史 payload 檢查：封閉清單多一棵樹（凍結表沒有那一列）沒有被抓到"
 ],
 "4f77a52e950cdfe425fd51a4a8bfd8e536ee6725bb364a26e16453c5b40e5804": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-restrict-r42-declared-unseen-env-keys.yml 宣告 rule-red，實測 pass"
 ],
 "4fabe8ac41108e9d2c1478818553c63429983533a3953caa8d8f161220f4e3d7": [
 "killed",
-""
+"test/fixtures/ci-log-filter-bypass-r39-word-backtick-herestring-set-x.yml:14: PARSE: run 區塊結尾時 `((`／`$[`／`[[`／`$(`／反引號／裸 `(` 有未收尾的（arith=0 brk=0 cond=False csub"
 ],
-"51646e56216331e83f8650b8b6bcb38d5b60670e4bad01071f13caef118b01ce": [
+"4fdc6594743b609ca37b02be48db7f1c748cf677d52949f1bcbe5bf31461b033": [
 "killed",
-""
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現"
 ],
-"518e6cdd77ada2c7e6fd5efdfdd13231e81322111fb3dd344abd4adfeb65aca0": [
+"50c5e6b9875aad2db854bff732b70409c69865c227f9725d2580fd7b0b3adfee": [
 "killed",
-""
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現"
 ],
 "51eea341c1ce57f58b9485117d83ad4646e8b77e1015d2b2f2a149ffa2d0dded": [
 "killed",
-""
+"test/fixtures/ci-log-filter-restrict-r46-brace-printf-v.yml:22: RULE: [--strict] step 'printf -v made by a brace word targets a trusted variable' 靠管線過濾，而 run 區塊"
+],
+"528ae6450a6d8deaaf1c68e35fedcc8b5c8d5cfd4bd17ad284e987e3832cdc3c": [
+"killed",
+"✗ manifest 檢查：缺 priv-tmpdir 的假序列沒有被抓到 ‖ ✗ manifest 檢查：缺 cwd-vis 的假序列沒有被抓到 ‖ ✗ manifest 檢查：缺 cwd-vis-abs 的假序列沒有被抓到"
+],
+"52a36b25ef3d272a6234f546dadd44a3c6baeb6334138f853e36602adac87155": [
+"killed",
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現"
 ],
 "52f6f342301ba7bb5c89df9c1cc36c6acf2dca61cfa8aade8d024a4c75354049": [
 "killed",
-""
+"test/fixtures/ci-log-filter-restrict-r42-subshell-scope.yml:22: RULE: [--strict] step 'good-r40-pf-subshell-off-before-lastpipe' 有寫出來的管線或提到 `$GITHUB_ENV`／`$GITH"
 ],
 "532571ca9b03932fdcca2fbb579e11b3d58f859dfe874394bae62e7224c4e44d": [
 "killed",
-""
-],
-"535ea7e7f6b7ebdcc94d9710f89134bed82253d65221056a314c71ab4e791757": [
-"killed",
-""
-],
-"536ca81ddd7732c711d049a57f230a6bbfb1befdaa06935cbe2e8a73ffeef77b": [
-"killed",
-""
-],
-"5378797f85f1b94fe44f0cc20f5264ba9f853a4c030b2e6e2bae5911aef8a74a": [
-"killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37o-cmdsub_end_case-backtick-paren-inside-case-cmd.yml 宣告 rule-red，實測 pass"
 ],
 "53c17d2603a14686d1d1c624335af98397050a3af316d69ef8765e8b560012f4": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r40-ghexpr-literal-constants.yml:13: PARSE: 引號到 run 區塊結尾都沒收——那一行在 bash 是語法錯誤、不會執行，本 lint 不解析"
 ],
-"5429d43225aa2460ad9b8a51373c387a876d18461fcaa7d51186cdf96b3aca39": [
+"540cf0b8f6de28f3fa2f650f53214fad8a62248aea3382b102815ffadeac9659": [
 "killed",
-""
+"FAIL: test_lenses_containment_holds_even_without_monorepo_root (__main__.ValidateTest.test_lenses_containment_holds_even_without_monorepo_root) ‖ FAILED (failures=1)"
 ],
-"55637dd3629893300b0fbcec72e3c6abd7dbe524cea6dfdb3e4780a8164b1ec2": [
+"54c74f95ce0ad6da93a20aee596691bac9f1180e73fecbeacbb37d169930e8ef": [
 "killed",
-""
-],
-"556e303561dfb1d8b6dcf5d596a31d32d6b8c0e920f6ddad5081dc7dfd7dd4dd": [
-"killed",
-""
-],
-"557b95a4b0350b4237fdf6b5744b96d3db4ff4cacaebd3602c7f377c89a30a0e": [
-"killed",
-""
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現"
 ],
 "55e9134e6f603909b11c351961b72b7e235ef9655e417bb630b681bc7d4d1279": [
 "killed",
-""
+"test/fixtures/ci-log-filter-bypass-r37c-dq-case-in-function-body.yml:12: RULE: step 'dq-case-in-function-body' 的 run 區塊既沒有經 neutralise.py，也沒有 `# LOG-FILTER:` 註解"
 ],
 "55e9e8da686869ce2e90ce523c6fab8f9781d31e1ff8e0cda7fa4e7c1af207be": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-folded-blank-separator-empty-delim.yml 宣告 rule-red，實測 pass"
 ],
-"562ab534ff1c39597405d2497e7881c6a70e93bff76326a0f0dd840a2eef8223": [
+"55f87e0fbaeff919525354c07316c6643ac1e9cef71744248e08878d0b49ee08": [
 "killed",
-""
+"✗ 有行程握著儀器的資料流卻不在步驟的行程群組裡（`set -m` 的背景工作）：收不到 EOF 也不卡住，判量不到（儀器不可信）（R50）：rc=0（期待 0）、「資料流沒有收乾淨」沒有出現 ‖ ✗ 逾時路徑的第二次 `communicate` 有時限：逃脫行程（`set -m` 的背景工作）握著 stdout 不放，約 12 秒內結束並判『量不到（儀器不可信：資料流沒有收乾淨）』，不卡到逃脫行程結束（R52 網，R51 logic M／G3）：rc=0（期待 1）、「資料流沒有收乾淨」沒有出現"
 ],
-"562dcf86601a711b66936e8b82376b7d5964eaa240db7f7a5795c021a10e9458": [
+"5629ef09ff53143002625031b64cf0dd395a65770a34ef2c99a720678686157a": [
 "killed",
-""
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現"
+],
+"5644701e3feef4be861d37c4d16c3ac2c2e240aa8b67e8c1a3ab49356790332a": [
+"killed",
+"✗ must-fail 探針的理由比對：rc=0（期待 1）、「must-fail 探針沒有以宣告的理由失敗」沒有出現 ‖ ✗ S-2 機制差分：多出 baseline 沒有的外流行（突變）：rc=0（期待 1）、「must-fail 探針沒有以宣告的理由失敗」沒有出現"
 ],
 "56da2d584a3d1fc43cc32cfc0841639024c9670364452bc60b268e1e5c8459a4": [
 "killed",
-""
+"test/fixtures/ci-log-filter-bypass-r37c-ansic-in-param-cmdsub.yml:11: RULE: step 'ansic-in-param-cmdsub' 的 run 區塊既沒有經 neutralise.py，也沒有 `# LOG-FILTER:` 註解說明為何不過"
 ],
-"57525eacf3249400a7801eae956673fa395e8a1ff73f2fdb3695cfcd835c87d3": [
+"57948d83d4b913371337a25397f093816e0defffea7cc85e734a7727378398b8": [
 "killed",
-""
-],
-"581120f1cb3ef611f548915bbcafd96d447b315987598dc3789c5d66d8796d91": [
-"killed",
-""
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現"
 ],
 "585f844e53be215cfca6b050ea0e3bcbb23e357f9a79a6f8c04081d033ff8416": [
 "killed",
-""
-],
-"58d868debfa971d4ff24511c2641a1c15324c15ab7936c1fec633d515867eee2": [
-"killed",
-""
-],
-"58e83d98b01706e49f9424c52e1594846ed856528b9e09b500b47402f05147cc": [
-"killed",
-""
-],
-"59780de913535d240d8a01c38fd80576b9b00969f3248b5f3388e991516d4be9": [
-"killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-folded-blank-separator-empty-delim.yml 宣告 rule-red，實測 pass"
 ],
 "59a9ab55ca5f51d674db8ccac4b692c41887591765c77651b424f22f923d2b5e": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r37t8-dq-arith-nested-cmdsub-quote.yml:13: PARSE: 引號到 run 區塊結尾都沒收——那一行在 bash 是語法錯誤、不會執行，本 lint 不解析"
 ],
 "5a997764356571b74eaa4d75501536e83d9e4fdf1d28dca0ea501760ec22bc5c": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r37p-parse-case-malformed-second-clause-pattern.yml:41: RULE: step 's' 靠管線過濾，卻有 `>&2` 複製 fd（stdout 可能被帶到 stderr 或另存的 fd）——那些文字不"
 ],
-"5b3858fd0ca027de8c1b3678c13f285b91892f855ec4aede1ee8a503133994cf": [
+"5af293f49f5a38ad9b2848317c01c209ef856d218a1427995af6c5fe1735c92c": [
 "killed",
-""
+"FAIL: test_missing_root_marketplace_in_ci_is_fail_loud_not_five_silent_skips (__main__.ValidateTest.test_missing_root_marketplace_in_ci_is_fail_loud_not_five_si ‖ FAIL: test_no_repo_report_names_every_gate_in_the_closed_list (__main__.ValidateTest.test_no_repo_report_names_every_gate_in_the_closed_list) ‖ FAILED (failures=2)"
 ],
-"5b42a17112e6c7477c41bd228cb0dfd5a85997ad8dd8e0a6ce70ef0cfbe47bb0": [
+"5af6ee3a3f78c40699e96f9423723b8a73402855240cbf8b2815bfa21aa61dfa": [
 "killed",
-""
+"✗ payload 脈絡：算術裡的運算式：rc=0（期待 1）、「繞過」沒有出現 ‖ ✗ 深目錄樹建在全程序共用的 stub 目錄（`PATH` 的第一段）：神諭離開 `main()` 清理時不崩潰，判定表照印（R50 第五輪 L1，K1 的漏網之魚；Python ≤3.12 才重現）：rc=1（期待 0）、「一致 1」沒有出現"
 ],
 "5b69342910f72ab6fdcb55c8a1b44bfd2df631e9a64b2ad6160dcb68aca4116a": [
 "killed",
-""
+"test/fixtures/ci-log-filter-bypass-r37o-case_head-at-command-level-mismatch-nested-paren.yml:23: RULE: [--strict] step 'cmdsub-case-level-mismatch-after-nested-"
 ],
 "5ba270217d8fb064dd254963d40f1d35ec8c945e336146f3c14283b3df69de0a": [
 "killed",
+"test/fixtures/ci-log-filter-good-r37b-strict-case-pattern-and-runs-on-comment.yml:24: PARSE: [--strict] 沒寫 shell，而這個 job 的 runs-on 是 '       - self-hosted      "
+],
+"5c29b4cafd3fa25a13582dcb80917d13781777e6842234bc81fe97d10ffa4e51": [
+"survived",
 ""
 ],
-"5c4c12abdfaf47d8d90e1915623eb2adb16815e0d85ff8ccaaeb964d45850c61": [
+"5c4bd878c2b38f857e4d69c888bacd8e9a1c1d13a1643195efa9851d8e0d2ad2": [
 "killed",
-""
+"FAIL: test_plugin_dir_symlinked_outside_is_caught_even_when_the_json_resolves_inside (__main__.ValidateTest.test_plugin_dir_symlinked_outside_is_caught_even_whe ‖ FAILED (failures=1)"
 ],
 "5c7b19d629f4f1c88a91233edaba9d5a0c6d9696f2bef2cbc87e4703d420d4e5": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r37o-cmdsub_end_case-ansic-legacy-arith-stray-esac.yml:43: PARSE: 引號到 run 區塊結尾都沒收——那一行在 bash 是語法錯誤、不會執行，本 lint 不解析"
 ],
-"5c7b82d2d81510abd0b7cb774ec6edd14ac6c2b74cd90adfeda4cdc478279167": [
+"5c9defebeec63d7fb8f59ab4d2c97619f70724677f93a29081be8af73324dc9c": [
 "killed",
-""
-],
-"5cad8d637df81c5495826cc30d73d99d25e2ebf3483084a65eaaf93c1b9b52f0": [
-"killed",
-""
+"✗ 版本守衛：bash 不在 lint 宣告的支援集合裡：rc=0（期待 1）、「ORACLE-BASH-SUPPORTED」沒有出現"
 ],
 "5d407bebf78629edb574b99704d2c72298e5512ff2e830314a16abb7439b75b9": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37c-param-dq-legacy-arith-quote.yml 宣告 parse-red，實測 pass"
 ],
 "5d73452cf6a5621025ebae3e3032302714be2422ac6f1673a15a5af2829117a4": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-heredoc-delim-locale.yml 宣告 rule-red，實測 pass"
 ],
 "5e004d260951c3cc26650a0d5360171b17eb488c4e755a4701d13137f451c53d": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r37b-fd-flow-safe-forms.yml:29: RULE: step 'redirects that keep stdout' 的 run 區塊既沒有經 neutralise.py，也沒有 `# LOG-FILTER:` 註解說明為何不過"
 ],
-"5e1e0e194d99f8f1bc87c45cddde154dff530e836e920753793e811975d057a3": [
+"5e487e0958b9af66a7436aa90284c7ff27ab80e85cadc6ec33ba105836ac0719": [
 "killed",
-""
+"FAIL: test_unrecognised_truthy_value_warns (__main__.ValidateTest.test_unrecognised_truthy_value_warns) ‖ FAILED (failures=1)"
 ],
 "5e85aadd151858a7813e37097839541fa317fc2f41425d63b93da92a20fcc96c": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-restrict-r42-flat-dotdot-target.yml 宣告 rule-red，實測 pass"
 ],
 "5f144b88024864546a434a2fdf1c57f133134eff6cc78d195b4cca789bf825ef": [
 "killed",
-""
+"test/fixtures/ci-log-filter-bypass-r37c-legacy-arith-in-param-cmdsub.yml:11: RULE: step 'legacy-arith-in-param-cmdsub' 靠管線過濾，卻有 引號或 `${…}` 裡的命令替換對不到收尾（或掃描器不解析它）"
 ],
 "5f58d1d90e275caa8e1fa366f638496d5d18319e038257c43e717a2aa5bafacd": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37d-unterm-cond.yml 宣告 parse-red，實測 pass"
 ],
 "5fcdc0021430bd552c1c9b466dbce470a2b751432b1a766979c514e546524292": [
 "killed",
-""
-],
-"5fe2a650bbd412bad20402176b52841bd786dce5bac57ad37299ee6ca910eb47": [
-"killed",
-""
-],
-"602a06d113ae5e4109921427498f98a8080875c7ab7400298190695de4a9a632": [
-"killed",
-""
+"test/fixtures/ci-log-filter-good-r37b-fd-flow-safe-forms.yml:41: RULE: step 'continued line with a quoted target' 靠管線過濾，卻有 `>\"             \"` 的目標看不到原文（本 lint 對不"
 ],
 "60e1e1b17bedd7a26455c9b571d308d234d543127381109f9da913509b561599": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37p-cmdsub-case-unmatched-paren-semisemi-esac-paren.yml 宣告 parse-red，實測 pass"
 ],
-"6118cbbdd4bad11ca36729c434c59a1ab1da692208de2280b5173dddb9e48e12": [
+"61851167c37aae2aaceba772b1d44d02f457dee9f47c3c45420976cbbd36d01f": [
 "killed",
-""
+"FAIL: test_description_prefix_gate_reads_the_first_version_as_the_latest (__main__.ValidateTest.test_description_prefix_gate_reads_the_first_version_as_the_late ‖ FAIL: test_description_prefix_regex_survives_cjk_adjacency (__main__.ValidateTest.test_description_prefix_regex_survives_cjk_adjacency) ‖ FAILED (failures=2)"
 ],
-"612c1e32c2eca20a6848a2044e4569d8f1c5e54f570033977f3fbf4186f7ee3f": [
+"6190fb3c3177c81f1ebc8401cf8a1db441f4c296a35714b432e0b7cc8d8683d7": [
 "killed",
-""
+"✗ 儀器不可信不關掉獨立的注入探針（R49 security M）：rc=1（期待 1）、「注入」沒有出現 ‖ ✗ 深目錄樹建在全程序共用的 stub 目錄（`PATH` 的第一段）：神諭離開 `main()` 清理時不崩潰，判定表照印（R50 第五輪 L1，K1 的漏網之魚；Python ≤3.12 才重現）：rc=1（期待 0）、「一致 1」沒有出現 ‖ ✗ 注入哨兵的 fd 那一半：步驟刪掉私有目錄（路徑那一半隨之失效），繼承 fd 的求值者仍被 fd 197 抓到（R52，R51 DA）：rc=1（期待 1）、「注入」沒有出現"
 ],
-"62a39ad9e80efe3dba374ac9461dd07ad7a639ba9a2ddcf9e2b306e5f1616e97": [
+"61d8ce71ee2529aae1e8c36bef4a2507783ab2371664836f737b0964701d5ba6": [
 "killed",
-""
+"✗ KNOWN_DISAGREE 之外的不一致（lint 與 runner 對同一個 step 說不同的話）： ‖ ✗ 神諭把 step 歸進了已知類別、檔頭卻沒有對應的 `# KNOWN-CLASS:`（歸了類卻沒宣告——已知類別不是免檢區，每一條都要有人在檔頭簽名）： ‖ ✗ 已知類別 G 在 fixture 集上是 9 條，預期恰好 8（改動已知類別的 fixture 請同步改 FIXTURE_CLASS_TOTALS）"
 ],
-"62a48a487136b61a7c51b235473e51243f3385f6e9707440e431d8f6672f50cf": [
+"61dca84546822795245430b2df75d487e3896efa5255531d26bc9fe977de0e0a": [
 "killed",
-""
+"FAIL: test_collision_gate_fails_loud_when_catalog_header_changed (__main__.ValidateTest.test_collision_gate_fails_loud_when_catalog_header_changed) ‖ FAILED (failures=1)"
 ],
 "630dab6b947f2bd37a13ef1939b63ed9c0bb7d955055ccda4e2c1bf6af246e7f": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37b-fd-dup-move.yml 宣告 rule-red，實測 pass"
 ],
 "634d9d56bcf5005dbe616d6cc3a67d886c7507a7e3acb1c6ea49a603e1cd5cd2": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37t8-dq-cmdsub-sameline-heredoc.yml 宣告 rule-red，實測 pass"
 ],
 "636ea6310acd28ff6fc445f09fa0f9f1b1abc89231a2ec15731788dac459d737": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-quoted-run-trailing-comment-dq.yml:8: RULE: step 'double-quoted run with a trailing YAML comment' 的 run 區塊既沒有經 neutralise.py，也沒"
 ],
 "638d177438e89b26f39be9b51ba655ade4ceed01ff8081e7783e1360c8a19f1a": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r37t8-cond-then-next-line.yml:13: PARSE: `]]`／算術命令 `))` 之後直接接保留字 `then`（沒有分號或換行）——bash 接不接受取決於外層的 if／while，本 lint 不追蹤複合命令的巢狀，不解"
 ],
 "63b54bb18ac38469abd14a8e8ece57de44100dcabfdb2adfeaf190637047e348": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r44-brace-word-and-adjacent-redirect.yml:12: RULE: [--strict] step 'a literal brace word and a word glued to a redirect' 靠管線過濾，"
 ],
 "64258bf2be320f0f2b9bebe21297d8c0a21d0d0e2a0b09e6b3b98dafbac00524": [
 "killed",
-""
+"test/fixtures/ci-log-filter-bypass-ansic-quote-fake-pipe.yml:11: PARSE: 引號到 run 區塊結尾都沒收——那一行在 bash 是語法錯誤、不會執行，本 lint 不解析"
 ],
 "642c1043e30879a7b251524ad2e2427cdd39cf543659a716178b778d8ef95780": [
 "killed",
-""
+"File \"<stdin>\", line 3818, in <module>"
 ],
-"643624a86caceb86448b04be443aee7d8b64c971c4e8142bdfe7c6c095ea78f9": [
+"64ea1d136a2ccc4d5b153c9e21a07f0b082aebc8107542e1dcf020ba6a040e64": [
 "killed",
-""
+"FAIL: test_unknown_header_column_is_error (__main__.ValidateTest.test_unknown_header_column_is_error) ‖ FAILED (failures=1)"
 ],
-"647daf446af4659dcb9765e413c70752f549306b924152c204f4fc8bb52593f4": [
+"653ae99eb5098a682053cc683b593b339dadee658658e8bd82f38dda263bb00a": [
 "killed",
-""
-],
-"655c8dc61d0b32fbdb4f32c866658136ff0610c15005714244685753e668e293": [
-"killed",
-""
-],
-"65b02b2a4d8fde1a53c3c0dfbabd59bbecc04557e83101a70878747be51866f8": [
-"killed",
-""
+"FAIL: test_gate_dependency_is_named_when_lens_dir_shape_crashes (__main__.ValidateTest.test_gate_dependency_is_named_when_lens_dir_shape_crashes) ‖ FAILED (failures=1)"
 ],
 "65ddab1bc4f7b5fbf7558cdb3ed93293cc79800509decfca43fa8d3c3999a54e": [
 "killed",
-""
-],
-"673a544f2cb288a8c58c174c2bd9b37d557cf2f4a79ecc673c236568cfcb2a9b": [
-"killed",
-""
+"test/fixtures/ci-log-filter-good-r42-default-set-arg-cond-word.yml:12: RULE: step 's' 靠管線過濾，卻有 `set` 的參數不是字面（`set -$X`…）——開了什麼看不出來——那些文字不經過管線（帶了 `2>&1` 也一樣：重導向由"
 ],
 "676dcf53c05989d9fe682ecc2bfed75ab69e7badf6eadaa1e9d111b225c4f976": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r37p-cmdsub-case-empty-case-literal-text.yml:34: RULE: step 'empty-case-then-literal-text-with-fake-leak' 靠管線過濾，卻有 引號或 `${…}` 裡"
+],
+"6779730a9a555e29ac2413c62d1481a974548643987b74847b44e0123db06dcf": [
+"killed",
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現"
+],
+"67a7b82144daa28f2d72f042ef0146684e656d63e0ad3cf31eeadd313f6a52fa": [
+"killed",
+"✗ main() 沒有呼叫 xrun_probe_problems_real()"
 ],
 "67b5c6716a6019319a4f55d3162e5561755d04ec712cf4a1cad1872721a5f785": [
 "survived",
@@ -990,1543 +1050,1539 @@
 ],
 "67f2fa64978e51e66275416c8476d4becab64bc187781e77ecc607fda58f1429": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-restrict-r42-flat-trap-err.yml 宣告 rule-red，實測 pass"
 ],
 "684593dbc1b924a41ab58303ccb972b4d2af5d22d2110a1edfc615aaf0aa9b46": [
 "killed",
-""
+"test/fixtures/ci-log-filter-bypass-r37o-case_head-at-command-level-mismatch-nested-paren.yml:23: RULE: [--strict] step 'cmdsub-case-level-mismatch-after-nested-"
 ],
 "69ee67997b856b0d5160946be3ca2071813cb9904343d659e7d274530e2632b9": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-restrict-r44-chan-lines-corpus.yml 宣告 EXPECT-EACH-STEP，第 181 行的 step 沒有自己的 RULE 行"
 ],
 "6a18686c9a511273230d9820f272269aa70ce91f910abcdfdfff1190587a12a5": [
 "killed",
-""
+"test/fixtures/ci-log-filter-bypass-arith-triple-paren.yml:9: PARSE: run 區塊結尾時 `((`／`$[`／`[[`／`$(`／反引號／裸 `(` 有未收尾的（arith=1 brk=0 cond=False csub=0 bt=False bare_"
 ],
-"6ad78b721683c7d44161d6dc712ff5814b7b34c2455a2d610130d77ff9611f64": [
+"6a2e4b9374279e6f0dfb9a73fb3845e56ad2145f326c7535ba64e47808fe78ab": [
 "killed",
-""
+"FAIL: test_external_strings_in_annotations_are_always_wrapped (__main__.ValidateTest.test_external_strings_in_annotations_are_always_wrapped) ‖ FAILED (failures=1)"
+],
+"6a94effa3f4ba3e2e1eb7120e6eecd64fd21792e375fb8201fed18edbb5ca16a": [
+"killed",
+"✗ manifest 檢查：完整的假序列被判有問題：[\"[spaced=False,tmpdir_priv=False] 哨兵位置 priv-tmp：條件 None 評估為假（或這個 payload 不屬於它）時目標 'priv' 仍然出現：payload 'S'，序列 ['priv']\", \"[spaced=Fals"
+],
+"6b12b1be2f5bc511b79d818699f1e9630c0f42020f9030489b33ad784565da95": [
+"killed",
+"FAIL: test_version_missing_on_both_sides_is_not_treated_as_in_sync (__main__.ValidateTest.test_version_missing_on_both_sides_is_not_treated_as_in_sync) ‖ FAILED (failures=1)"
 ],
 "6b17e7a1bf380260367356502e390e75157e25db6d8d63c710beef1485a3d78a": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37p-fdflow-is2to1-pre-drop.yml 宣告 rule-red，實測 pass"
 ],
-"6b5ed41c73e2d3702d81dd4843d7bbf658c9c789570859e62024aecff55b0003": [
+"6ce1145599f13ac1a49a7cdafae2c04e5ee6da402ccede6b1c191f66058ed8dc": [
 "killed",
-""
+"✗ 宣告只認縮排比 dash 更深的註解行：寫在下一個 step 的 dash 上方（同欄）的 `# LOG-FILTER:` 不是前一個 step 的宣告，前一個 step 真實的外流照樣被判『繞過』（R52 宣稱查核 D 組；`5b5a46d` 就有的缺陷）：rc=0（期待 1）、「不一致：繞過」沒有出現"
 ],
-"6b84f59f616c02670ba3a2a9b104781ca3ec7c569a6cfe18599c9f1d2f0d116e": [
+"6d1600a10706d75d11620def91aa707c02fcbbe426353416ec324ffff2e9e5a0": [
 "killed",
-""
-],
-"6cf3cf261ba0e2899e287a6e875e39d1fc755fcd7ef7f2ef64667aa2a7584919": [
-"killed",
-""
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現"
 ],
 "6d75965779e7f63c18230044a31769100cb55661a573a6f6fb77f889b2372e46": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-restrict-r44-surv-corpus.yml 宣告 EXPECT-EACH-STEP，第 259 行的 step 沒有自己的 RULE 行"
+],
+"6d8399af82255706b9c150fe9be0b88d3e0b14d18bdb00680c63e137435b43ad": [
+"killed",
+"FAIL: test_pack_own_claude_plugin_symlink_is_not_read_by_check_version (__main__.ValidateTest.test_pack_own_claude_plugin_symlink_is_not_read_by_check_version) ‖ FAILED (failures=1)"
+],
+"6da4178eb2f821239fcad6967335a80299a676634ee49ea433fab63d6a170fb0": [
+"killed",
+"✗ oracle↔lint 的 RULE 字面耦合檢查：rc=0（期待 1）、「用來認 RULE 的字面」沒有出現"
 ],
 "6dccc35564d37c37d2b84968a88a5e0a05705244404d7d4d57342356897cfce9": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37t8-set-dq-param-option.yml 宣告 rule-red，實測 pass"
 ],
-"6e898ac6b853f168b92496daf1d11ee3ff84c8d7521dbe457c63e6ebfa70d658": [
+"6df41ffb34695d2990fbd666cdd68b4f0df808aec590782e25b92595b6492f1f": [
 "killed",
-""
+"FAIL: test_output_boundary_buffers_partial_lines (__main__.ValidateTest.test_output_boundary_buffers_partial_lines) ‖ FAILED (failures=1)"
 ],
-"6f0ae9377dba3b9334114da5ef1e1aeaa828472d83a0c07fc535b16ee635976b": [
+"6ec4a041a012c4181ae79ac3f3ca4f21cf29b3dc637822164e0608f455c3730b": [
 "killed",
-""
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現"
 ],
-"6f38417d99d253ed77154ba54bb3dd251c1536b00e19133f787fc2332fb3c700": [
+"6fc5ca723234967e119691c8d420b1e30fe8c85cfd4d5e940c163cd9816a374a": [
 "killed",
-""
-],
-"6fb31be6daaa38472a5ca6a8bd968516208192b1c9aa160c7f98bd3c2520c4b7": [
-"killed",
-""
+"FAIL: test_untrusted_content_cannot_inject_workflow_commands (__main__.ValidateTest.test_untrusted_content_cannot_inject_workflow_commands) ‖ FAILED (failures=1)"
 ],
 "6ffd85c2c8ff633a2389460566183c29953703b5dea62ac2d1053615a64f9660": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37o-dqbrace-dqparts-brace-off.yml 宣告 rule-red，實測 pass"
 ],
 "70fd52bb1b22ac02565552e1cd3de93dc8bd2234b65204bc0dacc1ecd8067d26": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37o-word_lex-interior-subs-backtick.yml 宣告 rule-red，實測 pass"
 ],
 "712946cc67a0b73a9bdba9ea4b85a12472710cf68fe57ae96fc85ef82a6126aa": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-restrict-r44-test-shapes-corpus.yml 宣告 EXPECT-EACH-STEP，第 20 行的 step 沒有自己的 RULE 行"
 ],
 "7141c606d3039d4102c688b70fccb81403abde9ddb2625b0f8df1efc16afbbb4": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r37t8-dq-arith-nested-cmdsub-quote.yml:13: PARSE: 引號到 run 區塊結尾都沒收——那一行在 bash 是語法錯誤、不會執行，本 lint 不解析"
+],
+"714a92cc3d76e46bac8661fa3d02fb615f516b36f13aa5260895f82d008ecb40": [
+"killed",
+"✗ ci-log-filter-known-r37a-mustfail-g-diff-syntax-break.yml —— 宣告的理由「語法壞掉」沒有出現 ‖ ✗ must-fail 探針沒有以宣告的理由失敗（它要量的那個分支沒被走到，或神諭在那裡放行了）："
+],
+"717f0397a2981995abc0bdaeb4346b4fda39412b6812b050d9d2f9cf3a4db790": [
+"killed",
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現 ‖ ✗ 深目錄樹建在全程序共用的 stub 目錄（`PATH` 的第一段）：神諭離開 `main()` 清理時不崩潰，判定表照印（R50 第五輪 L1，K1 的漏網之魚；Python ≤3.12 才重現）：rc=1（期待 0）、「一致 1」沒有出現"
 ],
 "7192f63765bccff7dcfcfdc737b1cc5e4a7e9e9e930b68e4d92292e169fadf8d": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-explicit-indent-zero.yml 宣告 parse-red，實測 pass"
 ],
 "71e6619604fd34d7a643925372889d2655f75e0d75bfc3283c5d2cd066d8febe": [
 "killed",
-""
-],
-"71f5cb60a8a6f1caf41ef8a476286596a9c2a8f1c7642439218657b0b69cb726": [
-"killed",
-""
-],
-"72c1171243ca0cc188c0c3603f3f9b6643bb328672d3d44e593da627c77ea573": [
-"killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-heredoc-in-cmdsubst-after-inner-parens.yml 宣告 parse-red，實測 pass"
 ],
 "72db128535ccab0e41608306a8f94e42d8ef5cc2d3752b01223c49df1daf2d4a": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r37d-pipe-amp-cont-chained.yml:11: RULE: step 'pipe-amp-cont-chained' 的 run 區塊既沒有經 neutralise.py，也沒有 `# LOG-FILTER:` 註解說明為何不過濾"
 ],
 "73ff18f3b9a6964cfb18543d6ff8d2707740444efadc181f3e7e637b6856a9d7": [
 "killed",
-""
+"test/fixtures/ci-log-filter-bypass-dq-delim-backslash-last-line.yml:11: RULE: step 'double-quoted delimiter ends with a backslash and there is no next line' 的 r"
 ],
 "745b7a5dc5094bc6702c977abc59b3e6f608df68521e520dd3b16dbe86e0e681": [
 "killed",
-""
+"File \"<stdin>\", line 3818, in <module>"
+],
+"74939144fb0b4a0d8fc37e616a910752f4bf77e0f378a7d6dfab22d2f6e9aac3": [
+"killed",
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現"
 ],
 "74d60b11798c5e00d65e0052062e300252ca79e63b109f4dd4c4df3541bcc242": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r40-pf-or-on.yml 宣告 rule-red，實測 pass"
 ],
-"75578ebabe6064dcc8a17cc8e6191919e480fd0369543ac078ec79d3acd86ad8": [
+"76795832c4b2f8b9fd0b042bf9084f2157f5d6e4e02381fe882d9d59de7b767b": [
 "killed",
-""
-],
-"7587cab9b24aece39204316392a2f08ac0492d231d68cc8fdf6ec300edf45168": [
-"killed",
-""
-],
-"758d3f059d55abef285ad829c95f893d5414ff88305edc14ca5065893149070f": [
-"killed",
-""
+"FAIL: test_base_side_manifest_of_wrong_type_also_guarded (__main__.ValidateTest.test_base_side_manifest_of_wrong_type_also_guarded) ‖ FAILED (failures=1)"
 ],
 "76bbabfe2efb94c2cd0e896afc45b9a52b8b9921db7d01546406f1d3ebb1a5bb": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37t8-cond-after-andand.yml 宣告 rule-red，實測 pass"
 ],
 "76ce671cab8df44292e0ca8840e23ec762c16cf48d6687eed753d38c3a76c86b": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r37p-lex-redir-word-edgecases.yml:66: RULE: step 't2' 靠管線過濾，卻有 `3>&1` 複製 fd（stdout 可能被帶到 stderr 或另存的 fd）——那些文字不經過管線（帶了 `2>&1` 也"
 ],
-"76ea9363665b7744df2b2add30b5aab0d8c4f77deb6c6996feaeb98db764b098": [
+"76e6760bb441bb9e0f8fe45d293b0b6ebc7ac620ea0b72fe5d902b844d64cc9f": [
 "killed",
-""
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現"
 ],
-"76fce83f2a3d6c1ad6a521febc9f08b39825095ce90b07707c90447805ab910e": [
+"772ef184bfcc61d09a98fd388db283852ad536a6d01a73a32cde99910438bc58": [
 "killed",
-""
+"✗ 對 `__orc_priv` 做純量指派不弄瞎稽核：`readonly` 讓子殼層在神諭裡中止、真 runner 照常執行，其後的 `printf '%n'` 判一致；R52 拿掉 `readonly`，判『繞過（primitive 稽核）』（R52，R51 regression）：rc=0（期待 1）、「prim"
 ],
 "7778b781508ca7deaf080e60b324ef32e3ca8f9fbf2147de4187390e2678fd07": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-cond-bracket-without-space.yml 宣告 rule-red，實測 pass"
 ],
-"781ef0792b18c13fca7ab500782da2961bb8bac781c41efe29544c23abdab3d7": [
+"78214ee2aad338923da7c547a5d31ab4e4445fb7ca28ac14ddd5e2c1377025e7": [
 "killed",
-""
+"FAIL: test_every_property_escape_has_its_own_test (__main__.ValidateTest.test_every_property_escape_has_its_own_test) ‖ FAIL: test_percent_escape_defeats_the_double_decode_forgery (__main__.ValidateTest.test_percent_escape_defeats_the_double_decode_forgery) ‖ FAILED (failures=2)"
 ],
-"78ab33ed2084693978b5f746a776eaf1abe9643e21ed2830e0dc91e760077baf": [
+"784876d30c55784a89fab694bf0eb87de03a586e91b69eeade95440e2f8684c9": [
 "killed",
-""
-],
-"78b39002123bd248b11834489fa154a0318b3fe5678e41ce2b40d4782fa2080e": [
-"killed",
-""
-],
-"78be52eeae22d0c0f4363ea4abae60d744d8a313488e414c081988b758f045d4": [
-"killed",
-""
+"✗ GH_SAFE_EXPRS 神諭與 lint 同步：rc=0（期待 1）、「GH_SAFE_EXPRS」沒有出現 ‖ ✗ 深目錄樹建在全程序共用的 stub 目錄（`PATH` 的第一段）：神諭離開 `main()` 清理時不崩潰，判定表照印（R50 第五輪 L1，K1 的漏網之魚；Python ≤3.12 才重現）：rc=1（期待 0）、「一致 1」沒有出現"
 ],
 "78c9d105c057a8a008c0e3dadcf56b9cb15c7b26a77abacb97b5eaf8b3a3a7d6": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37b-env-root-flow.yml 宣告 parse-red，實測 pass"
 ],
 "795c9a35b7895a5c55fac602d89999e182cefcd5393c18fa602dc923a2a72055": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37p-cmdsub-case-unmatched-paren-semisemi-esac-paren.yml 宣告 parse-red，實測 pass"
 ],
 "799b8135a0fac328f2208e7fc7c6e3ae3c8aaa611ab89e0b30f8b60bebc77b76": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37o-cmdsub_end_case-backtick-paren-inside-case-cmd.yml 宣告 rule-red，實測 pass"
 ],
 "79af7e605ee060120969f804fa1354b07d1e57bed82486f759d6383c59f5a9e1": [
 "killed",
-""
+"test/fixtures/ci-log-filter-bypass-param-expansion-dq-backtick-quote.yml:11: PARSE: 引號到 run 區塊結尾都沒收——那一行在 bash 是語法錯誤、不會執行，本 lint 不解析"
 ],
 "79d5dc16ff9a45c590155ef94b67bdc73a6977423e350fc1c33f405b92b9e96a": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-cond-bracket-without-space.yml 宣告 rule-red，實測 pass"
 ],
-"7aeb22aa2972d6da38c555e646156990b09dc7ddde49e01a73dada1e0d6f0798": [
+"7b2c3c6b74077ddc85e567a79cbb4d7626a9ea68e8c9ed2e491405c80122d5b7": [
 "killed",
-""
-],
-"7aec5e82d674deb1aec270c87ec8c26b1cf03e223a2a7475b8bf366cfacf401c": [
-"killed",
-""
+"✗ KNOWN_DISAGREE 之外的不一致（lint 與 runner 對同一個 step 說不同的話）： ‖ ✗ 檔頭宣告了已知類別、神諭卻沒把那麼多 step 歸進那一類（KNOWN-CLASS 過期——重判這個 fixture）： ‖ ✗ ci-log-filter-known-r37a-mustfail-undeclared-g.yml —— 宣告的理由「歸了類卻沒宣告：G」沒有出現"
 ],
 "7bc4fa95ed7c255216230b4bcc098ff9fc0386678488574b7857ca21e0863636": [
 "killed",
-""
+"test/fixtures/ci-log-filter-bypass-arith-triple-paren.yml:9: PARSE: run 區塊結尾時 `((`／`$[`／`[[`／`$(`／反引號／裸 `(` 有未收尾的（arith=1 brk=0 cond=False csub=0 bt=False bare_"
+],
+"7c5527c987b95f7e6f312b27c98dc542d5a0fa36e50bff6032cdd2276ec476ca": [
+"killed",
+"FAIL: test_emit_recognises_a_command_head_after_leading_whitespace (__main__.ValidateTest.test_emit_recognises_a_command_head_after_leading_whitespace) ‖ FAILED (failures=1)"
+],
+"7cf432da51937d74db8bb4986bab04612614e1a1c25dccbf07fb7578cbb52e27": [
+"killed",
+"FAIL: test_every_property_escape_has_its_own_test (__main__.ValidateTest.test_every_property_escape_has_its_own_test) ‖ FAILED (failures=1)"
 ],
 "7cfdeb3fc4ea89aa993dea61d743a21143fc5c8580ee4d6744108420ae739a75": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37b-xtrace-eval-set.yml 宣告 rule-red，實測 pass"
 ],
-"7d0af38d8259fc818e9a8e24ffcf7b47e7f5ef5c8707dd73ea9a784047b857eb": [
+"7ddc57fe02a29be6b05713cb3d1c349a5aa3bf64559d90b4e183b9a8d87a32fa": [
 "killed",
-""
-],
-"7d2c580c5aa8d4ed265d8f632d7e4d5f598e3912f2b1fbb790749fdb477b3b32": [
-"killed",
-""
-],
-"7d3d0096442b1017d4f05e77f0335521ba409a625f34cf076df6be1b412d66ce": [
-"killed",
-""
+"FAIL: test_entry_name_must_match_plugin_json_name (__main__.ValidateTest.test_entry_name_must_match_plugin_json_name) (case='缺 name') ‖ FAILED (failures=1)"
 ],
 "7df27d3e79d5d7a6336f6aca11ca788e26ef7dcaad572dc7c5d8181cd11607ae": [
 "killed",
-""
-],
-"7e44d1870b7ce4094c3d30b95c5a8c6dfd9d307ea7c1e766f404b8d385d87d9a": [
-"killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-restrict-r42-flat-command-edges4.yml 宣告 EXPECT-EACH-STEP，第 41 行的 step 沒有自己的 RULE 行"
 ],
 "7e707c057e8157cb15310220e95f467bf1463c592542cbb9a88dba64b93ba4b4": [
 "killed",
-""
-],
-"7f0712c6576c187ffbfb44117830eae4dfd58672ce2ae35db43e450e28e8e1bc": [
-"killed",
-""
+"test/fixtures/ci-log-filter-good-r39-strict-group-set-E-prefix.yml:13: RULE: [--strict] step 'set -E prefix' 靠管線過濾，而 run 區塊不在 `--strict` 的正面文法裡：`set` 前綴只收 `-e`／"
 ],
 "7f55e3acc56a1e313e02ca921707ea97dbb2fef212ed17b65b427435534f36e4": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r37o-cmdsub-nested-arith-shift.yml:13: PARSE: `${…}` 在同一行沒收尾（含裡面的引號、命令替換），或是 bash 5.3 的 `${ cmd; }`／`${| cmd; }`，或裡面有本 lint 不解析"
 ],
 "7f7b8624aaed5aae95d2b6d4944d6d11b2e80bd92149edcfdeba0e4eefcf2154": [
 "killed",
-""
+"File \"<stdin>\", line 3818, in <module>"
 ],
 "7fa1d8db444d260671049ec4567c5c580f17429ae015875fbb7441c1f996afd5": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37p-parse-misc-parse-andor-double-consume.yml 宣告 rule-red，實測 pass"
 ],
 "802fd7d3b1d39b84d36aec50301711c4ca58d98e09ee0483daa79e98057b5973": [
 "killed",
-""
-],
-"80a1f921baee01f39d16647fd3eec0f566b4d5aa9146d2c82d0d88cda5ec3c57": [
-"killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-restrict-r44-test-glob-operand.yml 宣告 rule-red，實測 pass"
 ],
 "80b34cdf74a1895528d0d92c6d260838433357ecb7126ed5533bacf7faa7f284": [
 "killed",
-""
+"test/fixtures/ci-log-filter-bypass-r37b-strict-shell-quoted-sh-defaults.yml:14: RULE: [--strict] step 'quoted sh from workflow defaults' 靠管線過濾，而 run 區塊不在 `--str"
 ],
 "80c7eda7bcc91c7e26b312372010ad1a2270c79f8f4d441bf4cd45fb01174db4": [
 "killed",
-""
-],
-"80e526272bd638a0e85955ce43322f7dc2731afc983310e2ca84d39d15493e0a": [
-"killed",
-""
+"test/fixtures/ci-log-filter-good-r37o-case_head-cmdsub-with-space.yml:28: PARSE: run 區塊結尾時 `((`／`$[`／`[[`／`$(`／反引號／裸 `(` 有未收尾的（arith=0 brk=0 cond=False csub=1 b"
 ],
 "80f721f621fe0baace499f1ba1ffecd8fb4f4a30afd417248c844b2ea034e689": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r37t8-dq-cmdsub-line-continuation.yml:13: PARSE: 雙引號裡的命令替換到 run 區塊結尾都沒收——那一行在 bash 是語法錯誤、不會執行，本 lint 不解析"
 ],
 "811edc86fd3ad59c3f1e821513873bd5f2e29c54be15573a9bbe3a1f3fcad5ce": [
 "killed",
-""
-],
-"818a5adbd8c2d62330210840273aacd8da89908b43dcf89ec2940be4de1d1337": [
-"killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37c-cmdsub-case-esac-argument.yml 宣告 parse-red，實測 pass"
 ],
 "820c2df7e090698d4429823963f4e723423608dc56757ec67612fad778034742": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-folded-blank-separator-empty-delim.yml 宣告 rule-red，實測 pass"
 ],
 "82292530d0e795a626941033f0a80fa680b75a7c48c475931986b9eeb00f3d07": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37o-cmdsub_end_case-backtick-paren-inside-case-cmd.yml 宣告 rule-red，實測 pass"
 ],
-"82388c915181e2d9c6b305f544ec3b516f8eae3620491cae301a24b9a8694e11": [
+"8276862c09fe6ca4d6b875fa8018234ed910a357cdbb4af37a59d9b965346dbd": [
 "killed",
-""
+"✗ main() 沒有呼叫 payload_history_problems_real()"
 ],
 "82ce540f3e82f457cdba1946045e02ba42f7f4d62f01f197f3a71a8491ac9035": [
 "killed",
-""
-],
-"82ea64fb0d1866d81b8d31ba1343ffe5a948a36a2e317fd5ae13bff1f8dcf99b": [
-"killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37t8-cond-dq-apostrophe-cmdsub-stderr.yml 宣告 rule-red，實測 pass"
 ],
 "82ef519a88f6427b9b9e9eab3214f05bcd2318917bd1100b0cc50f3b40cc6255": [
 "killed",
-""
-],
-"82fb3b07329fe870f6245b19519d36f4678ea8e659be65ce20d8a92ec8a5954a": [
-"killed",
-""
+"test/fixtures/ci-log-filter-good-unquoted-delim-backslash.yml:8: RULE: step 'backslash in an unquoted delimiter quotes it, so the body backslash does not contin"
 ],
 "839eacb4c596d7e678191e233864bb6b3a935b5b6a94575f9af85f1ddb7f7347": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-arith-multiline-shift.yml 宣告 rule-red，實測 pass"
 ],
-"841fbf20b0377635e7fc082925b328ed46a9dac714073ba445d70dcd8b222e05": [
+"850c4b8572fe6ddb00c57a47abd5440a2429f563735bf4f0f2df6c36e664fce6": [
 "killed",
-""
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現"
 ],
-"845978ae363bf19387c15cdeef1e3f058897f5bcaea4c873a05c4a4e03f5ce8f": [
+"851a5b78f019e94d3ebeb029dc4ef46796f2c142ae4fb86a814d955c5be23537": [
 "killed",
-""
-],
-"84fb139afcba6d4cd2c7069d077b780f378c1c96e599faca8faa8b49c1600415": [
-"killed",
-""
+"FAIL: test_wc_collapses_every_separator_the_runner_honours (__main__.ValidateTest.test_wc_collapses_every_separator_the_runner_honours) ‖ FAILED (failures=1)"
 ],
 "855dff2d9985c3f5d83b45b855674a62b09f6e04a35ad84935d10ed5cda208b4": [
 "killed",
-""
-],
-"8579781484824e043843039cf1cc66da5dda79ae25a5b0e9224450fd3cb019b5": [
-"killed",
-""
+"test/fixtures/ci-log-filter-good-r37t8-close-stdin.yml:9: RULE: step 's' 靠管線過濾，卻有 `<&-` 複製到看不出值的 fd——那些文字不經過管線（帶了 `2>&1` 也一樣：重導向由左到右套用；只有收尾後緊接 `2>&1 |`／`|&` 進 n"
 ],
 "857b2515e4d4a44033f6355381e9afe46a3a58488a03052d1dcf9ba96c6ee99d": [
 "killed",
-""
+"test/fixtures/ci-log-filter-bypass-r37t8-ansic-hex-nul.yml:9: RULE: step 's' 的 run 區塊既沒有經 neutralise.py，也沒有 `# LOG-FILTER:` 註解說明為何不過濾"
 ],
 "857ccca68d58e19b49f0048c73cc0c4b7e834ede1192dd0d5e9e0a833510bd33": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37t8-arith-cmd-cmdsub-stderr.yml 宣告 rule-red，實測 pass"
 ],
 "8581bdec10b6d493af7d4bbad9ac7f0527d8d402cf849f7c58a7a7f6b3b00ffc": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37c-dq-legacy-arith-inner-quote.yml 宣告 parse-red，實測 pass"
 ],
 "859f9610cac51759c623336d9b50ac137f3864c8bf02b2784bf5028be8924a7e": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r37c-param-cmdsub-dq-escaped-quote.yml:16: PARSE: `${…}` 在同一行沒收尾（含裡面的引號、命令替換），或是 bash 5.3 的 `${ cmd; }`／`${| cmd; }`，或裡面有本 lint"
 ],
 "85a5f26be208705e761ab7675c0f104997a0eaec45b651bc03069188ac27fbc2": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37t8-unterm-subshell-around-cmdsub-group.yml 宣告 parse-red，實測 pass"
+],
+"860f3c6c3a917db455b338413c497a4c2df298c9bcdbd42052628c02b25be9e7": [
+"killed",
+"✗ ci-log-filter-oracle-r42-s2-flip.yml —— 宣告的理由「不是 S-2」沒有出現 ‖ ✗ must-fail 探針沒有以宣告的理由失敗（它要量的那個分支沒被走到，或神諭在那裡放行了）："
 ],
 "861e2467801d6315c42c7e9f3ffe3f5a5a2b8375acccdcfb5e74705b64ef54a2": [
 "killed",
-""
+"test/fixtures/ci-log-filter-restrict-r42-flat-command-edges4.yml:41: RULE: [--strict] step 'printf with no argument' 靠管線過濾，而 run 區塊不在 `--strict` 的正面文法裡：`printf`"
 ],
 "8622faeb318eb809a60dbee5b87f0798014774de683f3097ec25ab980384b4dc": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r37t8-cmdsub-case-line-continuation.yml:13: PARSE: run 區塊結尾時 `((`／`$[`／`[[`／`$(`／反引號／裸 `(` 有未收尾的（arith=0 brk=0 cond=False csub="
 ],
-"86db2944d90626063ef62c185a5b1f6a354cf2a1891a64b73416a29cdd56e7aa": [
+"863c2a77d2a132e505f988bc2c888619774c1242ed3828a6071a90175b0f24cd": [
 "killed",
-""
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現"
 ],
-"8721ad6401170c6bbf69a90576de0b3b294d2f75be308f662a1ce6b5ebdb74a0": [
+"865ffc368062b932bcf152740516c6640a31bc51d1cda8dcb01b0360641bc319": [
 "killed",
-""
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現"
+],
+"86dee275cb566a8cad758561bc0e018542d016046cf17a188b25947678177764": [
+"killed",
+"FAIL: test_entry_with_wrong_source_says_fix_the_entry_not_add_one (__main__.ValidateTest.test_entry_with_wrong_source_says_fix_the_entry_not_add_one) ‖ FAIL: test_entry_without_source_field_says_fix_the_entry (__main__.ValidateTest.test_entry_without_source_field_says_fix_the_entry) ‖ FAIL: test_new_plugin_dir_without_entry_is_error (__main__.ValidateTest.test_new_plugin_dir_without_entry_is_error)"
+],
+"87398e119f049207e59984353302f0aea6f9e2bcd623bc70d39c248b8e1eaae8": [
+"killed",
+"✗ 歷史 payload 凍結表：`5b5a46d` 的第 1 組 payload 不在 INJECT_PAYLOADS：'PWD[$(echo${IFS}ORACLE-INJECT-MARKER>>$ORACLE_INJECT)]' ‖ ✗ 歷史 payload 凍結表：`5b5a46d` 的第 2 組 payload 不在 INJECT_PAYLOADS：'-v PWD[$(echo${IFS}ORACLE-INJECT-MARKER>>$ORACLE_INJECT)]' ‖ ✗ 歷史 payload 凍結表：`5b5a46d` 的第 3 組 payload 不在 INJECT_PAYLOADS：'-n -o -v PWD[$(echo${IFS}ORACLE-INJECT-MARKER>>$ORACLE_INJECT)]'"
 ],
 "87539e6d064c27dca5d231fbfffa07d2977553cf4bc438076d67230abf35abff": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37b-env-container-shellopts.yml 宣告 rule-red，實測 pass"
 ],
-"876c04f8fff2ed1533469315e4c058ecc6a9946f708b60a4b59f3c753c972524": [
+"87e406c28be55da78635452dd389fb6a587f93cb47b849a000e45739dd3191f9": [
 "killed",
-""
-],
-"87eaf3a7dddd30c7a1405b7eb2436393bf9fade714e7c365a417a0a1a66a0dce": [
-"killed",
-""
+"✗ 宣告 step 列出 `$RUNNER_TEMP/_runner_file_commands`：通道檔裸名（uuid）先換成固定標記，宣告差分才判得成（R50）：rc=1（期待 0）、「一致 1」沒有出現"
 ],
 "87fc12f2585d94770c098629cfc330d66ea9e22f9cd9354987dcba1d5a1605ba": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r37t8-arith-expansion-then-word.yml:13: PARSE: `]]`／算術命令 `))` 之後直接接保留字 `then`（沒有分號或換行）——bash 接不接受取決於外層的 if／while，本 lint 不追蹤複合命令"
 ],
 "88026bd6dc22b826a274e4ec74715e0c35148a5f7bc988766debeb0501a6ede0": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37t8-cond-in-subshell.yml 宣告 rule-red，實測 pass"
 ],
 "8830f6534a461d03e59ff198176111db55b49c55fe2ee5395ea4de48faf18abc": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r44-declared-trap-pipe.yml 宣告 rule-red，實測 pass"
 ],
-"88f0d225f8a90da09682918a2e0a1914df07332284f03be7ef0e7a66ed127216": [
+"891212ba0775eccc825949fe265b856b24551ab694769a530a60aa9dbe34aac3": [
 "killed",
-""
-],
-"8995f54d3e3c7fd1cce94b2e6e1041d62bad97616bbab57581be6569069e171b": [
-"killed",
-""
+"FAIL: test_every_decoding_call_site_survives_undecodable_bytes (__main__.ValidateTest.test_every_decoding_call_site_survives_undecodable_bytes) ‖ FAIL: test_non_utf8_pack_manifest_never_crashes_any_gate (__main__.ValidateTest.test_non_utf8_pack_manifest_never_crashes_any_gate) (args=('--base', 'aee1ee523e ‖ FAILED (failures=2)"
 ],
 "89cfa868ef43cbffb0bbb6b9fe40a05ca1debb59915d9aa15c1d649be9b73433": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37c-dq-arith-inner-quote.yml 宣告 parse-red，實測 pass"
 ],
-"8a23b10ef779004a680dcc0d295a7a70789d0db1653fe75c467c0f26f7bbfc86": [
+"8a3ede82863b1d518a28c2aed42f1d2eafdfe95e7290e293ee3be55dc59d9030": [
 "killed",
-""
+"✗ main() 沒有呼叫 target_fulfillment_problems_real()"
+],
+"8aa5451dfbde6bd0baa1d1f63af06783b0fa7043f5ca1f6712f14d1f9b6ce085": [
+"killed",
+"✗ 逐目標履行：目標 cwd：寫進 $ORACLE_INJECT 之後神諭沒有偵測到注入 ‖ ✗ 逐目標履行：目標 cwd-abs：寫進 $ORACLE_INJECT 之後神諭沒有偵測到注入 ‖ ✗ 逐目標履行：目標 cwd-vis：寫進 $ORACLE_INJECT 之後神諭沒有偵測到注入"
+],
+"8ad18c64c16ad59b6ee5b13be32a540d78fcb4bc7cbd931854b3b7a3c39a0e9d": [
+"killed",
+"FAIL: test_non_string_source_path_is_named_not_an_internal_error (__main__.ValidateTest.test_non_string_source_path_is_named_not_an_internal_error) ‖ FAILED (failures=1)"
+],
+"8b3b53f10d1c2f8645246db317775edb45fe494ee1d961b94941f2404458c657": [
+"killed",
+"FAIL: test_external_strings_entering_annotations_go_through_wc (__main__.ValidateTest.test_external_strings_entering_annotations_go_through_wc) ‖ FAIL: test_missing_base_ref_is_error_not_silent_skip (__main__.ValidateTest.test_missing_base_ref_is_error_not_silent_skip) ‖ FAILED (failures=2)"
+],
+"8b431621b14e296d3404b8a869960e0d620a2731245a2d8f4da9520c5bd1ff07": [
+"killed",
+"FAIL: test_entry_name_must_match_plugin_json_name (__main__.ValidateTest.test_entry_name_must_match_plugin_json_name) (case='name 打錯') ‖ FAILED (failures=1)"
 ],
 "8b45ea0098751a8886454f78a77001d14edeee0e0ea8563374a0baefb5f9c9cc": [
 "killed",
-""
+"test/fixtures/ci-log-filter-bypass-r37o-case_head-at-command-level-mismatch-nested-paren.yml:23: RULE: [--strict] step 'cmdsub-case-level-mismatch-after-nested-"
 ],
-"8b57fc099ddb12ca63223f859e38cbb17f0d351c8a8f991130276e217bd6b7ca": [
+"8b9eb9c7951418d3787b1a12027be85186ffcfab50f73a925cd842e5172a3587": [
 "killed",
-""
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現 ‖ ✗ **第 13 格：`TMPDIR` 含空白 ∧ 求值者的 shell 不切開重導向的目標詞 ∧ 求值者先離開步驟 cwd**（R60 G2，R59 requirements／logic／regression／DA／Codex）：`bash --posix` 先 `cd /`（PX1）、`bash --posix` "
 ],
-"8c6333d9a6533e562858580af338dd1ee54f5a6cde67b5b11c1a5f294ad10576": [
+"8c171d41996ad4afcde20af0fc4b6eee955534b8590bb2a5677010ac65b58f33": [
 "killed",
-""
+"✗ tool_usable：假 sandbox-exec 失敗（rc≠0；真實的外層沙箱 `deny process-exec` 實測為 rc=71，這裡用 1 代表任何非零）→ 不可用：期待 False、實際 True"
 ],
-"8cc3e3cc6880f81012138424cf706b1f177cf1a14005e964edcb187c65bb3be0": [
+"8c5ddb82fd79476882badee8be6695d6ba9d36146d2daa36218d7ed1f2c8d492": [
 "killed",
-""
+"FAIL: test_ci_neutraliser_is_the_same_implementation_as_the_output_boundary (__main__.ValidateTest.test_ci_neutraliser_is_the_same_implementation_as_the_output_ ‖ FAIL: test_output_boundary_flush_neutralises_pending_line (__main__.ValidateTest.test_output_boundary_flush_neutralises_pending_line) ‖ FAIL: test_output_boundary_writelines_is_sanitised (__main__.ValidateTest.test_output_boundary_writelines_is_sanitised)"
 ],
-"8d023c813f6c47c97d9d8d4cef3038ae8fb0cc2c8ec3bbc461326bc68284af3a": [
+"8c810c74695541ff4c5769bc6771c1eaa3a47016434706068f9a79b67ec73f62": [
 "killed",
-""
+"✗ **第 13 格：`TMPDIR` 含空白 ∧ 求值者的 shell 不切開重導向的目標詞 ∧ 求值者先離開步驟 cwd**（R60 G2，R59 requirements／logic／regression／DA／Codex）：`bash --posix` 先 `cd /`（PX1）、`bash --posix` "
 ],
 "8d10dbc0b476066fef4a0ed448e5061629e39470a47e0bb9a6b72521f849be12": [
 "killed",
-""
-],
-"8da297ebf05e6e1c47b85bb009e4a3f34cd9c0ca7bf6545761b7df3a4eb548de": [
-"killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37o-cmdsub_end_case-backtick-paren-inside-case-cmd.yml 宣告 rule-red，實測 pass"
 ],
 "8df2e7019b7980a48de6bfabe8a39765abe038da7fab95a3d4bcfddf3f6676e4": [
 "killed",
-""
-],
-"8e33de68b96f211ed9a5f5a5d621023c8f1e029f5ab18fff728a35c3ee425b87": [
-"killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37o-sh-opts-child-bash-o-nonliteral-name.yml 宣告 rule-red，實測 pass"
 ],
 "8eda57bbbdcdd3d95d436858c11445a981438fa3cf19b662eafe9c2186b294ea": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r37b-strict-shell-quoted-bash.yml:30: RULE: [--strict] step 'quoted defaults' 有管線，卻沒有跑在 pipefail 之下（shell 不是關鍵字 `bash`、樣板也沒帶 `-"
+],
+"8ef63a26630eafb81a808a02c304e3823b2cdbd0744c9b1c53a6f7aa62710057": [
+"killed",
+"✗ 已觀察到外流而分類失敗、沒有類別宣告：rc=0（期待 1）、「分類失敗不抵銷」出現 ‖ ✗ 深目錄樹建在全程序共用的 stub 目錄（`PATH` 的第一段）：神諭離開 `main()` 清理時不崩潰，判定表照印（R50 第五輪 L1，K1 的漏網之魚；Python ≤3.12 才重現）：rc=1（期待 0）、「一致 1」沒有出現"
 ],
 "8f170506b19782460412d8e180035e34807efed98919e8ffaed0ddeb12115d99": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-quoted-scalar-indented-lines-no-dedent.yml 宣告 rule-red，實測 pass"
 ],
 "8f21a51694a10b57405484037022e87972e6e57b30f2a4378f48ae26e1a726d1": [
 "killed",
-""
+"test/fixtures/ci-log-filter-bypass-r37t8-dq-cmdsub-sameline-heredoc.yml:13: PARSE: 雙引號裡的命令替換到 run 區塊結尾都沒收——那一行在 bash 是語法錯誤、不會執行，本 lint 不解析"
 ],
 "8f7a82e4f23ddaa72ec657c33df418b1d2651d3307c08446e1d258246e32f611": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r37t8-dev-tcp-target.yml:9: RULE: step 's' 靠管線過濾，卻有 `>/dev/tcp/127.0.0.1/1` 寫到 /dev 或 /proc 底下（去引號後是 `/dev/tcp/127.0.0.1/1`）——那"
 ],
-"9063b70bce63f89a6f2e0576c2f6216db45ab982ac6d8303d16c84362546c737": [
+"8fb2c37ad94e453b782bb7aa2f02a5f9ab2880e02409f26dc8df14977fcc8c67": [
 "killed",
-""
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現"
 ],
-"908bd50c7b3a8730d73955dc713b1d2712f2ed61f47ad62ec3498e26ec380845": [
+"900f0c979eb018b7ff4ccad7f06e4779551452a68b35fb7402145f8dfb94c282": [
 "killed",
-""
+"FAIL: test_entry_with_wrong_source_says_fix_the_entry_not_add_one (__main__.ValidateTest.test_entry_with_wrong_source_says_fix_the_entry_not_add_one) ‖ FAIL: test_entry_without_source_field_says_fix_the_entry (__main__.ValidateTest.test_entry_without_source_field_says_fix_the_entry) ‖ FAILED (failures=2)"
+],
+"909d517758fb56e48e13f75d0322c4039fd6aaa186a74f85ade76fe420480b78": [
+"killed",
+"✗ 逐目標履行：目標 cwd-vis：$ORACLE_INJECT 是 '<TMP>/.orc-0mcfsg_g/inject'，不符合 (?:<TMP>/)?inject ‖ ✗ 逐目標履行：目標 cwd-vis-abs：$ORACLE_INJECT 是 '<TMP>/.orc-cb2jbyvd/inject'，不符合 <TMP>/inject ‖ ✗ 逐目標履行：目標 priv：$ORACLE_INJECT 是 '<TMP>/.orc-ydg0i_rv/inject'，不符合 <PRIV>/i"
+],
+"90cb8e4f5347a53bdd11ab3728ab34562c0ffce9d4c7f15758361be47276a352": [
+"killed",
+"✗ 稽核與探針的範圍：宣告寫在 YAML 層（step 的註解行）而沒有觸發的 step 同樣不進文法（R48，R47 logic）：rc=1（期待 0）、「一致 1」出現 ‖ ✗ 宣告註解寫在 bare `-` 與第一個鍵之間：神諭的 step 範圍涵蓋它（R49 logic LOW）：rc=1（期待 0）、「一致 1」出現 ‖ ✗ YAML 層宣告而沒有觸發的 step 不進正面文法，注入探針不跑（`in_grammar(run, yaml_decl_step)` 的呼叫點；R49 logic M2）：rc=1（期待 0）、「一致 1」出現"
 ],
 "916195ce7fb1569a0810ab82ea9608a73a05b17d8eaa993015d5b20a7bc986a7": [
 "killed",
-""
+"File \"<stdin>\", line 3846, in <module>"
+],
+"91d09525e7f03b1da231ad610ac5f4d39648d8f22cdb9308d10b7815f3640768": [
+"killed",
+"FAIL: test_every_decoding_call_site_survives_undecodable_bytes (__main__.ValidateTest.test_every_decoding_call_site_survives_undecodable_bytes) ‖ FAIL: test_non_utf8_pack_manifest_never_crashes_any_gate (__main__.ValidateTest.test_non_utf8_pack_manifest_never_crashes_any_gate) (args=('--base', '3bdbab21d3 ‖ FAILED (failures=2)"
+],
+"91e8081dda5670af2a85e1157aa61eed92040dfd9ff54cd80a4087a72328ac9f": [
+"killed",
+"✗ 歷史哨兵位置 manifest：[spaced=True,tmpdir_priv=False] 哨兵位置 cwd-visible-abs：目標 'cwd-vis-abs' 不在 payload 'PWD[$(echo${IFS}ORACLE-INJECT-' 的序列裡（['cwd', 'cwd-abs', 'pri ‖ ✗ 歷史哨兵位置 manifest：[spaced=True,tmpdir_priv=False] 哨兵位置 cwd-visible-abs：目標 'cwd-vis-abs' 不在 payload '-v PWD[$(echo${IFS}ORACLE-INJE' 的序列裡（['cwd', 'cwd-abs', 'pri ‖ ✗ 歷史哨兵位置 manifest：[spaced=True,tmpdir_priv=False] 哨兵位置 cwd-visible-abs：目標 'cwd-vis-abs' 不在 payload '-n -o -v PWD[$(echo${IFS}ORACL' 的序列裡（['cwd', 'cwd-abs', 'pri"
 ],
 "920c8c4bbbd00fb2e14bbe2242e83b393933b34fda5d10a7d7093803d589bda3": [
 "killed",
-""
+"test/fixtures/ci-log-filter-bypass-r37p-cmdsub-case-nested-broken-arith.yml:31: RULE: step 'nested-broken-arith-cmdsub' 靠管線過濾，卻有 `>&2` 複製 fd（stdout 可能被帶到 stderr"
 ],
-"928918c78b892d1aed4e6870ee0bf2f41280becc059a026b2eb31018176c33dc": [
+"923dc9007c85940e668ce3b9e5d8d6e14b3dac604017dc14fce68344e03892de": [
 "killed",
-""
-],
-"92aede2488c74100a0e2faa4f98587bc8b1345782ab8b1cc6ada0eca6b908073": [
-"killed",
-""
+"FAIL: test_pai_harness_env_cannot_redirect_what_gets_evaluated (__main__.ValidateTest.test_pai_harness_env_cannot_redirect_what_gets_evaluated) ‖ FAILED (failures=1)"
 ],
 "92b84b88383158205c942ab24a4709038412aeeb6fadd86b1b32bdc1b0a1b3ba": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r42-tail-newline-before-redirect.yml 宣告 rule-red，實測 pass"
 ],
-"92c5588aa15d6a341dba5fa1b9d7b3d78c8521ed5b31fec6535cbace5dbd62a0": [
+"92da90ffcad33086a0f34a9985ba45812e5a5b535fa9ec6f58ecc24d5a088654": [
 "killed",
-""
+"FAIL: test_entry_without_source_is_named (__main__.ValidateTest.test_entry_without_source_is_named) ‖ FAILED (failures=1)"
 ],
-"931346592d11a2c89160437490867507027b44b420b00f434c2e789c879d2fc2": [
+"9360ec9707e8e1801af337f79c86ab11e925b82f490ba2ec01d31d0c75748920": [
 "killed",
-""
+"FAIL: test_base_side_manifest_of_wrong_type_also_guarded (__main__.ValidateTest.test_base_side_manifest_of_wrong_type_also_guarded) ‖ FAIL: test_check_bumped_json_sites_also_guard_type (__main__.ValidateTest.test_check_bumped_json_sites_also_guard_type) ‖ FAIL: test_valid_json_of_wrong_type_does_not_crash (__main__.ValidateTest.test_valid_json_of_wrong_type_does_not_crash) (file='pack plugin.json')"
 ],
-"93f4de40fe7a64f36678e33e4dbd09fb5f747a2509e0488e9f3647a5dc2b1909": [
+"9474c23010dd974cbac2bb83a23aa325b386c303f29e727cca89a5261dd8ab65": [
 "killed",
-""
+"✗ primitive 稽核：管線子殼層裡信任變數被具名 fd 改寫（R46）：rc=0（期待 1）、「信任變數」沒有出現 ‖ ✗ 對照組：不動儀器的同一批違規（`printf '%n'`、改寫信任變數、可注入構造、pipefail 關閉）全部判『不一致：繞過』——盲點探針的『一致』『量不到』因此不是違規本來就看不到（R50）：rc=1（期待 1）、「不一致 4」沒有出現"
 ],
-"9407f582ef126d71aaf365ec138c00d35c560e7a18bcf214696e7aec83a884bd": [
+"953fe7bcae5eeda9caaf5fcca07fefd1eea229be7d6fb360a778bb48e2626f02": [
 "killed",
-""
-],
-"9489933c7fa6c5644dec92932068c4ffae2e7ee847317d10f387e2eb38dfa7af": [
-"killed",
-""
-],
-"94e1d3a0a542c48dbc5693d2f1617934441315f2bd710f200ddb1b24bb280c7b": [
-"killed",
-""
+"✗ 背景行程在收尾時仍在跑：整群殺掉，判量不到（儀器不可信；在 `--strict`、lint 放行、step 在文法內、記錄無違規時）；對遠超寬限的行程是確定的（R49 Codex 第 4 條，取代 R48 的 ignore_cleanup_errors）：rc=0（期待 0）、「背景行程在神諭收尾時仍在跑」沒有出現 ‖ ✗ **已知盲點類（文件化，不是保證）**：讓 pipefail 觀測量不到——`exec 198>/dev/null`（事件流）、`$ORACLE_PRIV` 裡的 FIFO、管線後接逾時的外部命令、對 PRELUDE 變數的純量指派——判『量不到』且 rc=0（R42 起的設計，R50 沒改）；真的 `--stri"
 ],
 "9554a730992312a1c36cd3c62f7942daa0c735ba6afd457f816c9f862ac4fc82": [
 "killed",
-""
+"test/fixtures/ci-log-filter-bypass-r37p-lex-depth-decrement-missing-op-guard.yml:52: PARSE: run 區塊結尾時 `((`／`$[`／`[[`／`$(`／反引號／裸 `(` 有未收尾的（arith=0 brk=0 cond=Fal"
+],
+"95ae338d556adf156beeab57ede05181687f0be7fb3973bc21708a05e64aca2d": [
+"killed",
+"✗ KNOWN_DISAGREE 之外的不一致（lint 與 runner 對同一個 step 說不同的話）： ‖ ✗ 檔頭宣告了已知類別、神諭卻沒把那麼多 step 歸進那一類（KNOWN-CLASS 過期——重判這個 fixture）： ‖ ✗ 已知類別 G 在 fixture 集上是 7 條，預期恰好 8（改動已知類別的 fixture 請同步改 FIXTURE_CLASS_TOTALS）"
+],
+"95f8927cb6d3f4975ccc3520024ac57cecf918603c7f2b8fc3dd62e1192e5711": [
+"killed",
+"✗ 逐目標履行：目標 priv-tmpdir：$ORACLE_INJECT 是 '<PRIV>/i'，不符合 <PRIV>/inject ‖ ✗ **哨兵位置軸（真沙箱版，只在 macOS）**（R62 H1，R61 requirements／logic／security／regression／DA／Codex）：SP1、SP2（拒寫 `/private/tmp`、關 fd、`env -i`）、SP3、SP4（拒寫 `/private/tmp` 與 cwd  ‖ ✗ **哨兵路徑形狀（沙箱版，只在 macOS）**（R64，R63 第 3、4 列）：DP1 只放行 `tmpXXXXXXXX/inject`（`32d45ff` 的私有目錄名）、DP0 也放行 `oXXXXXXXX`（對照組）、HO1 只放行隱藏 `.orc-*` 底下的 `inject`（`cwd` 目標）。負對"
 ],
 "96d8613ed89d06b5cd7a76f842ce1a9014caea55f55889da17d42258ea558f55": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r37b-fd-flow-safe-forms.yml:29: RULE: step 'redirects that keep stdout' 靠管線過濾，卻有 `>/dev/null` 寫到 /dev 或 /proc 底下（去引號後是 `/dev/nu"
 ],
 "96d9057d6d24037e7d4497d381af851a3bc5f71863f006c39f4fb26c11e88c3f": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37e-fold-trailing-space-terminator.yml 宣告 rule-red，實測 pass"
+],
+"9700ddcdc9ef76334e5038d2cf9912f3c8dcf2ee47a40d9bfa1db0b647a12867": [
+"killed",
+"✗ 背景行程在收尾時仍在跑：整群殺掉，判量不到（儀器不可信；在 `--strict`、lint 放行、step 在文法內、記錄無違規時）；對遠超寬限的行程是確定的（R49 Codex 第 4 條，取代 R48 的 ignore_cleanup_errors）：rc=0（期待 0）、「背景行程在神諭收尾時仍在跑」沒有出現"
+],
+"97061686bfaf87a7e840f46c725a3635c7a7ad9b61f16e6419bfd9061dd34c3e": [
+"killed",
+"FAIL: test_no_in_repo_plugin_checked_is_error (__main__.ValidateTest.test_no_in_repo_plugin_checked_is_error) ‖ FAILED (failures=1)"
 ],
 "97a0b0b7ac414c92a6c6d7a254ca54852c42f2392962b419168e2c4240ed4cef": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37m-ansic-word-before-cond.yml 宣告 rule-red，實測 pass"
 ],
 "97a51a8af342cea05f5fef07dc3883b0a62305e812d1be6ac9c98b985bec84dd": [
 "killed",
-""
+"test/fixtures/ci-log-filter-bypass-r37c-ansic-in-param-cmdsub.yml:11: RULE: step 'ansic-in-param-cmdsub' 靠管線過濾，卻有 引號或 `${…}` 裡的命令替換對不到收尾（或掃描器不解析它）——裡面的重導向看不到，不解"
 ],
-"97fd73d37879b3dae341d1920fc324e1ea38e4189fa08ed352f795775f055f42": [
+"97ff4886aabecf8ed4225a0a3406efd429b0a1e227c75db9b87797812581bb20": [
 "killed",
-""
+"FAIL: test_reverse_check_does_not_read_plugin_json_outside_repo (__main__.ValidateTest.test_reverse_check_does_not_read_plugin_json_outside_repo) ‖ FAILED (failures=1)"
 ],
-"98cf1ae33272a8420c01ae35a006e1b2ce71da3f40df79ccb181cd8b33d87691": [
+"98d5c3f138a7450c1b7eed81524f237fb4903a0b60c37dfa71dcc730e74dc8d3": [
 "killed",
-""
+"✗ 通道上限的網：PR 文字寫在上限**之外**，神諭看不到，不能判『一致』——判『量不到（儀器不可信：通道檔 … 超過）』（R52 網，R51 logic M／G1）：rc=0（期待 1）、「通道檔 GITHUB_ENV 超過 4096 位元組」沒有出現"
 ],
-"99023a40a22103b641a1d262e0b1bc681bc0d4ff14bd8b8adde8146e69c976ce": [
+"99361ae887a93c78e11ecb70f17e9ed8402b04d8fb29997c511f8827b1f5e6b4": [
 "killed",
-""
-],
-"993a3ac7e4867fdbfbc79a3fefb0d8644d3dbb2be16bd49e050116e57ca00597": [
-"killed",
-""
+"✗ **注入的鍵設定各是獨立的一次執行：舊樹的設定、所有鍵同時、逐鍵各一次**（R60 G1，R59 regression／logic／DA）：step 先驗證 PR 的另一個欄位——第二個 `${{ …title }}` 鍵的長度閘門、`>` 閘門、`head_ref` 的 `>` 閘門、純 bash 的 `[[ $"
 ],
 "99822bf1754d38b771d2da6fd20384a1959c3e038e720aeb28928d07017e0b66": [
 "killed",
-""
+"File \"<stdin>\", line 3846, in <module>"
 ],
 "998982b52ca46bfa6455d5ce5b244c70602ea88db3cf79846e3dc59298285baa": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r37t8-cmdsub-case-line-continuation.yml:13: PARSE: run 區塊結尾時 `((`／`$[`／`[[`／`$(`／反引號／裸 `(` 有未收尾的（arith=0 brk=0 cond=False csub="
 ],
-"9a4483f81619e7c0695dff165906cf7d359e60af5c8582d29128d17f2c7d4c96": [
+"99a52f722e0578ff801408446b64cbde4b6aae448c9956e5526d2548e78282a7": [
 "killed",
-""
+"FAIL: test_missing_lenses_dir_is_error (__main__.ValidateTest.test_missing_lenses_dir_is_error) ‖ FAILED (failures=1)"
 ],
-"9a561ae245abe8268b5fa7bebaecdf0e1aaf0309475cc78de95323dda7132c7c": [
+"99adcd54e6d4807e95630b3f01b28bf3424eab4403fc9fbf0802ebbe47ffdef4": [
 "killed",
-""
+"✗ ci-log-filter-known-r37a-mustfail-g-diff-heredoc-feeds-pipe.yml —— 宣告的理由「出現原本沒有的外流行」沒有出現 ‖ ✗ must-fail 探針沒有以宣告的理由失敗（它要量的那個分支沒被走到，或神諭在那裡放行了）："
+],
+"99b395d89a32ed4f896dccc183751cc86cb4a64054d09d2f9119d3f26534fcd8": [
+"killed",
+"✗ 稽核與探針的範圍：宣告寫在 YAML 層（step 的註解行）而沒有觸發的 step 同樣不進文法（R48，R47 logic）：rc=1（期待 0）、「一致 1」出現 ‖ ✗ 宣告註解寫在 bare `-` 與第一個鍵之間：神諭的 step 範圍涵蓋它（R49 logic LOW）：rc=1（期待 0）、「一致 1」出現 ‖ ✗ YAML 層宣告而沒有觸發的 step 不進正面文法，注入探針不跑（`in_grammar(run, yaml_decl_step)` 的呼叫點；R49 logic M2）：rc=1（期待 0）、「一致 1」出現"
+],
+"9a0e08f493ccdc0bd73645a1a5cd88d3e1e86fa4d90f9986ea5c28f697b0aaf0": [
+"killed",
+"✗ KNOWN_DISAGREE 比對內容雜湊：rc=0（期待 1）、「內容雜湊不符」沒有出現"
 ],
 "9a97490b68f921fb0ffe4324ca4c66651312cf39111e82f497fef51542b18adc": [
 "killed",
-""
+"test/fixtures/ci-log-filter-bypass-r37o-cmdsub_end_case-backtick-paren-inside-case-cmd.yml:32: PARSE: 雙引號裡的命令替換到 run 區塊結尾都沒收——那一行在 bash 是語法錯誤、不會執行，本 lint 不解析"
 ],
 "9aca8b6ef3705ff410d8fbb6239faa35ad8f1b254d3bc98332ba3a9a6c5fa28f": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37d-andand-cont-pipe.yml 宣告 rule-red，實測 pass"
 ],
-"9cca9d51f461fbf70a84c44cccefd6f10b5b26632cef9290326b7a15cd4408a7": [
+"9be44ecfef83e29c772bee42527ae856ada143533a0639c088f6a00eca686ba1": [
 "killed",
-""
-],
-"9cea32445c76e65020e84d3fd08bf08ab78453b0287ec4687d9389b2235bae54": [
-"killed",
-""
+"✗ 歷史哨兵位置 manifest：[spaced=False,tmpdir_priv=True] 哨兵位置 priv-tmpdir：目標 'priv-tmpdir' 不在 payload 'PWD[$(echo${IFS}ORACLE-INJECT-' 的序列裡（['priv']） ‖ ✗ 歷史哨兵位置 manifest：[spaced=False,tmpdir_priv=True] 哨兵位置 priv-tmpdir：目標 'priv-tmpdir' 不在 payload '-v PWD[$(echo${IFS}ORACLE-INJE' 的序列裡（['priv']） ‖ ✗ 歷史哨兵位置 manifest：[spaced=False,tmpdir_priv=True] 哨兵位置 priv-tmpdir：目標 'priv-tmpdir' 不在 payload '-n -o -v PWD[$(echo${IFS}ORACL' 的序列裡（['priv']）"
 ],
 "9d29ca45645af9571230c6e91f03593dbe7cd64a75129b6d5abdb423dd615e3d": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37b-env-job-bash-env.yml 宣告 rule-red，實測 pass"
 ],
 "9d33876e92ff1e4285b93f67f2bee8fa5bc2e6d1c67d884e2e55c7dd5231dde3": [
 "killed",
-""
+"test/fixtures/ci-log-filter-bypass-r42-strict-nested-funsub.yml:15: PARSE: `${…}` 在同一行沒收尾（含裡面的引號、命令替換），或是 bash 5.3 的 `${ cmd; }`／`${| cmd; }`，或裡面有本 lint 不解析的構造："
 ],
-"9e80fa0a13324c8d02b567683d7319870c8579fec8272c04eb77006f69a38c06": [
+"9d37b7978e6248f70d9c6fbe1d74b42b615b094b41c79d321ef44acd36aff051": [
 "killed",
-""
+"✗ 主 shell 自己關掉稽核 fd：寫不出 fin，判量不到（儀器不可信）：rc=0（期待 0）、「主 shell 卻沒有 fin」沒有出現"
 ],
-"9e9aad20065f5a3f35200092de145877a29c4cc4d2fb87b92a5fb5f70eb9b4de": [
+"9ddf2079d9b86611238a3b15fe4d947c489c6e7595b17c58129fa78f12571868": [
 "killed",
-""
+"✗ 歷史 payload 凍結表：`b86bc53` 的第 8 組 payload 不在 INJECT_PAYLOADS：'PWD[$(echo${IFS}ORACLE-INJECT-MARKER>/dev/fd/197||:)]' ‖ ✗ 歷史 payload 凍結表：`b86bc53` 的第 9 組 payload 不在 INJECT_PAYLOADS：'-v PWD[$(echo${IFS}ORACLE-INJECT-MARKER>/dev/fd/197||:)]' ‖ ✗ 歷史 payload 凍結表：`b86bc53` 的第 10 組 payload 不在 INJECT_PAYLOADS：'-n -o -v PWD[$(echo${IFS}ORACLE-INJECT-MARKER>/dev/fd/197||:)]'"
 ],
 "9ea170ac47a7447edab5fec3e9f55aae8f49887f11d5541602ef6a3a27a8c180": [
 "killed",
-""
+"test/fixtures/ci-log-filter-bypass-param-expansion-dq-escaped-quote.yml:12: PARSE: 引號到 run 區塊結尾都沒收——那一行在 bash 是語法錯誤、不會執行，本 lint 不解析"
 ],
 "9f45348352dcb2bc6dad0223a9500a5c97b90558ea50e9b04ca17b3454d02913": [
 "killed",
-""
-],
-"9f77fab114d9fb3d5c38bf097e166f240280fb3b2d26d99bc615a72e9567ebad": [
-"killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37o-word_lex-legacy-arith-bound-drop.yml 宣告 rule-red，實測 pass"
 ],
 "a05e5649fc62f0e38dd4c24a9e9965f0c0f219611b09678dca70667e16edcc0c": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-folded-blank-after-more-indented-empty-delim.yml:11: RULE: step 'blank after a more-indented line stays a line' 的 run 區塊既沒有經 ne"
 ],
-"a0631ba9d567334f4c0b1af9143df8347fb6cc39bebc630d5080ad9ec9f34d85": [
+"a10b76d384d2c153a3bc0150b4b8f1c81fae2691c862dbb0c86e661cb396461c": [
 "killed",
-""
+"✗ 歷史哨兵位置 manifest：[spaced=True,tmpdir_priv=False] 哨兵位置 cwd-abs：目標 'cwd-abs' 不在 payload 'PWD[$(echo${IFS}ORACLE-INJECT-' 的序列裡（['cwd', 'priv', 'cwd-vis', 'cwd-vis ‖ ✗ 歷史哨兵位置 manifest：[spaced=True,tmpdir_priv=False] R60 的目標序列 ['cwd', 'cwd-abs', 'priv'] 不是 payload 'PWD[$(echo${IFS}ORACLE-INJECT-' 的新序列 ['cwd', 'priv', 'cwd-vis ‖ ✗ 歷史哨兵位置 manifest：[spaced=True,tmpdir_priv=False] 哨兵位置 cwd-abs：目標 'cwd-abs' 不在 payload '-v PWD[$(echo${IFS}ORACLE-INJE' 的序列裡（['cwd', 'priv', 'cwd-vis', 'cwd-vis"
 ],
-"a074a0cd39be179ed92172eeb8a6df7cca7866376a4439b611946e22a9bcabfd": [
+"a23b3f66021c622740bce8935dff48007751d1c1385c8a5c0ebac673facdb2f2": [
 "killed",
-""
+"✗ pipefail 探針被腳本換掉：判量不到、不判一致：rc=1（期待 0）、「量不到（pipefail 探針被換掉」沒有出現 ‖ ✗ **已知盲點類（文件化，不是保證）**：讓 pipefail 觀測量不到——`exec 198>/dev/null`（事件流）、`$ORACLE_PRIV` 裡的 FIFO、管線後接逾時的外部命令、對 PRELUDE 變數的純量指派——判『量不到』且 rc=0（R42 起的設計，R50 沒改）；真的 `--stri ‖ ✗ 深目錄樹建在全程序共用的 stub 目錄（`PATH` 的第一段）：神諭離開 `main()` 清理時不崩潰，判定表照印（R50 第五輪 L1，K1 的漏網之魚；Python ≤3.12 才重現）：rc=1（期待 0）、「一致 1」沒有出現"
 ],
-"a1619b7c129c261b4157660f64e8bb678741c3dd75fd75623d193771ef5f4a4a": [
+"a2b21887c875ff6a39068610e6260d831ca3506978e2f086c7edbfe294cdf628": [
 "killed",
-""
-],
-"a23eb1b05fc340576bba251d72b1b923c4b4cfd22dec3337720d8caae8291d0f": [
-"killed",
-""
-],
-"a2c25326d73d4f66eb3da7cc18f3ea9ff2d858a695c0f58cf6b766f752a944d6": [
-"killed",
-""
-],
-"a2d075d1218a4e741079ec41749e916e4fae21b70c5321f51d070e17a7925fd1": [
-"killed",
-""
+"✗ 跨 step 通道：lint 放行、PR 文字寫進 GITHUB_ENV：rc=1（期待 1）、「跨 step 通道」沒有出現 ‖ ✗ EXIT 失敗路徑：errexit 之下仍跑使用者的 trap 動作（R44）：rc=0（期待 1）、「跨 step 通道」沒有出現 ‖ ✗ 儀器完整性：cwd 裡同名的檔（`chan-GITHUB_ENV`）不是通道，截斷它截斷不到真的通道（R48 歷史項；R50 起通道檔在 `$RUNNER_TEMP/_runner_file_commands/`；R48 宣稱查核 E 組）：rc=0（期待 1）、「跨 step 通道」沒有出現"
 ],
 "a317bb82bb5c795b4f9633bfadae96cebdb8fabf6e1764eef00c52369a8e97d6": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37t8-export-bare-bash-env.yml 宣告 rule-red，實測 pass"
 ],
-"a31ea08e744e20d42b290401ce63db5cdd640336c9a2658d5cafd6cbb7219b84": [
+"a335e70a75f45516a619d02348fe8b0589662a9c7b6d0c88a6b184ccd2082395": [
 "killed",
-""
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現"
 ],
 "a358d3119eff00df509cd715c77e7cf274fc15e5dc81bc31cf43bd349befdbe0": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-parse-r40-bash53-funsub-space.yml 宣告 parse-red，實測 pass"
 ],
-"a43ae6df049b5d69bc8d5d4d5b0d71ae189b0fd7202a99e2b8ce237b6e139f44": [
+"a3f96eff9e40453a4dcc0dc8aa80329e4702d89a1a61a0d342724462f7654eff": [
 "killed",
-""
+"FAIL: test_wc_collapses_every_separator_the_runner_honours (__main__.ValidateTest.test_wc_collapses_every_separator_the_runner_honours) ‖ FAILED (failures=1)"
+],
+"a3fa03da1954701c8a8eb6c87693fcc5138eb5ee84587330624e34abe748656b": [
+"killed",
+"✗ 逐目標履行：目標 cwd：$ORACLE_INJECT 是 '<TMP>/.orc-mtp7446t/injectx'，不符合 (?:<TMP>/)?\\.orc-[A-Za-z0-9_]{8}/inject ‖ ✗ 逐目標履行：目標 cwd：哨兵檔沒有預先建好（PRE=0） ‖ ✗ 逐目標履行：目標 cwd：寫進 $ORACLE_INJECT 之後神諭沒有偵測到注入"
+],
+"a43f5eaf8360e6b9985be1e78f12dc43dccac0f5c750b62d149386afcd68e8d2": [
+"killed",
+"FAIL: test_wc_collapses_every_separator_the_runner_honours (__main__.ValidateTest.test_wc_collapses_every_separator_the_runner_honours) ‖ FAILED (failures=1)"
+],
+"a480a1b44782abab899e20a4ac8e4040ceb9c1dba8221e607bf21774b0dd98fb": [
+"killed",
+"✗ 逐目標形狀檢查：priv-tmpdir 前綴是 o（R62 的錯，R63 第 3 列）：期待有問題、實際通過"
 ],
 "a495033e12e9a1e84b122d991ed11ad8e52141b2938511a6bae40e09ee29d48e": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37e-ansic-octal-nonascii.yml 宣告 parse-red，實測 pass"
+],
+"a4c2668d081554ce544106eb0f7be430aa89d4cec556b38f357e1d2963a681a0": [
+"killed",
+"FAIL: test_wc_collapses_every_separator_the_runner_honours (__main__.ValidateTest.test_wc_collapses_every_separator_the_runner_honours) ‖ FAILED (failures=1)"
 ],
 "a4c475cc8b0009ceb57d871cf2cdec50a5477f2613bc6b3100c56380449734cb": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r46-brace-no-expansion.yml:56: RULE: [--strict] step 'an external command with a brace expansion is outside the check' 靠管線過濾，而 "
 ],
 "a4cd152965305d637b12084410655a04343e6ed03e7396ea19b63c5401cbc5f3": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r39-xtrace-prefix-nonliteral-name.yml 宣告 rule-red，實測 pass"
 ],
 "a4d1e13404b7bb98937a4d134729d578342c3e2873bd54b444aba3cf1ae785f5": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37b-fd-in-param-cmdsub.yml 宣告 rule-red，實測 pass"
 ],
-"a51805d6f95c936df5ed1c0bbe1c1f29f82ad66ff3378268faaa33fc2b6440c4": [
+"a5d3c3d61af934c63768795f25f4850cac4cc03100465b83ff6bdb6f5e752900": [
 "killed",
-""
-],
-"a553c996b275d9850cf7f3d5a315400c28887735eaa4d6ff45d2225a7ce435f3": [
-"killed",
-""
-],
-"a568637a135439a017cafbed355f743e93a9ddce85d53793f7a2e0e037ade59b": [
-"killed",
-""
+"✗ `pfu` 閘門在 lint 擋下（RULE-red）那一側也開：pipefail 探針被換掉的 step 與沒被換掉的對照組，判定相同（一致 2）（R52 宣稱查核 A 組）：rc=0（期待 0）、「一致 2」沒有出現"
 ],
 "a5fd5c7ae959863ca4807bd0b170de68ef0b724036c76027f9ca24e9bcbe2661": [
 "killed",
-""
+"test/fixtures/ci-log-filter-bypass-r37t8-ansic-hex-nul.yml:9: RULE: step 's' 的 run 區塊既沒有經 neutralise.py，也沒有 `# LOG-FILTER:` 註解說明為何不過濾"
+],
+"a6e492e67424bdef2523315f81e7cfa8da3faa9caece0705997a9238ec42de67": [
+"killed",
+"FAIL: test_collision_gate_fails_loud_when_catalog_missing (__main__.ValidateTest.test_collision_gate_fails_loud_when_catalog_missing) ‖ FAILED (failures=1)"
+],
+"a709708602a1a40ff31d9ce36fb08720c25fa772f3838214112cb802e85e8007": [
+"killed",
+"✗ 唯一的 RULE 是 pipefail、而 pipefail 其實開著：判誤擋，不整步跳過：rc=0（期待 1）、「歸了類卻沒宣告」沒有出現 ‖ ✗ 深目錄樹建在全程序共用的 stub 目錄（`PATH` 的第一段）：神諭離開 `main()` 清理時不崩潰，判定表照印（R50 第五輪 L1，K1 的漏網之魚；Python ≤3.12 才重現）：rc=1（期待 0）、「一致 1」沒有出現"
 ],
 "a7d9a9e4490ece10d9d2cd5e6e6e50c396b73bc6c873a2ef3eb3440fcaa49214": [
 "killed",
-""
-],
-"a7e6b9687560424476c23331179773520995874408c77edca511250061ea683a": [
-"killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37e-dedent-tab-after-blank.yml 宣告 rule-red，實測 pass"
 ],
 "a88f86ffa1db9aae22129b7dd1ae985a1ee6b4cce104d490d36ee92577c71c48": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37b-xtrace-env-shellopts-child.yml 宣告 rule-red，實測 pass"
 ],
 "a9626b6ba76abfcf90b384d4e23ccb68fb8e04653a573016091a502c5952526c": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r44-unquoted-test.yml 宣告 rule-red，實測 pass"
 ],
-"a97888ccefba5adc79eb10fd35d0a33e9d0b7f3db8387164a32b8fbf5e65eacb": [
-"survived",
-""
+"a9a81a9495b2f47ac3687b234368b52248d914c6b1f9395f6b731eecf440b2df": [
+"killed",
+"FAIL: test_one_sided_bump_is_error_and_two_sided_passes (__main__.ValidateTest.test_one_sided_bump_is_error_and_two_sided_passes) ‖ FAILED (failures=1)"
 ],
 "aa202cff687c40358cbba3a0331abd492b2006b78e65d5de63820b836e76e809": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37t8-set-o-param-name.yml 宣告 rule-red，實測 pass"
+],
+"ab1a540631208a4c98e1bbaf6dba890b060a9c4fb0fad4480ad22ef753b165a7": [
+"killed",
+"FAIL: test_catalog_symlink_cannot_leak_content (__main__.ValidateTest.test_catalog_symlink_cannot_leak_content) ‖ FAILED (failures=1)"
 ],
 "ab2f140d0695b69cb176f3f53bf4be439e7d92914d4bbf1fc73fb9cea18c9fa4": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-dash-heredoc-tab.yml:8: RULE: step 'dash heredoc strips leading tabs from the terminator' 的 run 區塊既沒有經 neutralise.py，也沒有 `# LOG"
 ],
 "ab94f85711ec1a2059b32b0dc9c069469ed39cb3ba0c3e2114edeb3f2ec4128f": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-quoted-run-trailing-comment-dq.yml:8: RULE: step 'double-quoted run with a trailing YAML comment' 的 run 區塊既沒有經 neutralise.py，也沒"
 ],
 "ab98ae1ade59b2b7351eab4a5db54aadb8c305fdf6422d6d79114e08fa4105a8": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-two-heredocs.yml 宣告 rule-red，實測 pass"
 ],
 "abab347742100320ca29e6830307a4d2c29ad95bca16c62894db9976d7329148": [
 "killed",
-""
+"test/fixtures/ci-log-filter-bypass-explicit-indent-zero.yml:10: PARSE: 本 lint 不解析這一行（不是 plain key、不是清單項、不是 block scalar 內容）：`echo hi | python3 scripts/neutralis"
 ],
-"ac35538c7f8c0a8c14d1a4136798930af1d1cbcce9cca604a02f664168352747": [
+"ac4b6450b25fc2e6f0cb11ce235e0d17596a8ae2e40fcd2675f6b4ccb0337c44": [
 "killed",
-""
+"✗ 逐目標履行：目標 cwd-vis：哨兵檔沒有預先建好（PRE=0） ‖ ✗ 逐目標履行：目標 cwd-vis-abs：哨兵檔沒有預先建好（PRE=0） ‖ ✗ **哨兵位置軸（可攜版）**（R62 H1，R61 的兩個 blocking）：求值者只寫得到 `TMPDIR` 底下的私有目錄（`/tmp` 底下的私有哨兵唯讀、`env -i`、關 fd；PA1 命令位置、PA2 算術脈絡）時，`32d45ff` 的位置（`\"priv-tmpdir\"` 目標）命中；所有私有哨兵"
 ],
-"aca5355d35b386c880a6388392a8553ad901a7d8a3da68c4b3f0f834e276f2ee": [
+"adaddb420b1cc55aadcd2b41c1fe64f87651cc97df7ff4a6e4ba878707e04157": [
 "killed",
-""
+"FAIL: test_external_strings_in_annotations_are_always_wrapped (__main__.ValidateTest.test_external_strings_in_annotations_are_always_wrapped) ‖ FAIL: test_profile_list_in_annotation_is_neutralised_and_bounded (__main__.ValidateTest.test_profile_list_in_annotation_is_neutralised_and_bounded) ‖ FAILED (failures=2)"
 ],
-"ada7435628030e58a59e4bb2e781315418a77d8fef841d095359739c85eefaa3": [
+"adae1af8a5685cdbe63866998daa75399efb133ffa63b0490ef72ae4ce9842ea": [
 "killed",
-""
+"✗ 逐目標形狀檢查：priv-tmpdir 檔名是 i：期待有問題、實際通過 ‖ ✗ 逐目標形狀檢查：cwd-abs 給了相對路徑：期待有問題、實際通過 ‖ ✗ 逐目標形狀檢查：cwd-vis 指到隱藏目錄：期待有問題、實際通過"
 ],
 "ae0a32419d88c037af7af9c34702f4fe582cca4c20ac7ef1b4fba2a1fa60083f": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37c-dq-arith-fake-pipe-multiline.yml 宣告 parse-red，實測 pass"
+],
+"ae9f8b3fb5328bc01507c92cc54a9a9f18724d657a6a92f7db6fe104fe8ef872": [
+"killed",
+"✗ pipefail 探針被換掉（文法內的 `__orc_want=x`）不關掉獨立的注入探針：同一群組的 `[ -n $PR_TITLE ]` 注入照樣判『繞過（注入）』（R52 `pfu` 閘門；`8b45659` 判『量不到』rc=0；R51 logic LOW）：rc=0（期待 1）、「注入」沒有出現"
+],
+"af18935ddadc1bd8649a81747a6ca33568e8bf7cb903d5b29885fd8e887a6756": [
+"killed",
+"FAIL: test_changed_lens_without_bump_is_error_and_with_bump_passes (__main__.ValidateTest.test_changed_lens_without_bump_is_error_and_with_bump_passes) ‖ FAIL: test_event_semantics_differ_between_push_and_default (__main__.ValidateTest.test_event_semantics_differ_between_push_and_default) ‖ FAIL: test_lens_file_rename_across_profiles_is_a_change_not_a_pure_rename (__main__.ValidateTest.test_lens_file_rename_across_profiles_is_a_change_not_a_pure_re"
 ],
 "af40a2af19239867080d2b929fe74d5d6352beeb678d72b419ace119cab351f5": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37t8-dq-backtick-inside-backtick.yml 宣告 parse-red，實測 pass"
 ],
 "af583a29e64da436c458f5416044646fa076affb05ac88d1bcda7316fbd92a95": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r39-fd-dotdot-dev-target.yml 宣告 rule-red，實測 pass"
 ],
 "af9cef3f9973086fe2df908d67894f37fdd388d944786cfcd83127d4bca42c0a": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r39-github-head-ref-in-run-default.yml 宣告 rule-red，實測 pass"
 ],
-"afba6f2ae8f10a8aaa5460d1ecc37b7192703cfc7a84d2fe22e1dea756276ba0": [
+"afdfd8dd85a77eb7829e8bf6b0b995d688c71b72a492b919cd8e9c71c711deb0": [
 "killed",
-""
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現"
 ],
 "b01eff8622790cf98e6ad97c93d7ca05782cb75d0ab0553eec07aebaf068de36": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37t8-dq-cmdsub-case-second-clause-pipe.yml 宣告 rule-red，實測 pass"
 ],
 "b020a77c87354f22a93254e326220c7b407970b70cb0fc1a354747cb39eeb03d": [
 "killed",
-""
-],
-"b074f3ed3ae48e85e8f3c165460cf34fc3a1dcade78c0e904a810a37707f54a7": [
-"killed",
-""
+"test/fixtures/ci-log-filter-bypass-param-expansion-dq-nested-param-quote.yml:11: PARSE: 引號到 run 區塊結尾都沒收——那一行在 bash 是語法錯誤、不會執行，本 lint 不解析"
 ],
 "b0e842d660da8405c972558710a01391e807efc85fc5ba64d2c735b013e3584a": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-restrict-r42-flat-command-edges4.yml 宣告 EXPECT-EACH-STEP，第 48 行的 step 沒有自己的 RULE 行"
 ],
 "b15d9767ff67e95c10fbd0f455a83b8fd37ed128667573b0f7fedf9d170a736b": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37c-heredoc-in-param-cmdsub.yml 宣告 parse-red，實測 pass"
 ],
-"b17d0c605f1c0bd9728c968f2815c58a5b295b67af820c6a4ce37858ccb2e457": [
+"b29dd09ffb0c95b390c2254ecc55cf7cc46bdc7d8069068e8f99bae038722a8c": [
 "killed",
-""
+"✗ 歷史 payload 凍結表：`8b45659` 的第 4 組 payload 不在 INJECT_PAYLOADS：'echo ORACLE-INJECT-MARKER >&197' ‖ ✗ 歷史 payload 凍結表：`b86bc53` 的第 4 組 payload 不在 INJECT_PAYLOADS：'echo ORACLE-INJECT-MARKER >&197' ‖ ✗ 歷史 payload 凍結表：`6490b57` 的第 4 組 payload 不在 INJECT_PAYLOADS：'echo ORACLE-INJECT-MARKER >&197'"
 ],
-"b2c73cf94a372ede41bf5b680380f2e4ff57b1ba26a6f25a4b51bf05cbd5a488": [
+"b2beb29c1d18a08020df8a376b040fcd4afef66d2285de3368de02eca3fd8c83": [
 "killed",
-""
+"FAIL: test_clean_run_does_not_claim_a_rename (__main__.ValidateTest.test_clean_run_does_not_claim_a_rename) ‖ FAILED (failures=1)"
+],
+"b2c244661e3faaeece680a1ce16a31798578439272d91436f6a3f58d76e734af": [
+"killed",
+"✗ 逾時路徑的第二次 `communicate` 有時限：逃脫行程（`set -m` 的背景工作）握著 stdout 不放，約 12 秒內結束並判『量不到（儀器不可信：資料流沒有收乾淨）』，不卡到逃脫行程結束（R52 網，R51 logic M／G3）：rc=0（期待 1）、「資料流沒有收乾淨」沒有出現"
 ],
 "b2cc6924007065b8d9266d5925e8dacd8649a5f5c84b0f22d0b53203ec2bdd97": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r40-lead-builtin-escaped.yml 宣告 rule-red，實測 pass"
 ],
-"b339005b299366d9efb5666a1b61e12e70a6615a6c7d8053fee86e0da1e641fe": [
+"b318d1e109cb142a22ab85880122914fb9357ba69b9a2806c19b237db789a547": [
 "killed",
-""
+"FAIL: test_absolute_and_dotdot_source_are_errors (__main__.ValidateTest.test_absolute_and_dotdot_source_are_errors) (source='/tmp/elsewhere') ‖ FAIL: test_absolute_and_dotdot_source_are_errors (__main__.ValidateTest.test_absolute_and_dotdot_source_are_errors) (source='../elsewhere') ‖ FAIL: test_illegal_entry_does_not_also_trigger_missing_entry_message (__main__.ValidateTest.test_illegal_entry_does_not_also_trigger_missing_entry_message)"
 ],
 "b3600a5d4d363ec5eac1009508d849133c1bd645fffb44d2dbd9b2f951cc386a": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37c-cmdsub-case-leading-paren-stray-paren.yml 宣告 parse-red，實測 pass"
 ],
-"b4283329435552f8eebd1ead924fc733082c82b89c72b7b2f9aa1f07c4d0ad63": [
+"b3b77de2887309cb22582aee4e13e849457c669211c6c90b6633ed100ab2b081": [
 "killed",
-""
-],
-"b45add7b2dad7527c76aae7b661be21f27ba5239c0a6956c9b5e4cfef9d578ae": [
-"killed",
-""
+"✗ 歷史 payload 凍結表：`b86bc53` 的第 5 組 payload 不在 INJECT_PAYLOADS：'PWD[$(echo${IFS}ORACLE-INJECT-MARKER>>@@ORACLE-INJECT-PATH@@)]' ‖ ✗ 歷史 payload 凍結表：`b86bc53` 的第 6 組 payload 不在 INJECT_PAYLOADS：'-v PWD[$(echo${IFS}ORACLE-INJECT-MARKER>>@@ORACLE-INJECT-PATH@@)]' ‖ ✗ 歷史 payload 凍結表：`b86bc53` 的第 7 組 payload 不在 INJECT_PAYLOADS：'-n -o -v PWD[$(echo${IFS}ORACLE-INJECT-MARKER>>@@ORACLE-INJECT-PATH@@)]'"
 ],
 "b45c4669800bb0f37b962ce8c699b131ec99aa3b97794a2b4a37d1175e5412aa": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-param-expansion-dq-nested-param-quote.yml 宣告 rule-red，實測 pass"
 ],
 "b474314076108e1c4937b0ebb34b27aca449fcdec484aedbfc0f70aaf6d429e8": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-folded-blank-after-more-indented-empty-delim.yml:11: RULE: step 'blank after a more-indented line stays a line' 的 run 區塊既沒有經 ne"
 ],
 "b4edf78187bd3d22d4af9c1a86b4f2e995bb077c08edd04ac6ee39c3d7b63d20": [
 "killed",
-""
-],
-"b504bb773bc5a8cdd763db8e144bfc49d0fb85f7ced16639262952b2e8e01728": [
-"killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37e-dedent-tab-first-line.yml 宣告 rule-red，實測 pass"
 ],
 "b56a8ce959bb319e7ce41e8a19be082ea30ef0ebcd768bfc46ff0b82ee45fa17": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37o-module-misc-root-env-nonflow-colon-value.yml 宣告 rule-red，實測 pass"
 ],
-"b57d0a58e3575b3cba2650c630bcd8c345909e665ee209246f5216e296834361": [
+"b56d41cc0097826dd79da1308d968e629e12564827230b747975d7cffa031527": [
 "killed",
-""
+"✗ tool_usable：假 sandbox-exec 跑得比逾時久（睡 5 秒、逾時 1 秒）→ 不可用：期待 False、實際 True ‖ ✗ tool_usable：假 sandbox-exec 存在但不可執行（`OSError`）→ 不可用：期待 False、實際 True"
 ],
-"b61898ea1b4fc59938cfc37cabf78647af552f03fff9242674abca5ae1225c22": [
+"b597ec6b94b92a27dcfd67eae34575e9191a6aac1849c9d0e4da40cdf5998127": [
 "killed",
-""
+"FAIL: test_malformed_argv_is_always_a_usage_error (__main__.ValidateTest.test_malformed_argv_is_always_a_usage_error) (case='--event 不在列舉內') ‖ FAILED (failures=1)"
+],
+"b6476c32d3b1f5543dd910acaf0bb4692e29fa903fde88557eaa8b643bdc9da1": [
+"killed",
+"✗ xtrace 外流不歸 S-2：rc=1（期待 1）、「xtrace 的輸出」沒有出現"
 ],
 "b6c78ed22058d72fc1d87e738eaa56495f1f44ba5528d0323759d714b7eb790a": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-heredoc-terminator-trailing-space.yml 宣告 rule-red，實測 pass"
 ],
 "b6d1c5e7a1c36b5c88271244063ddd51eb1b26bae7815220d42687809415600e": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-folded-continuation-unbalanced-quote-rescan.yml 宣告 rule-red，實測 pass"
+],
+"b6ed0dc36a94540c273fcfeab7f3f0b8b3f7b0ca762352c1b81af3e699c28a7a": [
+"killed",
+"FAIL: test_check_csvs_not_running_on_empty_lens_list_is_named (__main__.ValidateTest.test_check_csvs_not_running_on_empty_lens_list_is_named) ‖ FAIL: test_lens_annotation_file_path_is_repo_relative (__main__.ValidateTest.test_lens_annotation_file_path_is_repo_relative) ‖ FAIL: test_uppercase_csv_extension_is_error (__main__.ValidateTest.test_uppercase_csv_extension_is_error)"
 ],
 "b7d983cb4f67d5ce6b99882f3e0d6ee93fe330fd4ea51ab2898789396f957aa4": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37b-fd-proc-fd-path.yml 宣告 rule-red，實測 pass"
 ],
 "b7f4f216556d920142b5d18d0825e003aedf7d23ebe105e1fd24cb3363702c72": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r37b-fd-flow-safe-forms.yml:15: RULE: step 'multi-line group' 靠管線過濾，卻有 `>&2` 複製 fd（stdout 可能被帶到 stderr 或另存的 fd）——那些文字不經過管線（帶了 `"
 ],
-"b85de83de6ffca79a4b60c107ae57914c396f5da47c00a1b84087442357e475b": [
+"b9103d2a2daffee966b8bec1999bf8d254d184bde9fe5fee65345698e9af8c0e": [
 "killed",
-""
+"FAIL: test_lister_symlink_outside_repo_is_not_executed (__main__.ValidateTest.test_lister_symlink_outside_repo_is_not_executed) ‖ FAILED (failures=1)"
+],
+"b91ad1341a0beaad76d3dcb67fa3987fd46a79bffb7050a3891c94e563491de8": [
+"killed",
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現"
+],
+"b952c4829b8e010b7d0a9bf160cd3feb8ed918bf48fc68b8cbe670a0b617ba00": [
+"killed",
+"✗ 逐目標履行：目標 priv：私有目錄的上一層是 '/var/folders/9l/bsxhtp351p91npykw90qt5zh0000gn/T'，應是 '/tmp' ‖ ✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現 ‖ ✗ **注入哨兵的『文字轉換 × 傳輸』交叉格**（R54 D1，R53 logic M／security M／regression M／DA M）：截斷 100／60 字 × 關 fd〔V、W 再加清環境〕、截斷 40／36 字的 `eval`〔保留 fd〕、`IFS=` 之後的 `eval`、受限 shell〔命令"
 ],
 "b982e62895f69353431d3c9da70d5fa1eeffe4a603cd9d77491abad6baa2d8b5": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r39-strict-group-set-E-prefix.yml:13: RULE: [--strict] step 'set -E prefix' 靠管線過濾，而 run 區塊不在 `--strict` 的正面文法裡：`set` 前綴只收 `-e`／"
 ],
-"b9b1c7d4933b769d076376f9658fd623785c8c9d677d8e1e2141116fcfb2f5a6": [
+"b9bf25cabfdc804b8ee7e2df845d2485e7e3414c5b19a20a9a0cce3e532712b1": [
 "killed",
-""
+"✗ 稽核與探針的範圍：只含 `||` 的宣告 step 同樣不進文法（與 lint 的 `flat_trigger` 同一套規則；R46 宣稱查核）：rc=1（期待 0）、「一致 1」出現"
 ],
-"b9bd63d1a1725947d8ad5a26477fe41d5b84f74f5ea053beccb6edb21b62d8b6": [
+"ba26b65cd51cb810c18f1aef97ccb44a83ef21fd5dd68f25ff611e2b6be9300b": [
 "killed",
-""
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現"
 ],
-"b9ee0c5fa33db942048fdec69da63162f74d69c374fd8d7624fb1ee974323454": [
+"ba508471ad88f8d00f9d6df3ea193e9eec151795c7354a046a2475de62f84617": [
 "killed",
-""
+"FAIL: test_short_row_is_allowed_but_missing_focus_is_not (__main__.ValidateTest.test_short_row_is_allowed_but_missing_focus_is_not) ‖ FAILED (failures=1)"
 ],
-"b9fc38d8ed958f50ccaf81e56e8855b6fa02ddfb2ca30ebf3868d8c8976288a0": [
+"ba8ded0913f16f249b981918fb624e21f19df308dc58d8a2ebeea851b3f75d78": [
 "killed",
-""
+"✗ 儀器不可信不關掉獨立的注入探針（R49 security M）：rc=1（期待 1）、「注入」沒有出現 ‖ ✗ 注入哨兵的 fd 那一半：步驟刪掉私有目錄（路徑那一半隨之失效），繼承 fd 的求值者仍被 fd 197 抓到（R52，R51 DA）：rc=1（期待 1）、「注入」沒有出現 ‖ ✗ 注入 payload 的 fd 那一半在兩個寫入點各自有網：刪掉私有目錄、保留 fd 的求值者，在 `[ -n $0 ]` 的算術脈絡（S 的 `-n -o -v PWD[$(…>&197)]`〔payload #3〕與 D 的同前綴版〔#10〕命中）與 `IFS=` 之後的 `eval`（程式碼行 R〔#4〕與 "
 ],
 "ba8f6ac6a4a09eaff833c0f01e3c5bf182dbcef60b9b12f24c51547d4221df99": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-heredoc-body-backslash-before-terminator.yml 宣告 rule-red，實測 pass"
 ],
-"bacee3b9f3f8439f559872f0773252a91e0af6ab17993147ce5f5561aed90f26": [
+"bb2dd03e2933bbb86a15907881092fe2b1e7c71322789cd5926545e1ca38bdc4": [
 "killed",
-""
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現"
 ],
-"baff74ca9c90c885c33a4d70b5bec04d8e2606b35e27d6c03ed42b62b24cc462": [
+"bb6b73c4d8d5a72325fe5f72ad4e0cb5b153249cc1405d38f2999eeec3f7e30e": [
 "killed",
-""
+"✗ XR 探針檢查：檔名寫死成完整字串（含連字號）、PATH 只是算了沒用：期待有問題、實際通過 ‖ ✗ XR 探針檢查：檔名接了常數尾碼、PATH 只是算了沒用：期待有問題、實際通過 ‖ ✗ XR 探針檢查：沒有用 PATH 當鍵：期待有問題、實際通過"
 ],
-"bb73da1310edcaffece16c4797920f83d64e8b564f44680c4f706df0ee491abb": [
+"bdda505a81bb02738cae129bae86cffb24373116f69d7e2d21e982593ed7d103": [
 "killed",
-""
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現 ‖ ✗ 逾時路徑的第二次 `communicate` 有時限：逃脫行程（`set -m` 的背景工作）握著 stdout 不放，約 12 秒內結束並判『量不到（儀器不可信：資料流沒有收乾淨）』，不卡到逃脫行程結束（R52 網，R51 logic M／G3）：rc=1（期待 1）、「資料流沒有收乾淨」沒有出現"
 ],
 "be4bca89c67ba64de886b7927555c8b9e66307a6c7ff58fdea2ffdde79faff2d": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-chomp-first-indent-indicator.yml 宣告 rule-red，實測 pass"
 ],
-"be59b8893920b9579806f4e8a8b9d7a76ca3e8f5e10cd71b86e6e71165bf24b1": [
+"bea28036c792e42a7ae58ad05742003055bb23626c5224d22be99c1353cb2777": [
 "killed",
-""
+"✗ 神諭把 step 歸進了已知類別、檔頭卻沒有對應的 `# KNOWN-CLASS:`（歸了類卻沒宣告——已知類別不是免檢區，每一條都要有人在檔頭簽名）： ‖ ✗ ci-log-filter-known-r37-mustfail-g-strict-not-blocking.yml —— 宣告的理由「形狀像已知類別 G」沒有出現 ‖ ✗ must-fail 探針沒有以宣告的理由失敗（它要量的那個分支沒被走到，或神諭在那裡放行了）："
 ],
-"bf11af199fb964a39193f319739c11518aedf04ce2094dae44886ebd44b4d67c": [
+"bf8b977098ebd6df789acff4e21699f554adbf1c5f214bbcad35cae3ef1e957a": [
 "killed",
-""
-],
-"c014c9f3f912567a7c03e16bb12664fe581aa2c118de4808eb11630aadb4487e": [
-"killed",
-""
-],
-"c0244ffbe6f4a887b9ce0e69b060946217d861a0cc4bed639f7eb7ab531c6e04": [
-"killed",
-""
+"✗ **第 13 格：`TMPDIR` 含空白 ∧ 求值者的 shell 不切開重導向的目標詞 ∧ 求值者先離開步驟 cwd**（R60 G2，R59 requirements／logic／regression／DA／Codex）：`bash --posix` 先 `cd /`（PX1）、`bash --posix` "
 ],
 "c05cfefbe87d0164f3effceaf841474fce4fadbc553f6a85ed2391ccccc94f27": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r37p-lex-redir-word-edgecases.yml:62: RULE: step 't1' 靠管線過濾，卻有 `3>&1` 複製 fd（stdout 可能被帶到 stderr 或另存的 fd）——那些文字不經過管線（帶了 `2>&1` 也"
+],
+"c06ae4c015795ba754564808e748473d1b70de225adea36d1600e8bd93bcdb32": [
+"killed",
+"✗ 歷史重抽比對：少一組：期待有問題、實際通過"
 ],
 "c09c9bcfa5edab08f111c8af5917b841d2c84081813b6f11f9bfb28856cc87f4": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37m-bang-argument-before-cond.yml 宣告 rule-red，實測 pass"
 ],
 "c1409b2ca3bdb099145afcc1989e5e2b7217ffb8cae37d60710ac005be605309": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37t8-misaligned-herestring-heredoc.yml 宣告 rule-red，實測 pass"
 ],
 "c149b52a58b72c84f597729e9b00c95daeefdc1279314bf7ebe0b3200d84e0d2": [
 "killed",
-""
+"test/fixtures/ci-log-filter-bypass-r37b-shell-template-bundled-o-xtrace.yml:11: RULE: [--strict] step 'bundled xtrace template' 靠管線過濾，而 run 區塊不在 `--strict` 的正面文"
 ],
-"c1a878ad52254641c96b788be4cd081b5e9e4d938ebe1266ee872a73172515a3": [
+"c1828df41ca981088820ba5102a10be3d84efa9d83d0c7ba9b9b339e9a1c5ff7": [
 "killed",
-""
+"✗ KNOWN_DISAGREE 之外的不一致（lint 與 runner 對同一個 step 說不同的話）： ‖ ✗ KNOWN_DISAGREE 裡的項目現在一致了、或已經量不到（理由不再成立，移除它）： ‖ ✗ 檔頭宣告了已知類別、神諭卻沒把那麼多 step 歸進那一類（KNOWN-CLASS 過期——重判這個 fixture）："
+],
+"c19ed622aad6c2345a81ca65e518c0720354808c90e9e3e465afc429db1c9a95": [
+"killed",
+"✗ 歷史 payload 檢查：缺 `32d45ff` 的第 4 組（R63 第 2 列的形狀）：期待有問題、實際通過 ‖ ✗ 歷史 payload 檢查：缺 `5b5a46d` 的第 1 組：期待有問題、實際通過 ‖ ✗ 歷史 payload 檢查：空的：期待有問題、實際通過"
 ],
 "c1ea6c3aac8443150af4e9c486ae20a5c8aabc75b2295e0b27c0f1349fe48d5c": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37t8-cond-then-no-semicolon.yml 宣告 parse-red，實測 pass"
 ],
 "c2759085309d655ab70cc854fa308dd04df1d21577aa5af5a9e4ddce032db0b4": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r40-ghexpr-github-generated-scalars.yml:12: RULE: step 'github-generated scalars' 靠管線過濾，而 run 裡直接寫了 runner 運算式 `${{ … }}`（純字面常數"
+],
+"c29bb862dec2b8b6268b0d872b3ff4182b895accdaa650912de15cb86f8fa6c5": [
+"killed",
+"FAIL: test_lens_file_rename_across_profiles_is_a_change_not_a_pure_rename (__main__.ValidateTest.test_lens_file_rename_across_profiles_is_a_change_not_a_pure_re ‖ FAILED (failures=1)"
+],
+"c2d364341016c54cbbf13e1b8ed45f29d560e506a386f916da81261854d1b178": [
+"killed",
+"✗ **第 13 格：`TMPDIR` 含空白 ∧ 求值者的 shell 不切開重導向的目標詞 ∧ 求值者先離開步驟 cwd**（R60 G2，R59 requirements／logic／regression／DA／Codex）：`bash --posix` 先 `cd /`（PX1）、`bash --posix` "
 ],
 "c2e12747ad50bd4a6c104ef69d795d04f6f4cb162fd56b589f18ec2fa29a9a9d": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37b-fd-glob-dev-stderr.yml 宣告 rule-red，實測 pass"
 ],
-"c3614b19d25823a5c2614d91bd526db60920883ba22c168c71dae041949b229c": [
+"c33a6aa219f49a06d9150caba17ef1595609e19fb852bacfd66a4beb28cd148d": [
 "killed",
-""
+"✗ 注入哨兵：PR 文字由不繼承 fd 的孫行程（Python `subprocess` 預設 `close_fds=True`）當程式碼執行——判『繞過（注入）』，不是『一致』（R52，R51 regression M2／DA）：rc=0（期待 1）、「注入」沒有出現 ‖ ✗ **注入哨兵的傳輸矩陣**（R52 C6，R51 DA）：求值者繼承什麼——環境 × fd × 行程群組 × cwd × shell 方言 × 剖析脈絡 × 文字被截斷 × 受限 shell 共十二格，分母 12，十二格全判『繞過（注入）』；`5b5a46d` 8／12、`8b45659` 5／12（探針檔頭有逐格 ‖ ✗ **注入哨兵的『文字轉換 × 傳輸』交叉格**（R54 D1，R53 logic M／security M／regression M／DA M）：截斷 100／60 字 × 關 fd〔V、W 再加清環境〕、截斷 40／36 字的 `eval`〔保留 fd〕、`IFS=` 之後的 `eval`、受限 shell〔命令"
 ],
-"c364a392cb3f683527df6e50e612fada20f7002665d72aaeba6389718d856fa5": [
+"c3424175c7e85092c8afec51d6a868dc21e856e24424853987d7ba8b8324ceea": [
 "killed",
-""
+"FAIL: test_ci_neutraliser_is_the_same_implementation_as_the_output_boundary (__main__.ValidateTest.test_ci_neutraliser_is_the_same_implementation_as_the_output_ ‖ FAIL: test_output_boundary_buffers_partial_lines (__main__.ValidateTest.test_output_boundary_buffers_partial_lines) ‖ FAIL: test_output_boundary_covers_stdout_and_stderr (__main__.ValidateTest.test_output_boundary_covers_stdout_and_stderr)"
+],
+"c376f3441256fb67eba5619a9d22b82e60eb9690000e0e1208f88e76db67252e": [
+"killed",
+"✗ 歷史 payload 凍結表：`b86bc53` 的第 8 組 payload 不在 INJECT_PAYLOADS：'PWD[$(echo${IFS}ORACLE-INJECT-MARKER>/dev/fd/197||:)]' ‖ ✗ 歷史 payload 凍結表：`b86bc53` 的第 9 組 payload 不在 INJECT_PAYLOADS：'-v PWD[$(echo${IFS}ORACLE-INJECT-MARKER>/dev/fd/197||:)]' ‖ ✗ 歷史 payload 凍結表：`b86bc53` 的第 10 組 payload 不在 INJECT_PAYLOADS：'-n -o -v PWD[$(echo${IFS}ORACLE-INJECT-MARKER>/dev/fd/197||:)]'"
 ],
 "c3a96c46f0a491f1428a93b2e9a79077d2603b729f3c7240060d715edbf815e4": [
 "killed",
-""
-],
-"c3d3123af4196dce7f636917933d7d4b048c58a1b3bf37b171e827312b9b5ce7": [
-"killed",
-""
+"test/fixtures/ci-log-filter-good-r39-run-export-python-literal.yml:9: RULE: step 'literal python env in run' 靠管線過濾，卻有 run 裡把 `PYTHONUNBUFFERED` 設成不是字面的值——過濾器 py"
 ],
 "c43fb050a47ea6f8c301284b66ec362fc5ea04ce4d32bfca276af1e67d6f0594": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37o-word_lex-legacy-arith-bound-drop.yml 宣告 rule-red，實測 pass"
 ],
-"c491c464cce3d44aa881890f796118f7244645077805b412ccf766e8700ffe04": [
+"c452712576cd3a638178b0fb7477b3c0f3adfb0cc55b016b89caa8833e921d1f": [
 "killed",
-""
+"✗ 稽核與探針的範圍：宣告而沒有觸發的 step 不進文法、不報繞過（R46）：rc=1（期待 0）、「一致 1」出現 ‖ ✗ 稽核與探針的範圍：只含 `||` 的宣告 step 同樣不進文法（與 lint 的 `flat_trigger` 同一套規則；R46 宣稱查核）：rc=1（期待 0）、「一致 1」出現 ‖ ✗ 稽核與探針的範圍：宣告寫在 YAML 層（step 的註解行）而沒有觸發的 step 同樣不進文法（R48，R47 logic）：rc=1（期待 0）、「一致 1」出現"
+],
+"c46ed6e58275cc61e79e95da6a0e58373c3df1c3032e87b49983aff4f4e4c403": [
+"killed",
+"FAIL: test_skill_md_outside_repo_is_not_read_by_collector_wiring (__main__.ValidateTest.test_skill_md_outside_repo_is_not_read_by_collector_wiring) ‖ FAILED (failures=1)"
 ],
 "c4acd156bf4152224696d3ed90af782d97f97341c03aa681ff8c60d112ff5fc0": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-tag-value-nested.yml 宣告 parse-red，實測 pass"
 ],
-"c4f7f8c225c8f7b4e5d1f43e6aeeaca923eb4ae6cc43f22b9afed1ec069b2aea": [
+"c4c56babb8309ddf04dc44a5488bcbf0d72639008c12cc24eb14c2def7ff2a43": [
 "killed",
-""
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現 ‖ ✗ **哨兵位置軸（可攜版）**（R62 H1，R61 的兩個 blocking）：求值者只寫得到 `TMPDIR` 底下的私有目錄（`/tmp` 底下的私有哨兵唯讀、`env -i`、關 fd；PA1 命令位置、PA2 算術脈絡）時，`32d45ff` 的位置（`\"priv-tmpdir\"` 目標）命中；所有私有哨兵 ‖ ✗ **哨兵位置軸（真沙箱版，只在 macOS）**（R62 H1，R61 requirements／logic／security／regression／DA／Codex）：SP1、SP2（拒寫 `/private/tmp`、關 fd、`env -i`）、SP3、SP4（拒寫 `/private/tmp` 與 cwd "
 ],
-"c5239b70e2bb65303fffe33162dd87da60a9c505e30d7a5f0a48562a3a92460f": [
+"c4d6ebbada75a5d4921dc6303b79d12aa15fbdc30371e0c347dc3f8a200f41c4": [
 "killed",
-""
+"✗ 歷史 payload 凍結表：`5b5a46d` 的第 1 組 payload 不在 INJECT_PAYLOADS：'PWD[$(echo${IFS}ORACLE-INJECT-MARKER>>$ORACLE_INJECT)]' ‖ ✗ 歷史 payload 凍結表：`5b5a46d` 的第 2 組 payload 不在 INJECT_PAYLOADS：'-v PWD[$(echo${IFS}ORACLE-INJECT-MARKER>>$ORACLE_INJECT)]' ‖ ✗ 歷史 payload 凍結表：`5b5a46d` 的第 3 組 payload 不在 INJECT_PAYLOADS：'-n -o -v PWD[$(echo${IFS}ORACLE-INJECT-MARKER>>$ORACLE_INJECT)]'"
 ],
-"c6dc61ec103c8b52f5b82d8dc24ef27dd809f23ddde18219d8c21b72f33ecf9d": [
+"c4e6c77c2cdf6f2f3b01c7967e5412bd14579f7189ae0e0b31fa0c03868354ea": [
 "killed",
-""
+"✗ 正規式：A 判的是繞過、不是一致（方向對調會被拒）：期待 False、實際 True"
+],
+"c4f785dacd2d4ed71a0a159c99a52e0f8c96aebafb33de856122f773b5e2ae4c": [
+"killed",
+"✗ ci-log-filter-known-r37-mustfail-g-strict-not-blocking.yml —— 宣告的理由「形狀像已知類別 G」沒有出現 ‖ ✗ must-fail 探針沒有以宣告的理由失敗（它要量的那個分支沒被走到，或神諭在那裡放行了）："
+],
+"c563191ac71389ae51c3a5a05cc8a438cee65e721267e69c5117ae76669d89ed": [
+"killed",
+"FAIL: test_catalog_parsing_to_zero_rows_is_error (__main__.ValidateTest.test_catalog_parsing_to_zero_rows_is_error) ‖ FAILED (failures=1)"
+],
+"c6530e36d425e0301bd10c14b9fa50c16397be7b65ccd67ad7fe4031487a739b": [
+"killed",
+"✗ pipefail 探針：lint 放行、管線在 pipefail 關閉下完成：rc=0（期待 1）、「繞過（pipefail」沒有出現 ‖ ✗ 宣告 step 的 trap 動作裡的管線：pipefail 探針讀得到（R44）：rc=0（期待 1）、「繞過（pipefail」沒有出現 ‖ ✗ 對照組：不動儀器的同一批違規（`printf '%n'`、改寫信任變數、可注入構造、pipefail 關閉）全部判『不一致：繞過』——盲點探針的『一致』『量不到』因此不是違規本來就看不到（R50）：rc=1（期待 1）、「不一致 4」沒有出現"
+],
+"c6f7778a8426f2aaf6d1728241b37c141fa8f732c66888571d3540f8874ac2be": [
+"killed",
+"✗ KNOWN_DISAGREE 之外的不一致（lint 與 runner 對同一個 step 說不同的話）： ‖ ✗ 檔頭宣告了已知類別、神諭卻沒把那麼多 step 歸進那一類（KNOWN-CLASS 過期——重判這個 fixture）： ‖ ✗ ci-log-filter-known-r37a-mustfail-s2-strict-not-blocking.yml —— 宣告的理由「不是預設模式獨有的缺口，不是 S-2」沒有出現"
 ],
 "c722f6f0bad303b329098d2a5c0cb12ab8761162c6aa8f4f3a08b42262dc3eb1": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37t8-unterm-subshell-around-cmdsub-group.yml 宣告 parse-red，實測 pass"
 ],
-"c75da8d5904eedd43f07aefac8f5c59a26290b8a9751c477a3807b4074885d6b": [
+"c7e179194ed7c22a90bdfac415ec8ac57839354b6dcb701ee7cc8529138983a5": [
 "killed",
-""
+"✗ 歷史 payload 凍結表：`b86bc53` 的第 11 組 payload 不在 INJECT_PAYLOADS：'echo ORACLE-INJECT-MARKER >>@@ORACLE-INJECT-PATH@@' ‖ ✗ 歷史 payload 凍結表：`6490b57` 的第 11 組 payload 不在 INJECT_PAYLOADS：'echo ORACLE-INJECT-MARKER >>@@ORACLE-INJECT-PATH@@' ‖ ✗ 歷史 payload 凍結表：`ecb77d9` 的第 11 組 payload 不在 INJECT_PAYLOADS：'echo ORACLE-INJECT-MARKER >>@@ORACLE-INJECT-PATH@@'"
 ],
-"c76ab8bd38cdc8a404e1d6bc1abf2a84718f55275fe2ca43a5fd91e4197c1ba8": [
+"c7f601eb1950ce829ace7d9925cf5ff64de4e6621401e42da9d0cdd720f23b31": [
 "killed",
-""
+"✗ ci-log-filter-known-r37a-mustfail-undeclared-g.yml —— 宣告的理由「歸了類卻沒宣告：G」沒有出現 ‖ ✗ must-fail 探針沒有以宣告的理由失敗（它要量的那個分支沒被走到，或神諭在那裡放行了）："
 ],
 "c7f880c943729ae860bedf6c912c8af99d7c8c7ac8b0c11d666fceafa86fc4d3": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37b-xtrace-builtin-set.yml 宣告 rule-red，實測 pass"
+],
+"c8769c2f4b6efd37f2d61c6534f907f9281566f9cef9b406b61dc9312dfd32e0": [
+"killed",
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現 ‖ ✗ **注入的鍵設定各是獨立的一次執行：舊樹的設定、所有鍵同時、逐鍵各一次**（R60 G1，R59 regression／logic／DA）：step 先驗證 PR 的另一個欄位——第二個 `${{ …title }}` 鍵的長度閘門、`>` 閘門、`head_ref` 的 `>` 閘門、純 bash 的 `[[ $"
 ],
 "c8a4e68803f8269da008845ff3ce2ffbc6b35564a9d1484934b81933d60fe469": [
 "killed",
-""
-],
-"c8d19cd3bae437ddf9b217130744cf405001d3989232978bb276629e3068ad10": [
-"killed",
-""
-],
-"c90bc50d7bbb4249e05ddb466971c94d6f35e2e595135a8b15d197f0aa4fdf97": [
-"killed",
-""
-],
-"c931782d439e48e7f78c356ea4c38ce462e69f2011e0acfba938a3e5142efeb1": [
-"killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37t8-shopt-o-param-name.yml 宣告 rule-red，實測 pass"
 ],
 "c95f0de18d064d77a219ed92eed6929c3f3951f89d8b22a3250c43259f37b01e": [
 "killed",
-""
-],
-"c9b432db1eecd5cbf14aa610efd55fc06982a290a910a8ec06a65d4c4fa57c7d": [
-"killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37m-backtick-cmdsub-comment.yml 宣告 parse-red，實測 pass"
 ],
 "c9c88bd8602c7647a884250d4773e87b05dc83f5cb1c1f22bf18e0b2ef62b4a6": [
 "killed",
-""
+"test/fixtures/ci-log-filter-bypass-r44-python-option-path.yml:20: RULE: [--strict] step 'python option -W' 靠管線過濾，而 run 區塊不在 `--strict` 的正面文法裡：群組的 `}` 之後必須恰好是 `2"
+],
+"ca2e6e938069999245b2eddb15047b8cc93c15ab97e0f211fc50123be26596b8": [
+"killed",
+"FAIL: test_output_boundary_covers_stdout_and_stderr (__main__.ValidateTest.test_output_boundary_covers_stdout_and_stderr) ‖ FAILED (failures=1)"
 ],
 "cac376d9bf41174db9e7a818f9793cb46f901a47419202498aacf295abdbbf89": [
 "killed",
-""
-],
-"cae7d74187545fae0b0db6325c5bf24eb0be264e821c2361f783df97db1ba517": [
-"killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37m-param-word-before-cond.yml 宣告 rule-red，實測 pass"
 ],
 "cb0a5b7e578cb03a4f06ef62f1e126c50a8d87e99149396fd4e9b2a4df80c4f4": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r37o-delim_align-ansic-terminator-escaped-quote.yml:45: PARSE: heredoc 分隔字裡的引號在同一行沒有收尾——分隔字會含換行，本 lint 不解析它"
+],
+"cb2963930c9240bebb03e4f51d96a0d64611233a3a4d0c3fd6da565a53f717b6": [
+"killed",
+"FAIL: test_lister_succeeding_with_empty_output_is_error (__main__.ValidateTest.test_lister_succeeding_with_empty_output_is_error) ‖ FAILED (failures=1)"
 ],
 "cb647d07cfd1caf36d472dba3a87d843a1466bc1d2fbdc95e487f8c0df00f44d": [
 "killed",
-""
-],
-"cba60b03e0701358ca33642ab8f63041e80e7b7a21db4a76296323d1ca15b076": [
-"killed",
-""
+"test/fixtures/ci-log-filter-good-r37o-cmdsub_end_case-ansic-legacy-arith-stray-esac.yml:43: PARSE: 引號到 run 區塊結尾都沒收——那一行在 bash 是語法錯誤、不會執行，本 lint 不解析"
 ],
 "cba81688313e8340ca6b6171cb5ca2c98eb660d822233f8c3ae6dfbdf831603f": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r44-neutralise-path-spans-or.yml 宣告 rule-red，實測 pass"
 ],
 "cbe4c40ecb9dcad3bb5a9018a637ec5f43af07349cb659feb1addb6a953bd8cd": [
 "killed",
-""
+"test/fixtures/ci-log-filter-bypass-r37e-ansic-nul.yml:17: RULE: step 'ansic-nul-misblock' 的 run 區塊既沒有經 neutralise.py，也沒有 `# LOG-FILTER:` 註解說明為何不過濾"
+],
+"cbf07fc14f9d0977cbb93e8115b47ddd3d956a988fff661b0b272a33d38b5154": [
+"killed",
+"FAIL: test_pack_rename_is_detected_not_reported_as_new_pack (__main__.ValidateTest.test_pack_rename_is_detected_not_reported_as_new_pack) ‖ FAIL: test_pure_rename_does_not_demand_a_bump (__main__.ValidateTest.test_pure_rename_does_not_demand_a_bump) ‖ FAIL: test_rename_plus_small_edit_is_still_caught (__main__.ValidateTest.test_rename_plus_small_edit_is_still_caught)"
 ],
 "cc3e0ed291ec004d62ee2e40125683904da22753c8c2214f5c9e731b4b58127d": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r44-default-lex-cmdsub-then-tty.yml 宣告 rule-red，實測 pass"
 ],
 "cc6d61c92bbc331e6d33766c5f8ad0ac6daa7a7b11cbf234f4be5f7df84fea49": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-param-expansion-multiline.yml 宣告 parse-red，實測 pass"
+],
+"cd86be53a41dccad4789adc38b087b6a3af393c712391a7268aa50d2535fd454": [
+"killed",
+"✗ 歷史 payload 凍結表：`32d45ff` 的第 7 組 payload 不在 INJECT_PAYLOADS：'echo ORACLE-INJECT-MARKER >>@@ORACLE-INJECT-PATH@@; echo ORACLE-INJECT-MARKER >/dev/fd/197'"
 ],
 "cdc4ba5b90425fdf2628861040b366262e8b42c2e1f1a3e03e6c474e0addd929": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r37m-neutralise-glued-follower-unobservable.yml:18: RULE: step 'backtick' 靠管線過濾，卻有 引號或 `${…}` 裡的命令替換對不到收尾（或掃描器不解析它）——裡面的重導向看不到，"
 ],
-"cdc91db650511956ea992236aa21e2f94e829a5e05ca57f74510c996258cfca8": [
+"cdcf95e7026b5824b6de5da65a1999a6b14fbc682601c11e48c4d1d1ff7b46a4": [
 "killed",
-""
+"FAIL: test_emit_neutralises_the_v1_command_form_on_its_own_layer (__main__.ValidateTest.test_emit_neutralises_the_v1_command_form_on_its_own_layer) ‖ FAILED (failures=1)"
 ],
-"cf98dcc528ca6764cb77c07a6788cafff49e9668fee0fb622d01177fead660ac": [
+"ce09a74003c24338ab274e911cf5bb90eeff0a8a42c04ddede875c24a345a722": [
 "killed",
-""
+"✗ 歷史 payload 凍結表：`b86bc53` 的第 5 組 payload 不在 INJECT_PAYLOADS：'PWD[$(echo${IFS}ORACLE-INJECT-MARKER>>@@ORACLE-INJECT-PATH@@)]' ‖ ✗ 歷史 payload 凍結表：`b86bc53` 的第 6 組 payload 不在 INJECT_PAYLOADS：'-v PWD[$(echo${IFS}ORACLE-INJECT-MARKER>>@@ORACLE-INJECT-PATH@@)]' ‖ ✗ 歷史 payload 凍結表：`b86bc53` 的第 7 組 payload 不在 INJECT_PAYLOADS：'-n -o -v PWD[$(echo${IFS}ORACLE-INJECT-MARKER>>@@ORACLE-INJECT-PATH@@)]'"
+],
+"ce0d5beaf40de2612ec64225faffb973574579ee2ec0b66f0cd8e15fb8578d8f": [
+"killed",
+"FAIL: test_pack_name_containment_keeps_outside_name_out_of_log (__main__.ValidateTest.test_pack_name_containment_keeps_outside_name_out_of_log) ‖ FAILED (failures=1)"
+],
+"cf2a43df50c9f4d3dea9925ccb8400e3d901cde305050a036e49d0266c3f754f": [
+"killed",
+"FAIL: test_no_repo_report_names_every_gate_in_the_closed_list (__main__.ValidateTest.test_no_repo_report_names_every_gate_in_the_closed_list) ‖ FAILED (failures=1)"
+],
+"cf76e191e8cfbf8d6dea70d0400eac77c4b2c08ad48e782757a15328ba57236f": [
+"killed",
+"✗ 逐目標形狀檢查：cwd 沒有預先建檔（突變靶 572）：期待有問題、實際通過"
 ],
 "cfec1fb1da1f8e5b6cce48eabccde408c24475de2d6e55d64b74889898f343ce": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-leading-pipe-literal.yml 宣告 rule-red，實測 pass"
 ],
 "cff03ff4e2988f1b77d97711830da3828a7885998f446bf632fa1cee0a1d1278": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-restrict-r44-named-fd.yml 宣告 rule-red，實測 pass"
 ],
 "cff6f6fee3ef6e58a3cf7aeaf5a04d5ad928bb602b41d41ba2ba4172154b7e62": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37o-module-misc-defaults-run-flow-strict-extraspace.yml 宣告 parse-red，實測 pass"
 ],
-"d0567ad0736e9cfb7b1bfbd2c7996643247b84c6fc4dc6f5ad7934500e11dfad": [
+"d0b47ac4e1383a37a8dba3cf6303f5d09105f46fa789766ccae36cf9d3e5aa79": [
 "killed",
-""
-],
-"d0f4d0376c9846f269ac098806b5d19f1f0f9f3d9c990e430fb7eeb3057d8a4d": [
-"killed",
-""
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現 ‖ ✗ stub `python3 --version` 之後的 `echo \"$PR_TITLE\"`（errexit 的 step）：判『不一致：繞過』，不是被截斷而『量不到』（R50 第五輪 L3）：rc=0（期待 1）、「不一致：繞過」沒有出現"
 ],
 "d12c4d34402dd262ed63aa5cba14d027c92dcbe52144802128dda163272233c7": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37p-parse-misc-parse-andor-double-consume.yml 宣告 rule-red，實測 pass"
 ],
 "d16dbba1dea99cc8989bfa5871d8a96f7a91428feab386fd1e7eb24442bf6432": [
 "killed",
-""
-],
-"d194e5619cf76a1ec486254e68abc39570cf117ac2538c3188557b1ff2ae3bb8": [
-"killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37t8-backtick-cond-regex.yml 宣告 rule-red，實測 pass"
 ],
 "d1bb93357d83b95ac89ec1c0175f1ca9b37fe0dab39ee634695395cbba7da762": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-restrict-r46-brace-test-operand.yml 宣告 EXPECT-EACH-STEP，第 54 行的 step 沒有自己的 RULE 行"
 ],
-"d236c5989dc9d662bbee2ae91ec648471ca62e95a4fff960e4055d0c87075615": [
+"d1bf6c4f0e117bf071b927f9b948b78d2fb6ce28eff12ce514b3dd3affaa8c75": [
 "killed",
-""
+"✗ KNOWN_DISAGREE 之外的不一致（lint 與 runner 對同一個 step 說不同的話）： ‖ ✗ 檔頭宣告了已知類別、神諭卻沒把那麼多 step 歸進那一類（KNOWN-CLASS 過期——重判這個 fixture）： ‖ ✗ 已知類別 文法外 在 fixture 集上是 0 條，預期恰好 264（改動已知類別的 fixture 請同步改 FIXTURE_CLASS_TOTALS）"
+],
+"d214cf0611a565368b62924700369ba7310031e16deee2207f63923984e28107": [
+"killed",
+"✗ bare `-` 後面先空一行、才是宣告註解：lint 認宣告，神諭的 step 範圍往上吞過空行，判一致（R52，R51 requirements 6／security／regression）：rc=1（期待 0）、「一致 1」出現 ‖ ✗ 宣告註解與第一個鍵之間多一個空行：同上，另一個位置（R52，R51 requirements 6）：rc=1（期待 0）、「一致 1」出現"
 ],
 "d2b0e356231fdc4759240b28551ac7153d402d01f2103b2456deb6400738d890": [
 "killed",
-""
-],
-"d2bfba485608335fd3bfdbb64726744cf3834718e4373fabf4c61cd308d89930": [
-"killed",
-""
+"test/fixtures/ci-log-filter-bypass-r37b-strict-runs-on-quoted-windows.yml:11: RULE: [--strict] step 'windows runner without a shell' 靠管線過濾，而 run 區塊不在 `--strict`"
 ],
 "d2c90b79e4ae4a4544a76b396a56ddebbb67db83a776d840d465d70bee6628be": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r40-ghexpr-literal-constants.yml:11: RULE: step 'literal constants' 靠管線過濾，而 run 裡直接寫了 runner 運算式 `${{ … }}`（純字面常數與 GitHub 產生的編號"
 ],
-"d31ab67ed3a3fd08d4f148f5e593f1a0508952706a6cda4037d14b4948991e54": [
-"survived",
-""
+"d2d08996d4cdc35104964a1a571af26b1d7d6199efd0d4eb8ba8be8ac61d8783": [
+"killed",
+"FAIL: test_non_utf8_pack_manifest_never_crashes_any_gate (__main__.ValidateTest.test_non_utf8_pack_manifest_never_crashes_any_gate) (args=()) ‖ FAIL: test_non_utf8_pack_manifest_never_crashes_any_gate (__main__.ValidateTest.test_non_utf8_pack_manifest_never_crashes_any_gate) (args=('--base', 'b85d41bdb0 ‖ FAIL: test_zero_lenses_parsed_is_error (__main__.ValidateTest.test_zero_lenses_parsed_is_error)"
 ],
 "d3d1632f33d6c10f8586e66ae8f9452474fee67a4817fccd85d93eb651bd07a9": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37t8-cond-after-oror.yml 宣告 rule-red，實測 pass"
 ],
-"d50853f756ffe30cdaf0f5a1d29d4c7be37146d30a3d66502e073150b5af376e": [
+"d4848ab721729e7085c2e0473ca8deb63034af582657015b35470cd082ceb11d": [
 "killed",
-""
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現"
 ],
 "d57ba0279eb9d41f3859919185a88b20a12c5fc7d9293b8f754bd260965e68d7": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r37c-cmdsub-nested-case-after-pattern.yml:11: PARSE: run 區塊結尾時 `((`／`$[`／`[[`／`$(`／反引號／裸 `(` 有未收尾的（arith=0 brk=0 cond=False csu"
 ],
-"d59e309e3e65d624cb8fea088655c4c085453c40e057a20787d0a6b83677d374": [
+"d6947e78c9bcd3ad40d0bb51b1bd2344c3259c7ca9f2a8505b7bc8bb49f22d03": [
 "killed",
-""
+"✗ 宣告 step 用絕對路徑呼叫過濾器（`\"$GITHUB_WORKSPACE/scripts/neutralise.py\"`）：事件行的路徑先正規化，宣告差分判一致，不是『不一致：繞過』（R50 第四輪 K4）：rc=1（期待 0）、「一致 1」出現"
 ],
-"d619c8a47da23f0932094c9189858055090329d37fd69f6f149edfe02a455872": [
+"d75bd600c552a9139f91b31ad17f7c4e64b048c0db300c296245c25c55ba7f0e": [
 "killed",
-""
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現"
 ],
-"d758e772dc39b5142def4999eced2b2aac55342ed28453411e405fbea14e6c8b": [
+"d7f65d195e983cbee7e22825f0b5cbd4ad35392170237b2374173055574bc376": [
 "killed",
-""
+"✗ XR 探針檢查：import uuid（`uuid1()` 帶時間戳；文字裡沒有禁用字，只有 import 允許清單那一道抓得到）：期待有問題、實際通過"
 ],
-"d81fadabe79b301bfb10365c4b3a9be9839ae8ec2185458cac38aa8fd7952436": [
+"d81fb2286c4864bce5a7c0c0f62296ad95a337f5b31aeacc4cdcd6153f62df7f": [
 "killed",
-""
-],
-"d822dfe15aa1c9c33fb6e76aadb58da5fb49b9ea3e067dabe5417a6670caf8ca": [
-"killed",
-""
+"FAIL: test_key_starting_with_hash_is_error (__main__.ValidateTest.test_key_starting_with_hash_is_error) ‖ FAILED (failures=1)"
 ],
 "d89dbab503270685dcb46500d9008b8994f833cb24e79ad541e6a5db6b540c33": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r42-trap-unquoted-var-action.yml 宣告 rule-red，實測 pass"
 ],
-"d8d0f7f36368819c44ef04a014023da2ce26b3721481176cc5cbc0779f3f3b86": [
+"da5dd0434dcc65d1ffd2a13ef69cab2bdc28b530b5f089e93c9df6b97b9655e3": [
 "killed",
-""
+"FAIL: test_broken_plugin_json_still_prints_accumulated_errors (__main__.ValidateTest.test_broken_plugin_json_still_prints_accumulated_errors) ‖ FAIL: test_check_bumped_json_sites_also_guard_type (__main__.ValidateTest.test_check_bumped_json_sites_also_guard_type) ‖ FAIL: test_non_utf8_pack_manifest_never_crashes_any_gate (__main__.ValidateTest.test_non_utf8_pack_manifest_never_crashes_any_gate) (args=('--base', '9a4c57b4d4"
+],
+"da7764c3269a99ac4a17ccf14feb3b86b9cca48dfc53d68d698236c29662ef8c": [
+"killed",
+"✗ 歷史哨兵位置 manifest：[spaced=False,tmpdir_priv=False] 哨兵位置 cwd-visible：目標 'cwd-vis' 不在 payload 'PWD[$(echo${IFS}ORACLE-INJECT-' 的序列裡（['cwd', 'priv']） ‖ ✗ 歷史哨兵位置 manifest：[spaced=False,tmpdir_priv=False] 哨兵位置 cwd-visible：目標 'cwd-vis' 不在 payload '-v PWD[$(echo${IFS}ORACLE-INJE' 的序列裡（['cwd', 'priv']） ‖ ✗ 歷史哨兵位置 manifest：[spaced=False,tmpdir_priv=False] 哨兵位置 cwd-visible：目標 'cwd-vis' 不在 payload '-n -o -v PWD[$(echo${IFS}ORACL' 的序列裡（['cwd', 'priv']）"
+],
+"da7f16da3fb6fcb50c6675dd5a81dcc328e60805b19181635f931514cecf848c": [
+"killed",
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現"
+],
+"da9aca386266a2639c56e4370a22849c14eae70e1d7f4183add00b2e9523c5ed": [
+"killed",
+"✗ payload 脈絡：註解裡的運算式：rc=0（期待 1）、「繞過」沒有出現 ‖ ✗ payload 脈絡：heredoc 內文裡的運算式：rc=0（期待 1）、「繞過」沒有出現 ‖ ✗ payload 脈絡：算術裡的運算式：rc=0（期待 1）、「繞過」沒有出現"
+],
+"daacf146464a23a57d7a6c645c9bc6e2ba14be05fc927e1544f97b2cc00ce217": [
+"killed",
+"✗ 注入哨兵的 fd 那一半：步驟刪掉私有目錄（路徑那一半隨之失效），繼承 fd 的求值者仍被 fd 197 抓到（R52，R51 DA）：rc=1（期待 1）、「注入」沒有出現 ‖ ✗ **注入哨兵的傳輸矩陣**（R52 C6，R51 DA）：求值者繼承什麼——環境 × fd × 行程群組 × cwd × shell 方言 × 剖析脈絡 × 文字被截斷 × 受限 shell 共十二格，分母 12，十二格全判『繞過（注入）』；`5b5a46d` 8／12、`8b45659` 5／12（探針檔頭有逐格 ‖ ✗ **注入哨兵的『文字轉換 × 傳輸』交叉格**（R54 D1，R53 logic M／security M／regression M／DA M）：截斷 100／60 字 × 關 fd〔V、W 再加清環境〕、截斷 40／36 字的 `eval`〔保留 fd〕、`IFS=` 之後的 `eval`、受限 shell〔命令"
+],
+"daefa5278f0fb3793c3fee8d40a4efdba35031f34d8b339379d035e7b06ec837": [
+"killed",
+"✗ 已知類別 G 被與外流無關的原因擋下：rc=1（期待 1）、「原因與外流無關」沒有出現"
 ],
 "db1cd8f08fa6c46627247aa5aa31c2c75f496714d2c10df622cacc0dea1ce3fb": [
 "killed",
-""
+"VACUOUS: no run steps found in test/fixtures/ci-log-filter-bypass-hexkey-tab-run.yml — the lint would be vacuous"
 ],
-"dbd7ac87e3a04bd4a9dfb8f234edfea4add3090538c91da0ebbcb70a37906d92": [
+"dbc1eb685c2414aa0adcf90fd639e47ef2f296794f998daaa0a6072db0618eab": [
 "killed",
-""
-],
-"dbfe8e61ef27677963a69bce76b3f3df70fc10e02c1a8123bcc773f9bd8ecc8d": [
-"killed",
-""
+"✗ **哨兵位置軸（可攜版）**（R62 H1，R61 的兩個 blocking）：求值者只寫得到 `TMPDIR` 底下的私有目錄（`/tmp` 底下的私有哨兵唯讀、`env -i`、關 fd；PA1 命令位置、PA2 算術脈絡）時，`32d45ff` 的位置（`\"priv-tmpdir\"` 目標）命中；所有私有哨兵 ‖ ✗ **哨兵位置軸（真沙箱版，只在 macOS）**（R62 H1，R61 requirements／logic／security／regression／DA／Codex）：SP1、SP2（拒寫 `/private/tmp`、關 fd、`env -i`）、SP3、SP4（拒寫 `/private/tmp` 與 cwd  ‖ ✗ **哨兵路徑形狀（沙箱版，只在 macOS）**（R64，R63 第 3、4 列）：DP1 只放行 `tmpXXXXXXXX/inject`（`32d45ff` 的私有目錄名）、DP0 也放行 `oXXXXXXXX`（對照組）、HO1 只放行隱藏 `.orc-*` 底下的 `inject`（`cwd` 目標）。負對"
 ],
 "dc9b8a6ae8567c56c59a4688a68edcf0305339b1d58163ab94a1e97a5cb1c786": [
 "killed",
-""
+"test/fixtures/ci-log-filter-bypass-r37d-multiline-dq-run.yml:15: RULE: step 'multiline dq run' 的 run 區塊既沒有經 neutralise.py，也沒有 `# LOG-FILTER:` 註解說明為何不過濾"
 ],
-"dcafa9e6663f806d048323b1f7e1542a9a55b1c81ac5be042d65405a2b3fe93d": [
+"dd1ce9d622ec9cec62678b7e4895398c5b45fb9c517642f64082e051647e436b": [
 "killed",
-""
-],
-"dcd87ce1aeaaf3c2ae48f696ea82128394e9a3bc3fc929230dc93f01a68eef4b": [
-"killed",
-""
-],
-"dd281979fa116d10b04f7f2a93482eeb81104cad34f9b2b4de421e0207c551ae": [
-"killed",
-""
-],
-"ddab0c3dc316bf4865740a74eebd68f6bca12b4d4323bc7fc783f79ab2b69909": [
-"killed",
-""
-],
-"ddb071f12e1d3bdc85ce2d7b9f8296eb05f61003f6a0f28cc8c13fd4ee80004f": [
-"killed",
-""
+"FAIL: test_every_decoding_call_site_survives_undecodable_bytes (__main__.ValidateTest.test_every_decoding_call_site_survives_undecodable_bytes) ‖ FAIL: test_every_filesystem_read_site_is_enumerated (__main__.ValidateTest.test_every_filesystem_read_site_is_enumerated) ‖ FAIL: test_reverse_check_survives_hostile_plugin_json (__main__.ValidateTest.test_reverse_check_survives_hostile_plugin_json) (case='非 UTF-8')"
 ],
 "ddbf296175760ea7385103c94a6800730bf4b1c20d74919564b80255724dec6a": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r37c-dq-arith-nested-shift.yml:13: PARSE: 引號到 run 區塊結尾都沒收——那一行在 bash 是語法錯誤、不會執行，本 lint 不解析"
 ],
 "ddcca835838e2f76cf1cc0a92fe3a6ed9200fc32e76a00dff1c695d5f2d135f8": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r37o-cmdsub_end_case-ansic-legacy-arith-stray-esac.yml:42: RULE: step 'legacy-arith-in-cmdsub-case' 靠管線過濾，卻有 引號或 `${…}` 裡的命令替換對"
+],
+"ddee68e6f593db396eb3e3cf2950fb0c878882200d35b3fd5adb0126cd53e2c7": [
+"killed",
+"FAIL: test_description_prefix_gate_reads_the_first_version_as_the_latest (__main__.ValidateTest.test_description_prefix_gate_reads_the_first_version_as_the_late ‖ FAIL: test_description_prefix_regex_survives_cjk_adjacency (__main__.ValidateTest.test_description_prefix_regex_survives_cjk_adjacency) ‖ FAIL: test_description_version_prefix_must_match_version (__main__.ValidateTest.test_description_version_prefix_must_match_version)"
+],
+"de4bdffdbb5c661884fb88f7a9c61ac10aa15477bc3971e6d27c86513faa4f07": [
+"killed",
+"FAIL: test_prerelease_to_final_counts_as_bump (__main__.ValidateTest.test_prerelease_to_final_counts_as_bump) ‖ FAIL: test_semver_is_strict_and_prerelease_ordering_follows_spec (__main__.ValidateTest.test_semver_is_strict_and_prerelease_ordering_follows_spec) ‖ FAILED (failures=2)"
 ],
 "de69d9f6790006d0f043bb1087e07ea8bfa49f2ffcfc8a268a55d62f1778089c": [
 "killed",
-""
-],
-"de95b901d858f45d462b233395a241744e3d8e6318e1c36cbc5d0579036046d3": [
-"killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37p-scanner-brace_end-dev-target-hidden.yml 宣告 rule-red，實測 pass"
 ],
 "ded6cfdef183e21787155834f1a59afc88337d51014f27d94b1853da312f3c6d": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-restrict-r44-mktemp-reassigned.yml 宣告 rule-red，實測 pass"
 ],
 "df7baa3b78d1e29a9d5c7a67edddfe20a86cef95bfb8533facb04ff834b77552": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37t8-backtick-word-stderr.yml 宣告 rule-red，實測 pass"
 ],
 "dfdc06374964c07f483e65218b4a5fc66d091e517ce31e71b2b22c2c38b39980": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37b-xtrace-shopt-s-o.yml 宣告 rule-red，實測 pass"
 ],
-"e040c02e8409780fd695989af7232830f1be98e74955c58efd0b28597fc31c66": [
+"dfffb1abaca5aa7ff7d3e29c26a5f4fa1900f407c3f953fc8bd017069139b831": [
 "killed",
-""
+"✗ 神諭把 step 歸進了已知類別、檔頭卻沒有對應的 `# KNOWN-CLASS:`（歸了類卻沒宣告——已知類別不是免檢區，每一條都要有人在檔頭簽名）： ‖ ✗ 已知類別 文法外 在 fixture 集上是 267 條，預期恰好 264（改動已知類別的 fixture 請同步改 FIXTURE_CLASS_TOTALS）"
 ],
-"e044f0b366ec217afd2f89721a351fff4ffbfacebd2df1df030cc0dcf92ecda3": [
+"e261852f0e52917c75cae73bbad7a261f0bfd51e981e6e73301adbc06c5ebb65": [
 "killed",
-""
-],
-"e12375670ecbc058ffe8901edf0207c91bf21f4d34085ccf74f6766c6695f109": [
-"killed",
-""
-],
-"e19207ddb8b5e66f3a6c64ea058e1d50e405a470642f069f652b4c632282e1fa": [
-"killed",
-""
-],
-"e28ab4dd3d4f31ba2305b6861e987b9cb2c8c2b965f87475493b3bf654a94049": [
-"killed",
-""
-],
-"e290f8944a76003dd09ceeaaa8c7301f045a25adcb4bb10d81c6bcfa6e0f4e9d": [
-"killed",
-""
+"✗ primitive 稽核：`printf '%n'` 的格式在封閉的轉換列舉之外（R46）：rc=0（期待 1）、「primitive 稽核」沒有出現 ‖ ✗ 儀器完整性：記錄邊界字元偽造不了稽核記錄（R48，R47 Codex）：rc=0（期待 1）、「primitive 稽核」沒有出現 ‖ ✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現"
 ],
 "e2cdecbb03ebf5384d3d4f27b41ce80c8a5a2a7a43d5f6a649e9cc8f2923ce97": [
 "killed",
-""
-],
-"e2d897696d8001e08e909b4eace6e0bdea0fb8bbf3a31cbb4e118bb76c018cbf": [
-"killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-restrict-r39-cmdsub-case-hash-word-start.yml 宣告 rule-red，實測 pass"
 ],
 "e314b843caf5c82ac88dc248add8628b945b184d10aa209d579ec9774222ea0f": [
 "killed",
-""
-],
-"e3311bc1c1133fac24dc59439ae750589111b944e85a9afdffc8c9f72f005c72": [
-"killed",
-""
-],
-"e3683d4f294c96f0101e875c222368a201343397f26272ac9f275af69c34cbdd": [
-"killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37d-unterm-cond.yml 宣告 parse-red，實測 pass"
 ],
 "e36a16de86c730d88675ea763966af30ec39b1283029fc7b50fbbcca858a396e": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-restrict-r44-trap-action-exit.yml 宣告 rule-red，實測 pass"
 ],
-"e45dba391902aa28c9ecc24f610eea480b863ae0eb5ba986acfb961e3eac60a4": [
+"e434b771de079300f8b51ebaa48dbacd0415231dc13dc97ec3f30966ccff0f2f": [
 "killed",
-""
+"✗ manifest 檢查：條件寫錯的假序列（empty-base）沒有被抓到 ‖ ✗ manifest 檢查：條件寫錯的假序列（mixed-miss）沒有被抓到 ‖ ✗ manifest 檢查：條件寫錯的假序列（uncond-tmpdir）沒有被抓到"
 ],
-"e4aecd0339e54276fcd93e4d073b82b97ccd247a4e644a3f83510dd48d31f1eb": [
+"e468c566808d6bd1e88e3177dc0b3f830da9693ecf97d059224f3c2a4b0d6a98": [
 "killed",
-""
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現"
 ],
-"e5037baa3d3fb3da41133e2e168d92d8b0df2c96352d95811943509ace6c4eba": [
+"e61e93d7bbedc6a7cbcfbb2f4c096179109e406abd6b27fb9cb9b4a22455449e": [
 "killed",
-""
+"✗ 宣告 ORACLE-COMPARABLE 的檔有不可比的 step（R40，#33 verify R39 放行條件 12）：rc=0（期待 1）、「ORACLE-COMPARABLE」出現 ‖ ✗ 深目錄樹建在全程序共用的 stub 目錄（`PATH` 的第一段）：神諭離開 `main()` 清理時不崩潰，判定表照印（R50 第五輪 L1，K1 的漏網之魚；Python ≤3.12 才重現）：rc=1（期待 0）、「一致 1」沒有出現"
 ],
-"e58c24393f66d32482fe83dd0a8327f9e7f74b297eb103a13773209c0f022a97": [
+"e62bef39556ddd01545b608c5aab3f9ddc421a37722d403f67e45369340e9924": [
 "killed",
-""
-],
-"e59073dbb7e3e4607fe60ba71bc2ffbdfecc91f68660ea943ce03b8cf65c8488": [
-"killed",
-""
+"FAIL: test_marketplace_plugins_of_wrong_type_does_not_crash (__main__.ValidateTest.test_marketplace_plugins_of_wrong_type_does_not_crash) ‖ FAILED (failures=1)"
 ],
 "e7070e956a116623e9bab863b729c4df4c792d193f85b726279c7d2a9a3f771a": [
 "killed",
-""
-],
-"e720803c138aa68d08706e5845032c98648944ea34eda77cd91a5b9a86780393": [
-"killed",
-""
+"test/fixtures/ci-log-filter-good-r37b-fd-flow-safe-forms.yml:26: RULE: step 'group with pipe-amp' 靠管線過濾，卻有 `>/dev/stderr` 寫到 /dev 或 /proc 底下（去引號後是 `/dev/stderr`"
 ],
 "e7dfc64b6c2b3106798b80dba2057f04a544f461b7e9cf2d9c948992d79463da": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-restrict-r42-declared-nonliteral-expr.yml 宣告 rule-red，實測 pass"
 ],
 "e7ed3fe903fbe4afbf5bd710b5878c642963a33de7a610d33a20f90246b9f79a": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-quote-open-at-block-end.yml 宣告 parse-red，實測 pass"
 ],
-"e847412a72cd57d9c927c8625cc525c579d92dcc1adb3d74a201f4b7dd8d66da": [
+"e9fd08b8d31eedbc8e8d77bf39617cbcdae5fe180940d9f5c23d2b25340cd3ca": [
 "killed",
-""
+"✗ payload 脈絡：heredoc 內文裡的運算式：rc=0（期待 1）、「繞過」沒有出現"
 ],
-"e8636cc7c5aa3e1f1c6314a413e4b18defe7f14808fe42066fb75bf37ced3c11": [
+"ea2b95985e94dded99ad0183e465bea5bd89b5ce7dfd434673bf50af47aa8dd1": [
 "killed",
-""
+"✗ 逐目標履行：目標 cwd：$ORACLE_INJECT 是 '<PRIV>/i'，不符合 (?:<TMP>/)?\\.orc-[A-Za-z0-9_]{8}/inject ‖ ✗ 逐目標履行：目標 cwd-abs：$ORACLE_INJECT 是 '<PRIV>/i'，不符合 <TMP>/\\.orc-[A-Za-z0-9_]{8}/inject ‖ ✗ 逐目標履行：目標 cwd-vis：$ORACLE_INJECT 是 '<PRIV>/i'，不符合 (?:<TMP>/)?inject"
 ],
-"e9a5be21998b5970fb1f0ae73ef0ffe2009291fffd57e334dcd97df5a9a7b0c5": [
+"ea6cc0308bbcbea9ebce990595dabf4638cbe8d376da7d524ce4e3fb52e8c2c9": [
 "killed",
-""
+"FAIL: test_every_remote_source_member_is_individually_covered (__main__.ValidateTest.test_every_remote_source_member_is_individually_covered) (source='github') ‖ FAIL: test_every_remote_source_member_is_individually_covered (__main__.ValidateTest.test_every_remote_source_member_is_individually_covered) (source='url') ‖ FAIL: test_every_remote_source_member_is_individually_covered (__main__.ValidateTest.test_every_remote_source_member_is_individually_covered) (source='git-subdi"
 ],
-"ea296d24678711af521e3ea75b289f79ee473265e8f9836f40caf2737921a222": [
+"eabfd4b02719f035b2162d8df626a2c1961f61e75900bf90322d25e0b9784f68": [
 "killed",
-""
+"FAIL: test_duplicate_header_column_is_error (__main__.ValidateTest.test_duplicate_header_column_is_error) ‖ FAILED (failures=1)"
 ],
-"ea507cad4b9849bdedefdebbb0033bf7fe50956abc1b58c270f96c9e0895bc8e": [
+"eacd97b6de1fa20d41a1f79842f063fc499794c53e15dd6dd5406b2fc3f97dd5": [
 "killed",
-""
-],
-"ea656abc6b6fb9e87316ffbfe04802621149a62ea4630876b4deb732460c59af": [
-"killed",
-""
-],
-"ea8412e153c743ddc377a6a85109f339af7d94e7cbe67c278725083e6bec8b87": [
-"killed",
-""
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現"
 ],
 "eadb173bd5c90bc9530a5356b29f0452f73fb0b883b7b156fc9bef8462fe7242": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r37c-param-arith-shift.yml:16: PARSE: `${…}` 在同一行沒收尾（含裡面的引號、命令替換），或是 bash 5.3 的 `${ cmd; }`／`${| cmd; }`，或裡面有本 lint 不解析的構造：舊式算術"
+],
+"eae3987ee8ec6c061cc82ba03a402577a779a0f2bec7a7e93a276fdc4e52ea4b": [
+"killed",
+"FAIL: test_root_marketplace_symlink_outside_repo_is_rejected_not_read (__main__.ValidateTest.test_root_marketplace_symlink_outside_repo_is_rejected_not_read) ‖ FAILED (failures=1)"
 ],
 "eb048e42a76240bcc875c91ed00c5a915a5c70d26575022286f1a816e9afae7a": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37m-cond-after-dq-cmdsub-close.yml 宣告 rule-red，實測 pass"
 ],
-"eb63da890d668241b6a841887653a5a0c8caef4b431211d19df9406cf7a571f1": [
+"ec0596e66cd7c30281b73a80757ac6263f7737290bbd4bad261ed7976e32657c": [
 "killed",
-""
+"FAIL: test_external_strings_in_annotations_are_always_wrapped (__main__.ValidateTest.test_external_strings_in_annotations_are_always_wrapped) ‖ FAIL: test_harness_evaluation_stderr_never_enters_annotation (__main__.ValidateTest.test_harness_evaluation_stderr_never_enters_annotation) ‖ FAIL: test_in_repo_broken_harness_leaks_nothing_either (__main__.ValidateTest.test_in_repo_broken_harness_leaks_nothing_either)"
 ],
 "ec4b44464f56189a9953f81d5f8741e75797f0616f18bb7a8b2b176bc713067c": [
 "killed",
-""
-],
-"ec4d5e43d433fe87236e6096330c3dcba7e9bdfba1c2fe0bb1160efb0869c636": [
-"killed",
-""
+"test/fixtures/ci-log-filter-good-r37b-fd-flow-safe-forms.yml:29: RULE: step 'redirects that keep stdout' 的 run 區塊既沒有經 neutralise.py，也沒有 `# LOG-FILTER:` 註解說明為何不過"
 ],
 "ec649298791c59fa66443cfae378b32c421aed1ef451d230c920c8032f6cbd48": [
 "killed",
-""
+"test/fixtures/ci-log-filter-bypass-r37p-cmdsub-case-nested-broken-arith.yml:31: RULE: step 'nested-broken-arith-cmdsub' 靠管線過濾，卻有 引號或 `${…}` 裡的命令替換對不到收尾（或掃描器不解析它"
 ],
-"ed01fd21b2a365fb9c8d23bdcd19222147f1a383264ebc4592f174d07e416804": [
+"ec74e3cbdfeefbe710d36171d1f516b06f18bd17957096ff86bd4e0336e14fe3": [
 "killed",
-""
+"✗ 歷史 payload 凍結表：`8b45659` 的第 1 組 payload 不在 INJECT_PAYLOADS：'PWD[$(echo${IFS}ORACLE-INJECT-MARKER>&197)]' ‖ ✗ 歷史 payload 凍結表：`8b45659` 的第 2 組 payload 不在 INJECT_PAYLOADS：'-v PWD[$(echo${IFS}ORACLE-INJECT-MARKER>&197)]' ‖ ✗ 歷史 payload 凍結表：`8b45659` 的第 3 組 payload 不在 INJECT_PAYLOADS：'-n -o -v PWD[$(echo${IFS}ORACLE-INJECT-MARKER>&197)]'"
 ],
-"ed067a59091ee4646534d9d71d633b629d12ac6c9780cd2a087cd65a9216e3b9": [
+"ec7d1bd387b7ff58fdb1b6c813cff1455d92a8123121802665938275638d77a6": [
 "killed",
-""
+"FAIL: test_every_property_escape_has_its_own_test (__main__.ValidateTest.test_every_property_escape_has_its_own_test) ‖ FAILED (failures=1)"
 ],
-"ed1639e862e8b5df45fa53f4fa47f97b0d13cd6a91633602ef38da0c5660529e": [
+"edf47a0bfca3f5b4ae6e7dde5ffa3d86df67d9254591208adb4511046981477d": [
 "killed",
-""
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現"
 ],
-"ed3158cba6692bc3743c25f10a4923a5c25347cb87d707bd413daebf1c3ebf11": [
+"edfeb0fd185ff0c15d15e61c3398015c6104eb6454a004feb8a954b5e679b9ab": [
 "killed",
-""
+"FAIL: test_hidden_files_are_triaged_into_three_kinds (__main__.ValidateTest.test_hidden_files_are_triaged_into_three_kinds) ‖ FAILED (failures=1)"
 ],
-"ee340ef4c1eaecb356d88a1589ad3daaa8dd583ddbf618d5458072e02411b214": [
+"ee2aca5319fa8757cd5739536f065d5f2ad6ee42fa771dc54442437bca57a9bf": [
 "killed",
-""
+"✗ 注入探針：注入完成之後才逾時的 step（R46）：rc=0（期待 1）、「注入：PR 文字被當程式碼執行」沒有出現 ‖ ✗ 深目錄樹建在全程序共用的 stub 目錄（`PATH` 的第一段）：神諭離開 `main()` 清理時不崩潰，判定表照印（R50 第五輪 L1，K1 的漏網之魚；Python ≤3.12 才重現）：rc=1（期待 0）、「一致 1」沒有出現"
+],
+"ee33754051ded3d36c3af9810cb135c8a9268c2ed3831c698afb6728fd0fdfa6": [
+"killed",
+"FAIL: test_comma_in_filename_cannot_forge_annotation_properties (__main__.ValidateTest.test_comma_in_filename_cannot_forge_annotation_properties) ‖ FAIL: test_directory_name_cannot_forge_annotation_properties (__main__.ValidateTest.test_directory_name_cannot_forge_annotation_properties) ‖ FAIL: test_every_property_escape_has_its_own_test (__main__.ValidateTest.test_every_property_escape_has_its_own_test)"
+],
+"ee495d768b54c5a0d400133b0aae3e5bbf6b35014613cbd92a851fd8666ed17e": [
+"killed",
+"FAIL: test_rename_plus_small_edit_is_still_caught (__main__.ValidateTest.test_rename_plus_small_edit_is_still_caught) ‖ FAILED (failures=1)"
+],
+"eee8e6592fd5d668450ba0d209282ca075199f8fbed8ad270fc0b77cf67d3136": [
+"killed",
+"✗ 歷史哨兵位置 manifest：[spaced=False,tmpdir_priv=False] R60 的目標序列 ['cwd', 'priv'] 不是 payload 'PWD[$(echo${IFS}ORACLE-INJECT-' 的新序列 ['cwd-vis', 'cwd', 'priv'] 的前綴 ‖ ✗ 歷史哨兵位置 manifest：[spaced=False,tmpdir_priv=False] R60 的目標序列 ['cwd', 'priv'] 不是 payload '-v PWD[$(echo${IFS}ORACLE-INJE' 的新序列 ['cwd-vis', 'cwd', 'priv'] 的前綴 ‖ ✗ 歷史哨兵位置 manifest：[spaced=False,tmpdir_priv=False] R60 的目標序列 ['cwd', 'priv'] 不是 payload '-n -o -v PWD[$(echo${IFS}ORACL' 的新序列 ['cwd-vis', 'cwd', 'priv'] 的前綴"
+],
+"eefc0ee0176c4b0cd33b0ba43743db7746f5f8788c0c822bc23713489ecde13d": [
+"killed",
+"✗ primitive 稽核：`test {-v,\"$X\"}` 的實際 argv 在文法的三種形狀之外（R46）：rc=1（期待 1）、「primitive 稽核」沒有出現 ‖ ✗ primitive 稽核：`printf '%n'` 的格式在封閉的轉換列舉之外（R46）：rc=1（期待 1）、「primitive 稽核」沒有出現 ‖ ✗ primitive 稽核：管線子殼層裡信任變數被具名 fd 改寫（R46）：rc=1（期待 1）、「信任變數」沒有出現"
 ],
 "ef17d0f86f05a2215492d0a204d7eea22187ec0654ebe608fc486e5a752e900a": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-explicit-indent-shallow.yml 宣告 parse-red，實測 pass"
 ],
 "f0514c7a488591feb1145ff5b6e265c98a04214dcbda15e3ac39b20b81b6e034": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37b-env-container-shellopts.yml 宣告 rule-red，實測 pass"
 ],
 "f05d5abd6775012a82627c6823bf3c0b2f3d7cda47ba93d28a1bd822647e0848": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r39-segment-after-neutralise-continued.yml 宣告 rule-red，實測 pass"
 ],
-"f0fbbcbeb5de21c92c4f8eacd1fa826c1b063a4ba72f22cf02b198236187d84a": [
+"f0c391a664744d35a52e78ba002c27f22ea2d2494cc98e1d1fb74ef14f4e535a": [
 "killed",
-""
+"✗ main() 沒有呼叫 sentinel_manifest_problems_real()"
 ],
-"f1ad271624efb9cfeb5cfca3659d75239b6bb77f0c4b2ef0d2f027799f9ae705": [
+"f137b651637489d3537881f74f4683fe9092cf2ce6a6b104e9305b3d3a39572a": [
 "killed",
-""
+"✗ 逐目標履行：目標 priv-tmpdir：私有目錄名 'o8rlyfuxk' 不符合 tmp[A-Za-z0-9_]{8} ‖ ✗ 逐目標履行：目標 priv-tmpdir：私有目錄的上一層是 '/tmp'，應是 '/var/folders/9l/bsxhtp351p91npykw90qt5zh0000gn/T' ‖ ✗ **哨兵位置軸（真沙箱版，只在 macOS）**（R62 H1，R61 requirements／logic／security／regression／DA／Codex）：SP1、SP2（拒寫 `/private/tmp`、關 fd、`env -i`）、SP3、SP4（拒寫 `/private/tmp` 與 cwd "
 ],
-"f1c45a85089a47327d425ee1c8994d01864c8aaafb9168b96b480bc44fa13a51": [
+"f1ce3577eb65b4c7b8f83f5da3b4ef581edb0efbba340c034fcb60dd75c02f7c": [
 "killed",
-""
+"✗ XR 探針檢查：固定寫法，加一行提到 time.time() 的 bash 註解（註解不算行為）：期待通過、實際有問題"
 ],
 "f1e1f4f2913bf1e8cb5f883167fc2cf048efc8d65c75f741439b77901f3873e5": [
 "killed",
-""
+"test/fixtures/ci-log-filter-bypass-r37t8-strict-shell-template-interactive.yml:10: RULE: [--strict] step 's' 靠管線過濾，而 run 區塊不在 `--strict` 的正面文法裡：`set` 前綴之後的第一個詞必"
 ],
-"f23e4e62048c91ea7b1e9b58ae84a31003e7c96e14b568c8c3d46e2ba623b2ba": [
+"f205cda4089beea0060a4e6511950f5c857316eef73f5d05b6f4a6a7232e340b": [
 "killed",
-""
+"FAIL: test_subdirectory_in_lenses_is_error (__main__.ValidateTest.test_subdirectory_in_lenses_is_error) ‖ FAILED (failures=1)"
+],
+"f27a295090d9a69bc598934cc9f53bee9483377bbb682e19a34ef4498d5c85f1": [
+"killed",
+"FAIL: test_external_strings_in_annotations_are_always_wrapped (__main__.ValidateTest.test_external_strings_in_annotations_are_always_wrapped) ‖ FAILED (failures=1)"
 ],
 "f283ffb7d4f9b358276a017bb06fd1877a674ebb7642b65a6d6854c288f2b8f3": [
 "killed",
-""
+"test/fixtures/ci-log-filter-bypass-param-expansion-ansic-inside.yml:11: PARSE: 引號到 run 區塊結尾都沒收——那一行在 bash 是語法錯誤、不會執行，本 lint 不解析"
 ],
 "f334aaedb806296c22cb6c4dcd74e56791d033874894cbe20c3a4cab7cc9bdab": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r37b-fd-flow-safe-forms.yml:23: RULE: step 'xtrace inside a piped group' 靠管線過濾，卻有 `set -x` 開了 xtrace——那些文字不經過管線（帶了 `2>&1` 也一樣：重"
 ],
 "f3610ce7cc432ec5e5cc18c9b98d6c21a199e1889d301aab3405bcb240589c33": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-restrict-r46-printf-conversion-n.yml 宣告 EXPECT-EACH-STEP，第 14 行的 step 沒有自己的 RULE 行"
 ],
 "f38c086787e3b8434e1e7d1efdfa4c1883ea72c3182f6f84a015ee19d6510c0a": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-quoted-scalar-indented-lines-no-dedent.yml 宣告 rule-red，實測 pass"
 ],
-"f39417a64a9772aeab1b594ea03e0481ac34a1dd15831bbeb1898d384803603b": [
+"f3ba5ca484e2d6f58f65e1ba82b5ca62cd656b1ae13de769e431cc442dfe133e": [
 "killed",
-""
-],
-"f422c059502a34c6aec55cec62ff8bda82bdecf10e66b764ab1dafac4c41cb92": [
-"killed",
-""
+"FAIL: test_neutralise_streams_instead_of_buffering_until_eof (__main__.ValidateTest.test_neutralise_streams_instead_of_buffering_until_eof) ‖ FAILED (failures=1)"
 ],
 "f42baeb9d9c0d02ebbd9ce58c67e5cab8b9f0e950a36da3d20cbd039899808a2": [
 "killed",
-""
+"test/fixtures/ci-log-filter-restrict-r44-ghenv-value-glob.yml:22: RULE: [--strict] step 'a brace in an env-file value' 靠管線過濾，而 run 區塊不在 `--strict` 的正面文法裡：未加引號的大"
+],
+"f54892c6b1e103ef9f40e43b742ab306ac3d80141561aad20112467cc71c6a52": [
+"killed",
+"✗ manifest 檢查：條件寫錯的假序列（uncond-tmpdir）沒有被抓到 ‖ ✗ manifest 檢查：條件寫錯的假序列（uncond-vis-abs）沒有被抓到"
 ],
 "f6309ec4942fc6aedfa1ef43efb477e237ff798dab77381ab81fcd531c588bbd": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37b-xtrace-set-o-quoted-name.yml 宣告 rule-red，實測 pass"
+],
+"f67660d56e816c6e3fff9675297fb97f229ef8075dec29a4df2a348abb269636": [
+"killed",
+"✗ KNOWN_DISAGREE 比對方向（R41 DA-5）：rc=1（期待 1）、「方向不符」沒有出現 ‖ ✗ 深目錄樹建在全程序共用的 stub 目錄（`PATH` 的第一段）：神諭離開 `main()` 清理時不崩潰，判定表照印（R50 第五輪 L1，K1 的漏網之魚；Python ≤3.12 才重現）：rc=1（期待 0）、「一致 1」沒有出現"
 ],
 "f6b4c3dcb1729d80544c58c0ac7b6bc3ab9a7656b29fdfa6fdcc349c83949959": [
 "killed",
-""
+"File \"<stdin>\", line 3846, in <module>"
 ],
-"f6df1679f4687166abf5095a41ae3aa35222853a2a1ebb03c127318001e1a710": [
+"f6cdc26c5be4fca4064008ad5165c10ea01ab10ffbd6aba5c50e5cedab3c885d": [
 "killed",
-""
-],
-"f756b4e874539de364fdc0ca70239b994a72ecb149cd34e1b464f8f2f2c57ec7": [
-"killed",
-""
-],
-"f76644dea48d6d4ff3f1e5ed47e2d3482a3868fc033d4c1664da38da00aafec7": [
-"killed",
-""
+"FAIL: test_collision_with_override_passes_but_warns (__main__.ValidateTest.test_collision_with_override_passes_but_warns) ‖ FAILED (failures=1)"
 ],
 "f788c01ce18cc812848c9a333932df1bddac393a660cdcda83d3c0ffd42e330e": [
 "killed",
-""
-],
-"f81a2c34355603ce69b62ab82f86efead5e719b05c4f2b2b691352049caf1cb6": [
-"killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r44-default-lex-cmdsub-then-tty.yml 宣告 rule-red，實測 pass"
 ],
 "f85459e38799983ae0afda58a27c5428e6fe5beebb38d67658ac9988b3d8262a": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-flow-seq-escaped-quote.yml:9: PARSE: flow 形式的值含 mapping 或跨行——本 lint 不解析它，而不解析就不放行：`[\"a\\\"b:c\"]`"
 ],
 "f858a52487b5dca2b297d7d0ca76bbe01431d5967be0fad92b85c5f98fbffecf": [
 "killed",
-""
+"test/fixtures/ci-log-filter-bypass-heredoc-in-dq-backticks.yml:11: PARSE: 引號到 run 區塊結尾都沒收——那一行在 bash 是語法錯誤、不會執行，本 lint 不解析"
+],
+"f87147d29f62fdddefc67075d211b812b0bce32743f0649ff3f526bbc526c605": [
+"killed",
+"✗ 歷史哨兵位置 manifest：[spaced=False,tmpdir_priv=False] 哨兵位置 priv-tmp：目標 'priv' 不在 payload 'PWD[$(echo${IFS}ORACLE-INJECT-' 的序列裡（['cwd', 'cwd-vis']） ‖ ✗ 歷史哨兵位置 manifest：[spaced=False,tmpdir_priv=False] R60 的目標序列 ['cwd', 'priv'] 不是 payload 'PWD[$(echo${IFS}ORACLE-INJECT-' 的新序列 ['cwd', 'cwd-vis'] 的前綴 ‖ ✗ 歷史哨兵位置 manifest：[spaced=False,tmpdir_priv=False] 哨兵位置 priv-tmp：目標 'priv' 不在 payload '-v PWD[$(echo${IFS}ORACLE-INJE' 的序列裡（['cwd', 'cwd-vis']）"
 ],
 "f9119a7028e9cb9e10f184340daa1091941bee17be63b9421f995e4950c247e8": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37t8-cond-line-continuation.yml 宣告 rule-red，實測 pass"
 ],
-"f9a219f5547c966ee337d02bdcc4517faefc33491e29c263aa27921c5b69d4db": [
+"f9dfbc37c1fc533343f7ed5c03560c295932fa5051eb7c6d1745cbc01865e379": [
 "killed",
-""
-],
-"f9ec42c6426d95418cce26ad429be7ad58d27dc51b2acc551236abb91f33bac4": [
-"killed",
-""
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現"
 ],
 "faf566fc1ea5c2560048f6292081724c34fc8a34cd8888458264252bfd52a070": [
 "killed",
-""
-],
-"fb45e312ec8b901397d2e43eaf67e70d9d847ac2df8e44e0f579b8928feb862b": [
-"killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37b-strict-pipefail-template-abs-path.yml 宣告 rule-red，實測 pass"
 ],
 "fb7c40fe38701d43d8e7a5ad9d25ac50c6e9948f357488d22b0f4b3e3d01b576": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r39-nonliteral-name-option-not-set-letters.yml:10: RULE: step 'nonliteral command name with tar-like options' 靠管線過濾，卻有 命令名不是字面、"
+],
+"fb913fccd64630ec5ba8eb328ea51fd3ad8bff2d26e941ad325aad32d1c9bda8": [
+"killed",
+"✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現"
 ],
 "fb9569285401852f1e9a7d685d96475aa3a70345025efc53e27c8a17627cb8d3": [
 "killed",
-""
+"test/fixtures/ci-log-filter-good-r37b-fd-flow-safe-forms.yml:21: PARSE: run 區塊結尾時 `((`／`$[`／`[[`／`$(`／反引號／裸 `(` 有未收尾的（arith=0 brk=0 cond=False csub=0 bt=False b"
 ],
 "fbe39e7e0765829b7583326283f9524172659f2cb4312a4279acb24c5428ae8d": [
 "killed",
-""
-],
-"fbf2338f04ff2db6448f84fdbcfa19e3e3626e7de13556b8d961163b35d7aa58": [
-"killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r39-xtrace-prefix-builtin-dashdash.yml 宣告 rule-red，實測 pass"
 ],
 "fc546cb1a99df98242eb7cf5a813393b272f5f69f7f4129800d4fead013a9ea4": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-restrict-r42-declared-opsweep.yml 宣告 EXPECT-EACH-STEP，第 30 行的 step 沒有自己的 RULE 行"
 ],
 "fc7594e974cf249cdf959c3f9d74d459584dcaf3ca7093d366036b535e691000": [
 "killed",
-""
-],
-"fd07aa9060a0c87046c97efcaa1088f603d3bd234a894c068e6090d247dfc17f": [
-"killed",
-""
+"test/fixtures/ci-log-filter-good-r37b-fd-flow-safe-forms.yml:15: RULE: step 'multi-line group' 靠管線過濾，卻有 `>&2` 複製 fd（stdout 可能被帶到 stderr 或另存的 fd）——那些文字不經過管線（帶了 `"
 ],
 "fd3f786054468d3ec6e15e5c05f12a55b37835b4555f4e597e04ba1e867d1a8f": [
 "killed",
-""
-],
-"fd51687f4471278e5bdc7a9b90c729b4c0baae7875126de3b4481fd63c90850e": [
-"killed",
-""
-],
-"fdbafb18381f8ae53324971483eddb59c6d2a1fa8b097089af9029da7af013c6": [
-"killed",
-""
+"test/fixtures/ci-log-filter-bypass-r37t8-ansic-hex-nul.yml:9: RULE: step 's' 的 run 區塊既沒有經 neutralise.py，也沒有 `# LOG-FILTER:` 註解說明為何不過濾"
 ],
 "feab77847e2c5bba4e99c28679dd0a4f61e47b1341d7baf54b2d4ee873e34576": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r37t8-arith-cmd-then-cond-word.yml 宣告 rule-red，實測 pass"
 ],
-"ff19a0686340bf361d46e7817d0123c945daa6e05d808bbc8c99f45d23436a13": [
+"feb5d4830e364c8e117718071d1bab2cf0298079c30f08cf998d90e3b8336da0": [
 "killed",
-""
+"✗ 歷史哨兵位置 manifest：[spaced=True,tmpdir_priv=False] 哨兵位置 cwd-abs：條件 'spaced' 評估為假（或這個 payload 不屬於它）時目標 'cwd-abs' 仍然出現：payload 'echo ORACLE-INJECT-MARKER >> \"'，序列  ‖ ✗ 歷史哨兵位置 manifest：[spaced=True,tmpdir_priv=False] R60 的目標序列 ['cwd', 'priv'] 不是 payload 'echo ORACLE-INJECT-MARKER >> \"' 的新序列 ['cwd', 'cwd-abs', 'priv', 'cwd-vis ‖ ✗ 歷史哨兵位置 manifest：[spaced=True,tmpdir_priv=True] 哨兵位置 cwd-abs：條件 'spaced' 評估為假（或這個 payload 不屬於它）時目標 'cwd-abs' 仍然出現：payload 'echo ORACLE-INJECT-MARKER >> \"'，序列 ["
+],
+"ff12fe3f80777bae52ebb721a4c82ea040a1cbfa5d3d9cb451553c0808819d33": [
+"killed",
+"FAIL: test_external_strings_entering_annotations_go_through_wc (__main__.ValidateTest.test_external_strings_entering_annotations_go_through_wc) ‖ FAILED (failures=1)"
 ],
 "ff49a70708192b819eaac2801d7bcd2f1790c67241a0553201791df61c7076f5": [
 "killed",
-""
+"lint-ci-log-filter selftest FAILED: test/fixtures/ci-log-filter-bypass-r44-printf-continuation.yml 宣告 EXPECT-EACH-STEP，第 16 行的 step 沒有自己的 RULE 行"
+],
+"ffe83a1211b71a1f929618194990cf01c9ff406872491d2e910cd65c04e6ac46": [
+"killed",
+"✗ 逐目標履行：目標 priv：私有目錄名 'oracle-priv-cym_jo1x' 不符合 o[A-Za-z0-9_]{8} ‖ ✗ 稽核檔解析與儀器完整性（單元測試；R48）：rc=1（期待 0）、「aud_violations ok」沒有出現 ‖ ✗ **私有路徑長度的邊界**（R56 E4，R55 logic M）：環境清空 ∧ 關 fd 的求值者，文字剛好截在 56 字（算術脈絡）與 44 字（命令位置）——`$ORACLE_INJECT` 與 fd 那幾組都不命中，只有路徑 payload P（56 字）與 Pc（44 字）命中，兩格都判『繞過（注入）』。"
 ]
 },
 "version": 1
