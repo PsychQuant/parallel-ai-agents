@@ -57,6 +57,11 @@ Arguments:
 
 #### Backend A — Workflow（預設）
 
+> **存檔（#103）**：engine 預設把每個席次的進度存到 `~/.cache/pai-ensemble/`，永久保留、要清就手動刪。中斷後以 `resumeFromRunId` 接回時，沒跑完的席次會從檔案接著做；以同一組輸入開新的 run 也會接著做（要全新一輪就換 `checkpointRun`）。另外會多派一個 `checkpoint-init` agent 存 args。協定見 `references/checkpoint-protocol.md`；不要存檔就在 args 加 `"checkpoint": false`。紀錄會引用逐字稿的片段（第三方的原話），永久留在本機；不想留就關掉存檔。
+>
+> - **artifact 指紋**：`checkpoint: false` 時沒有這一行，也不跑工具。其餘情形 `contextBlock` 的第一行是 `artifact sha256: <hash> inputs: <給工具的參數>`。hash 是 `"${CLAUDE_PLUGIN_ROOT}/bin/pai-artifact-fingerprint" "$FILE" ${SRT_FILE:+"$SRT_FILE"}` 的輸出，輸入是 `file`（講義）與 `srtFile`（逐字稿）。工具失敗（含沒有 python3）時審閱照跑：這一輪改用 `"checkpoint": false`，報告裡寫出這一輪沒有接回保護。接回之前照協定的「artifact 指紋」重算比對。
+> - **在報告裡寫出存檔狀態**：Workflow 回傳後看 `stats.checkpoint`（run 中斷時沒有回傳，也就沒有這些）。`resumedSeats` 非空時，寫出這一輪接回了哪些席次（它們的結論有一部分來自中斷前的紀錄）；`disabledSeats` 非空時，寫出哪些席次這一輪沒有存檔；`argsSaved` 為 false 時，寫出 `args.json` 沒存。都沒有就不必提。
+
 1. 解析 harness 絕對路徑：`${CLAUDE_PLUGIN_ROOT}/workflows/ensemble-workflow.js`。
 2. **蒐集 lens 層 ②③**（#29）：`python3 "${CLAUDE_PLUGIN_ROOT}/bin/pai-collect-lens-layers" lecture` → `lenses` **原樣**（含 `override` 與 `needsSrt` 欄）進 `args.customLenses`；`layers` / `warnings` 留給 Phase 4 的 provenance 行。完整契約見 [`references/lens-layers.md`](../../references/lens-layers.md)。⚠️ **`profile` 維持 `"lecture"`，不可改成 `"custom"`**。外部 lens 同樣可標 `needsSrt` —— 沒有 SRT 時 harness 會照既有規則處理。
 3. 解析 dispatch model（#20）：`PAI_AGENT_MODEL` 未設 → `opus`；設了但不在 `sonnet|opus|haiku|fable` → **abort with usage error**（fail-loud，不靜默換模型；engine 對顯式非法值亦會於派發前 throw 作第二層）。解析值經 `args.agentModel` 傳入。接著呼叫 `Workflow` tool，傳 `scriptPath`（上述絕對路徑）+ `args`：
@@ -68,7 +73,7 @@ Arguments:
      "file": "<講義 HTML 絕對路徑>",
      "srtFile": "<SRT 絕對路徑或 null>",
      "customLenses": "<pai-collect-lens-layers 的 lenses（層 ②③）；無則省略>",
-     "contextBlock": "<student_info + teaching context 組成的字串>",
+     "contextBlock": "artifact sha256: <工具的輸出> inputs: <給工具的參數>\n<student_info + teaching context 組成的字串>",
      "replicas": 1,
      "codexEnabled": false
    }

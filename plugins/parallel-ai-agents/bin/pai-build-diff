@@ -24,6 +24,9 @@
 #     防含換行檔名偽造假 diff 行）+ head -c 64KB 上限。
 #   * --commits N≥commit 總數 → 對 empty tree 取 diff（不 clamp 成 HEAD~TOT 越界 fatal）。
 #   * 內部 buffer 用 trap EXIT 清理是安全的（同步、無 async reader）；skill 的 DIFF_FILE 才需手動 Phase 4.5 清。
+#   * 被審的 repo 不可信：core.fsmonitor、hook（.git/hooks 與 core.hooksPath）、diff.external、diff.<driver>.command、
+#     textconv，以及 partial clone 缺物件時 lazy fetch 經 transport 呼叫的 core.gitProxy 這一類，都不執行（有測試）。filter 的 clean 與 process 仍會在 --diff 模式執行：關掉它們，LFS 這類合法 filter
+#     的 diff 就失真。--diff 遇到 stat 過期的檔時，會和 git diff 一樣改寫被審 repo 的 .git/index。
 
 set -uo pipefail
 
@@ -51,10 +54,11 @@ case "$MODE" in
 esac
 
 # ── 解析 repo root（杜絕「不在 repo 內卻靜默產生空 diff」） ──
-REPO="$(git -C "$repo_arg" rev-parse --show-toplevel 2>/dev/null)" \
+REPO="$(git -c core.fsmonitor=false -C "$repo_arg" rev-parse --show-toplevel 2>/dev/null)" \
   || { err "不在 git repo 內（-C='$repo_arg'）→ 改路徑模式或 cd 進 repo"; exit 1; }
 
-GIT() { git -C "$REPO" --no-pager "$@"; }   # --no-pager + 下方 --no-color：杜絕 ANSI 污染輸出
+GIT() { GIT_NO_LAZY_FETCH=1 git -C "$REPO" --no-pager -c core.fsmonitor=false -c core.hooksPath=/dev/null -c protocol.allow=never "$@"; }   # --no-pager + DIFF 的 --no-color：杜絕 ANSI 污染輸出
+DIFF() { GIT diff --no-color --no-ext-diff --no-textconv "$@"; }
 
 # ── 內部 buffer：synchronous，trap EXIT 清理安全（與 skill 的 async DIFF_FILE 無關） ──
 WORK="$(mktemp -t pai-build-diff.XXXXXX)" || { err "mktemp 失敗"; exit 1; }
@@ -77,23 +81,23 @@ append_new() {
     printf 'new file（symlink/特殊檔，僅列路徑）: %q\n' "$f" >>"$WORK"
     return
   fi
-  GIT diff --no-color --no-index -- /dev/null "$f" 2>/dev/null | head -c 65536 >>"$WORK" || true
+  DIFF --no-index -- /dev/null "$f" 2>/dev/null | head -c 65536 >>"$WORK" || true
 }
 
 # ── 取 diff（每條檢查 exit code；只用驗證過的值，不裸內插） ──
 case "$MODE" in
   --diff)
-    GIT diff --no-color HEAD >"$WORK" || { err "git diff 失敗"; exit 1; }
+    DIFF HEAD >"$WORK" || { err "git diff 失敗"; exit 1; }
     GIT ls-files --others --exclude-standard -z \
       | while IFS= read -r -d '' f; do append_new "$f"; done ;;
   --base)
     [ -n "$ARG" ] || { err "--base 需要 <ref>"; exit 1; }
     validate_ref "$ARG"
-    GIT diff --no-color "$ARG"...HEAD >"$WORK" || { err "git diff 失敗"; exit 1; } ;;  # 三點=相對 merge-base
+    DIFF "$ARG"...HEAD >"$WORK" || { err "git diff 失敗"; exit 1; } ;;  # 三點=相對 merge-base
   --since)
     [ -n "$ARG" ] || { err "--since 需要 <ref>"; exit 1; }
     validate_ref "$ARG"
-    GIT diff --no-color "$ARG"..HEAD >"$WORK" || { err "git diff 失敗"; exit 1; } ;;
+    DIFF "$ARG"..HEAD >"$WORK" || { err "git diff 失敗"; exit 1; } ;;
   --commits)
     validate_int "$ARG"
     TOT="$(GIT rev-list --count HEAD)" || { err "repo 無 commit"; exit 1; }
@@ -102,7 +106,7 @@ case "$MODE" in
     else
       BASE="HEAD~$ARG"
     fi
-    GIT diff --no-color "$BASE" HEAD >"$WORK" || { err "git diff 失敗"; exit 1; } ;;
+    DIFF "$BASE" HEAD >"$WORK" || { err "git diff 失敗"; exit 1; } ;;
   --pr)
     validate_int "$ARG"
     ( cd "$REPO" && gh pr diff --color never "$ARG" ) >"$WORK" || { err "gh pr diff 失敗"; exit 1; } ;;

@@ -31,7 +31,7 @@ jobs:
         run: bash test/lint-bats.sh --selftest && bash test/lint-bats.sh
 
       - name: py_compile
-        run: python3 -m py_compile bin/pai-parse-lens-csv bin/pai-collect-lens-layers
+        run: python3 -m py_compile bin/pai-parse-lens-csv bin/pai-collect-lens-layers bin/pai-artifact-fingerprint
 
       # builtin-lenses.csv is generated from the harness PROFILES. It drives nothing at runtime
       # (#29 keeps the built-in baseline inside the harness), so a stale catalog is a DOCS defect,

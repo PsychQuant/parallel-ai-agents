@@ -179,6 +179,125 @@ dirty() { printf 'wip\n' >> "$REPO/a.txt"; }
   [[ "$output" == *"需正整數"* ]]
 }
 
+# ── 被審的 repo 不可信：它的設定不能讓這支 script 執行別的程式 ─────
+# 帶自己 .git/config 的 repo（解壓縮的 tarball、複製來的目錄）是可達的情形。
+
+# 建一個會留下標記檔的 hook；標記檔放在 repo 外。
+hostile_hook() {
+  MARKER="${BATS_TEST_TMPDIR}/marker"
+  HOOK="${BATS_TEST_TMPDIR}/hook.sh"
+  printf '#!/bin/sh\ntouch "%s"\n' "$MARKER" > "$HOOK"
+  chmod +x "$HOOK"
+}
+
+# 同一個設定，直接跑 git diff 會觸發：這個測試的前提是真的。
+assert_premise_fires() {
+  rm -f "$MARKER"
+  ( cd "$REPO" && git diff HEAD >/dev/null 2>&1 </dev/null )
+  [ -e "$MARKER" ]
+  rm -f "$MARKER"
+}
+
+@test "不可信的 repo：core.fsmonitor 不被執行（--diff 與 untracked）" {
+  hostile_hook; dirty; printf 'new\n' > "$REPO/u.txt"
+  git -C "$REPO" config core.fsmonitor "$HOOK"
+  assert_premise_fires
+  run "$BIN" -C "$REPO" --diff
+  [ "$status" -eq 0 ]
+  [ ! -e "$MARKER" ]
+  [[ "$output" == *"+wip"* ]]
+}
+
+@test "不可信的 repo：diff.external 不被執行，輸出仍是 unified diff" {
+  hostile_hook; dirty
+  git -C "$REPO" config diff.external "$HOOK"
+  assert_premise_fires
+  run "$BIN" -C "$REPO" --diff
+  [ "$status" -eq 0 ]
+  [ ! -e "$MARKER" ]
+  [[ "$output" == *"+wip"* ]]
+}
+
+@test "不可信的 repo：diff.<driver>.command 與 textconv 不被執行（工作樹與 commit 之間的模式都一樣）" {
+  hostile_hook; dirty
+  printf '* diff=d\n' > "$REPO/.gitattributes"
+  git -C "$REPO" add .gitattributes
+  git -C "$REPO" commit -qm attrs
+  printf 'more\n' >> "$REPO/a.txt"
+  for key in diff.d.command diff.d.textconv; do
+    git -C "$REPO" config "$key" "$HOOK"
+    assert_premise_fires
+    run "$BIN" -C "$REPO" --diff
+    [ "$status" -eq 0 ]
+    [ ! -e "$MARKER" ]
+    run "$BIN" -C "$REPO" --commits 2
+    [ "$status" -eq 0 ]
+    [ ! -e "$MARKER" ]
+    run "$BIN" -C "$REPO" --since HEAD~2
+    [ "$status" -eq 0 ]
+    [ ! -e "$MARKER" ]
+    run "$BIN" -C "$REPO" --base HEAD~2
+    [ "$status" -eq 0 ]
+    [ ! -e "$MARKER" ]
+    git -C "$REPO" config --unset "$key"
+  done
+}
+
+# index 裡有 stat 過期、內容沒變的檔（解壓縮的 tarball、複製來的目錄就是這樣）：git diff 會刷新並改寫
+# index，接著觸發 post-index-change。每次呼叫換一個時間，不然 stat 可能與上一次相同。
+stale_index() {
+  STALE_HOUR=$(( ${STALE_HOUR:-9} + 1 ))
+  touch -t "20000101${STALE_HOUR}00" "$REPO/a.txt"
+}
+
+# 兩種放法共用：前提成立（直接跑 git diff 會觸發）、pai-build-diff 不觸發、index 確實被刷新。
+assert_index_hook_not_run() {
+  stale_index; assert_premise_fires
+  stale_index; printf 'new\n' > "$REPO/u.txt"
+  local before; before="$(cksum "$REPO/.git/index")"
+  run "$BIN" -C "$REPO" --diff
+  [ "$status" -eq 0 ]
+  [ ! -e "$MARKER" ]
+  [[ "$output" == *"+new"* ]]
+  [ "$(cksum "$REPO/.git/index")" != "$before" ]
+}
+
+@test "不可信的 repo：.git/hooks 的 post-index-change 不被執行（index 過期時 git diff 會改寫 index）" {
+  hostile_hook
+  mkdir -p "$REPO/.git/hooks"
+  cp "$HOOK" "$REPO/.git/hooks/post-index-change"
+  assert_index_hook_not_run
+}
+
+@test "不可信的 repo：.git/config 的 core.hooksPath 指到的 hook 不被執行" {
+  hostile_hook
+  mkdir "${BATS_TEST_TMPDIR}/elsewhere"
+  cp "$HOOK" "${BATS_TEST_TMPDIR}/elsewhere/post-index-change"
+  git -C "$REPO" config core.hooksPath "${BATS_TEST_TMPDIR}/elsewhere"
+  assert_index_hook_not_run
+}
+
+# partial clone 缺 blob 時，git diff 走 lazy fetch，經 transport 呼叫 repo 設定的 core.gitProxy（R10 DA 實測）。
+@test "不可信的 repo：partial clone 缺 blob 時 lazy fetch 不執行 core.gitProxy（--diff 與 --commits）" {
+  hostile_hook
+  git -C "$REPO" config core.repositoryformatversion 1
+  git -C "$REPO" config extensions.partialClone origin
+  git -C "$REPO" config remote.origin.url git://127.0.0.1:9/x
+  git -C "$REPO" config remote.origin.promisor true
+  git -C "$REPO" config core.gitProxy "$HOOK"
+  local blob; blob="$(git -C "$REPO" rev-parse HEAD:a.txt)"
+  rm -f "$REPO/.git/objects/${blob:0:2}/${blob:2}"
+  dirty
+  # 前提：直接跑 git diff 會觸發（物件拿不到，git 本身以非零結束，這裡只看標記）
+  ( cd "$REPO" && git diff HEAD >/dev/null 2>&1 </dev/null ) || true
+  [ -e "$MARKER" ]
+  rm -f "$MARKER"
+  run "$BIN" -C "$REPO" --diff
+  [ ! -e "$MARKER" ]
+  run "$BIN" -C "$REPO" --commits 1
+  [ ! -e "$MARKER" ]
+}
+
 # ── 用法 / 未知 mode ────────────────────────────────────────
 
 @test "未知 mode --bogus → exit 1 且印『未知 MODE』（多位元組 regression）" {

@@ -54,9 +54,17 @@ argument-hint: "[--fixture stats-paper] [--runs K] [--min-hits N] [--codex] [--a
      "file": "<FIX>/paper.md",
      "contextBlock": "學術論文審閱。ground-truth 計算 artifact：<FIX>/analysis/results.csv（number-verifier 逐數字比對用）。",
      "codexEnabled": false,
-     "replicas": 1
+     "replicas": 1,
+     "checkpointDir": "<results 目錄的絕對路徑>/ckpt-<i>"
    }
    ```
+
+   ⚠️ **每次 run 給自己的 `checkpointDir`（#103）**。K 次 run 的 args 完全相同，不給的話會共用預設目錄
+   `~/.cache/pai-ensemble/<dirKey>/`：第 i 次中途中斷、第 i+1 次開跑時，後者的席次會接著前者的部分結果做，
+   各 run 就不再獨立，量到的偵測率失真。協定見 `references/checkpoint-protocol.md`。本 skill 不在 `contextBlock`
+   寫 `artifact sha256:` 那一行（五個審閱 skill 會寫）：fixture 是 plugin 裡固定的檔，每次 run 又有自己的
+   `checkpointDir`，中斷到接回之間 artifact 不會變。存檔開啟時 reviewer prompt 多了內嵌的命令與邊審邊記錄的
+   指示，所以 2.26.0 前後量到的偵測率不能直接比較（CHANGELOG 2.26.0）。
 
    ⚠️ **contextBlock 必須中性** —— 跟真實審閱一模一樣。**絕不提「eval」「fixture」「埋了缺陷」
    「manifest」**，否則 reviewer 會被 prime 去找碴，偵測率失真（量到的是 prompted recall 不是

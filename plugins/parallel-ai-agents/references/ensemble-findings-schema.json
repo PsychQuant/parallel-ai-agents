@@ -23,6 +23,11 @@
         }
       }
     },
-    "verdict": { "type": "string", "enum": ["PASS", "FINDINGS"] }
+    "verdict": { "type": "string", "enum": ["PASS", "FINDINGS"] },
+    "checkpointState": {
+      "type": "string",
+      "enum": ["FRESH", "RESUME", "DISABLED"],
+      "$comment": "Optional. Only in CK_FINDINGS_SCHEMA, the schema seats get when checkpointing is on; FINDINGS_SCHEMA itself does not have it."
+    }
   }
 }

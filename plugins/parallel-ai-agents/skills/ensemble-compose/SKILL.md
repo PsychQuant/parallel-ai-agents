@@ -123,6 +123,11 @@ FILE_OR_DIR      — 審閱對象（缺則問使用者）
 
 ### Phase 2: 組裝 + 派發（Workflow）
 
+> **存檔（#103）**：engine 預設把每個席次的進度存到 `~/.cache/pai-ensemble/`，永久保留、要清就手動刪。中斷後以 `resumeFromRunId` 接回時，沒跑完的席次會從檔案接著做；以同一組輸入開新的 run 也會接著做（要全新一輪就換 `checkpointRun`）。另外會多派一個 `checkpoint-init` agent 存 args。協定見 `references/checkpoint-protocol.md`；不要存檔就在 args 加 `"checkpoint": false`。
+>
+> - **artifact 指紋**：`checkpoint: false` 時沒有這一行，也不跑工具。其餘情形 `contextBlock` 的第一行是 `artifact sha256: <hash> inputs: <給工具的參數>`。hash 是 `"${CLAUDE_PLUGIN_ROOT}/bin/pai-artifact-fingerprint" "$FILE_OR_DIR"` 的輸出。工具失敗（含沒有 python3）時審閱照跑：這一輪改用 `"checkpoint": false`，報告裡寫出這一輪沒有接回保護。接回之前照協定的「artifact 指紋」重算比對。
+> - **在報告裡寫出存檔狀態**：Workflow 回傳後看 `stats.checkpoint`（run 中斷時沒有回傳，也就沒有這些）。`resumedSeats` 非空時，寫出這一輪接回了哪些席次（它們的結論有一部分來自中斷前的紀錄）；`disabledSeats` 非空時，寫出哪些席次這一輪沒有存檔；`argsSaved` 為 false 時，寫出 `args.json` 沒存。都沒有就不必提。
+
 1. 解析 harness 絕對路徑 `${CLAUDE_PLUGIN_ROOT}/workflows/ensemble-workflow.js`；wrapper `${CLAUDE_PLUGIN_ROOT}/bin/codex-call`。
 2. 把 flag 解析成 args：
    - `--base` → `profile`（預設 `"custom"`）
@@ -138,7 +143,7 @@ FILE_OR_DIR      — 審閱對象（缺則問使用者）
      "profile": "custom",
      "agentModel": "<PAI_AGENT_MODEL 解析值（預設 opus，#20）>",
      "file": "<FILE_OR_DIR 絕對路徑>",
-     "contextBlock": "<檔案類型 emphasis + focus>",
+     "contextBlock": "artifact sha256: <工具的輸出> inputs: <給工具的參數>\n<檔案類型 emphasis + focus>",
      "includeLenses": ["code.security", "academic.methodology"],
      "customLenses": [{"key": "perf", "focus": "檢查每個 hot path 的時間複雜度與不必要的重算"}],
      "replicas": 1,
