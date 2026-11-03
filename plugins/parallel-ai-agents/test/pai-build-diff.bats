@@ -243,6 +243,40 @@ assert_premise_fires() {
   done
 }
 
+# index 裡有 stat 過期、內容沒變的檔（解壓縮的 tarball、複製來的目錄就是這樣）：git diff 會刷新並改寫
+# index，接著觸發 post-index-change。每次呼叫換一個時間，不然 stat 可能與上一次相同。
+stale_index() {
+  STALE_HOUR=$(( ${STALE_HOUR:-9} + 1 ))
+  touch -t "20000101${STALE_HOUR}00" "$REPO/a.txt"
+}
+
+# 兩種放法共用：前提成立（直接跑 git diff 會觸發）、pai-build-diff 不觸發、index 確實被刷新。
+assert_index_hook_not_run() {
+  stale_index; assert_premise_fires
+  stale_index; printf 'new\n' > "$REPO/u.txt"
+  local before; before="$(cksum "$REPO/.git/index")"
+  run "$BIN" -C "$REPO" --diff
+  [ "$status" -eq 0 ]
+  [ ! -e "$MARKER" ]
+  [[ "$output" == *"+new"* ]]
+  [ "$(cksum "$REPO/.git/index")" != "$before" ]
+}
+
+@test "不可信的 repo：.git/hooks 的 post-index-change 不被執行（index 過期時 git diff 會改寫 index）" {
+  hostile_hook
+  mkdir -p "$REPO/.git/hooks"
+  cp "$HOOK" "$REPO/.git/hooks/post-index-change"
+  assert_index_hook_not_run
+}
+
+@test "不可信的 repo：.git/config 的 core.hooksPath 指到的 hook 不被執行" {
+  hostile_hook
+  mkdir "${BATS_TEST_TMPDIR}/elsewhere"
+  cp "$HOOK" "${BATS_TEST_TMPDIR}/elsewhere/post-index-change"
+  git -C "$REPO" config core.hooksPath "${BATS_TEST_TMPDIR}/elsewhere"
+  assert_index_hook_not_run
+}
+
 # ── 用法 / 未知 mode ────────────────────────────────────────
 
 @test "未知 mode --bogus → exit 1 且印『未知 MODE』（多位元組 regression）" {

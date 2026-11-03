@@ -1252,6 +1252,20 @@ test('#103 測試的 sh()：腳本走 stdin（超過單一引數上限也跑得�
   rmSync(home, { recursive: true, force: true })
 })
 
+test('#103 r10：references/ensemble-findings-schema.json 與席次實際收到的 schema 相同（含選填的 checkpointState）', async () => {
+  const strip = (v) => {
+    if (Array.isArray(v)) return v.map(strip)
+    if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).filter(([k]) => k !== '$comment').map(([k, x]) => [k, strip(x)]))
+    return v
+  }
+  const mirror = strip(JSON.parse(readFileSync(join(__dirname, '..', 'references', 'ensemble-findings-schema.json'), 'utf8')))
+  const home = tmpHome()
+  const on = await promptsFor({ profile: 'code', file: join(home, 'none'), codexEnabled: false })
+  assert.deepEqual(mirror, on.opts.get('review:architecture').schema)
+  assert.ok(!mirror.required.includes('checkpointState'), 'checkpointState 是選填的')
+  rmSync(home, { recursive: true, force: true })
+})
+
 test('#103 r8：plugin 原始碼裡沒有原樣的雙向覆寫字元（以跳脫序列寫）', async () => {
   const bidi = /[\u202a-\u202e\u2066-\u2069]/
   const root = join(__dirname, '..')

@@ -173,7 +173,6 @@ test('失敗一律是 stdout 空、exit 非零、stderr 說原因；沒有「什
   const emptyDir = join(d, 'empty'); mkdirSync(emptyDir)
   const emptyTree = join(d, 'tree'); mkdirSync(join(emptyTree, 'a', 'b'), { recursive: true })
   const emptyRepo = join(d, 'repo'); mkdirSync(emptyRepo); git(emptyRepo, 'init', '-q')
-  const emptyFile = join(d, 'zero'); writeFileSync(emptyFile, '')
   const good = join(d, 'good'); writeFileSync(good, 'g\n')
   const fifo = join(d, 'fifo'); assert.equal(spawnSync('mkfifo', [fifo]).status, 0)
   const cases = [
@@ -187,7 +186,6 @@ test('失敗一律是 stdout 空、exit 非零、stderr 說原因；沒有「什
     [emptyDir],
     [emptyTree],
     [emptyRepo],
-    [emptyFile],
     [fifo],
     [good, join(d, 'no-such-path')], // 多個輸入裡有一個壞的，整個失敗
     [join(d, 'no-such-path'), good],
@@ -196,6 +194,65 @@ test('失敗一律是 stdout 空、exit 非零、stderr 說原因；沒有「什
   ]
   for (const args of cases) refuses(args)
   rmSync(d, { recursive: true, force: true })
+})
+
+test('0 byte 的檔照常雜湊：單獨給或在多個輸入裡都算，權限與內容一變指紋就變', () => {
+  const d = scratch()
+  const zero = join(d, 'zero'); writeFileSync(zero, ''); chmodSync(zero, 0o644)
+  const good = join(d, 'good'); writeFileSync(good, 'g\n')
+  const alone = fp(zero)
+  assert.notEqual(fp(good, zero), fp(good), '多輸入裡的空檔沒有算進去')
+  assert.notEqual(fp(good, zero), fp(zero, good))
+  chmodSync(zero, 0o600)
+  assert.notEqual(fp(zero), alone, '空檔的權限沒有算進去')
+  chmodSync(zero, 0o644)
+  writeFileSync(zero, 'x')
+  assert.notEqual(fp(zero), alone)
+  rmSync(d, { recursive: true, force: true })
+})
+
+test('直接給的檔：權限位元算進去，路徑不算（重建到別的路徑、權限相同的 diff 指紋相同）', () => {
+  const d = scratch()
+  const f = join(d, 'f'); writeFileSync(f, 'x\n'); chmodSync(f, 0o644)
+  const g = join(d, 'g'); writeFileSync(g, 'y\n'); chmodSync(g, 0o644)
+  const h = fp(f)
+  const both = fp(f, g)
+  chmodSync(f, 0o755)
+  assert.notEqual(fp(f), h, 'chmod 644 → 755，指紋沒變')
+  chmodSync(f, 0o644)
+  assert.equal(fp(f), h)
+  chmodSync(g, 0o600)
+  assert.notEqual(fp(f, g), both, '多輸入裡第二個檔的權限沒有算進去')
+  const rebuilt = join(d, 'rebuilt-elsewhere'); writeFileSync(rebuilt, 'x\n'); chmodSync(rebuilt, 0o644)
+  assert.equal(fp(rebuilt), h, '換了路徑，內容與權限相同，指紋卻變了')
+  rmSync(d, { recursive: true, force: true })
+})
+
+test('走訪模式：每個沒被排除的目錄都算，含空目錄；git 列出的範圍不含空目錄', () => {
+  const d = plainDir()
+  changesEachStep(d, [
+    ['新增空目錄', () => { mkdirSync(join(d, 'empty')); chmodSync(join(d, 'empty'), 0o755) }],
+    ['空目錄的權限', () => chmodSync(join(d, 'empty'), 0o777)],
+    ['空目錄底下再一層', () => { mkdirSync(join(d, 'empty', 'inner')); chmodSync(join(d, 'empty', 'inner'), 0o755) }],
+    ['內層空目錄的權限', () => chmodSync(join(d, 'empty', 'inner'), 0o700)],
+  ])
+  const h = fp(d)
+  rmSync(join(d, 'empty'), { recursive: true, force: true })
+  assert.notEqual(fp(d), h, '刪掉空目錄，指紋沒變')
+  const noEmpty = fp(d)
+  const ck = join(d, 'ck')
+  const kept = fp('--exclude', ck, d)
+  mkdirSync(ck)
+  assert.equal(fp('--exclude', ck, d), kept, '被排除的空目錄算進去了')
+  rmSync(ck, { recursive: true, force: true })
+  mkdirSync(join(d, 'node_modules'))
+  assert.equal(fp(d), noEmpty, '略過名單裡的空目錄算進去了')
+  rmSync(d, { recursive: true, force: true })
+  const r = repo()
+  const inGit = fp(r)
+  mkdirSync(join(r, 'empty-in-git'))
+  assert.equal(fp(r), inGit, 'git 不列空目錄：這是協定寫的限制')
+  rmSync(r, { recursive: true, force: true })
 })
 
 test('讀不了的檔（單獨給或在目錄裡）是失敗，不是少算一個', () => {
@@ -476,6 +533,69 @@ test('文件：舊的配方已經不在，五個審閱 skill 以引號呼叫工�
   const protocol = readFileSync(join(ROOT, 'references', 'checkpoint-protocol.md'), 'utf8')
   assert.match(protocol, /artifact sha256: <[^>]+> inputs: <[^>]+>/)
   assert.ok(protocol.includes('bin/pai-artifact-fingerprint'))
+})
+
+test('文件：五個審閱 skill 的指紋命令照抄就能跑，選填的輸入沒有時不傳（bash 與 zsh）', () => {
+  const d = scratch()
+  const [a, b, c] = ['main', 'with space', 'third'].map((n) => { const p = join(d, n); writeFileSync(p, n + '\n'); return p })
+  // 每個情形：殼層變數、預期等於直接給哪些檔
+  const none = { FILE: a, FILE_OR_DIR: a, SRT_FILE: '', GROUND_TRUTH: [], DOCS: [] }
+  // 變數根本沒設定也要能跑：zsh 對沒設定的變數，"${X[@]}" 會給一個空字串參數
+  const table = {
+    'academic-review': [[{ ...none }, [a]], [{ FILE: a }, [a]], [{ ...none, GROUND_TRUTH: [b, c] }, [a, b, c]]],
+    'code-review': [[{ ...none }, [a]]],
+    compose: [[{ ...none }, [a]]],
+    'lecture-review': [[{ ...none }, [a]], [{ FILE: a }, [a]], [{ ...none, SRT_FILE: b }, [a, b]]],
+    'minutes-review': [[{ ...none, SRT_FILE: b }, [a, b]], [{ FILE: a, SRT_FILE: b }, [a, b]], [{ ...none, SRT_FILE: b, DOCS: [c] }, [a, b, c]]],
+  }
+  const q = (s) => `'${s.replace(/'/g, `'\\''`)}'`
+  for (const [skill, cases] of Object.entries(table)) {
+    const text = readFileSync(join(ROOT, 'skills', `ensemble-${skill}`, 'SKILL.md'), 'utf8')
+    const m = text.match(/`("\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/pai-artifact-fingerprint"[^`]*)`/)
+    assert.ok(m, `${skill} 找不到指紋命令`)
+    for (const [vars, files] of cases) {
+      const setup = Object.entries(vars).map(([k, v]) => (Array.isArray(v) ? `${k}=(${v.map(q).join(' ')})` : `${k}=${q(v)}`)).join('; ')
+      for (const shell of ['bash', 'zsh']) {
+        const r = spawnSync(shell, ['-c', `${setup}; ${m[1]}`], { env: { ...process.env, CLAUDE_PLUGIN_ROOT: ROOT }, encoding: 'utf8' })
+        if (r.error && r.error.code === 'ENOENT') continue
+        assert.equal(r.status, 0, `${skill}（${shell}）照抄失敗：${r.stderr}`)
+        assert.equal(r.stdout.trim(), fp(...files), `${skill}（${shell}）算到的不是這些檔：${m[1]}`)
+      }
+    }
+  }
+  rmSync(d, { recursive: true, force: true })
+})
+
+test('文件：工具失敗不擋審閱，一律改用 checkpoint: false；checkpoint: false 時沒有這一行', () => {
+  const stop = ['工具失敗就停下來', '停下來告訴使用者']
+  for (const s of ['academic-review', 'code-review', 'compose', 'lecture-review', 'minutes-review']) {
+    const text = readFileSync(join(ROOT, 'skills', `ensemble-${s}`, 'SKILL.md'), 'utf8')
+    const line = text.split('\n').find((l) => l.includes('**artifact 指紋**'))
+    assert.ok(line, `${s} 找不到 artifact 指紋那一段`)
+    for (const needle of stop) assert.ok(!line.includes(needle), `${s} 還要呼叫端停下來：${needle}`)
+    assert.match(line, /工具失敗[^。]*審閱照跑[^。]*"checkpoint": false[^。]*接回保護/, `${s} 沒有寫工具失敗時怎麼做`)
+    assert.match(line, /`checkpoint: false` 時沒有這一行/, `${s} 沒有寫 checkpoint: false 時不需要這一行`)
+  }
+  const protocol = readFileSync(join(ROOT, 'references', 'checkpoint-protocol.md'), 'utf8')
+  for (const needle of stop) assert.ok(!protocol.includes(needle), `協定還要呼叫端停下來：${needle}`)
+  assert.match(protocol, /工具失敗[^。]*審閱照跑[^。]*`checkpoint: false`[^。]*接回保護/)
+  const claude = readFileSync(join(ROOT, 'CLAUDE.md'), 'utf8')
+  assert.ok(!claude.includes('指紋工具失敗（'), 'CLAUDE.md 的句子沒有謂語')
+  assert.match(claude, /指紋工具失敗[^。]*`checkpoint: false`/)
+})
+
+test('文件：協定與 CHANGELOG 不再說裁決待確認；inputs: 是資料，不是拿來重跑的文字', () => {
+  const protocol = readFileSync(join(ROOT, 'references', 'checkpoint-protocol.md'), 'utf8')
+  assert.ok(!/待使用者確認|待確認/.test(protocol), '協定還有待確認的說法')
+  const changelog = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8').match(/^## \[2\.26\.0\][\s\S]*?(?=^## \[)/m)[0]
+  assert.ok(!/待使用者確認|待確認/.test(changelog), 'CHANGELOG 還有待確認的說法')
+  assert.match(protocol, /`inputs:` 是資料[^。]*不經 shell 執行[^。]*自己有紀錄就取自己的/)
+  for (const [name, text] of [['協定', protocol], ['CHANGELOG', changelog], ['code-review', readFileSync(join(ROOT, 'skills', 'ensemble-code-review', 'SKILL.md'), 'utf8')]]) {
+    assert.ok(!/照 `inputs:` 重算|照這一行把 diff/.test(text), `${name} 還叫人重跑那段文字`)
+  }
+  assert.ok(!/academic 的分析檔/.test(protocol), '已知限制把有給指紋工具的檔說成不在雜湊裡')
+  const skill = readFileSync(join(ROOT, 'skills', 'ensemble-code-review', 'SKILL.md'), 'utf8')
+  assert.ok(!/\d+ 個 bats 測試/.test(skill), 'code-review 還寫死 bats 的個數')
 })
 
 let pass = 0

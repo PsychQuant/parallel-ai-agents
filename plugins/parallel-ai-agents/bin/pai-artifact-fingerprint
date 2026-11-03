@@ -9,16 +9,16 @@
 #
 # 輸出：成功時 stdout 一行 64 碼 hex，exit 0。任何失敗都是 stdout 沒有東西、stderr 一行原因、
 # exit 非零（1 輸入有問題；2 用法錯）。沒有「什麼都沒算到」的常數：不存在的路徑、空字串、讀不了的檔、
-# 0 byte 的檔、列不出任何項目的目錄都算失敗。
+# 列不出任何項目的目錄都算失敗。
 #
 # 雜湊的內容：
-#   * 多個 INPUT 合成一個雜湊，順序照給的。INPUT 自己的路徑不算（diff 重建到新的暫存檔，內容相同就相同）。
-#   * 檔案：內容。
+#   * 多個 INPUT 合成一個雜湊，順序照給的。INPUT 自己的路徑不算（diff 重建到新的暫存檔，內容與權限相同就相同）。
+#   * 檔案：內容與權限位元。
 #   * 目錄：每個項目的相對路徑、型態與權限位元（lstat），加上檔案內容或 symlink 目標；項目上層的每個目錄
 #     （含 INPUT 本身）也算權限。修改時間不算。
 #     在 git work tree 裡，項目是 git 列出的範圍：追蹤中的檔加沒被忽略的未追蹤檔，只限這個目錄底下；追蹤中但
-#     工作目錄裡沒有的檔記成不存在，不算失敗。submodule 與未追蹤的巢狀 repo 只算路徑與權限。
-#     git 列不出任何東西（整個目錄被忽略、空 repo）或不在 git 裡時，走訪目錄，略過名單同 engine 的讀檔器
+#     工作目錄裡沒有的檔記成不存在，不算失敗。git 不列空目錄。submodule 與未追蹤的巢狀 repo 只算路徑與權限。
+#     git 列不出任何東西（整個目錄被忽略、空 repo）或不在 git 裡時，走訪目錄，空目錄也算，略過名單同 engine 的讀檔器
 #     （workflows/ensemble-workflow.js 的 READER_PY；有測試比對兩邊相等）。沒有任何檔案與 symlink 就算失敗。
 #   * --exclude：拿掉那個路徑與它底下的一切（放在被審目錄裡的 checkpoint 目錄）。路徑還不存在也可以，
 #     所以第一次與接回時算出來一樣。
@@ -66,13 +66,11 @@ def content_digest(path, flags=0):
         if not stat.S_ISREG(os.fstat(fd).st_mode):
             raise Refused("not a regular file: " + show(path))
         digest = hashlib.sha256()
-        size = 0
         while True:
             chunk = os.read(fd, CHUNK)
             if not chunk:
-                return digest.digest(), size
+                return digest.digest()
             digest.update(chunk)
-            size += len(chunk)
     finally:
         os.close(fd)
 
@@ -101,10 +99,11 @@ def git_listed(root):
 
 
 def walked(root, excluded):
+    """(檔案與 symlink, 一般目錄)，都是相對路徑。"""
     def fail(e):
         raise e
 
-    found = set()
+    leaves, subdirs = set(), set()
     for d, dirs, files in os.walk(root, onerror=fail):
         dirs[:] = sorted(
             x for x in dirs
@@ -112,11 +111,14 @@ def walked(root, excluded):
             and not excluded(os.path.join(d, x))
             and not excluded(os.path.realpath(os.path.join(d, x)))
         )
-        for x in files + [x for x in dirs if os.path.islink(os.path.join(d, x))]:
+        for x in dirs:
+            q = os.path.join(d, x)
+            (leaves if os.path.islink(q) else subdirs).add(os.path.relpath(q, root))
+        for x in files:
             q = os.path.join(d, x)
             if not excluded(q):
-                found.add(os.path.relpath(q, root))
-    return found
+                leaves.add(os.path.relpath(q, root))
+    return leaves, subdirs
 
 
 def parents(rel):
@@ -134,7 +136,7 @@ def record(full):
     if stat.S_ISLNK(st.st_mode):
         return b"link\0" + mode + b"\0" + os.readlink(full)
     if stat.S_ISREG(st.st_mode):
-        return b"file\0" + mode + b"\0" + content_digest(full, getattr(os, "O_NOFOLLOW", 0))[0]
+        return b"file\0" + mode + b"\0" + content_digest(full, getattr(os, "O_NOFOLLOW", 0))
     if stat.S_ISDIR(st.st_mode):
         return b"dir\0" + mode
     return b"special\0%o" % st.st_mode
@@ -144,8 +146,9 @@ def hash_directory(h, root, excluded):
     names = git_listed(root)
     if names is not None:
         names = {p for p in names if not excluded(os.path.join(root, p))}
+    subdirs = set()
     if not names:
-        names = walked(root, excluded)
+        names, subdirs = walked(root, excluded)
     if not names:
         raise Refused("nothing to hash in directory: " + show(root))
     entries = {}
@@ -161,6 +164,8 @@ def hash_directory(h, root, excluded):
 
     for rel in names:
         entries[rel] = record(os.path.join(root, rel)) if reachable(rel) else b"absent"
+    for rel in subdirs:
+        entries[rel] = record(os.path.join(root, rel))
     field(h, b"dir")
     field(h, b"%d" % len(entries))
     for rel in sorted(entries):
@@ -174,11 +179,9 @@ def hash_input(h, path, excluded):
         real = os.path.realpath(path)
         if excluded(real):
             raise Refused("input is excluded: " + show(path))
-        digest, size = content_digest(real)
-        if size == 0:
-            raise Refused("nothing to hash, empty file: " + show(path))
         field(h, b"file")
-        h.update(digest)
+        field(h, b"%o" % stat.S_IMODE(st.st_mode))
+        h.update(content_digest(real))
     elif stat.S_ISDIR(st.st_mode):
         hash_directory(h, os.path.realpath(path), excluded)
     else:

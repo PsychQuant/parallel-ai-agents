@@ -105,7 +105,7 @@ case "$rc" in
 esac
 ```
 
-> `pai-build-diff` 封裝了全部硬化：ref/N 驗證（防 command injection + dashed-ref）、untracked 新檔的 symlink/FIFO/換行檔名安全處理、`--commits N≥TOT` 用 empty-tree base、所有 git/gh exit-code 檢查、空判定。**要改 diff 邏輯就改 `bin/pai-build-diff` 並更新 `test/pai-build-diff.bats`，不要在這裡重寫 inline**（單一真相源）。契約細節見該 script 與其 25 個 bats 測試。
+> `pai-build-diff` 封裝了全部硬化：ref/N 驗證（防 command injection + dashed-ref）、untracked 新檔的 symlink/FIFO/換行檔名安全處理、`--commits N≥TOT` 用 empty-tree base、所有 git/gh exit-code 檢查、空判定。**要改 diff 邏輯就改 `bin/pai-build-diff` 並更新 `test/pai-build-diff.bats`，不要在這裡重寫 inline**（單一真相源）。契約細節見該 script 與其 bats 測試。
 
 > **PR mode 的 context 陷阱**：`gh pr diff` 取的是**遠端 PR** 的 diff，但 reviewer 用 Read 讀到的「周邊原始碼」是**本地工作樹**（可能停在別的分支）。所以 `--pr` 模式下，contextBlock 要明示「周邊以 diff 內 hunk context 為準，本地 Read 未必對應 PR 的版本」；要精確就先 `gh pr checkout <N>`（會動工作樹，多數情況不值得）。
 
@@ -133,7 +133,7 @@ esac
 
 > **存檔（#103）**：engine 預設把每個席次的進度存到 `~/.cache/pai-ensemble/`，永久保留、要清就手動刪。中斷後以 `resumeFromRunId` 接回時，沒跑完的席次會從檔案接著做。本 skill 開新的 run 不會接著做：每次的 diff 都寫到新的暫存路徑。另外會多派一個 `checkpoint-init` agent 存 args。協定見 `references/checkpoint-protocol.md`；不要存檔就在 args 加 `"checkpoint": false`。本 skill 每次把 diff 寫到新的暫存路徑，所以每個 run 都在 `~/.cache/pai-ensemble/` 留一個新目錄；diff 含秘密時，finding 引用的片段也會留在那裡，這種情形請關掉存檔。
 >
-> - **artifact 指紋**：`contextBlock` 的第一行是 `artifact sha256: <hash> inputs: <來源>`。路徑模式：hash 是 `"${CLAUDE_PLUGIN_ROOT}/bin/pai-artifact-fingerprint" "$FILE_OR_DIR"` 的輸出，`inputs:` 寫那個路徑。diff 模式：hash 是同一個工具對 `"$DIFF_FILE"` 的輸出，`inputs:` 寫 `pai-build-diff -C <repo 的絕對路徑> <mode> <ref 或 N>`；重算時照這一行把 diff 建到新的暫存檔、算它的 hash、刪掉它（exit 3 表示現在沒有變更，算不同）；`$DIFF_FILE` 已經刪掉時不能接回。工具失敗就停下來告訴使用者，不要用別的方法寫這一行。接回之前照協定的「artifact 指紋」重算比對。
+> - **artifact 指紋**：`checkpoint: false` 時沒有這一行，也不跑工具。其餘情形 `contextBlock` 的第一行是 `artifact sha256: <hash> inputs: <來源>`。路徑模式：hash 是 `"${CLAUDE_PLUGIN_ROOT}/bin/pai-artifact-fingerprint" "$FILE_OR_DIR"` 的輸出，`inputs:` 寫那個路徑。diff 模式：hash 是同一個工具對 `"$DIFF_FILE"` 的輸出，`inputs:` 寫 `pai-build-diff -C <repo 的絕對路徑> <mode> <ref 或 N>`；重算時以這些參數把 diff 建到新的 `mktemp` 暫存檔（權限也算在 hash 裡）、算它的 hash、刪掉它（exit 3 表示現在沒有變更，算不同）；`$DIFF_FILE` 已經刪掉時不能接回。工具失敗（含沒有 python3）時審閱照跑：這一輪改用 `"checkpoint": false`，報告裡寫出這一輪沒有接回保護。接回之前照協定的「artifact 指紋」重算比對。
 > - **在報告裡寫出存檔狀態**：Workflow 回傳後看 `stats.checkpoint`（run 中斷時沒有回傳，也就沒有這些）。`resumedSeats` 非空時，寫出這一輪接回了哪些席次（它們的結論有一部分來自中斷前的紀錄）；`disabledSeats` 非空時，寫出哪些席次這一輪沒有存檔；`argsSaved` 為 false 時，寫出 `args.json` 沒存。都沒有就不必提。
 
 1. 解析 harness 絕對路徑：`${CLAUDE_PLUGIN_ROOT}/workflows/ensemble-workflow.js`。

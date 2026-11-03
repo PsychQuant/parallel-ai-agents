@@ -71,7 +71,7 @@ DA 專門盯三種安靜的偏移：把個別發言寫成全體共識、把條�
 
 > **存檔（#103）**：engine 預設把每個席次的進度存到 `~/.cache/pai-ensemble/`，永久保留、要清就手動刪。中斷後以 `resumeFromRunId` 接回時，沒跑完的席次會從檔案接著做；以同一組輸入開新的 run 也會接著做（要全新一輪就換 `checkpointRun`）。另外會多派一個 `checkpoint-init` agent 存 args。協定見 `references/checkpoint-protocol.md`；不要存檔就在 args 加 `"checkpoint": false`。紀錄會引用逐字稿的片段（第三方的原話），永久留在本機；不想留就關掉存檔。
 >
-> - **artifact 指紋**：`contextBlock` 的第一行是 `artifact sha256: <hash> inputs: <給工具的參數>`。hash 是 `"${CLAUDE_PLUGIN_ROOT}/bin/pai-artifact-fingerprint" "$FILE" "$SRT_FILE" "$DOC_1" …` 的輸出，輸入是 `file`（會議記錄）、`srtFile`（逐字稿）與 `contextBlock` 列出的每一個佐證文件。工具失敗就停下來告訴使用者，不要用別的方法寫這一行。接回之前照協定的「artifact 指紋」重算比對。
+> - **artifact 指紋**：`checkpoint: false` 時沒有這一行，也不跑工具。其餘情形 `contextBlock` 的第一行是 `artifact sha256: <hash> inputs: <給工具的參數>`。hash 是 `"${CLAUDE_PLUGIN_ROOT}/bin/pai-artifact-fingerprint" "$FILE" "$SRT_FILE" ${DOCS[@]+"${DOCS[@]}"}` 的輸出，輸入是 `file`（會議記錄）、`srtFile`（逐字稿）與 `contextBlock` 列出的每一個佐證文件。工具失敗（含沒有 python3）時審閱照跑：這一輪改用 `"checkpoint": false`，報告裡寫出這一輪沒有接回保護。接回之前照協定的「artifact 指紋」重算比對。
 > - **在報告裡寫出存檔狀態**：Workflow 回傳後看 `stats.checkpoint`（run 中斷時沒有回傳，也就沒有這些）。`resumedSeats` 非空時，寫出這一輪接回了哪些席次（它們的結論有一部分來自中斷前的紀錄）；`disabledSeats` 非空時，寫出哪些席次這一輪沒有存檔；`argsSaved` 為 false 時，寫出 `args.json` 沒存。都沒有就不必提。
 
 ```javascript

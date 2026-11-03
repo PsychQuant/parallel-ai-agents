@@ -86,7 +86,7 @@ checkpoint 目錄最好放在被審的 repo 之外。放在裡面時要把它加
 - 部分結果**不是報告**：不得當成 verify 結果貼出去，也不得據此推進任何狀態。
 - 要接回中斷的 run：`Workflow({scriptPath, resumeFromRunId, args})`。只給 `resumeFromRunId` 不夠，Workflow 仍要 args；`args.json` 是讓呼叫端有一份可以讀回的副本，沒有讓接回省掉 args（issue #103 的 Expected 3 只做到這一步）。args 從呼叫端自己的紀錄取，或從 checkpoint 目錄的 `args.json` 取。目錄最可靠的出處是 run 開頭的 log 行 `pai-ensemble: checkpoint → <目錄>`：`args.json` 由 init 寫，init 排在最後，run 在它之前中斷時還沒有這個檔。`args.json` 與席次寫的檔在同一個目錄，被 artifact 誘導的席次可以改寫它；重用前核對 `codexCallPath`、`diffFile`、`file`，或用呼叫端自己的副本。檔名裡的雜湊不防竄改。預設位置用 `find ~/.cache/pai-ensemble -name args.json -exec ls -t {} +` 依時間列出（涵蓋 `run-*/` 子目錄），由 args 裡的 `diffFile` 等欄位辨認是哪一輪；給了 `checkpointDir` 的就看那個目錄（與它底下的 `run-*/`）。
 - 同一組輸入要跑成彼此獨立的多輪時，各輪給不同的 `checkpointRun`（或不同的 `checkpointDir`）。
-- **接回之前重算 artifact 指紋**（理由見上方「由 journal 回答的席次不會重新檢查 artifact」，做法見「artifact 指紋」）。本 plugin 的五個審閱 skill（academic、code、compose、lecture、minutes）都寫這一行並照做。`ensemble-eval` 不寫：被審的 fixture 是 plugin 裡固定的檔，每次 run 又給自己的 `checkpointDir`，中斷到接回之間 artifact 不會變。
+- **接回之前重算 artifact 指紋**（理由見上方「由 journal 回答的席次不會重新檢查 artifact」，做法見「artifact 指紋」）。本 plugin 的五個審閱 skill（academic、code、compose、lecture、minutes）存檔開啟時都寫這一行並照做。`ensemble-eval` 不寫：被審的 fixture 是 plugin 裡固定的檔，每次 run 又給自己的 `checkpointDir`，中斷到接回之間 artifact 不會變。
 - 出現過 `RESUME` 的 run，結論有一部分建立在前一次中斷的紀錄上，不等於全新一輪的結論。哪些席次接回了，列在 `stats.checkpoint.resumedSeats`：接回時讀到至少一筆紀錄的席次（只有檔頭的檔印 `FRESH`，不算）。回 `DISABLED` 的席次列在 `stats.checkpoint.disabledSeats`，它們這一輪沒有存檔，中斷了也接不回。兩份清單都來自席次在回傳裡自報的 `checkpointState`，沒報的不計；`stats` 只有 run 跑完才有，中斷的 run 沒有這個訊號。本 plugin 的五個審閱 skill 在報告裡寫出這兩份清單非空的情形，以及 `argsSaved` 為 false 的情形。要全新一輪，就換 `checkpointRun` 或 `checkpointDir`。
 - `checkpoint` 只收 `true`／`false`；`"false"`、`0`、`null` 這類值在派發前 throw，不會被當成開啟。
 - 開啟 checkpoint 時，run 會多派一個 `checkpoint-init` 席次，不算在 `maxAgents` 與 `stats.agents` 裡，以 `stats.checkpoint.initDispatched` 表示。
@@ -97,16 +97,16 @@ checkpoint 目錄最好放在被審的 repo 之外。放在裡面時要把它加
 artifact sha256: <hash> inputs: <給工具的參數>
 ```
 
-`<hash>` 是 `bin/pai-artifact-fingerprint` 的輸出（雜湊什麼寫在它的檔頭），`inputs:` 照 shell 的引號寫下給它的參數，含 `--exclude`（checkpoint 目錄放在被審目錄裡時要排除它）。code-review 的 diff 模式寫建出 diff 的 `pai-build-diff` 參數。工具失敗時 stdout 是空的、exit 非零：停下來告訴使用者，不要用別的方法寫這一行。被 git 忽略的檔與 submodule、巢狀 repo 的內容不在目錄的範圍內，審的內容住在那裡時，把它們另外列成輸入。
+`<hash>` 是 `bin/pai-artifact-fingerprint` 的輸出（雜湊什麼寫在它的檔頭），`inputs:` 照 shell 的引號寫下給它的參數，含 `--exclude`（checkpoint 目錄放在被審目錄裡時要排除它）。code-review 的 diff 模式寫建出 diff 的 `pai-build-diff` 參數。`checkpoint: false` 時沒有這一行，也不跑工具。工具失敗（stdout 是空的、exit 非零，含沒有 python3）時審閱照跑：改用 `checkpoint: false`，報告裡寫出這一輪沒有接回保護。在 git work tree 裡，空目錄不在範圍內；被 git 忽略的檔與 submodule、巢狀 repo 的內容也不在，審的內容住在那裡時，把它們另外列成輸入。
 
-接回之前，照 `inputs:` 重算，和存下的 args（自己的紀錄或 `args.json`）裡這一行比對：相同才接回；不同就不接回，用重算的那一行組 args，開新的 run（另給新的 `checkpointRun` 或 `checkpointDir`）。hash 不得從 `args.json` 抄：抄來的永遠相同。`args.json` 席次寫得到，比對不會認證它的 `inputs:` 與其他欄位，從它讀回時先核對（見呼叫端契約）。
+接回之前，以 `inputs:` 的參數重算，和存下的 args（自己的紀錄或 `args.json`）裡這一行比對：相同才接回；不同就不接回，用重算的那一行組 args，開新的 run（另給新的 `checkpointRun` 或 `checkpointDir`）。hash 不得從 `args.json` 抄：抄來的永遠相同。`args.json` 席次寫得到，比對不會認證它的 `inputs:` 與其他欄位，從它讀回時先核對（見呼叫端契約）；`inputs:` 是資料，拆成參數傳給工具、不經 shell 執行，自己有紀錄就取自己的。
 
 engine 核對不到呼叫端有沒有寫這一行、有沒有重算；直接拿存下的 args 接回的呼叫端，會沿用舊版本的結論。
 
 ## 已知限制
 
-- **接回只看席次的 prompt 與 artifact 的內容**。席次另外讀的東西不在雜湊裡：diff 模式下自己去讀的周邊程式碼、`contextBlock` 點名的參考檔（ensemble-eval 的 results.csv、academic 的分析檔）。這些東西在 prompt 與 artifact 都不變時改了，接回的席次會沿用舊的紀錄。被審內容可能這樣變的呼叫端，要把參考檔也給指紋工具，或把 commit id、tree id 寫進 `contextBlock`，這樣它一變，所有席次的 key 就跟著變。
-- **args 很大時 init 的成本也大**：init 席次要逐字抄出 base64 的 args，它的 prompt 約是 args 位元組數的 1.35 倍再加 4.1 KB。contextBlock 為 4 KB 時約 9.7 千字元，30 KB 約 4.5 萬，100 KB 約 13.9 萬（2026-10-20 實測）。
+- **接回只看席次的 prompt 與 artifact 的內容（使用者 2026-11-02 接受）**。席次另外讀的東西不在雜湊裡：diff 模式下自己去讀的周邊程式碼、`contextBlock` 點名而沒有給指紋工具的參考檔（ensemble-eval 的 results.csv）。這些東西在 prompt 與 artifact 都不變時改了，接回的席次會沿用舊的紀錄。被審內容可能這樣變的呼叫端，要把參考檔也給指紋工具，或把 commit id、tree id 寫進 `contextBlock`，這樣它一變，所有席次的 key 就跟著變。
+- **args 很大時 init 的成本也大（使用者 2026-11-02 接受）**：init 席次要逐字抄出 base64 的 args，它的 prompt 約是 args 位元組數的 1.35 倍再加 4.1 KB。contextBlock 為 4 KB 時約 9.7 千字元，30 KB 約 4.5 萬，100 KB 約 13.9 萬（2026-10-20 實測）。
 - **每個席次的 prompt 變長**，大多是內嵌的讀檔器與紀錄命令（2026-11-02 實測，沒有 contextBlock：reviewer 879 → 13,621 字元，devil's-advocate 943 → 13,669，codex 3,643 → 13,988）。席次每記一筆就要輸出一次紀錄命令（1,680 字元，另加紀錄本身）。init 抄錯只會出 INFO，但輸出 token 已經付了。
 - **寫下 `done` 到結果進 journal 之間有一段空窗**：席次寫完 `done` 之後才回傳結果。session 若剛好在這中間中斷，接回時這個席次沒有快取可用，會重新派發；它看到自己的 `done`，就從頭做。結果仍然正確，但那一輪的工作白做。這段空窗是席次寫下 `done` 之後產生最終回傳（全部 finding）的時間，長度沒有量過，在高 effort 下可能是數十秒。2026-10-22 實際發生過一次：一個 lens 席次寫完 `done` 之後，最後一次模型請求失敗，這個呼叫在 journal 裡記為失敗。
 - **接回時，快取只保留到派發順序中第一個沒有快取的呼叫之前**（見上方「journal 快取怎麼對應」）。第一個沒有快取的呼叫可以是改過 args 的那一個，也可以是上一次被打斷或出錯的那一個。排在它之後、上一次已經做完的席次全部從頭做：看到自己的 `done`，把檔改名為 `.prev-N`，重新審閱。只有沒做完的席次從檔案接回。這是最常見的中斷形狀：派發順序中排第三的 lens 沒做完，排在它之後的 lens 與 codex 即使已經做完，也整份重做。
@@ -121,7 +121,7 @@ engine 核對不到呼叫端有沒有寫這一行、有沒有重算；直接拿�
 - **鍵不含工作目錄**：兩個 repo 用同樣的共用輸入（例如同一個 `contextBlock`、同一個 artifact 路徑）會落在同一個目錄。相對路徑解析成不同的檔時不沿用彼此的紀錄，但會互相把對方的檔改名為 `.prev-N`。同一個絕對路徑的 artifact，以及只有 `contextBlock`、沒有 artifact 檔的席次，會沿用：審閱範圍取決於席次所在目錄的呼叫端（`contextBlock` 寫「審目前的 repo」），要把路徑寫進 `contextBlock` 或給不同的 `checkpointRun`。
 - 目錄擁有者的檢查（別人擁有的目錄或路徑項目回 `DISABLED`）沒有自動化測試，因為要另一個使用者才建得出那種目錄；他人可寫入的路徑那一條有測試。
 - **init 沒有成功時的 INFO**：init 的命令先檢查目錄、再比對 base64，所以目錄不能用時回 `PAI_ARGS ERROR`，不會被抄錯蓋掉。只有引擎認得的情形（init 席次被略過、出錯、沒回傳，或命令回 `PAI_ARGS MISMATCH`，含 base64 抄錯）說「各席次的部分結果仍存著」；這是「init 的失敗與席次無關」的意思，席次自己的存檔是否正常，看它們的 `PAI_CHECKPOINT` 行。其餘情形（`PAI_ARGS ERROR`、沒有 python3、traceback、席次轉述的文字）說「可能是同一個原因讓每個席次都沒存檔，先看席次的 `PAI_CHECKPOINT` 行」。
-- **接回的鍵與目錄名，與使用者裁決的字面不同（待使用者確認）**：2026-10-19 的裁決寫「args 雜湊與 artifact 雜湊都相同才沿用」，也就是 args 有任何不同就什麼都不沿用、全部重跑；2026-10-20 寫預設目錄以 args 雜湊命名。實作改成每個席次以自己的輸入為鍵，目錄以共用輸入的 `dirKey` 命名。以「沿用了多少」來比：只改到某些席次的參數時，派發順序中排在第一個改變的呼叫之前的席次由 journal 沿用，還沒做完、自己的輸入沒變的席次沿用檔案裡的紀錄，所以**實作沿用得比裁決多**（裁決是一律不沿用）；排在它之後、已經做完的席次從頭做，與裁決相同；目錄型 artifact 超過項目上限時不接回、只改修改時間也從頭做，**實作沿用得比裁決少**。同樣待確認的還有兩點：接回不看 prompt 與 artifact 位元組以外、席次自己讀的程式碼（第一條已知限制）；args 很大時 init 的成本（第二條已知限制）。
+- **接回的鍵與目錄名，與裁決的字面不同（使用者 2026-11-02 接受）**：2026-10-19 的裁決寫「args 雜湊與 artifact 雜湊都相同才沿用」，2026-10-20 寫預設目錄以 args 雜湊命名。實作是每個席次以自己的輸入為鍵，目錄以共用輸入的 `dirKey` 命名，所以只改到部分席次的輸入時，其他席次的部分結果不受影響（journal 快取見上方）。
 
 ## 隱私與清理
 
