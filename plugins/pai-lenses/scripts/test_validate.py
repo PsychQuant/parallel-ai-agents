@@ -2138,6 +2138,33 @@ class ValidateTest(unittest.TestCase):
         self.assertIn("…（截斷）", line, "子行程 stdout 進 annotation 必須經 wc() 截斷")
         self.assertNotIn(canary, line, "整段內容不得原樣進 annotation")
 
+    def test_killer_evidence_masks_local_paths_and_keeps_unittest_errors(self):
+        """R66（R65 security／DA L、logic L）：殺手證據會寫進**公開 repo 的** `mutation-cache.json`。前一版原樣記下本機的暫存目錄
+        （macOS 是 `/var/folders/<兩碼>/<每個使用者不同>/T`）；也不認 unittest 的 `ERROR:` 行，測試本身出例外時只記到 `FAILED (errors=N)`，看不出是哪個測試。"""
+        from unittest import mock
+        sys.path.insert(0, str(HERE)); import mutation_check as M
+        tmp = "/scratch/someone/tmpdir"   # 不符合 `/var/folders` 形狀的自訂 TMPDIR：只有比對 `gettempdir()` 那一道遮得掉
+        out = "✗ 逐目標履行：目標 priv：私有目錄的上一層是 '%s'，應是 '/tmp'\n" % tmp
+        out += "✗ x：'/private/var/folders/ab/zz9_0000gn/T/tmpq1/inject' 與 '/var/folders/ab/zz9_0000gn/C/x'\n"
+        with mock.patch.object(M.tempfile, "gettempdir", return_value=tmp):
+            ev = M._killer_evidence(out, "")
+        self.assertNotIn(tmp, ev)
+        self.assertNotRegex(ev, r"/var/folders/[^<]", "每個使用者不同的暫存路徑要遮蔽")
+        self.assertIn("<TMPDIR>", ev)
+        self.assertIn("'/tmp'", ev, "`/tmp` 不是每個使用者不同的路徑，不遮蔽（Linux 的 TMPDIR 就是它；R66 第一版的測試在這裡只在 macOS 成立）")
+        with mock.patch.object(M.tempfile, "gettempdir", return_value="/tmp"):
+            self.assertIn("'/tmp'", M._killer_evidence("✗ 上一層是 '/tmp'\n", ""), "TMPDIR 就是 `/tmp` 時也不把訊息裡的 `/tmp` 換掉")
+        self.assertNotIn(os.path.expanduser("~") + "/", M._killer_evidence("✗ 讀不到 %s/x\n" % os.path.expanduser("~"), ""))
+        err = "ERROR: test_x (test_validate.T.test_x)\nTraceback ...\nFAILED (errors=1)\n"
+        self.assertIn("ERROR: test_x", M._killer_evidence(err, ""), "unittest 的 ERROR: 行要記下來")
+
+    def test_committed_mutation_cache_has_no_per_user_paths(self):
+        """R66：提交的 `mutation-cache.json` 不得含每個使用者不同的路徑（macOS 的 `/var/folders/…`、家目錄）。"""
+        text = (HERE / "mutation-cache.json").read_text(encoding="utf-8")
+        m = re.search(r".{0,60}/var/folders/[A-Za-z0-9_+-]{2}/.{0,40}", text)
+        self.assertIsNone(m, "快取檔含每個使用者不同的暫存路徑：%s" % (m.group(0) if m else ""))
+        self.assertEqual(text.count(os.path.expanduser("~") + "/"), 0, "快取檔含家目錄路徑")
+
     def test_mutation_check_restores_validate_on_sigterm(self):
         """R15 requirements F9：mutation 一輪被 SIGTERM 砍掉時（不是 Ctrl-C），被 mutate 的 validate.py
         無聲留在工作樹。handler 把 SIGTERM／SIGHUP 轉成 SystemExit，讓既有的 BaseException 還原路徑跑到。"""

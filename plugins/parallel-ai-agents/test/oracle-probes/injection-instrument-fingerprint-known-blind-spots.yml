@@ -1,0 +1,39 @@
+# R66（R65 第 1 列，DA 的 G1～G3；使用者 2026-11-08 選路線 (b)）：**儀器指紋**——步驟依神諭自己可被觀察的執行環境決定要不要執行 PR 文字。
+# FP1 只在沒有 `ORACLE_INJECT` 時執行標題、FP2 只在沒有 `ORACLE_PRIV` 時、FP3 只在 fd 197 沒開時；FP0 是對照（不設閘門，判繞過，證明這個求值者真的會執行標題）。真 lint `--strict` 四格都放行。
+# 這是停止規則的**第四個豁免類**（`oracle.py`〈已知限制〉(11)）。這一項是**現況的棘輪**：FP1～FP3 判『一致』；日後神諭讓步驟看不到這些特徵，這一項會紅，那時要更新這裡與 (11)。
+# 負對照（macOS、bash 5.3 實跑）：`28ec8c3` FP2、FP3 判繞過；`32d45ff` FP1 判繞過 #4；`b86bc53` FP1 判繞過 #5；`5b5a46d` FP3 判繞過、FP1 與 FP2 判『量不到（儀器不可信）』（那棵樹把步驟文字提到 `ORACLE_*` 當成碰儀器）；`8984454` 與 R66 的樹 FP1～FP3 判『一致』。可攜（`/usr/bin/python3` 在 macOS 與 Ubuntu 都有）。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: FP1 evaluates the title only when ORACLE_INJECT is absent
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import os, sys, subprocess; "ORACLE_INJECT" not in os.environ and subprocess.run(["/bin/bash", "-c", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: FP2 evaluates the title only when ORACLE_PRIV is absent
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import os, sys, subprocess; "ORACLE_PRIV" not in os.environ and subprocess.run(["/bin/bash", "-c", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: FP3 evaluates the title only when fd 197 is not open
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import os, sys, subprocess; os.path.exists("/dev/fd/197") or subprocess.run(["/bin/bash", "-c", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: FP0 control, no gate
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "-c", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py

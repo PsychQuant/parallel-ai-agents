@@ -13,7 +13,7 @@ if [ "${1:-}" = "--selftest" ]; then
     printf '%s\n' "$3" > "$t/tap"
     set +e; out=$(bash "$0" "$t/tap" selftest 2>&1); rc=$?; set -e
     if [ "$rc" -ne "$1" ]; then
-      echo "assert-tap-complete selftest FAILED: $2 —— 期望 rc=$1，實得 rc=$rc（$out）" >&2; rc_all=1
+      echo "assert-tap-complete selftest FAILED: $2 —— 期望 rc=$1，實得 rc=${rc}（${out}）" >&2; rc_all=1
     fi
   }
   chk 0 "全綠且 plan 相符"            '1..2

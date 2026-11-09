@@ -1,0 +1,39 @@
+# R66（同上；R60 條件 G2 點名的 shell）：求值者不是 bash，且先 `cd` 到別處、沙箱拒寫 `/private/tmp`：
+#   QA2  `/bin/sh` 的算術脈絡；QA3  `/bin/dash` 的 `eval`；C1  `/bin/ksh` 的算術脈絡：判『不一致：繞過（注入）』。
+#   C2   `/bin/zsh` 的算術脈絡：判『一致』——`oracle.py`〈已知限制〉(8) 的盲格（zsh 的算術脈絡在所有樹都是盲格），放在這裡是棘輪：日後抓得到，這一項會紅。
+# 只在 macOS：沙箱與 `/bin/ksh`、`/bin/zsh`。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: QA2 bin sh cd arithmetic
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/usr/bin/sandbox-exec", "-p", "(version 1)(allow default)(deny file-write* (subpath \"/private/tmp\"))", "/bin/sh", "-c", "cd /; t=$0; (( t )) || :", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: QA3 dash cd eval
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/usr/bin/sandbox-exec", "-p", "(version 1)(allow default)(deny file-write* (subpath \"/private/tmp\"))", "/bin/dash", "-c", "cd /; eval \"x=$0\"", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: C1 ksh cd away arithmetic
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/usr/bin/sandbox-exec", "-p", "(version 1)(allow default)(deny file-write* (subpath \"/private/tmp\"))", "/bin/ksh", "-c", "cd /; t=$0; (( t )) || :", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: C2 zsh cd away arithmetic
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/usr/bin/sandbox-exec", "-p", "(version 1)(allow default)(deny file-write* (subpath \"/private/tmp\"))", "/bin/zsh", "-c", "cd /; t=$0; (( t )) || :", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py

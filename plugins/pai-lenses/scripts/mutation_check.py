@@ -1737,9 +1737,9 @@ MUTATIONS += [
      '_INJECT_P = "$(echo${IFS}" + INJECT_MARKER + ">>" + INJECT_PATH_TOKEN + ")"', '_INJECT_P = "$(echo${IFS}" + INJECT_MARKER + ">/dev/null)"', 'oracle-inverted'),
     ('oracle: 程式碼行 Pc 不寫私有路徑（Pc 獨有的只剩『清環境 ∧ 關 fd』的格子——J 格〔`IFS=` 之後的 `eval` ∧ 關 fd〕現在由 #11、#16 命中；R53 D1 → selfcheck 89 的 J 格原本是殺手；R56 加入 E 組後 J 格改由 #16 命中，現在由 selfcheck 101 的 Pc44 格殺〔宣稱查核 A 組實測〕）',
      '"echo " + INJECT_MARKER + " >>" + INJECT_PATH_TOKEN,\n', '"echo " + INJECT_MARKER + " >/dev/null",\n', 'oracle-inverted'),
-    ('oracle: 程式碼行 Dc 不寫 fd 197（只有 dash ∧ `IFS=` 之後的 `eval` ∧ 刪目錄；R53 Codex 1 → selfcheck 98 的第二個 step）',
+    ('oracle: 程式碼行 Dc 不寫 fd 197（只有 dash ∧ `IFS=` 之後的 `eval` ∧ 刪目錄；R53 Codex 1 → selfcheck 98 的第二個 step；R66 更正（R65 logic／regression／DA）：R64 加回的 #17～#20 也寫 fd 197，selfcheck 98 的兩個 step 都被它們命中，不再區分這個突變——這個靶現在由歷史 payload 凍結表殺掉）',
      '"echo " + INJECT_MARKER + " >/dev/fd/197 || :",\n', '"echo " + INJECT_MARKER + " >/dev/null || :",\n', 'oracle-inverted'),
-    ('oracle: payload D 又用 `>&197`（dash 把兩位數的 fd 重導向當語法錯誤，整段 payload 不執行；R51 E 組 → selfcheck 98 的第一個 step）',
+    ('oracle: payload D 又用 `>&197`（dash 把兩位數的 fd 重導向當語法錯誤，整段 payload 不執行；R51 E 組 → selfcheck 98 的第一個 step；R66 更正（R65 logic／regression／DA）：R64 加回的 #17～#20 也寫 fd 197，selfcheck 98 的兩個 step 都被它們命中，不再區分這個突變——這個靶現在由歷史 payload 凍結表殺掉）',
      '_INJECT_D = "$(echo${IFS}" + INJECT_MARKER + ">/dev/fd/197||:)"', '_INJECT_D = "$(echo${IFS}" + INJECT_MARKER + ">&197||:)"', 'oracle-inverted'),
     ('oracle: 注入哨兵不收 fd 197（刪掉私有目錄就把哨兵弄瞎；R51 DA → selfcheck 81）',
      'INJECT_MARKER.encode() in data[FD_INJECT] or', 'False or', 'oracle-inverted'),
@@ -1777,11 +1777,11 @@ MUTATIONS += [
      '"-n -o -v PWD[" + _INJECT_S + "]",\n                   "echo " + INJECT_MARKER + " >&197",\n', '"-n -o -v PWD[" + _INJECT_S + "]",\n', 'oracle-inverted'),
     ('oracle: 拿掉三組路徑 payload P（文字被截斷 ∧ 關 fd；清環境 ∧ 關 fd；R53 D1 → R56 起 selfcheck 96 的 P 格被 E 組遮住，實際殺手是 96 的 V 格與 101 的 P56 格；Q、W 另被 Pc 命中，R57 logic LOW）',
      '                   "PWD[" + _INJECT_P + "]",\n                   "-v PWD[" + _INJECT_P + "]",\n                   "-n -o -v PWD[" + _INJECT_P + "]",\n', '', 'oracle-inverted'),
-    ('oracle: 拿掉三組 `/dev/fd/197` payload D（dash ∧ 刪目錄；R53 Codex 1 → selfcheck 98 的第一個 step）',
+    ('oracle: 拿掉三組 `/dev/fd/197` payload D（dash ∧ 刪目錄；R53 Codex 1 → selfcheck 98 的第一個 step；R66 更正（R65 logic／regression／DA）：R64 加回的 #17～#20 也寫 fd 197，selfcheck 98 的兩個 step 都被它們命中，不再區分這個突變——這個靶現在由歷史 payload 凍結表殺掉）',
      '                   "PWD[" + _INJECT_D + "]",\n                   "-v PWD[" + _INJECT_D + "]",\n                   "-n -o -v PWD[" + _INJECT_D + "]",\n', '', 'oracle-inverted'),
     ('oracle: `pfu` 閘門在 lint 擋下（RULE-red）那一側不開（宣稱查核 A 組 → selfcheck 95）',
      '(verdict.startswith("不一致：誤擋") or timed or pfu)))', '(verdict.startswith("不一致：誤擋") or timed)))', 'oracle-inverted'),
-    ('oracle: `/dev/fd/197` payload（`_INJECT_D`）不寫 fd 197（dash ∧ 刪目錄 ∧ 雙引號裡的命令替換；R53 Codex 1 → selfcheck 98 的第一個 step）',
+    ('oracle: `/dev/fd/197` payload（`_INJECT_D`）不寫 fd 197（dash ∧ 刪目錄 ∧ 雙引號裡的命令替換；R53 Codex 1 → selfcheck 98 的第一個 step；R66 更正（R65 logic／regression／DA）：R64 加回的 #17～#20 也寫 fd 197，selfcheck 98 的兩個 step 都被它們命中，不再區分這個突變——這個靶現在由歷史 payload 凍結表殺掉）',
      '_INJECT_D = "$(echo${IFS}" + INJECT_MARKER + ">/dev/fd/197||:)"', '_INJECT_D = "$(echo${IFS}" + INJECT_MARKER + ">/dev/null||:)"', 'oracle-inverted'),
     # ── R54 D3：stub 的 `-t`、`--` 分支、`--version`／`--help`（R53 regression M2、Codex 3、regression LOW）──
     ('oracle: stub python3 的 `-t` 不在無參數旗標清單（CPython 3.9–3.13 都接受；R53 regression M2 → --selftest-aud）',
@@ -1901,7 +1901,7 @@ MUTATIONS += [
     ('selfcheck: `tool_usable` 只擋被信號終止（負的結束碼）、不看一般的非零結束碼（`== 0` → `>= 0`；外層沙箱擋掉它時仍當成可用，第 105 項八格全判一致而紅，看起來像神諭回歸；R59 Codex 3 的非零退出案 → `--selftest-matcher`）',
      'capture_output=True, timeout=timeout).returncode == 0', 'capture_output=True, timeout=timeout).returncode >= 0', 'selfcheck-matcher'),
     # ── R62 H1／H2（R61 的哨兵位置軸：`32d45ff` 的 `TMPDIR` 私有目錄、`28ec8c3` 的 cwd 頂層哨兵）──
-    ('oracle: `_inject_runs` 不加 `cwd-vis` 目標（cwd 頂層的可見哨兵；R50 移除、R61 logic 第 14 格，`28ec8c3` 判繞過、R60 判一致 → 歷史哨兵位置 manifest；原註明的 selfcheck 108 PB1／PB2、109 SP5／SP6 在 R62 失去區分力，實際殺手見 R64 量測紀錄的殺手欄）',
+    ('oracle: `_inject_runs` 不加 `cwd-vis` 目標（cwd 頂層的可見哨兵；R50 移除、R61 logic 第 14 格，`28ec8c3` 判繞過、R60 判一致 → 歷史哨兵位置 manifest；原註明的 selfcheck 108 PB1／PB2 在 R62 失去區分力，實際殺手見 R64 量測紀錄的殺手欄；109 SP5／SP6 也失去過，R66 改寫沙箱後恢復）',
      '        if is_e:\n            targets.append("cwd-vis")', '        if False:\n            targets.append("cwd-vis")', 'oracle-inverted'),
     ('oracle: `_inject_runs` 不加 `priv-tmpdir` 目標（預設 `TMPDIR` 底下的私有目錄；R54 搬到 `/tmp`、R61 的 blocking，`32d45ff` 判繞過、R60 判一致 → selfcheck 108 PA1／PA2、109 SP1～SP4、哨兵位置 manifest）',
      '        if tmpdir_priv and (is_e or INJECT_PATH_TOKEN in pl):', '        if False and (is_e or INJECT_PATH_TOKEN in pl):', 'oracle-inverted'),
@@ -1917,7 +1917,7 @@ MUTATIONS += [
      '                spaced, tmpdir_priv = _tmpdir_spaced(), _tmpdir_priv_ok()', '                spaced, tmpdir_priv = _tmpdir_spaced(), False', 'oracle-inverted'),
     ('oracle: `run_script` 對 `priv-tmpdir` 仍把私有目錄放在 `/tmp`（目標存在、位置沒變；R61 → selfcheck 108 PA1／PA2、109）',
      '(_Scratch() if inject_to == "priv-tmpdir" else _priv_scratch())', '_priv_scratch()', 'oracle-inverted'),
-    ('oracle: `run_script` 沒有 `cwd-vis` 分支（`ORACLE_INJECT` 退回 `<priv>/i`；R61 logic 第 14 格 → 逐目標履行檢查；原註明的 selfcheck 108 PB1／PB2、109 SP5／SP6 在 R62 失去區分力，實際殺手見 R64 量測紀錄的殺手欄）',
+    ('oracle: `run_script` 沒有 `cwd-vis` 分支（`ORACLE_INJECT` 退回 `<priv>/i`；R61 logic 第 14 格 → 逐目標履行檢查；原註明的 selfcheck 108 PB1／PB2 在 R62 失去區分力，實際殺手見 R64 量測紀錄的殺手欄；109 SP5／SP6 也失去過，R66 改寫沙箱後恢復）',
      '            elif inject_to in ("cwd-vis", "cwd-vis-abs"):', '            elif False:', 'oracle-inverted'),
     # ── R62 Codex 預審處置（M1 歷史檔名、M2 cwd-vis 的絕對路徑、M3 manifest 四個條件組合、LOW：cwd-vis 預建檔）──
     ('oracle: `priv-tmpdir` 的哨兵檔名退回 `i`（`32d45ff` 的檔名是 `inject`，路徑形狀也是歷史位置的一部分；Codex 預審 M1 → selfcheck 109 SP9／SP10 〔拒寫 `TMPDIR` 但放行基名 `inject` 的沙箱〕）',
@@ -1990,6 +1990,53 @@ MUTATIONS += [
      '        if os.path.realpath(kv.get("PP", "") or "/nonexistent-parent") != os.path.realpath(want):', '        if False:', 'history-matcher'),
     ('history: 逐目標形狀不要求偵測到注入（R64 → --selftest-matcher 的「寫進去之後神諭沒偵測到」案）',
      '    if not hit:\n        probs.append("目標 %s：寫進', '    if False:\n        probs.append("目標 %s：寫進', 'history-matcher'),
+    # ── R66（#33 verify R65 logic M：逐目標履行與 git 重抽本身沒有網）：--selftest-matcher 以假 oracle、假 git 跑整個函式 ──
+    ('history: 逐目標履行的結果不交給形狀檢查（R65 logic 突變 (1) → --selftest-matcher 的假 oracle「cwd 的輸出差一點」等案）',
+     '        probs += fulfillment_shape_problems(target, out, bool(res[4]["inject"]), short, tmpdir)', '        pass', 'history-matcher'),
+    ('history: 逐目標履行一個目標都不跑（R65 logic 突變 (2) → 假 oracle「每個目標要各跑一次」）',
+     '    for target in sorted(TARGET_SHAPES):\n        sd', '    for target in sorted(TARGET_SHAPES)[:0]:\n        sd', 'history-matcher'),
+    ('history: 逐目標履行不比對目標集合與 manifest（R65 logic 突變 (3) → 假 oracle「manifest 多一個目標」）',
+     '    if set(TARGET_SHAPES) != set(manifest_targets):', '    if False:', 'history-matcher'),
+    ('history: 逐目標履行逾時不報（R65 logic 突變 (5) → 假 oracle「priv 逾時」）',
+     '            probs.append("目標 %s：run_script 逾時" % target)\n', '            pass\n', 'history-matcher'),
+    ('history: 逐目標履行的偵測寫死成真（R65 logic 突變 (4) → 假 oracle「cwd-vis 寫進去之後沒偵測到」）',
+     'bool(res[4]["inject"])', 'True', 'history-matcher'),
+    ('history: 逐目標履行把「這個環境會用到的目標建不出路徑」當成跳過（R66 → 假 oracle「cwd 建不出路徑」）',
+     '                probs.append("目標 %s：run_script 結束（%s），而這個環境的 _inject_runs 會用到它" % (target, e))', '                skipped.append(target)', 'history-matcher'),
+    ('history: 逐目標履行忽略 tmpdir 參數（R66 → 假 oracle「六個目標都正確」）',
+     '    tmpdir = tmpdir or tempfile.gettempdir()', '    tmpdir = tempfile.gettempdir()', 'history-matcher'),
+    ('history: 重抽一律回報沒有歷史（R65 logic 突變 (6) → 假 git「九棵樹都在」）',
+     '    if not present:\n', '    if True:\n', 'history-matcher'),
+    ('history: 重抽時其他樹有歷史、這棵沒有也不報（R66，前一版缺一棵就整個跳過 → 假 git「只缺一棵」）',
+     '    probs = ["`%s`：其他樹有 git 歷史、這棵沒有（完整 SHA 寫錯，或歷史被截斷）" % t for t in missing]', '    probs = []', 'history-matcher'),
+    ('history: 重抽讀不到某棵樹的 oracle.py 也不報（R65 logic 突變 (7) → 假 git「一棵讀不到」）',
+     '            probs.append("`%s`：讀不到 %s" % (tree, ORACLE_REL))\n', '            pass\n', 'history-matcher'),
+    ('history: 重抽的 git show 例外不接（R65 logic L：TimeoutExpired 讓 selfcheck 當掉 → 假 git「一棵逾時」）',
+     '        except (OSError, subprocess.SubprocessError, UnicodeDecodeError) as e:', '        except ZeroDivisionError as e:', 'history-matcher'),
+    ('history: 抽 payload 的求值器不認 `%`（R65 logic → 假 git「8b45659 用 % 拼字串」）',
+     '        if isinstance(n.op, ast.Mod) and isinstance(a, str):', '        if False:', 'history-matcher'),
+    ('history: 凍結表的摘要不比對（R66；前一版凍結表少一組只有 git 重抽看得到 → --selftest-matcher 的「摘要對不上」案）',
+     '        if HISTORICAL_DIGEST.get(tree) != _row_digest(tree):', '        if False:', 'history-matcher'),
+    ('history: 凍結表 `5b5a46d` 那一列少第 4 組（R65 logic 突變 (9)，前一版在 CI 與突變全輪都看不到 → 摘要）',
+     "    '5b5a46d': (0, 1, 2, 3),", "    '5b5a46d': (0, 1, 2),", 'history-matcher'),
+    ('history: 完整 SHA 不檢查（R66 → --selftest-matcher 的「TREE_SHA 對不上」案）',
+     '        if not TREE_SHA.get(tree, "").startswith(tree):', '        if False:', 'history-matcher'),
+    ('history: `cwd` 的形狀放寬成任何字串（R65 logic 突變 (8)、requirements L → 假 oracle「cwd 的輸出差一點」）',
+     '"cwd":         {"oi": r"<TMP>/\\.orc-" + _RND + r"/inject"}', '"cwd":         {"oi": r".*"}', 'history-matcher'),
+    ('history: `cwd-vis` 的形狀接受相對路徑（R66 → --selftest-matcher 的「cwd-vis 給了相對路徑」）',
+     '"cwd-vis":     {"oi": r"<TMP>/inject"}', '"cwd-vis":     {"oi": r"(?:<TMP>/)?inject"}', 'history-matcher'),
+    ('history: `priv` 那一列拿掉私有目錄名與上一層的要求（R65 regression L → --selftest-matcher 的「priv 前綴不是 o」「priv 不在短路徑底下」）',
+     '"pb": r"o" + _RND,   "parent": "short"}', '"pass": ""}', 'history-matcher'),
+    ('history: 抽常數的串接沒有長度上限（R65 security → --selftest-matcher 的「倍增串接」）',
+     '            if len(a) + len(b) > _EV_MAX:', '            if False:', 'history-matcher'),
+    ('history: 抽常數的 `%` 不擋大寬度（R65 security → --selftest-matcher 的「% 的寬度上億」「% 的 * 寬度」）',
+     '            if len(a) > _EV_MAX or _EV_WIDE_RE.search(a):', '            if False:', 'history-matcher'),
+    ('history: 抽常數的 `%` 例外逃出去（R66 → --selftest-matcher 的「% 參數不對」）',
+     '            except (TypeError, ValueError) as e:', '            except ZeroDivisionError as e:', 'history-matcher'),
+    ('history: 抽常數的 RecursionError 逃出去（R65 security → --selftest-matcher 的「3000 項的 + 鏈」）',
+     '            except (_Unev, RecursionError):', '            except _Unev:', 'history-matcher'),
+    ('history: 語法錯誤的舊原始碼讓抽常數當掉（R66 → --selftest-matcher 的「語法錯誤」）',
+     '    except (SyntaxError, ValueError, RecursionError, MemoryError):', '    except ZeroDivisionError:', 'history-matcher'),
     ('selfcheck: `main()` 不呼叫歷史 payload 凍結表的檢查（R64 → --selftest-matcher 的原始碼檢查）',
      '    for x in payload_history_problems_real():\n        print("✗ 歷史 payload 凍結表：" + x)\n        bad += 1\n', '', 'selfcheck-matcher'),
     ('selfcheck: `main()` 不呼叫逐目標履行檢查（R64 → --selftest-matcher 的原始碼檢查）',
@@ -2208,12 +2255,31 @@ def main():
 
 def _killer_evidence(out, err):
     """被殺的靶的殺手證據（R64，#33 verify R63 DA：前一版只記 rc≠0，『殺掉』不記是哪一項殺的，負載敏感的項目假紅時分不出來）：
-    驗證輸出裡前三行失敗訊息（`✗`、`FAIL`、`not ok` 開頭），沒有就取最後一行非空輸出；每行截到 160 字，去掉 tab 與換行（`RESULT` 行是單行、以 tab 分欄）。"""
-    lines = [l.strip() for l in (out + "\n" + err).splitlines()]
-    hits = [l for l in lines if l.startswith(("✗", "FAIL", "not ok"))][:3]
+    驗證輸出裡前三行失敗訊息（`✗`、`FAIL`、`not ok`、`ERROR:` 開頭），沒有就取最後一行非空輸出；每行截到 160 字，去掉 tab 與換行（`RESULT` 行是單行、以 tab 分欄）。
+    R66（R65 logic L）：加上 unittest 的 `ERROR:`——測試本身出例外時，前一版只記到最後一行 `FAILED (errors=N)`，看不出是哪個測試、是不是環境錯誤。
+    R66（R65 security／DA L）：每行先經 `_mask_local_paths`，證據會寫進公開 repo 的 `mutation-cache.json`。"""
+    lines = [_mask_local_paths(l.strip()) for l in (out + "\n" + err).splitlines()]
+    hits = [l for l in lines if l.startswith(("✗", "FAIL", "not ok", "ERROR:"))][:3]
     if not hits:
         hits = [l for l in lines if l][-1:]
     return " ‖ ".join(h[:160] for h in hits).replace("\t", " ")
+
+
+_PER_USER_TMP_RE = re.compile(r"(?:/private)?/var/folders/[A-Za-z0-9_+-]{2}/[A-Za-z0-9_+-]+/[A-Za-z]\b")
+
+
+def _mask_local_paths(s):
+    """R66：殺手證據不得帶每個使用者不同的路徑。換掉：這次的暫存目錄（`tempfile.gettempdir()` 與它的 realpath）→ `<TMPDIR>`；
+    macOS 每個使用者的 `/var/folders/<兩碼>/<雜湊>/<T|C|X>` → `<TMPDIR>`；家目錄 → `~`。只為了不外流：證據欄不進快取鍵，不影響沿用。"""
+    tmp = tempfile.gettempdir().rstrip("/")
+    for p in sorted({tmp, os.path.realpath(tmp)}, key=len, reverse=True):
+        if len(p) > 4:
+            s = s.replace(p, "<TMPDIR>")
+    s = _PER_USER_TMP_RE.sub("<TMPDIR>", s)
+    home = os.path.expanduser("~").rstrip("/")
+    if len(home) > 1:
+        s = s.replace(home + "/", "~/")
+    return s
 
 
 def run_serial(sel, emit):

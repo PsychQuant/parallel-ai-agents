@@ -1,0 +1,23 @@
+# R66（同上）：`PS4` 與 `PATH` 入口——`oracle.py`〈已知限制〉(7)。兩者都在 `_OWN_ENV` 裡，YAML `env:` 帶 PR 文字時神諭不注入 payload，判『一致』，真 lint `--strict` 放行。
+# 這是**現況的棘輪**：日後神諭涵蓋了這兩個入口，這一項會紅，那時要更新這裡。可攜。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: PS1 PS4 from title, child bash -x inside the filtered group, no dollar in run text
+        shell: bash
+        env:
+          PS4: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /bin/bash -xc true; } 2>&1 | python3 scripts/neutralise.py
+      - name: OP1 PATH carries the PR title and is evaluated
+        shell: bash
+        env:
+          PATH: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "-c", sys.argv[1]])' "$PATH"; } 2>&1 | python3 scripts/neutralise.py

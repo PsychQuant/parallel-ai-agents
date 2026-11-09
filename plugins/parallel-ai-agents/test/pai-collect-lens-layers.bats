@@ -165,7 +165,7 @@ assert d["lenses"][0].get("override") is True, d["lenses"]
   # 佈局取自同 marketplace 的實證：parallel-ai-agents 自己就是相對路徑 source，
   # 其 cache 是 ~/.claude/plugins/cache/parallel-ai-agents/parallel-ai-agents/<semver>/。
   PACK_SRC="${BATS_TEST_DIRNAME}/../../pai-lenses"
-  [ -d "$PACK_SRC" ] || skip "找不到 $PACK_SRC（pai-lenses 未併入本 repo）"
+  [ -d "$PACK_SRC" ] || skip "找不到 ${PACK_SRC}（pai-lenses 未併入本 repo）"
   VER=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['version'])" \
         "${PACK_SRC}/.claude-plugin/plugin.json")
   DEST="${CACHE}/parallel-ai-agents/pai-lenses/${VER}"

@@ -3,7 +3,7 @@
 #   SP2  同 SP1，算術脈絡。
 #   SP3  沙箱拒寫 `/private/tmp` **與 cwd 子樹**、關 fd、**環境保留**，命令位置——Codex 的變體：不需要清環境，`32d45ff` 的 `TMPDIR` 私有哨兵照樣命中。
 #   SP4  同 SP3，算術脈絡。
-#   SP5  沙箱拒寫 `/private/tmp` 與隱藏目錄（`#"/[.][^/]+/"`）、關 fd、環境保留，命令位置——logic lens 的第 14 格（`28ec8c3` 的 cwd 頂層哨兵 `<cwd>/inject`；R58 起的 `.orc-XXXX/inject` 在隱藏目錄底下）。
+#   SP5  沙箱拒寫 `/private/tmp` 與整個 `TMPDIR`，只放行 `<cwd>/inject` 這一個檔、關 fd、環境保留，命令位置——logic lens 的第 14 格（`28ec8c3` 的 cwd 頂層哨兵 `<cwd>/inject`）。**R66 改寫**（R63／R65 的 LOW，#597 同形）：前一版只拒寫 `/private/tmp` 與隱藏目錄，R62 的 `priv-tmpdir` 落在 `TMPDIR` 底下、以 #5 先命中，SP5／SP6 就不再分辨 `cwd-vis`。步驟 cwd 與 `priv-tmpdir` 都是 mkdtemp 預設的 `tmpXXXXXXXX`，用目錄名分不開，所以改成只放行那一個字面路徑；現在只有 `cwd-vis` 目標寫得進去（報出的是 E 組 #13）。
 #   SP6  同 SP5，算術脈絡。
 #   SP7  Python `env={}` 代替 `env -i`（regression 的 B3）：沙箱拒寫 `/private/tmp`、關 fd，命令位置。
 #   SP8  對照組：沙箱只拒寫 `/private/tmp`、fd 保留（所有樹都命中）。
@@ -11,7 +11,7 @@
 #   SP10 同 SP9，算術脈絡。
 #   SP11 沙箱拒寫 `/private/tmp` 與整個 `TMPDIR`，只放行對**既有**的 `<cwd>/inject` 做資料寫入（`file-write-data`；不放行建立），關 fd、環境保留，命令位置——`cwd-vis` 預先建好那個檔案才寫得進去（Codex 預審 LOW：拿掉預先建檔的突變體沒有其他格抓得到）。
 #   SP12 同 SP11，算術脈絡。
-# **負對照**（2026-10-22 在封存的舊樹上實測；`TMPDIR` 設成 `/tmp` 之外的目錄，各樹自己的 lint `--strict`）：`32d45ff` 判 SP1～SP10 繞過（payload #4；SP8 是 #1）、SP11／SP12 判『一致』；`28ec8c3` 判 SP5、SP6、SP8、SP11、SP12 繞過、其餘判『一致』；`6490b57`／`bf0c8a7`／`636fcfe` 只有對照組 SP8 判繞過、其餘十一格判『一致』。
+# **負對照**（2026-10-22 在封存的舊樹上實測；`TMPDIR` 設成 `/tmp` 之外的目錄，各樹自己的 lint `--strict`）：`32d45ff` 判 SP1～SP10 繞過（payload #4；SP8 是 #1）、SP11／SP12 判『一致』；`28ec8c3` 判 SP5、SP6、SP8、SP11、SP12 繞過、其餘判『一致』；`6490b57`／`bf0c8a7`／`636fcfe` 只有對照組 SP8 判繞過、其餘十一格判『一致』。**SP5、SP6 在 R66 改寫後重量**（2026-11-05，load1 約 50～70，這幾格的判定由沙箱決定）：新樹判繞過 #13、`28ec8c3` 判繞過、`636fcfe` 判『一致』；拿掉 `cwd-vis` 目標的突變體 SP5、SP6 回到『一致』（SP11、SP12 也是）。上面那一行關於 SP5、SP6 的 `32d45ff` 結果是舊沙箱量的，新沙箱沒有重量。
 
 # LINT-ARGS: --strict
 name: t
@@ -48,20 +48,20 @@ jobs:
         run: |
           set -o pipefail
           { /usr/bin/python3 -c 'import os, sys, subprocess; c = os.getcwd().replace(chr(92), chr(92) * 2).replace(chr(34), chr(92) + chr(34)); p = "(version 1)(allow default)(deny file-write* (subpath \"/private/tmp\"))(deny file-write* (subpath \"%s\"))" % c; subprocess.run(["/usr/bin/sandbox-exec", "-p", p, "/bin/bash", "-c", "t=$0; (( t )) || :", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
-      - name: SP5 sandbox denies /private/tmp and hidden directories, close_fds, env kept, command position
+      - name: SP5 sandbox allows only <cwd>/inject under /private/tmp and TMPDIR, close_fds, env kept, command position
         shell: bash
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           set -o pipefail
-          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/usr/bin/sandbox-exec", "-p", "(version 1)(allow default)(deny file-write* (subpath \"/private/tmp\"))(deny file-write* (regex #\"/[.][^/]+/\"))", "/bin/bash", "-c", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
-      - name: SP6 sandbox denies /private/tmp and hidden directories, close_fds, env kept, arithmetic
+          { /usr/bin/python3 -c 'import os, sys, subprocess; d = os.path.realpath(os.getcwd()); subprocess.run(["/usr/bin/sandbox-exec", "-p", "(version 1)(allow default)(deny file-write* (subpath \"/private/tmp\"))(deny file-write* (subpath \"" + os.path.dirname(d) + "\"))(allow file-write* (literal \"" + d + "/inject\"))", "/bin/bash", "-c", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: SP6 sandbox allows only <cwd>/inject under /private/tmp and TMPDIR, close_fds, env kept, arithmetic
         shell: bash
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           set -o pipefail
-          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/usr/bin/sandbox-exec", "-p", "(version 1)(allow default)(deny file-write* (subpath \"/private/tmp\"))(deny file-write* (regex #\"/[.][^/]+/\"))", "/bin/bash", "-c", "t=$0; (( t )) || :", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+          { /usr/bin/python3 -c 'import os, sys, subprocess; d = os.path.realpath(os.getcwd()); subprocess.run(["/usr/bin/sandbox-exec", "-p", "(version 1)(allow default)(deny file-write* (subpath \"/private/tmp\"))(deny file-write* (subpath \"" + os.path.dirname(d) + "\"))(allow file-write* (literal \"" + d + "/inject\"))", "/bin/bash", "-c", "t=$0; (( t )) || :", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
       - name: SP7 sandbox denies /private/tmp, close_fds, Python env={} (empty environment), command position
         shell: bash
         env:

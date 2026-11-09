@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""神諭的反向探針：只有神諭**失敗**時才成立的檢查（#33 verify R37）。
+"""神諭的反向探針：多數是只有神諭**失敗**時才成立的檢查，其餘是期待 rc=0 的單元測試、已知盲點與判『一致』的項目（#33 verify R37 起）。
 
 fixture 集裡的 must-fail 探針（`# ORACLE-MUST-FAIL:`）驗的是「神諭對某張 fixture 以宣告的理由失敗」。
 R37 時有兩件事它驗不到——要驗它們，未突變的神諭在 fixture 集上就得是紅的：
@@ -15,8 +15,8 @@ R37 時有兩件事它驗不到——要驗它們，未突變的神諭在 fixtur
 
 批次與編號（編號＝下面 `CHECKS` 的順序；每一項的內容在它自己的說明欄，這裡不再複述一份會過期的描述——R43 第 21 列：
 前一版的 docstring 逐批列舉、數字加起來少一項，而且寫著「二十六項」「三十項」卻沒有一個地方真的數過）：
-  R37 1–2；R39 3–8；R40 9–10；R42 11–15；R42 WP7 16–19；R42 WP8 20–26；R44 27–31；R46 32–38；R48 39–45；R50 46–72；R52 73–95；R54 96–99；R56 100–102；R58 103–105；R60 106–107；R62 108–110；R64 111–112。
-共 112 項。守衛：`main()` 開頭比對這一行的總數與批次區間的終點是否等於 `len(CHECKS)`，不等就 rc=1——數字與清單不是兩份各自維護的東西。
+  R37 1–2；R39 3–8；R40 9–10；R42 11–15；R42 WP7 16–19；R42 WP8 20–26；R44 27–31；R46 32–38；R48 39–45；R50 46–72；R52 73–95；R54 96–99；R56 100–102；R58 103–105；R60 106–107；R62 108–110；R64 111–112；R66 113–116。
+共 116 項。守衛：`main()` 開頭比對這一行的總數與批次區間的終點是否等於 `len(CHECKS)`，不等就 rc=1——數字與清單不是兩份各自維護的東西。
 
 用法：test/oracle_selfcheck.py      rc=0：每一項都照預期；rc=1：至少一項沒有（或上面的數字與 `CHECKS` 不符）。
 """
@@ -331,10 +331,10 @@ CHECKS = [
      "SP7（Python `env={}`）、SP9、SP10（拒寫 `/private/tmp` 與整個 `TMPDIR`、**只放行基名 `inject`**——`32d45ff` 的私有哨兵檔名也是歷史位置的一部分，Codex 預審 M1）、SP11、SP12（只放行對**既有**的 `<cwd>/inject` 做資料寫入、不放行建立——`cwd-vis` 預先建檔，Codex 預審 LOW）要判『不一致：繞過（注入）』，SP8 是對照組（只拒寫 `/private/tmp`、fd 保留）。真 lint `--strict` 全部放行。負對照（2026-10-22 在封存的舊樹上實測）：`6490b57`／`bf0c8a7`／`636fcfe` 只有 SP8 判繞過、其餘十一格判『一致』；`32d45ff` 判 SP1～SP10 繞過（payload #4；SP8 是 #1）、SP11／SP12 判『一致』；`28ec8c3` 判 SP5、SP6、SP8、SP11、SP12 繞過、其餘判『一致』", {"TMPDIR": SAFE_TMPDIR},
      [PROBES / "injection-sentinel-position-sandbox.yml"], 1,
      INJ(12) + [re.compile(r"\bSP%d\b[^\n]*oracle=\S+\s+不一致：繞過（注入" % n, re.M) for n in range(1, 13)]),
-    # R62 H3（R61 DA）：跨執行持久狀態是已知盲點（性質聲明 (ii) 的成員、停止規則的第三個豁免類）——這一項是**現況的棘輪**：三格都判『一致』；日後神諭有了封閉的執行，這一項會紅，那時要更新探針與停止規則。
-    ("**跨執行持久狀態（已知盲點，棘輪）**（R62 H3，R61 DA 的 TG1／CG1／DT1）：step 把狀態（taint 檔、計數器、工作區衛生檢查的 taint）留在共用的 `/tmp`、並依它決定要不要執行 `PR_TITLE`——神諭對同一個 step 的多次執行共用同一台主機，先跑的執行把後跑的吃掉，四格判『一致』（XR4 是 R63 的工作區衛生檢查格，R62 的 `cwd-vis` 造出）"
+    # R62 H3（R61 DA）：跨執行持久狀態是已知盲點（性質聲明 (ii) 的成員、停止規則的第三個豁免類）——這一項是**現況的棘輪**：每一格都判『一致』（R66 起七格）；日後神諭有了封閉的執行，這一項會紅，那時要更新探針與停止規則。
+    ("**跨執行持久狀態（已知盲點，棘輪）**（R62 H3，R61 DA 的 TG1／CG1／DT1）：step 把狀態（taint 檔、計數器、工作區衛生檢查的 taint）留在共用的主機位置（`/tmp`、`/var/tmp`、步驟 cwd 的上層）、並依它決定要不要執行 `PR_TITLE`——神諭對同一個 step 的多次執行共用同一台主機，先跑的執行把後跑的吃掉，七格判『一致』（XR4 是 R63 的工作區衛生檢查格，R62 的 `cwd-vis` 造出；XR5～XR7 是 R63 第 6 列的純計數格、`/var/tmp` 與上層 taint 格，R66 照使用者 2026-11-01 的決定收進來）"
      "（真 lint `--strict` 放行；真 runner 對同一個 step 在一次 workflow run 裡只執行一次，攻擊者給合法的分支名、標題就被執行；神諭的多次反事實執行之間不重置共用的主機狀態）。DA 的鴿籠論證：任何執行順序都無法同時保住所有舊設定，所以列為豁免類而不是缺陷（使用者 2026-11-01 同意，條文見 `oracle.py`〈已知限制〉(9)）。狀態檔名帶神諭這次呼叫的 `PATH` 雜湊、不讀時鐘（結構由 `xrun_probe_problems` 守）", {},
-     [PROBES / "injection-cross-run-state-known-blind-spots.yml"], 0, "一致 4"),
+     [PROBES / "injection-cross-run-state-known-blind-spots.yml"], 0, "一致 7"),
     # ── R64（#33 verify R63 第 2～4 列）──
     ("**payload 字串軸（可攜版）**（R64，R63 第 2 列）：求值者只在標題含 `;`（PL1、PL3 算術）或不計路徑的長度 ≥ 70（PL2）時才執行它——`32d45ff` 的四組複合 payload（R54 拆掉、R64 加回 #17～#20）才命中；PL0 是不把關的對照組。"
      "負對照：`32d45ff` 四格繞過（#4），`636fcfe`／`8292d86` 的 PL1～PL3 判『一致』。凍結表在 `oracle_history.HISTORICAL_PAYLOADS`",
@@ -342,11 +342,22 @@ CHECKS = [
     ("**哨兵路徑形狀（沙箱版，只在 macOS）**（R64，R63 第 3、4 列）：DP1 只放行 `tmpXXXXXXXX/inject`（`32d45ff` 的私有目錄名）、DP0 也放行 `oXXXXXXXX`（對照組）、HO1 只放行隱藏 `.orc-*` 底下的 `inject`（`cwd` 目標）。"
      "負對照：DP1 在 `8292d86`（R62，前綴 `o`）判『一致』；HO1 在 R63 的 X2 突變樹（`.orc-*/injectx`）判『一致』。逐目標的形狀另由 `oracle_history.TARGET_SHAPES` 直接守",
      {}, [PROBES / "injection-sentinel-shape-sandbox.yml"], 1, INJ(3)),
+    # R66（R61 Follow-up 指定收進 repo，R62、R64 沒做；R63／R65 requirements）：G1／G2 點名的輸入。只收點名的格子：selfcheck 是突變全輪每個 `oracle-inverted` 靶都要跑的，R61 探針全收（25 格）太貴。
+    ("**`git check-ref-format` 閘門（可攜）**（R66，R60 G1 點名）：求值前驗 `head_ref` 是合法分支名，真 lint `--strict` 放行，神諭要判『不一致：繞過（注入）』", {},
+     [PROBES / "injection-named-git-refgate.yml"], 1, INJ(1)),
+    ("**點名的 shell（沙箱版，只在 macOS）**（R66，R60 G2 點名）：`/bin/sh`、`/bin/dash`、`/bin/ksh` 先 `cd` 到別處再求值，判『不一致：繞過（注入）』；`/bin/zsh` 的算術脈絡判『一致』（〈已知限制〉(8) 的棘輪）", {},
+     [PROBES / "injection-named-shells-sandbox.yml"], 1, ["一致 1、不一致 3", ("不一致：繞過（注入", 3)]),
+    ("**`PS4`、`PATH` 入口（已知盲點，棘輪）**（R66，R60 G1 點名、〈已知限制〉(7)）：`_OWN_ENV` 裡的鍵帶 PR 文字時神諭不注入，判『一致』；日後涵蓋了，這一項會紅", {},
+     [PROBES / "injection-named-entries-known-blind-spots.yml"], 0, "一致 2"),
+    # R66（R65 第 1 列；使用者 2026-11-08 選 (b)，停止規則的第四個豁免類，〈已知限制〉(11)）：儀器指紋。FP0 是對照（不設閘門，要判繞過），FP1～FP3 是棘輪。
+    ("**儀器指紋（已知盲點，棘輪）**（R66，R65 第 1 列、〈已知限制〉(11)）：三個步驟各自只在一個特徵不在時才執行標題（FP1 沒有 `ORACLE_INJECT`、FP2 沒有 `ORACLE_PRIV`、FP3 fd 197 沒開），判『一致』；對照的 FP0 判『不一致：繞過（注入）』。"
+     "負對照：`28ec8c3` FP2、FP3 繞過，`32d45ff` FP1 繞過 #4，`b86bc53` FP1 繞過 #5；日後神諭讓步驟看不到這些特徵，這一項會紅", {},
+     [PROBES / "injection-instrument-fingerprint-known-blind-spots.yml"], 1, ["一致 3、不一致 1", ("不一致：繞過（注入", 1)]),
 ]
 
 # 需要平台工具才跑得了的項目（探針檔名 → 必須存在的執行檔）：沒有就在 `main()` 印『跳過』，不算通過也不算失敗（Linux 上沒有 `sandbox-exec`）。
-# **沒有任何 CI job 會跑第 105 項**：ubuntu job 沒有 `sandbox-exec`、macOS job 不跑 `oracle_selfcheck`（R59 G5 要求納入 CI；`.github/` 是這個 PR 的閘門本身，加一步會改變『閘門相對 `6490b57` 沒有變』這個前提，R60 沒有做，列在 CHANGELOG 的〈沒有處理的〉）——這一項只在開發機上跑。
-REQUIRES = {"injection-fs-restricted.yml": "/usr/bin/sandbox-exec", "injection-sentinel-position-sandbox.yml": "/usr/bin/sandbox-exec", "injection-sentinel-shape-sandbox.yml": "/usr/bin/sandbox-exec"}
+# **沒有任何 CI job 會跑第 105、109、112、114 項**（下面 `REQUIRES` 的四張沙箱探針；R66 更正，R65 requirements／regression：前一版只寫第 105 項，R62、R64 加的兩項沒有跟著改）：ubuntu job 沒有 `sandbox-exec`、macOS job 不跑 `oracle_selfcheck`（R59 G5 要求納入 CI；`.github/` 是這個 PR 的閘門本身，加一步會改變『閘門相對 `6490b57` 沒有變』這個前提，R60 沒有做，列在 CHANGELOG 的〈沒有處理的〉）——這一項只在開發機上跑。
+REQUIRES = {"injection-fs-restricted.yml": "/usr/bin/sandbox-exec", "injection-sentinel-position-sandbox.yml": "/usr/bin/sandbox-exec", "injection-sentinel-shape-sandbox.yml": "/usr/bin/sandbox-exec", "injection-named-shells-sandbox.yml": "/usr/bin/sandbox-exec"}
 
 
 def tool_usable(path, timeout=20):
@@ -505,12 +516,48 @@ def matcher_problems():
         oracle_history.CLOSED_TREES = saved + ("deadbee",)   # 封閉清單多一棵樹、凍結表沒有那一列：一定要報
         if not oracle_history.payload_history_problems(full, "M", "T"):
             problems.append("歷史 payload 檢查：封閉清單多一棵樹（凍結表沒有那一列）沒有被抓到")
+        # R66 量測後（突變第 637 靶存活）：上一案現在也會被逐樹的摘要／完整 SHA 比對抓到，鍵集合比對因此沒有只靠它的案。
+        # 它單獨守的是反方向：封閉清單少一棵樹、凍結表還有那一列時，逐樹比對只走封閉清單，看不到那一列，那棵樹的檢查就安靜地消失。
+        oracle_history.CLOSED_TREES = saved[:-1]
+        if not oracle_history.payload_history_problems(full, "M", "T"):
+            problems.append("歷史 payload 檢查：封閉清單少一棵樹（凍結表還有那一列）沒有被抓到")
     finally:
         oracle_history.CLOSED_TREES = saved
+    # R66：凍結表的第二份紀錄（摘要、完整 SHA）對不上、或少一棵樹時一定要報——資料正確時這幾道守衛不會觸發，所以要在這裡故意弄錯一次（R66 的突變對照：關掉這幾道比對時存活）。
+    for name, tree, bad in (("HISTORICAL_DIGEST", "5b5a46d", "0" * 16), ("TREE_SHA", "8b45659", "deadbeef" * 5), ("HISTORICAL_DIGEST", "636fcfe", None)):
+        table = getattr(oracle_history, name)
+        saved_v = table[tree]
+        try:
+            if bad is None:
+                del table[tree]
+            else:
+                table[tree] = bad
+            if not oracle_history.payload_history_problems(full, "M", "T"):
+                problems.append("歷史 payload 檢查：%s 的 `%s` %s沒有被抓到" % (name, tree, "少了" if bad is None else "對不上"))
+        finally:
+            table[tree] = saved_v
     for what, tree, src, want_bad in REGEN_CASES:
         got = bool(oracle_history._regen_one(tree, src))
         if got != want_bad:
             problems.append("歷史重抽比對：%s：期待%s、實際%s" % (what, "有問題" if want_bad else "通過", "有問題" if got else "通過"))
+    for what, fake, targets, want_bad, want_skip in FULFIL_CASES():
+        got, skipped = oracle_history.target_fulfillment_problems(fake, targets, tmpdir="/var/T")
+        if bool(got) != want_bad or skipped != want_skip:
+            problems.append("逐目標履行（假 oracle）：%s：期待%s、跳過 %s；實際%s、跳過 %s" % (what, "有問題" if want_bad else "通過", want_skip, "有問題" if got else "通過", skipped))
+        if sorted(fake.calls) != sorted(oracle_history.TARGET_SHAPES):
+            problems.append("逐目標履行（假 oracle）：%s：每個目標要各跑一次 run_script，實際跑了 %s" % (what, sorted(fake.calls)))
+    for what, kw, want_ran, want_bad in REGEN_GIT_CASES:
+        ran, got = oracle_history.payload_history_regen_problems("/nonexistent", git=_fake_git(**kw))
+        if ran != want_ran or bool(got) != want_bad:
+            problems.append("歷史重抽（假 git）：%s：期待%s、%s；實際%s、%s（%s）" % (what, "跑了" if want_ran else "跳過", "有問題" if want_bad else "通過",
+                                                                     "跑了" if ran else "跳過", "有問題" if got else "通過", "；".join(got)[:120]))
+    for what, src, ok in EV_CASES:
+        try:
+            pays = oracle_history.extract_payloads(src)[2]
+            if not ok(pays):
+                problems.append("抽常數：%s：抽到 %r" % (what, (pays[0][:20] if pays else pays)))
+        except BaseException as e:   # 真的逃出來才算壞；SystemExit／KeyboardInterrupt 不會從這裡來
+            problems.append("抽常數：%s：例外逃出 extract_payloads（%s）" % (what, type(e).__name__))
     for fn in ("payload_history_problems_real()", "target_fulfillment_problems_real()"):
         if fn not in inspect.getsource(main):
             problems.append("main() 沒有呼叫 %s" % fn)
@@ -537,12 +584,15 @@ REGEN_CASES = (   # (說明, 樹, 合成的 oracle.py 原始碼, 是否應該被
 )
 SHAPE_CASES = (   # (說明, 目標, 正規化後的 stdout, 神諭有沒有偵測到, 是否應該被判有問題)；短路徑的上一層是 /tmp、TMPDIR 是 /var/T
     ("priv 正確", "priv", "OI=<PRIV>/i\nPRE=1\nPB=o%s\nPP=/tmp" % _R8, True, False),
+    ("priv 前綴不是 o（R65 regression L：拿掉這一列的 pb 要被抓到）", "priv", "OI=<PRIV>/i\nPRE=1\nPB=tmp%s\nPP=/tmp" % _R8, True, True),
+    ("priv 不在短路徑底下（同上，parent）", "priv", "OI=<PRIV>/i\nPRE=1\nPB=o%s\nPP=/var/T" % _R8, True, True),
     ("priv-tmpdir 正確（32d45ff：tmp 前綴、檔名 inject）", "priv-tmpdir", "OI=<PRIV>/inject\nPRE=1\nPB=tmp%s\nPP=/var/T" % _R8, True, False),
     ("priv-tmpdir 前綴是 o（R62 的錯，R63 第 3 列）", "priv-tmpdir", "OI=<PRIV>/inject\nPRE=1\nPB=o%s\nPP=/var/T" % _R8, True, True),
     ("priv-tmpdir 放在 /tmp（上一層錯）", "priv-tmpdir", "OI=<PRIV>/inject\nPRE=1\nPB=tmp%s\nPP=/tmp" % _R8, True, True),
     ("priv-tmpdir 檔名是 i", "priv-tmpdir", "OI=<PRIV>/i\nPRE=1\nPB=tmp%s\nPP=/var/T" % _R8, True, True),
     ("cwd 正確（絕對）", "cwd", "OI=<TMP>/.orc-%s/inject\nPRE=1\nPB=o%s\nPP=/tmp" % (_R8, _R8), True, False),
-    ("cwd 正確（相對）", "cwd", "OI=.orc-%s/inject\nPRE=1" % _R8, True, False),
+    ("cwd 給了相對路徑（履行檢查用加引號的 payload，一律應是絕對路徑；R58 第一個草稿的退步，R66 起抓）", "cwd", "OI=.orc-%s/inject\nPRE=1" % _R8, True, True),
+    ("cwd-vis 給了相對路徑（同上）", "cwd-vis", "OI=inject\nPRE=1", True, True),
     ("cwd 指到 injectx（R63 的 X2）", "cwd", "OI=<TMP>/.orc-%s/injectx\nPRE=0" % _R8, False, True),
     ("cwd 沒有預先建檔（突變靶 572）", "cwd", "OI=<TMP>/.orc-%s/inject\nPRE=0" % _R8, True, True),
     ("cwd-abs 給了相對路徑", "cwd-abs", "OI=.orc-%s/inject\nPRE=1" % _R8, True, True),
@@ -551,6 +601,115 @@ SHAPE_CASES = (   # (說明, 目標, 正規化後的 stdout, 神諭有沒有偵�
     ("cwd-vis-abs 正確", "cwd-vis-abs", "OI=<TMP>/inject\nPRE=1", True, False),
     ("寫進去之後神諭沒偵測到", "cwd-vis-abs", "OI=<TMP>/inject\nPRE=1", False, True),
     ("沒登記的目標", "cwd-mystery", "OI=<TMP>/inject\nPRE=1", True, True),
+)
+
+# R66（R65 logic M：逐目標履行與 git 重抽沒有網——拿掉整個呼叫、迴圈跑零次、偵測寫死成真、逾時不報，`--selftest-matcher` 與真檢查都綠）：
+# 用假的 `oracle` 模組跑 `oracle_history.target_fulfillment_problems` 本身。假 `run_script` 依 `inject_to` 回傳排好的結果，所以接線（每個目標都跑、結果傳給形狀檢查、
+# 偵測取自 `res[4]["inject"]`、逾時與 `SystemExit` 的處理、上一層目錄的參數）都在這裡量；形狀本身的判斷由上面的 `SHAPE_CASES` 量。
+_FULFIL_OK = {   # 每個目標的正確輸出（正規化後的 stdout）；短路徑的上一層 /tmp、TMPDIR 是 /var/T
+    "priv": "OI=<PRIV>/i\nPRE=1\nPB=o%s\nPP=/tmp" % _R8, "priv-tmpdir": "OI=<PRIV>/inject\nPRE=1\nPB=tmp%s\nPP=/var/T" % _R8,
+    "cwd": "OI=<TMP>/.orc-%s/inject\nPRE=1" % _R8, "cwd-abs": "OI=<TMP>/.orc-%s/inject\nPRE=1" % _R8,
+    "cwd-vis": "OI=<TMP>/inject\nPRE=1", "cwd-vis-abs": "OI=<TMP>/inject\nPRE=1",
+}
+_FULFIL_NEAR = {   # 每個目標各一個差一點的輸出：形狀表任一列被放寬（例如換成 `.*`）就會漏掉它
+    "priv": "OI=<PRIV>/inject\nPRE=1\nPB=o%s\nPP=/tmp" % _R8, "priv-tmpdir": "OI=<PRIV>/i\nPRE=1\nPB=tmp%s\nPP=/var/T" % _R8,
+    "cwd": "OI=<TMP>/.orc-%s/injectx\nPRE=1" % _R8, "cwd-abs": "OI=.orc-%s/inject\nPRE=1" % _R8,
+    "cwd-vis": "OI=<TMP>/.orc-%s/inject\nPRE=1" % _R8, "cwd-vis-abs": "OI=inject\nPRE=1",
+}
+
+
+class _FakeOracle:
+    """`target_fulfillment_problems` 只用到這幾個名字。`plan`：目標 → `"ok"`／`"near"`／`"miss"`（沒偵測到）／`"timeout"`／`"exit"`（`sys.exit`）。"""
+    INJECT_PAYLOADS = ("echo M >>$ORACLE_INJECT", 'echo M >> "$ORACLE_INJECT"')
+
+    def __init__(self, plan, priv_ok=True):
+        self.plan, self.priv_ok, self.calls = plan, priv_ok, []
+
+    def _short_tmp(self):
+        return "/tmp"
+
+    def pick_bash(self):
+        return "bash"
+
+    def _tmpdir_spaced(self):
+        return False
+
+    def _tmpdir_priv_ok(self):
+        return self.priv_ok
+
+    def _inject_runs(self, spaced=False, tmpdir_priv=False):
+        for to in ("cwd", "priv", "cwd-vis", "cwd-abs", "cwd-vis-abs") + (("priv-tmpdir",) if tmpdir_priv else ()):
+            yield self.INJECT_PAYLOADS[1], to
+
+    def run_script(self, run, bash, stub_bin, yaml_env=None, extra=False, inject=None, inject_to="priv", inject_keys="all"):
+        self.calls.append(inject_to)
+        how = self.plan.get(inject_to, "ok")
+        if how == "exit":
+            sys.exit("假的：建不出 %s 的路徑" % inject_to)
+        if how == "timeout":
+            return ("timeout", None, None, None, {"inject": False})
+        out = (_FULFIL_NEAR if how == "near" else _FULFIL_OK)[inject_to]
+        return ("piped", (0, out.encode(), b"", None), None, None, {"inject": how != "miss"})
+
+
+def FULFIL_CASES():
+    """(說明, 假 oracle, manifest 的目標集合, 是否應該被判有問題, 應該被跳過的目標)。"""
+    every = set(_FULFIL_OK)
+    cases = [("六個目標都正確", _FakeOracle({}), every, False, [])]
+    for t in sorted(every):
+        cases.append(("%s 的輸出差一點（形狀表放寬或結果沒傳給形狀檢查）" % t, _FakeOracle({t: "near"}), every, True, []))
+    cases += [("cwd-vis 寫進去之後沒偵測到（偵測不得寫死成真）", _FakeOracle({"cwd-vis": "miss"}), every, True, []),
+              ("priv 逾時（逾時要報）", _FakeOracle({"priv": "timeout"}), every, True, []),
+              ("manifest 多一個目標（目標集合要比對）", _FakeOracle({}), every | {"cwd-mystery"}, True, []),
+              ("priv-tmpdir 建不出路徑、這個環境也不用它（記為跳過，不是問題）", _FakeOracle({"priv-tmpdir": "exit"}, priv_ok=False), every, False, ["priv-tmpdir"]),
+              ("priv-tmpdir 建不出路徑、但這個環境會用它（是問題）", _FakeOracle({"priv-tmpdir": "exit"}), every, True, []),
+              ("cwd 建不出路徑（這個環境一定用它）", _FakeOracle({"cwd": "exit"}), every, True, [])]
+    return cases
+
+
+def _fake_git(missing=(), unreadable=(), boom=(), pct=False, other_marker=()):
+    """假的 git：`cat-file -e` 對 `missing` 以外的樹成功；`show` 回傳依凍結表合成的 `oracle.py`（`pct=True` 時 `8b45659` 那一份用 `%` 拼字串，量 `_ev` 的 `%`）。"""
+    import types
+    by_sha = {oracle_history.TREE_SHA[t]: t for t in oracle_history.CLOSED_TREES}
+
+    def src(tree):
+        if pct and tree == "8b45659":
+            return _SRC8B_PCT
+        m, k = ("OTHER-MARKER", oracle_history.CANON_TOKEN) if tree in other_marker else (oracle_history.CANON_MARKER, oracle_history.CANON_TOKEN)
+        pays = tuple(oracle_history._canon(oracle_history.PAYLOAD_UNION[i], m, k) for i in oracle_history.HISTORICAL_PAYLOADS[tree])
+        return 'INJECT_MARKER = %r\nINJECT_PATH_TOKEN = %r\nINJECT_PAYLOADS = %r\n' % (m, k, pays)
+
+    def git(*a):
+        if a[0] == "cat-file":
+            t = by_sha.get(a[2].split("^")[0])
+            return types.SimpleNamespace(returncode=1 if t is None or t in missing else 0, stdout="")
+        t = by_sha.get(a[1].split(":")[0])
+        if t in boom:
+            raise subprocess.TimeoutExpired("git", 60)
+        if t is None or t in unreadable:
+            return types.SimpleNamespace(returncode=128, stdout="")
+        return types.SimpleNamespace(returncode=0, stdout=src(t))
+    return git
+
+
+_SRC8B_PCT = 'INJECT_MARKER = "ORACLE-INJECT-MARKER"\n_S = "$(echo${IFS}%s>&197)" % INJECT_MARKER\nINJECT_PAYLOADS = ("PWD[" + _S + "]", "-v PWD[" + _S + "]", "-n -o -v PWD[" + _S + "]", "echo %s >&197" % INJECT_MARKER)\n'
+REGEN_GIT_CASES = (   # (說明, 假 git 的參數, 期待「跑了」, 期待有問題)
+    ("九棵樹都在、內容相符", {}, True, False),
+    ("九棵樹都在、8b45659 用 % 拼字串（_ev 要認得 %）", {"pct": True}, True, False),
+    ("九棵都沒有（淺層 clone）：跳過，不算問題", {"missing": tuple(oracle_history.CLOSED_TREES)}, False, True),
+    ("只缺一棵：是問題，不是整個跳過", {"missing": ("32d45ff",)}, True, True),
+    ("一棵讀不到 oracle.py", {"unreadable": ("6490b57",)}, True, True),
+    ("一棵 git show 逾時：報問題，不讓 selfcheck 當掉", {"boom": ("636fcfe",)}, True, True),
+    ("一棵的標記不是凍結的寫法：不能逕自正規化（R65 Codex：全域字串替換分不出字面與標記）", {"other_marker": ("b86bc53",)}, True, True),
+)
+# R66（R65 security L）：`_ev` 抽的是舊樹原始碼的常數，資源要有上限，例外不能逃出去。(說明, 原始碼, 抽到的 payload 檢查)
+EV_CASES = (
+    ("3000 項的 + 鏈：RecursionError 不逃出去", 'M = "a"\nINJECT_PAYLOADS = (M' + " + M" * 3000 + ",)\n", lambda pays: pays is None),
+    ("% 的寬度上億：不展開", 'X = "%050000000d" % 1\nINJECT_PAYLOADS = (X,)\n', lambda pays: pays is None),
+    ("% 的 * 寬度：不展開", 'X = "%*d" % (50000000, 1)\nINJECT_PAYLOADS = (X,)\n', lambda pays: pays is None),
+    ("% 參數不對：不當掉", 'X = "%d" % "a"\nINJECT_PAYLOADS = (X,)\n', lambda pays: pays is None),
+    ("倍增串接：單一字串有上限", 'X = "aaaa"\n' + "".join("X = X + X\n" for _ in range(24)) + "INJECT_PAYLOADS = (X,)\n", lambda pays: pays is not None and len(pays[0]) <= 1 << 16),
+    ("語法錯誤：回 None", "INJECT_PAYLOADS = (\n", lambda pays: pays is None),
 )
 
 
@@ -564,6 +723,11 @@ XRUN_CASES = (   # (說明, 假的 run 內容, 是否應該被判有問題)；`_
     ("檔名寫死成完整字串（含連字號）、PATH 只是算了沒用", "python3 -c 'import os, hashlib; k = {K}; t = \"/tmp/orc-known-xrun-taint-shared\"'", True),
     ("檔名接了常數尾碼、PATH 只是算了沒用", "python3 -c 'import os; unused = os.environ[\"PATH\"]; t = \"/tmp/orc-known-xrun-taint-\" + \"shared\"'", True),
     ("沒有用 PATH 當鍵", "python3 -c 'import os; t = \"/tmp/orc-known-xrun-taint-\" + str(os.getuid())'", True),
+    # R66：XR6、XR7 的兩種固定寫法要過；上層目錄寫死檔名、寫到使用者的家目錄要被抓到（探針不碰家目錄。這是探針衛生，不是豁免範圍：(9) 2026-11-08 起以性質劃界，家目錄也在豁免內）
+    ("固定寫法：/var/tmp 底下", "python3 -c 'import os, sys, hashlib; t = \"/var/tmp/orc-known-xrun-vtaint-\" + {K}; sys.exit(0) if os.path.exists(t) else None'", False),
+    ("固定寫法：步驟 cwd 的上層", "python3 -c 'import os, sys, hashlib; t = os.path.join(os.path.dirname(os.getcwd()), \"orc-known-xrun-ptaint-\" + {K}); sys.exit(0) if os.path.exists(t) else None'", False),
+    ("步驟 cwd 的上層、檔名寫死", "python3 -c 'import os, hashlib; k = {K}; t = os.path.join(os.path.dirname(os.getcwd()), \"orc-known-xrun-ptaint-shared\")'", True),
+    ("寫到使用者的家目錄（探針不碰家目錄）", "python3 -c 'import os, hashlib; t = os.path.join(os.path.expanduser(\"~\"), \"orc-known-xrun-htaint-\" + {K})'", True),
 )
 
 
@@ -643,6 +807,8 @@ def payload_history_problems_real():
     """R64（R63 第 2 列）：封閉清單各樹的每一組 payload 都在 `oracle.INJECT_PAYLOADS` 裡；有 git 歷史時另外把凍結表與歷史重抽的結果逐列比對（沒有歷史就印一行說明、不算通過也不算失敗）。"""
     mod = load_oracle()
     probs = oracle_history.payload_history_problems(mod.INJECT_PAYLOADS, mod.INJECT_MARKER, mod.INJECT_PATH_TOKEN)
+    if (mod.INJECT_MARKER, mod.INJECT_PATH_TOKEN) != (oracle_history.CANON_MARKER, oracle_history.CANON_TOKEN):   # R66（R65 Codex）：凍結表的比對會把記號換成現在的值，記號本身要另外守
+        probs.append("INJECT_MARKER／INJECT_PATH_TOKEN 與凍結的寫法不同：%r、%r" % (mod.INJECT_MARKER, mod.INJECT_PATH_TOKEN))
     ran, regen = oracle_history.payload_history_regen_problems(str(HERE.parents[2]))
     if ran:
         probs += regen
@@ -653,7 +819,10 @@ def payload_history_problems_real():
 
 def target_fulfillment_problems_real():
     """R64（R63 第 3、4 列）：每個 `_inject_runs` 目標真的跑一次 `run_script`，比對實際建出的哨兵路徑形狀、上一層、預先建檔與偵測（`oracle_history.TARGET_SHAPES`）。"""
-    return oracle_history.target_fulfillment_problems(load_oracle(), {row[2] for row in HISTORICAL_SENTINEL_POSITIONS})
+    probs, skipped = oracle_history.target_fulfillment_problems(load_oracle(), {row[2] for row in HISTORICAL_SENTINEL_POSITIONS})
+    if skipped:
+        print("↷ 逐目標履行：%s 跳過——這個環境的 `_inject_runs` 不用它、`run_script` 也建不出它的路徑（例如 TMPDIR 含空白時的 priv-tmpdir）；不算通過" % ", ".join(skipped))
+    return probs
 
 
 # R62 量測抓到（2026-10-25）：第 110 項的 XR 探針原本用固定檔名 `/tmp/orc-known-xrun-*` 加『30 秒後視為過期』。XR1、XR3 的 taint 只在第一次寫入，之後的執行看它的**年齡**；
@@ -663,11 +832,14 @@ def target_fulfillment_problems_real():
 # 修法：狀態檔名接上神諭這次呼叫的 `PATH` 雜湊（`PATH` 由 `run_script` 以 `stub_bin` 蓋寫，`stub_bin` 是 `main()` 每次呼叫 mkdtemp 一次、整個行程共用；XR 探針的 YAML `env:` 沒有 `PATH`）。
 # **這裡的檢查是刻意的封閉結構約束，不是『不讀時鐘』的證明**（R62 Codex 第三次核對 1–3：黑名單版擋不住 `from time import time as now`、`os.stat(t).st_ctime`、接了常數尾碼的檔名）：
 # 每個 `run:`（先去掉 bash 的註解行）必須 (1) 只 import `os`、`sys`、`hashlib`、`subprocess`（不准 `from … import`、`__import__`、`importlib`），(2) 不出現 `_XRUN_FORBIDDEN_RE` 列的時間、stat 與
-# 檔案時間類寫法（Python 與 bash 兩邊），(3) 每一個 `/tmp/orc-known-xrun` 都恰好是 `"/tmp/orc-known-xrun-<種類>-" + <_XRUN_KEY_EXPR>` 這個形狀，且至少一個。
+# 檔案時間類寫法（Python 與 bash 兩邊），(3) 每一個 `orc-known-xrun` 都恰好是下面三種固定寫法之一，且至少一個：`"/tmp/orc-known-xrun-<種類>-" + <_XRUN_KEY_EXPR>`、
+# `"/var/tmp/orc-known-xrun-<種類>-" + <_XRUN_KEY_EXPR>`、`os.path.join(os.path.dirname(os.getcwd()), "orc-known-xrun-<種類>-" + <_XRUN_KEY_EXPR>)`（R66：後兩種是 R63 第 6 列的 `/var/tmp` 與步驟 cwd 上層的 taint 格，
+# 使用者 2026-11-01 的決定要求收進這張探針；三個位置都在 (9) 的豁免範圍內。固定寫法只收這三種是探針衛生的約束，不是豁免範圍）。
 # 語義相同的其他寫法（例如 `os.environ.get("PATH", "")`）也會被判不符——改探針的人要同時改這裡，訊息會說是『不符合固定寫法』。
 XRUN_PROBE = PROBES / "injection-cross-run-state-known-blind-spots.yml"
 _XRUN_KEY_EXPR = 'hashlib.sha1(os.environ["PATH"].encode()).hexdigest()[:16]'
-_XRUN_STATE_RE = re.compile(r'"/tmp/orc-known-xrun-[a-z]+-" \+ ' + re.escape(_XRUN_KEY_EXPR))
+_XRUN_STATE_RE = re.compile(r'"(?:/tmp|/var/tmp)/orc-known-xrun-[a-z]+-" \+ ' + re.escape(_XRUN_KEY_EXPR)
+                            + r'|os\.path\.join\(os\.path\.dirname\(os\.getcwd\(\)\), "orc-known-xrun-[a-z]+-" \+ ' + re.escape(_XRUN_KEY_EXPR) + r'\)')
 _XRUN_ALLOWED_IMPORTS = frozenset({"os", "sys", "hashlib", "subprocess"})
 _XRUN_IMPORT_RE = re.compile(r"\bimport\s+([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)")
 _XRUN_FORBIDDEN_RE = re.compile(r"\bfrom\s+\w+\s+import\b|__import__|\bimportlib\b|\bdatetime\b|\btime\b|stat\b|\bst_\w*time|\bget[amc]time\b|\btimes\b|\bscandir\b"
@@ -700,11 +872,11 @@ def xrun_probe_problems(text):
         bad_imports = sorted({m for g in _XRUN_IMPORT_RE.findall(code) for m in re.split(r"\s*,\s*", g)} - _XRUN_ALLOWED_IMPORTS)
         if bad_imports:
             problems.append("第 %d 個 run 不符合固定寫法：import 了允許清單以外的模組 %s（只准 os、sys、hashlib、subprocess）" % (i, "、".join(bad_imports)))
-        n_state, n_keyed = code.count("/tmp/orc-known-xrun"), len(_XRUN_STATE_RE.findall(code))
+        n_state, n_keyed = code.count("orc-known-xrun"), len(_XRUN_STATE_RE.findall(code))
         if n_state == 0:
-            problems.append("第 %d 個 run 沒有 `/tmp/orc-known-xrun-…` 狀態檔" % i)
+            problems.append("第 %d 個 run 沒有 `orc-known-xrun-…` 狀態檔" % i)
         elif n_keyed != n_state:
-            problems.append("第 %d 個 run 不符合固定寫法：`/tmp/orc-known-xrun` 出現 %d 次，只有 %d 次是 `\"/tmp/orc-known-xrun-<種類>-\" + %s`（寫死或接了別的尾碼的檔名會讓平行的神諭與上一次呼叫的殘檔共用狀態）" % (i, n_state, n_keyed, _XRUN_KEY_EXPR))
+            problems.append("第 %d 個 run 不符合固定寫法：`orc-known-xrun` 出現 %d 次，只有 %d 次是三種固定寫法之一（`/tmp`、`/var/tmp` 或步驟 cwd 的上層，接 %s；寫死或接了別的尾碼的檔名會讓平行的神諭與上一次呼叫的殘檔共用狀態）" % (i, n_state, n_keyed, _XRUN_KEY_EXPR))
     return problems
 
 
@@ -764,7 +936,7 @@ def main():
         for x in probs:
             print("✗ " + x)
         if not probs:
-            print("matcher ok（12 案＋tool_usable 6 案＋哨兵位置 manifest %d 案＋XR 探針 %d 案＋歷史 payload %d 案＋歷史重抽 %d 案＋逐目標形狀 %d 案）" % (MANIFEST_CASE_COUNT, len(XRUN_CASES), len(HISTORY_CASES(())), len(REGEN_CASES), len(SHAPE_CASES)))
+            print("matcher ok（12 案＋tool_usable 6 案＋哨兵位置 manifest %d 案＋XR 探針 %d 案＋歷史 payload %d 案＋歷史重抽 %d 案＋逐目標形狀 %d 案＋逐目標履行 %d 案＋歷史重抽〔假 git〕%d 案＋抽常數 %d 案）" % (MANIFEST_CASE_COUNT, len(XRUN_CASES), len(HISTORY_CASES(())), len(REGEN_CASES), len(SHAPE_CASES), len(FULFIL_CASES()), len(REGEN_GIT_CASES), len(EV_CASES)))
         return 1 if probs else 0
     bad = 0
     for x in matcher_problems():

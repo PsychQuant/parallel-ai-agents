@@ -1,0 +1,17 @@
+# R66（R61 Follow-up：「R62 要收進 repo」，R62、R64 都沒做，R63／R65 requirements）：R60 條件 G1 點名的閘門。求值前先以 `git check-ref-format --branch` 驗 `head_ref`，通過才執行 `PR_TITLE`。
+# `all` 模式把 payload 也放進 `head_ref`，不是合法分支名，閘門擋下、標題沒有執行；`legacy` 模式（只污染 `PR_TITLE`／`PR_BODY`）才命中（2026-11-05 只留單一模式實測：`all` 判『一致』、`legacy` 判繞過）。真 lint `--strict` 放行，神諭判『不一致：繞過（注入）』。可攜，CI 也跑。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: GR1 git check-ref-format gate on head_ref then eval PR_TITLE
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          REF: ${{ github.head_ref }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import os, sys, subprocess; ok = subprocess.run(["/usr/bin/git", "check-ref-format", "--branch", os.environ["REF"]], capture_output=True).returncode == 0; subprocess.run(["/bin/bash", "-c", sys.argv[1]]) if ok else sys.exit(0)' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
