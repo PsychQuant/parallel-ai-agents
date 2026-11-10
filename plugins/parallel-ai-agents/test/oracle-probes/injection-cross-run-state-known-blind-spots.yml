@@ -8,14 +8,14 @@
 #   XR3  （DA 的 DT1）cwd 底下有任何點開頭的項目就在共用 `/tmp` 留 taint 檔：E 組的 `cwd` 目標那次執行建出 `.orc-*/`，之後的 `priv` 目標執行被吃掉（R58 起）：`6490b57`、`28ec8c3` 判繞過，`5b5a46d`、`32d45ff`、`8b45659`、`bf0c8a7`、R60、R62 判『一致』。
 #   XR4  （R63 logic、regression 的工作區衛生檢查格）cwd 頂層有名為 `inject` 的可見檔就在共用 `/tmp` 留 taint 檔，否則以 `IFS=; eval` 執行換掉斜線的 `PR_TITLE`（只有 #16 命中）：R62 的 `cwd-vis` 目標在 #13 那幾次就預先建好可見的 `inject`，#16 的執行全被吃掉。這一格是 R62 **自己造出**的：`636fcfe` 判繞過（#16），R62（`8292d86`）與 R64 判『一致』（2026-11-01 協調者在兩棵樹上重現；拿掉 `cwd-vis` 的突變回到繞過）。R63 DA 證明不存在免費的順序，所以列在這裡、不改順序。
 #   XR5～XR7（R66；R63 第 6 列的其餘格子，使用者 2026-11-01 的決定要求「列入已知盲點探針」——R64 只收了 XR4，用「計數器型已有 XR2」的理由略過計數格，R65 指出那是錯的：XR2 帶 `head_ref` 閘門，這裡的計數格沒有任何閘門）：
-#   XR5  （R63 DA 的 CN 格）純計數器：共用 `/tmp` 的計數檔，第 24 次執行起拒絕，否則以 `IFS=; eval` 執行換掉斜線的 `PR_TITLE`。不碰任何儀器、不看任何 PR 欄位，只數執行次數。2026-11-04 實測（門檻 16～28 掃過）：`636fcfe` 門檻 20～28 判繞過 #16、`6490b57` 門檻 18～28 判繞過 #16，`8984454` 全部判『一致』；取兩棵舊樹都繞過的區間中段 24。
+#   XR5  （R63 DA 的 CN 格）純計數器：共用 `/tmp` 的計數檔，之前已執行 21 次以上（第 22 次起）就拒絕〔R68 從 24 改成 21，見下面的補註〕，否則以 `IFS=; eval` 執行換掉斜線的 `PR_TITLE`。不碰任何儀器、不看任何 PR 欄位，只數執行次數。2026-11-04 實測（門檻 16～28 掃過）：`636fcfe` 門檻 20～28 判繞過 #16、`6490b57` 門檻 18～28 判繞過 #16，`8984454` 全部判『一致』；取兩棵舊樹都繞過的區間中段 24。**R68 補註（R67 regression；宣稱查核更正）**：計數器在 #16 第一次執行時看到的是之前的執行數——注入序列裡 #16 之前有 28 次（`priv-tmpdir` 目標存在時）或 21 次（不存在時；2026-11-09 以 `_inject_runs` 數出），神諭在注入之前還先跑一次步驟，所以計數是 29 或 22；`TMPDIR` 含空白時另多 `cwd-abs` 的執行，是 28。前一版的門檻 24 落在 22 與 29 之間：`TMPDIR` 的路徑含 `_inject_path_ok` 不收、又不是空白的字元（例如 `~`）時 `priv-tmpdir` 不在，XR5 判繞過、第 110 項變紅（R68 宣稱查核實測）。**R68 把門檻改成 21**：R66 的掃描（門檻 16～28）顯示 `636fcfe` 在門檻 18 一致、20 起繞過，`6490b57` 在 16 一致、18 起繞過，計數器的判定隨門檻單調，所以 21 在兩棵舊樹都繞過，而新樹三種計數（22、28、29）都 ≥ 21。2026-11-10 實測（load1 約 20～30）：`636fcfe` XR4、XR5 繞過，`6490b57` 七格繞過，`8984454` 七格一致；新樹在預設、含 `~`、含空白三種 `TMPDIR` 下第 110 項都 rc=0、七格一致。棘輪跳起來仍可能是 #16 之前的執行數變了（例如加減目標或 payload），不只是神諭變成封閉的執行。
 #   XR6  （R63 security 的 XV1）同 XR1 的 `head_ref` 閘門，taint 放在 `/var/tmp`。`6490b57` 判繞過 #5，`636fcfe`、`8984454` 判『一致』（2026-11-04 實測）。
 #   XR7  （R63 security 的 XV2）同上，taint 放在步驟 cwd 的上層（神諭的 `TMPDIR`）。`6490b57` 判繞過 #5，`636fcfe`、`8984454` 判『一致』（2026-11-04 實測）。
 #   負對照：2026-11-04（R66）以七格的本版探針實測：`8984454` 七格一致；`636fcfe` XR4、XR5 判繞過（其餘一致）；`6490b57` 七格全部判繞過（load1 約 70～100，判定由狀態檔決定、不隨負載變）。
 #   更早：2026-10-26 以本版探針在封存的七棵舊樹上實測（XR1～XR3 那三行）；另以前一版探針（固定檔名、30 秒過期）在 `32d45ff`、`28ec8c3`、`5b5a46d`、`8b45659` 上對照，12 格判定與本版相同——以 `PATH` 為鍵沒有在舊樹上造出差異。
 # taint 與計數檔放在字面的 `/tmp`（XR6 放 `/var/tmp`、XR7 放步驟 cwd 的上層），檔名是 `orc-known-xrun-<種類>-<鍵>`，**鍵是 `PATH` 的 SHA-1 前 16 碼**：`PATH` 的第一段是整個神諭行程共用、每次呼叫都新建的 stub 目錄（`$TMPDIR/oracle-*/bin`，在 `_OWN_ENV` 裡、不會被注入），所以同一次呼叫的多次執行共用狀態、不同呼叫通常互不相干（stub 目錄名隨機；殘檔、名稱重用與截短的雜湊不是數學上不可能——R63 Codex），**不讀時鐘**（`oracle_selfcheck.py` 的 `xrun_probe_problems` 守這兩件事）。
 # 前一版用固定檔名加『30 秒後視為過期』：XR1、XR3 的 taint 只寫一次，之後的執行看它的年齡；XR2 每次執行都重寫計數檔，要相鄰兩次執行的間隔超過 30 秒才重置。整份探針在 load 約 12 時跑 33 秒（每格約 11 秒），所以機器變慢時判定可能翻成『繞過』（窗口改成 0 秒實測三格都判繞過；慢到什麼程度才翻沒有量）；平行的神諭（突變全輪 `--jobs 8` 同時跑好幾份 selfcheck）又共用同一組固定檔名，一方留下的 taint 會吃掉另一方的執行。R62 的量測鏈 2026-10-25 11:10 的前置驗證裡第 110 項變紅，當時校準只有 13～19 秒（不是單純的慢）；是哪一個成因這次沒有分辨，本版兩個都去掉。
-# 殘檔：每次呼叫最多五個空檔／小數字檔留在 `/tmp`、一個留在 `/var/tmp`、一個留在神諭的 `TMPDIR`（不清；與 `test/README.md` (iii) 列的 F5 固定檔名同一類的開發機工具問題，不是 CI 閘門問題）。
+# 殘檔：每次呼叫最多五個空檔／小數字檔留在 `/tmp`、一個留在 `/var/tmp`（XR6）、一個留在神諭的 `TMPDIR`（XR7，步驟 cwd 的上層）（不清；與 `test/README.md` (iii) 列的 F5 固定檔名同一類的開發機工具問題，不是 CI 閘門問題）。
 # LINT-ARGS: --strict
 name: t
 on: pull_request
@@ -53,13 +53,13 @@ jobs:
         run: |
           set -o pipefail
           { /usr/bin/python3 -c 'import os, sys, hashlib, subprocess; t = "/tmp/orc-known-xrun-vis-" + hashlib.sha1(os.environ["PATH"].encode()).hexdigest()[:16]; sys.exit(0) if os.path.exists(t) else None; (open(t, "w").close(), sys.exit(0)) if "inject" in os.listdir(".") else subprocess.run(["/bin/bash", "-c", "IFS=; eval \"$0\"", sys.argv[1].replace("/", "_")])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
-      - name: XR5 pure per-machine execution counter in /tmp (per oracle run), refuse from the 24th execution; evaluator IFS-empty eval with slashes replaced
+      - name: XR5 pure per-machine execution counter in /tmp (per oracle run), refuse once 21 earlier executions have run; evaluator IFS-empty eval with slashes replaced
         shell: bash
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           set -o pipefail
-          { /usr/bin/python3 -c 'import os, sys, hashlib, subprocess; p = "/tmp/orc-known-xrun-cnt-" + hashlib.sha1(os.environ["PATH"].encode()).hexdigest()[:16]; k = int(open(p).read() or 0) if os.path.exists(p) else 0; open(p, "w").write(str(k + 1)); sys.exit(0) if k >= 24 else subprocess.run(["/bin/bash", "-c", "IFS=; eval \"$0\"", sys.argv[1].replace("/", "_")])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+          { /usr/bin/python3 -c 'import os, sys, hashlib, subprocess; p = "/tmp/orc-known-xrun-cnt-" + hashlib.sha1(os.environ["PATH"].encode()).hexdigest()[:16]; k = int(open(p).read() or 0) if os.path.exists(p) else 0; open(p, "w").write(str(k + 1)); sys.exit(0) if k >= 21 else subprocess.run(["/bin/bash", "-c", "IFS=; eval \"$0\"", sys.argv[1].replace("/", "_")])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
       - name: XR6 head_ref gate with the taint in /var/tmp (per oracle run), then eval PR_TITLE
         shell: bash
         env:

@@ -1735,7 +1735,7 @@ MUTATIONS += [
     # ── R54（#33 verify R53）：payload 拆成單一通道的家族（S／R：fd 的 dup；P／Pc：路徑；D／Dc：`/dev/fd/197`），每一組有自己的殺手探針；R52 的長寫法把路徑與 fd 綁在同一個字串，兩半各自冗餘於別組，網釘不住 ──
     ('oracle: 路徑 payload（`_INJECT_P`）不寫私有路徑（只有 `[ -n $0 ]` 算術脈絡 ∧ 關 fd；文字被截斷 ∧ 關 fd；R53 D1 → R56 起 selfcheck 82 與 96 的 P 格被 E 組遮住〔82 的 #7 同時有 #15；96 的 P 格 [5,6,7,13,14,15]〕，實際殺手是 96 的 V 格〔清環境 ∧ 關 fd〕與 101 的 P56 格；Q、W 另被 Pc 命中，R57 logic／regression LOW）',
      '_INJECT_P = "$(echo${IFS}" + INJECT_MARKER + ">>" + INJECT_PATH_TOKEN + ")"', '_INJECT_P = "$(echo${IFS}" + INJECT_MARKER + ">/dev/null)"', 'oracle-inverted'),
-    ('oracle: 程式碼行 Pc 不寫私有路徑（Pc 獨有的只剩『清環境 ∧ 關 fd』的格子——J 格〔`IFS=` 之後的 `eval` ∧ 關 fd〕現在由 #11、#16 命中；R53 D1 → selfcheck 89 的 J 格原本是殺手；R56 加入 E 組後 J 格改由 #16 命中，現在由 selfcheck 101 的 Pc44 格殺〔宣稱查核 A 組實測〕）',
+    ('oracle: 程式碼行 Pc 不寫私有路徑（Pc 獨有的只剩『清環境 ∧ 關 fd』的格子——J 格〔`IFS=` 之後的 `eval` ∧ 關 fd〕現在由 #11、#16 命中；R53 D1 → selfcheck 89 的 J 格原本是殺手；R56 加入 E 組後 J 格改由 #16 命中，R64 前由 selfcheck 101 的 Pc44 格殺〔宣稱查核 A 組實測〕；R68 更正（R67 regression，#597 同族漏改）：R64 加回的歷史 payload 也命中 Pc44 格，2026-11-09 實測這個突變下第 96、101 項都通過、不再區分；R66 量測記下的殺手證據是歷史 payload 凍結表（`b86bc53`／`6490b57`／`ecb77d9` 的第 11 組））',
      '"echo " + INJECT_MARKER + " >>" + INJECT_PATH_TOKEN,\n', '"echo " + INJECT_MARKER + " >/dev/null",\n', 'oracle-inverted'),
     ('oracle: 程式碼行 Dc 不寫 fd 197（只有 dash ∧ `IFS=` 之後的 `eval` ∧ 刪目錄；R53 Codex 1 → selfcheck 98 的第二個 step；R66 更正（R65 logic／regression／DA）：R64 加回的 #17～#20 也寫 fd 197，selfcheck 98 的兩個 step 都被它們命中，不再區分這個突變——這個靶現在由歷史 payload 凍結表殺掉）',
      '"echo " + INJECT_MARKER + " >/dev/fd/197 || :",\n', '"echo " + INJECT_MARKER + " >/dev/null || :",\n', 'oracle-inverted'),
@@ -2006,21 +2006,21 @@ MUTATIONS += [
     ('history: 逐目標履行忽略 tmpdir 參數（R66 → 假 oracle「六個目標都正確」）',
      '    tmpdir = tmpdir or tempfile.gettempdir()', '    tmpdir = tempfile.gettempdir()', 'history-matcher'),
     ('history: 重抽一律回報沒有歷史（R65 logic 突變 (6) → 假 git「九棵樹都在」）',
-     '    if not present:\n', '    if True:\n', 'history-matcher'),
+     '    if not present and not failed and not nogit:\n', '    if True:\n', 'history-matcher'),
     ('history: 重抽時其他樹有歷史、這棵沒有也不報（R66，前一版缺一棵就整個跳過 → 假 git「只缺一棵」）',
-     '    probs = ["`%s`：其他樹有 git 歷史、這棵沒有（完整 SHA 寫錯，或歷史被截斷）" % t for t in missing]', '    probs = []', 'history-matcher'),
+     '    probs += ["`%s`：其他樹有 git 歷史、這棵沒有（完整 SHA 寫錯，或歷史被截斷）" % t for t in missing] if present else \\\n', '    probs += [] if present else \\\n', 'history-matcher'),
     ('history: 重抽讀不到某棵樹的 oracle.py 也不報（R65 logic 突變 (7) → 假 git「一棵讀不到」）',
      '            probs.append("`%s`：讀不到 %s" % (tree, ORACLE_REL))\n', '            pass\n', 'history-matcher'),
     ('history: 重抽的 git show 例外不接（R65 logic L：TimeoutExpired 讓 selfcheck 當掉 → 假 git「一棵逾時」）',
-     '        except (OSError, subprocess.SubprocessError, UnicodeDecodeError) as e:', '        except ZeroDivisionError as e:', 'history-matcher'),
+     '        except (OSError, subprocess.SubprocessError, UnicodeDecodeError) as e:\n            probs.append(', '        except ZeroDivisionError as e:\n            probs.append(', 'history-matcher'),
     ('history: 抽 payload 的求值器不認 `%`（R65 logic → 假 git「8b45659 用 % 拼字串」）',
      '        if isinstance(n.op, ast.Mod) and isinstance(a, str):', '        if False:', 'history-matcher'),
     ('history: 凍結表的摘要不比對（R66；前一版凍結表少一組只有 git 重抽看得到 → --selftest-matcher 的「摘要對不上」案）',
-     '        if HISTORICAL_DIGEST.get(tree) != _row_digest(tree):', '        if False:', 'history-matcher'),
+     '        if HISTORICAL_DIGEST.get(tree) != digest:', '        if False:', 'history-matcher'),
     ('history: 凍結表 `5b5a46d` 那一列少第 4 組（R65 logic 突變 (9)，前一版在 CI 與突變全輪都看不到 → 摘要）',
      "    '5b5a46d': (0, 1, 2, 3),", "    '5b5a46d': (0, 1, 2),", 'history-matcher'),
     ('history: 完整 SHA 不檢查（R66 → --selftest-matcher 的「TREE_SHA 對不上」案）',
-     '        if not TREE_SHA.get(tree, "").startswith(tree):', '        if False:', 'history-matcher'),
+     '        if not (re.fullmatch(r"[0-9a-f]{40}", sha) and sha.startswith(tree)):', '        if False:', 'history-matcher'),
     ('history: `cwd` 的形狀放寬成任何字串（R65 logic 突變 (8)、requirements L → 假 oracle「cwd 的輸出差一點」）',
      '"cwd":         {"oi": r"<TMP>/\\.orc-" + _RND + r"/inject"}', '"cwd":         {"oi": r".*"}', 'history-matcher'),
     ('history: `cwd-vis` 的形狀接受相對路徑（R66 → --selftest-matcher 的「cwd-vis 給了相對路徑」）',
@@ -2029,18 +2029,70 @@ MUTATIONS += [
      '"pb": r"o" + _RND,   "parent": "short"}', '"pass": ""}', 'history-matcher'),
     ('history: 抽常數的串接沒有長度上限（R65 security → --selftest-matcher 的「倍增串接」）',
      '            if len(a) + len(b) > _EV_MAX:', '            if False:', 'history-matcher'),
-    ('history: 抽常數的 `%` 不擋大寬度（R65 security → --selftest-matcher 的「% 的寬度上億」「% 的 * 寬度」）',
+    ('history: 抽常數的 `%` 不擋大寬度（R65 security → --selftest-matcher 的「% 的寬度上億」「% 的 * 寬度」；R68：估計加進寬度之後「% 的寬度上億」改由估計擋下、兩案都不再區分這個突變——#597 形狀，matcher 靶的突變確認抓到；現在由 `%*d` 的峰值記憶體檢查殺）',
      '            if len(a) > _EV_MAX or _EV_WIDE_RE.search(a):', '            if False:', 'history-matcher'),
     ('history: 抽常數的 `%` 例外逃出去（R66 → --selftest-matcher 的「% 參數不對」）',
      '            except (TypeError, ValueError) as e:', '            except ZeroDivisionError as e:', 'history-matcher'),
     ('history: 抽常數的 RecursionError 逃出去（R65 security → --selftest-matcher 的「3000 項的 + 鏈」）',
-     '            except (_Unev, RecursionError):', '            except _Unev:', 'history-matcher'),
+     '            except (_Unev, RecursionError, MemoryError):', '            except (_Unev, MemoryError):', 'history-matcher'),
     ('history: 語法錯誤的舊原始碼讓抽常數當掉（R66 → --selftest-matcher 的「語法錯誤」）',
      '    except (SyntaxError, ValueError, RecursionError, MemoryError):', '    except ZeroDivisionError:', 'history-matcher'),
     ('selfcheck: `main()` 不呼叫歷史 payload 凍結表的檢查（R64 → --selftest-matcher 的原始碼檢查）',
      '    for x in payload_history_problems_real():\n        print("✗ 歷史 payload 凍結表：" + x)\n        bad += 1\n', '', 'selfcheck-matcher'),
     ('selfcheck: `main()` 不呼叫逐目標履行檢查（R64 → --selftest-matcher 的原始碼檢查）',
      '    for x in target_fulfillment_problems_real():\n        print("✗ 逐目標履行：" + x)\n        bad += 1\n', '', 'selfcheck-matcher'),
+    # R68（#33 verify R67 blocking 第 1 列）：重抽這條權威路徑的接線與失敗分支。前一版這幾行沒有任何靶，拿掉都存活（協調者在 3d94732 上重現）。
+    ('selfcheck: 凍結表組裝不守 INJECT_MARKER／INJECT_PATH_TOKEN（R67 logic／DA → --selftest-matcher 的「記號被改」）',
+     '    if (mod.INJECT_MARKER, mod.INJECT_PATH_TOKEN) != (oracle_history.CANON_MARKER, oracle_history.CANON_TOKEN):', '    if False:', 'selfcheck-matcher'),
+    ('selfcheck: 重抽回報的問題沒有算進去（R67 logic／DA → --selftest-matcher 的「重抽回報一個問題」）',
+     '        probs += rprobs\n', '        pass\n', 'selfcheck-matcher'),
+    ('selfcheck: 假 git 的接受清單由受測的 TREE_SHA 反建（R67 Codex C2 → --selftest-matcher 的「TREE_SHA 退回 7 碼縮寫時假 git 照收」）',
+     ' if re.fullmatch(r"[0-9a-f]{40}", oracle_history.TREE_SHA.get(t, ""))}', '}', 'selfcheck-matcher'),
+    ('history: 完整 SHA 只看 startswith（R67 Codex C2 → --selftest-matcher 的 TREE_SHA 縮寫案）',
+     '        if not (re.fullmatch(r"[0-9a-f]{40}", sha) and sha.startswith(tree)):', '        if not sha.startswith(tree):', 'history-matcher'),
+    ('history: 一棵的 cat-file 丟例外就整輪跳過（R67 Codex C1 → --selftest-matcher 的「第一棵／中途 cat-file 逾時」）',
+     '            failed.append((tree, type(e).__name__))\n            continue\n', '            return False, ["沒有可用的 git（%s）" % e]\n', 'history-matcher'),
+    ('history: cat-file 的解碼錯誤沒接（R67 Codex C1 → --selftest-matcher 的「cat-file 輸出解碼失敗」）',
+     '        except (OSError, subprocess.SubprocessError, UnicodeDecodeError) as e:\n            failed.append', '        except (OSError, subprocess.SubprocessError) as e:\n            failed.append', 'history-matcher'),
+    ('history: 探測失敗、其餘都沒有歷史時整輪跳過（R67 Codex C1 → --selftest-matcher 的「第一棵 cat-file 逾時」以外的組合）',
+     '    if not present and not failed and not nogit:', '    if not present:', 'history-matcher'),
+    # R68（#33 verify R67 LOW）：抽常數的上限、摘要與索引檢查的順序、封閉清單的固定份。
+    ('history: 常數本身不設上限（R67 logic L、Codex → --selftest-matcher 的「單一常數超過上限」）',
+     '        if isinstance(n.value, str) and len(n.value) > _EV_MAX:', '        if False:', 'history-matcher'),
+    ('history: 大整數常數不擋（R67 → --selftest-matcher 的「大整數常數」）',
+     '        if isinstance(n.value, int) and abs(n.value) >= 10 ** 18:', '        if False:', 'history-matcher'),
+    ('history: `%` 展開前不估計結果（R67 Codex → --selftest-matcher 的峰值記憶體檢查）',
+     '            if est > _EV_MAX:', '            if False:', 'history-matcher'),
+    ('history: `%` 展開後不檢查結果長度（R67 logic L → --selftest-matcher 的「`%r` 把不可印字元展開成跳脫序列」；R68 宣稱查核：展開前的估計加進寬度之後，「四位數寬度重複」改由估計擋下、不再區分這個突變——#597 形狀，補這一案）',
+     '            if len(r) > _EV_MAX:\n', '            if False:\n', 'history-matcher'),
+    ('history: 摘要計算讓索引超出範圍丟 IndexError（R67 logic L → --selftest-matcher 的索引超出案）',
+     '        try:\n            digest = _row_digest(tree)\n        except IndexError:', '        try:\n            digest = _row_digest(tree)\n        except ZeroDivisionError:', 'history-matcher'),
+    ('selfcheck: 封閉清單的固定份不比對（R67 requirements L → --selftest-matcher 的「少了 28ec8c3」）',
+     '    if tuple(oracle_history.CLOSED_TREES) != _CLOSED_TREES_PIN:', '    if False:', 'selfcheck-matcher'),
+    # R68 宣稱查核（獨立的程式審查）：重抽的 rc 分類、工作樹判定、重抽比對的索引守衛、`%` 估計的寬度；凍結表組裝的另外三道接線。
+    ('history: 不先確認 git 能用就把各棵的 cat-file 失敗當成沒有歷史（程式審查 #1；缺物件與 git 拒絕這個 repo 都回 rc=128 → --selftest-matcher 的「git 拒絕這個 repo」）',
+     '    if rp.returncode != 0:\n', '    if False:\n', 'history-matcher'),
+    ('history: 不在 git 工作樹時照樣探測（程式審查 #1 → --selftest-matcher 的「不在 git 工作樹」）',
+     '    if not in_worktree:\n', '    if False:\n', 'history-matcher'),
+    ('history: 重抽比對不守凍結表的索引範圍（程式審查 #4 → --selftest-matcher 的索引超出案）',
+     '    if any(not 0 <= i < len(PAYLOAD_UNION) for i in idx):', '    if False:', 'history-matcher'),
+    ('history: `%` 的估計不算寬度與精度（程式審查 #5 → --selftest-matcher 的峰值記憶體檢查）',
+     '                + sum(int(d) for spec in _EV_SPEC_RE.findall(a) for d in re.findall(r"\\d+", spec))\n', '                + 0\n', 'history-matcher'),
+    # R68 增量查核：`_in_git_worktree` 與真的 git 時的預設值、`_EV_WIDE_RE` 的數字分支，前一版都沒有案。
+    ('history: .git 是檔案（連結的工作樹）時判成不在工作樹（增量查核 #3 → --selftest-matcher 的「.git 是檔案」）',
+     '    return any((d / ".git").exists() for d in (p, *p.parents))', '    return any((d / ".git").is_dir() for d in (p, *p.parents))', 'history-matcher'),
+    ('history: 只看這一層、不看上層的 .git（增量查核 #3 → --selftest-matcher 的「.git 在上一層」）',
+     '    return any((d / ".git").exists() for d in (p, *p.parents))', '    return any((d / ".git").exists() for d in (p,))', 'history-matcher'),
+    ('history: 真的 git 時也不看檔案系統、一律當成在工作樹裡（增量查核 #3 → --selftest-matcher 的「沒有 .git 的目錄要跳過」）',
+     '        in_worktree = git is not None or _in_git_worktree(repo_root)\n', '        in_worktree = True\n', 'history-matcher'),
+    ('history: `%` 的寬度檢查只擋九位數以上（增量查核 #2 → --selftest-matcher 的「五位數寬度」）',
+     '_EV_WIDE_RE = re.compile(r"%[^a-zA-Z%]*(?:\\d{5}|\\*)")', '_EV_WIDE_RE = re.compile(r"%[^a-zA-Z%]*(?:\\d{9}|\\*)")', 'history-matcher'),
+    ('selfcheck: 重抽跑了就用它的結果蓋掉前面的問題（程式審查 #2 → --selftest-matcher 的「記號被改、重抽跑了且 0 問題」）',
+     '        probs += rprobs\n', '        probs = rprobs\n', 'selfcheck-matcher'),
+    ('selfcheck: 凍結表組裝不跑凍結表比對（程式審查 #2 → --selftest-matcher 的「模組少一組歷史 payload」）',
+     '    probs = oracle_history.payload_history_problems(mod.INJECT_PAYLOADS, mod.INJECT_MARKER, mod.INJECT_PATH_TOKEN)\n', '    probs = []\n', 'selfcheck-matcher'),
+    ('selfcheck: 記號守衛只看 INJECT_MARKER（程式審查 #2 → --selftest-matcher 的「路徑記號被改」）',
+     '    if (mod.INJECT_MARKER, mod.INJECT_PATH_TOKEN) != (oracle_history.CANON_MARKER, oracle_history.CANON_TOKEN):', '    if mod.INJECT_MARKER != oracle_history.CANON_MARKER:', 'selfcheck-matcher'),
 ]
 
 EXPECTED_SURVIVE = {
@@ -2265,20 +2317,33 @@ def _killer_evidence(out, err):
     return " ‖ ".join(h[:160] for h in hits).replace("\t", " ")
 
 
-_PER_USER_TMP_RE = re.compile(r"(?:/private)?/var/folders/[A-Za-z0-9_+-]{2}/[A-Za-z0-9_+-]+/[A-Za-z]\b")
+_PATH_CH = r"A-Za-z0-9_+~\-"   # 字元類的內容；`-` 跳脫，後面再接 `.` 也不會變成範圍
+_PER_USER_TMP_RE = re.compile(r"(?:/private)?/var/folders/[A-Za-z0-9_+-]{2}/[A-Za-z0-9_+-]+(?:/[A-Za-z0-9](?![%s.]))?" % _PATH_CH)
+_SHARED_TMP = frozenset({"/tmp", "/private/tmp", "/var/tmp", "/private/var/tmp"})
+
+
+def _sub_path(s, p, repl):
+    """把 `p` 當成完整路徑或路徑前綴換掉：後面接的不能是路徑字元（`tmp-backup` 不是 `tmp`），句點後面再接路徑字元也不算邊界（`me.bak`）。
+    前面不設邊界：`/host/Users/me` 這種掛載路徑一樣帶著使用者名稱，多遮比漏遮安全。"""
+    return re.sub(re.escape(p) + r"(?![%s]|\.[%s])" % (_PATH_CH, _PATH_CH), lambda _m: repl, s)
 
 
 def _mask_local_paths(s):
     """R66：殺手證據不得帶每個使用者不同的路徑。換掉：這次的暫存目錄（`tempfile.gettempdir()` 與它的 realpath）→ `<TMPDIR>`；
-    macOS 每個使用者的 `/var/folders/<兩碼>/<雜湊>/<T|C|X>` → `<TMPDIR>`；家目錄 → `~`。只為了不外流：證據欄不進快取鍵，不影響沿用。"""
+    macOS 每個使用者的 `/var/folders/<兩碼>/<雜湊>`（含其下一層的單字元子目錄 `T`／`C`／`X`／`0`）→ `<TMPDIR>`；家目錄（與它的 realpath）→ `~`。
+    只為了不外流：證據欄不進快取鍵，不影響沿用。
+    R68（R67 logic／security／requirements／Codex L）：比對要有路徑邊界（`_sub_path`）；沒有尾斜線的家目錄也遮；共用的系統暫存目錄
+    （`_SHARED_TMP`）不遮，前一版在 `TMPDIR=/tmp` 時把訊息裡的 `/private/tmp` 換掉；使用者設定的短 TMPDIR（例如 `/a`）照遮，前一版的
+    `len > 4` 把它排除了；`/var/folders/…/0` 與沒有子目錄的 `/var/folders/<兩碼>/<雜湊>` 也遮。"""
     tmp = tempfile.gettempdir().rstrip("/")
     for p in sorted({tmp, os.path.realpath(tmp)}, key=len, reverse=True):
-        if len(p) > 4:
-            s = s.replace(p, "<TMPDIR>")
+        if len(p) > 1 and p not in _SHARED_TMP:
+            s = _sub_path(s, p, "<TMPDIR>")
     s = _PER_USER_TMP_RE.sub("<TMPDIR>", s)
     home = os.path.expanduser("~").rstrip("/")
-    if len(home) > 1:
-        s = s.replace(home + "/", "~/")
+    for p in sorted({home, os.path.realpath(home)}, key=len, reverse=True):
+        if len(p) > 1:
+            s = _sub_path(s, p, "~")
     return s
 
 

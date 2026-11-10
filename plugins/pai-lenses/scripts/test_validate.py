@@ -2154,16 +2154,55 @@ class ValidateTest(unittest.TestCase):
         self.assertIn("'/tmp'", ev, "`/tmp` 不是每個使用者不同的路徑，不遮蔽（Linux 的 TMPDIR 就是它；R66 第一版的測試在這裡只在 macOS 成立）")
         with mock.patch.object(M.tempfile, "gettempdir", return_value="/tmp"):
             self.assertIn("'/tmp'", M._killer_evidence("✗ 上一層是 '/tmp'\n", ""), "TMPDIR 就是 `/tmp` 時也不把訊息裡的 `/tmp` 換掉")
-        self.assertNotIn(os.path.expanduser("~") + "/", M._killer_evidence("✗ 讀不到 %s/x\n" % os.path.expanduser("~"), ""))
+        if len(os.path.expanduser("~").rstrip("/")) > 1:   # R68 宣稱查核（程式審查 #3）：HOME 是 `/` 時 `//` 恆在，這一道在沒有家目錄的容器裡恆紅（R66 起就是）
+            self.assertNotIn(os.path.expanduser("~") + "/", M._killer_evidence("✗ 讀不到 %s/x\n" % os.path.expanduser("~"), ""))
         err = "ERROR: test_x (test_validate.T.test_x)\nTraceback ...\nFAILED (errors=1)\n"
         self.assertIn("ERROR: test_x", M._killer_evidence(err, ""), "unittest 的 ERROR: 行要記下來")
 
+    def test_killer_evidence_masks_with_path_boundaries(self):
+        """R68（R67 logic／security／requirements／Codex L）：遮蔽要有路徑邊界、包含沒有尾斜線的家目錄、不誤遮共用的系統暫存目錄、
+        也遮 `/var/folders/<兩碼>/<雜湊>` 底下 T／C／X 以外的子目錄（例如 `0`）與它本身。"""
+        from unittest import mock
+        sys.path.insert(0, str(HERE)); import mutation_check as M
+        home = os.path.expanduser("~").rstrip("/")
+        if len(home) > 1:   # R68 宣稱查核（程式審查 #3）：HOME 是 `/` 或空字串時（沒有家目錄的容器）沒有東西可遮，`assertNotIn("", …)` 恆紅
+            self.assertNotIn(home, M._mask_local_paths("✗ home=%r\n" % home), "沒有尾斜線的家目錄也要遮")
+        with mock.patch.object(M.os.path, "expanduser", return_value="/u/me"):
+            self.assertEqual(M._mask_local_paths("✗ home='/u/me'\n"), "✗ home='~'\n", "沒有尾斜線的家目錄也要遮（不依賴執行者的 HOME）")
+        with mock.patch.object(M.tempfile, "gettempdir", return_value="/tmp"):
+            self.assertIn("/private/tmp/x", M._mask_local_paths("✗ 期待 /private/tmp/x\n"), "TMPDIR 是 /tmp 時不把 /private/tmp 換掉（它不是每個使用者不同的路徑）")
+        with mock.patch.object(M.tempfile, "gettempdir", return_value="/scratch/my tmp"):
+            got = M._mask_local_paths("✗ 比對值 /scratch/my tmp-backup 與 /scratch/my tmp/x\n")
+        self.assertIn("/scratch/my tmp-backup", got, "沒有路徑邊界的子字串不遮")
+        self.assertIn("<TMPDIR>/x", got)
+        got = M._mask_local_paths("✗ a=/var/folders/ab/zz9_0000gn/0/x b=/var/folders/ab/zz9_0000gn c=/private/var/folders/ab/zz9_0000gn/T\n")
+        self.assertNotRegex(got, r"/var/folders/[^<]", "每個使用者不同的暫存路徑，不論結尾是哪個子目錄都要遮：%s" % got)
+        with mock.patch.object(M.tempfile, "gettempdir", return_value="/a"):
+            self.assertEqual(M._mask_local_paths("✗ 在 /a/x 與 '/a'\n"), "✗ 在 <TMPDIR>/x 與 '<TMPDIR>'\n", "使用者設定的短 TMPDIR 也要遮（前一版的 len>4 把它排除了）")
+        with mock.patch.object(M.os.path, "expanduser", return_value="/u/me"), \
+             mock.patch.object(M.os.path, "realpath", side_effect=lambda q: "/vol/u/me" if q == "/u/me" else q):
+            self.assertEqual(M._mask_local_paths("✗ /vol/u/me/x、/u/me、/u/meow\n"), "✗ ~/x、~、/u/meow\n", "家目錄的 realpath 別名也遮；`/u/meow` 不是家目錄、不遮")
+        # R68 宣稱查核（程式審查 #7）：TMPDIR 的 realpath 別名也遮；`/var/tmp` 與 `/private/var/tmp` 是共用的系統暫存目錄，TMPDIR 指到它時不遮。
+        with mock.patch.object(M.tempfile, "gettempdir", return_value="/t/link"), \
+             mock.patch.object(M.os.path, "realpath", side_effect=lambda q: "/vol/t/real" if q == "/t/link" else q):
+            self.assertEqual(M._mask_local_paths("✗ /vol/t/real/x 與 /t/link/y\n"), "✗ <TMPDIR>/x 與 <TMPDIR>/y\n", "TMPDIR 的 realpath 別名也要遮")
+        for shared in ("/var/tmp", "/private/var/tmp"):
+            with mock.patch.object(M.tempfile, "gettempdir", return_value=shared):
+                self.assertIn(shared + "/x", M._mask_local_paths("✗ 期待 %s/x\n" % shared), "%s 是共用的系統暫存目錄，不遮" % shared)
+
     def test_committed_mutation_cache_has_no_per_user_paths(self):
-        """R66：提交的 `mutation-cache.json` 不得含每個使用者不同的路徑（macOS 的 `/var/folders/…`、家目錄）。"""
+        """R66：提交的 `mutation-cache.json` 不得含每個使用者不同的路徑（macOS 的 `/var/folders/…`、家目錄）。
+        R68（R67 Codex L）：前一版只查跑測試的人自己的家目錄加尾斜線——沒有尾斜線的家目錄查不到，Linux CI（家目錄是 `/home/runner`）
+        也查不到作者在 macOS 留下的 `/Users/<名字>`。改成查任何 `/Users/<名字>` 與 `/home/<名字>`；`/home/runner` 是每台 GitHub runner
+        都一樣的公開路徑，不指向任何人，不算。查得到的只有這兩種形狀，其他系統的家目錄（例如 `/root`、自訂的掛載點）不在這道檢查內。"""
         text = (HERE / "mutation-cache.json").read_text(encoding="utf-8")
         m = re.search(r".{0,60}/var/folders/[A-Za-z0-9_+-]{2}/.{0,40}", text)
         self.assertIsNone(m, "快取檔含每個使用者不同的暫存路徑：%s" % (m.group(0) if m else ""))
-        self.assertEqual(text.count(os.path.expanduser("~") + "/"), 0, "快取檔含家目錄路徑")
+        home = os.path.expanduser("~").rstrip("/")
+        if len(home) > 1 and home != "/home/runner":   # R68 宣稱查核：HOME 是 `/` 或空字串時沒有東西可查（程式審查 #3）；CI 的 HOME 就是下面除外的 `/home/runner`，兩道檢查的除外要一致（CHANGELOG 查核 #8）
+            self.assertNotIn(home, text, "快取檔含家目錄路徑")
+        homes = [h for h in re.findall(r"/(?:Users|home)/[^/\s'\"\\]+", text) if h != "/home/runner"]
+        self.assertEqual(homes, [], "快取檔含家目錄路徑：%s" % sorted(set(homes))[:5])
 
     def test_mutation_check_restores_validate_on_sigterm(self):
         """R15 requirements F9：mutation 一輪被 SIGTERM 砍掉時（不是 Ctrl-C），被 mutate 的 validate.py

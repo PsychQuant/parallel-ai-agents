@@ -17,6 +17,7 @@ R61 的處方是把「單調」改成機械檢查：`oracle_selfcheck.py` 的 `H
 """
 import ast
 import os
+import pathlib
 import re
 import subprocess
 import tempfile
@@ -26,10 +27,20 @@ CANON_MARKER = "ORACLE-INJECT-MARKER"          # 凍結表的字串用這兩個�
 CANON_TOKEN = "@@ORACLE-INJECT-PATH@@"
 
 # 封閉清單，只有這九棵樹（R61 停止規則的八棵，加上 R61 驗過的 `636fcfe`）；新增一棵樹要同時在這裡與 `HISTORICAL_PAYLOADS` 加一列，拿掉一列要有書面理由。
-# **納入準則**（R66，R65 第 4 列；使用者 2026-11-08 決定 `8292d86` 不進）：清單外的樹不逐一延伸；要加一棵樹，理由要寫在這裡。**被更正的錯不算取代**：
-# 一輪 verify 的對象，若某個注入設定在下一輪被認定為那一輪自己的錯、並由下一輪改回，這棵樹不因那個設定進清單。`8292d86`（R63 的對象）的 `priv-tmpdir`
-# 私有目錄前綴是 `o`，R63 第 3 列認定那是 R62 的錯，R64 改回 mkdtemp 預設的 `tmp`，所以不進。代價照實記：只寫得進 `<TMPDIR>/oXXXXXXXX/inject` 的求值者，
-# `8292d86` 判繞過 #5、R64 起的樹判一致（R65 第 4 列 DO1）。
+# 這份清單另在 `oracle_selfcheck.py` 有一份固定的複本（`_CLOSED_TREES_PIN`，R68）：這裡連同凍結列、摘要、SHA 一起少一棵樹時，所有逐樹檢查都會跟著縮小而保持綠，
+# 只有那份複本會報；改清單要兩處一起改，兩處不一致就是 selfcheck 的問題。
+# **納入準則是治理規則，不是可由程式推導的性質**（R66 寫成準則，R67 requirements／DA／Codex：「被更正的錯」要由人判斷，程式只能比對清單，判斷不了一個設定是不是錯）：
+# 一輪 verify 的對象（PR 頭）要不要進清單，由使用者裁定，裁定與理由寫在這裡。裁定時用的準則：**被更正的錯不算取代**——某個注入設定在下一輪被認定為那一輪自己的錯、
+# 並由下一輪改回，這棵樹不因那個設定進清單；設定沒有被這樣認定、而被後來的樹改掉的，這棵樹進清單（它的設定是被取代，不是被更正）。逐樹的裁定：
+#   · R61 停止規則的八棵（`5b5a46d`～`28ec8c3`）：使用者 2026-10 依停止規則列入。
+#   · `636fcfe`（R61 的對象，R60 的樹）：R64 列入時的紀錄是「R61 驗過」。它的注入設定沒有被下一輪認定為那一輪自己的錯，後來的樹在它之上加目標、加 payload，
+#     依本準則屬「被取代」，進清單。
+#   · `8292d86`（R63 的對象）：**不進**（使用者 2026-11-08 決定）。它的 `priv-tmpdir` 私有目錄前綴是 `o`，R63 第 3 列認定那是 R62 的錯，R64 改回 mkdtemp 預設的 `tmp`。
+#     代價照實記：只寫得進 `<TMPDIR>/oXXXXXXXX/inject` 的求值者，`8292d86` 判繞過 #5、R64 起的樹判一致（R65 第 4 列 DO1）。
+#   · `8984454`（R65 的對象）與 `3d94732`（R67 的對象）：不另列。兩棵樹的 `INJECT_PAYLOADS`（以 `extract_payloads` 抽出）與 `_inject_runs`、`_inject_key_modes`、
+#     `_tmpdir_priv_ok`、`_inject_path_ok` 的程式（去掉 docstring 比 AST）都與 R68 的樹相同（2026-11-09 比對），新樹必須包含的聯集因此不變。日後改動注入設定時，
+#     改動前的那棵樹要照本準則重新裁定。
+# 清單外的樹不逐一延伸。
 CLOSED_TREES = ("5b5a46d", "8b45659", "32d45ff", "b86bc53", "6490b57", "ecb77d9", "bf0c8a7", "28ec8c3", "636fcfe")
 # R66（R65 logic／security：重抽用 7 碼縮寫，日後縮寫變得有歧義時 `cat-file` 失敗、被當成「沒有歷史」而整個跳過）：git 一律用完整 SHA。
 TREE_SHA = {
@@ -99,10 +110,15 @@ def payload_history_problems(payloads, marker, token):
         probs.append("凍結表的樹與封閉清單不一致：%s 對 %s" % (sorted(HISTORICAL_PAYLOADS), sorted(CLOSED_TREES)))
     for tree in CLOSED_TREES:   # 摘要或完整 SHA 少一棵樹時，下面兩道逐樹比對就會報（多出的鍵無害），不另比鍵集合
 
-        if HISTORICAL_DIGEST.get(tree) != _row_digest(tree):
+        try:
+            digest = _row_digest(tree)
+        except IndexError:   # R68（R67 logic L）：索引超出 PAYLOAD_UNION 由下面那一支報，這裡只算不一致
+            digest = None
+        if HISTORICAL_DIGEST.get(tree) != digest:
             probs.append("`%s` 那一列與它的摘要不一致（凍結表被改了而摘要沒改，或反過來；照 git 重抽的結果兩者一起改）" % tree)
-        if not TREE_SHA.get(tree, "").startswith(tree):
-            probs.append("`%s` 的完整 SHA %r 不是以它開頭" % (tree, TREE_SHA.get(tree)))
+        sha = TREE_SHA.get(tree, "")
+        if not (re.fullmatch(r"[0-9a-f]{40}", sha) and sha.startswith(tree)):   # R68（R67 Codex C2）：前一版只看 startswith，退回 7 碼縮寫也通過
+            probs.append("`%s` 的完整 SHA %r 不是 40 位十六進位、或不是以它開頭" % (tree, TREE_SHA.get(tree)))
     have = set(payloads)
     for tree in CLOSED_TREES:
         for pos, i in enumerate(HISTORICAL_PAYLOADS.get(tree, ())):
@@ -121,11 +137,16 @@ class _Unev(Exception):
 
 _EV_MAX = 1 << 16   # 抽出來的單一字串上限（R66，R65 security L：`_ev` 讀的是 git 歷史裡的原始碼，`"%050000000d" % 1`、連續倍增都能在幾毫秒內建出幾十 MB）；真的 payload 不到 200 字
 _EV_WIDE_RE = re.compile(r"%[^a-zA-Z%]*(?:\d{5}|\*)")   # `%` 的寬度或精度有五位數以上，或用 `*` 由參數決定
+_EV_SPEC_RE = re.compile(r"%[^a-zA-Z%]*")   # R68 宣稱查核（程式審查 #5）：每個轉換的旗標、寬度、精度；估計結果長度時把寬度與精度加進去（四位數寬度重複一萬次也是幾十 MB）
 
 
 def _ev(n, env):
     """只認常數、名字、字串 `+` 與 `%` 的極小求值器：從舊樹的原始碼抽常數，**不執行**舊樹的任何程式碼。"""
     if isinstance(n, ast.Constant) and isinstance(n.value, (str, int)):
+        if isinstance(n.value, str) and len(n.value) > _EV_MAX:   # R68（R67 logic L、Codex）：常數本身也要有上限
+            raise _Unev("too long")
+        if isinstance(n.value, int) and abs(n.value) >= 10 ** 18:   # 大整數的字串化在 3.9 上是平方時間，`%d` 也會膨脹
+            raise _Unev("int too large")
         return n.value
     if isinstance(n, ast.Name):
         if n.id in env:
@@ -140,10 +161,18 @@ def _ev(n, env):
         if isinstance(n.op, ast.Mod) and isinstance(a, str):
             if len(a) > _EV_MAX or _EV_WIDE_RE.search(a):
                 raise _Unev("format width")
+            args = b if isinstance(b, tuple) else (b,)
+            est = len(a) + sum(len(x) if isinstance(x, str) else len(repr(x)) for x in args) \
+                + sum(int(d) for spec in _EV_SPEC_RE.findall(a) for d in re.findall(r"\d+", spec))
+            if est > _EV_MAX:   # R68（R67 logic L、Codex）：展開前先估計結果——短格式字串重複、`%s` 的參數、巢狀 tuple 的 repr、每個轉換的寬度與精度
+                raise _Unev("format result")
             try:
-                return a % b
+                r = a % b
             except (TypeError, ValueError) as e:
                 raise _Unev("format") from e
+            if len(r) > _EV_MAX:
+                raise _Unev("format result")
+            return r
         raise _Unev("binop")
     if isinstance(n, (ast.Tuple, ast.List)):
         return tuple(_ev(e, env) for e in n.elts)
@@ -161,28 +190,58 @@ def extract_payloads(source):
         if isinstance(st, ast.Assign) and len(st.targets) == 1 and isinstance(st.targets[0], ast.Name):
             try:
                 env[st.targets[0].id] = _ev(st.value, env)
-            except (_Unev, RecursionError):
+            except (_Unev, RecursionError, MemoryError):   # R68（R67 logic L）：MemoryError 也不逃出去
                 pass
     return env.get("INJECT_MARKER"), env.get("INJECT_PATH_TOKEN"), env.get("INJECT_PAYLOADS")
 
 
-def payload_history_regen_problems(repo_root, git=None):
+def _in_git_worktree(repo_root):
+    """`repo_root` 或它的上層有沒有 `.git`（目錄或檔案）。只看檔案系統、不解析 git 的錯誤訊息（訊息會依 locale 翻譯）。"""
+    p = pathlib.Path(repo_root).resolve()
+    return any((d / ".git").exists() for d in (p, *p.parents))
+
+
+def payload_history_regen_problems(repo_root, git=None, in_worktree=None):
     """有 git 歷史時，從九棵樹重新抽 `INJECT_PAYLOADS`、正規化後與凍結表逐列比對。回傳 (是否跑了, 問題清單)。
-    九棵樹**一棵都沒有**（淺層 clone、不在 git 工作樹、沒有 git）回 (False, [原因])——這是唯一的跳過；**部分**有、部分沒有就是問題（R66，R65 logic：前一版缺一棵就整個跳過）。
-    `git(*args)` 回傳 `subprocess.CompletedProcess`（文字以 UTF-8 解碼）；`--selftest-matcher` 傳假的進來，不需要 git 就能測這段（R65 logic M：前一版這段沒有網）。"""
+    只有三種情況跳過、回 (False, [原因])：不在 git 工作樹（`repo_root` 與上層都沒有 `.git`，例如突變全輪的拷貝）、git 能用而九棵樹的 `cat-file -e` 都不成功（確認沒有這些 commit：淺層 clone）、沒有 git 可執行檔；**部分**有、部分沒有就是問題（R66，R65 logic：前一版缺一棵就整個跳過）。
+    git 不能用（`git rev-parse --git-dir` 失敗，例如 dubious ownership）是問題，不是「沒有歷史」——`cat-file -e <sha>^{commit}` 在缺物件與 git 拒絕這個 repo 時都回 rc=128，所以先確認 git 能用，再把各棵的失敗當成沒有這個 commit
+    （R68 宣稱查核〔程式審查 #1〕：前一版把 rc≠0 一律當成「沒有」，git 拒絕這個 repo 時整輪跳過、還印錯的原因；R68 第一版的修法改成「rc=1 才是沒有」，Linux 預跑抓到缺物件其實是 128、淺層 clone 因此轉紅）。
+    探測本身丟例外（逾時、解碼錯誤）也是問題，前面已確認有歷史的樹照樣比對（R68，R67 Codex C1：前一版任一棵的 `cat-file` 丟例外就整輪跳過）。
+    `git(*args)` 回傳 `subprocess.CompletedProcess`（stdout 以 UTF-8 解碼；stderr 丟掉、不解碼——R68 宣稱查核〔程式審查 #6〕：前一版連用不到的 stderr 也嚴格解碼，非 UTF-8 的 git 訊息會讓淺層 clone 變成九條「探測失敗」）；
+    `--selftest-matcher` 傳假的進來，不需要 git 就能測這段（R65 logic M：前一版這段沒有網）。`in_worktree` 沒給時：真的 git 看檔案系統，假的 git 當成在工作樹裡。"""
+    if in_worktree is None:
+        in_worktree = git is not None or _in_git_worktree(repo_root)
+    if not in_worktree:
+        return False, ["不在 git 工作樹（這個目錄與上層都找不到 .git）"]   # 不印路徑：這行會進 selfcheck 的輸出與殺手證據
     if git is None:
         def git(*a):
-            return subprocess.run(["git", "-C", repo_root] + list(a), capture_output=True, text=True, encoding="utf-8", timeout=60)
-    present, missing = [], []
+            return subprocess.run(["git", "-C", repo_root] + list(a), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8", timeout=60)
+    try:
+        rp = git("rev-parse", "--git-dir")
+    except FileNotFoundError as e:
+        return False, ["沒有可用的 git（%s）" % e]
+    except (OSError, subprocess.SubprocessError, UnicodeDecodeError) as e:
+        return True, ["探測 git 失敗（rev-parse：%s）" % type(e).__name__]
+    if rp.returncode != 0:
+        return True, ["git 不能用（rev-parse rc=%d，例如 dubious ownership）：九棵樹的歷史都沒有比對" % rp.returncode]
+    present, missing, failed, nogit = [], [], [], []
     for tree in CLOSED_TREES:
         try:
-            ok = git("cat-file", "-e", TREE_SHA.get(tree, tree) + "^{commit}").returncode == 0
-        except (OSError, subprocess.SubprocessError) as e:
-            return False, ["沒有可用的 git（%s）" % e]
-        (present if ok else missing).append(tree)
-    if not present:
-        return False, ["九棵樹都沒有 git 歷史（淺層 clone 或不在 git 工作樹）"]
-    probs = ["`%s`：其他樹有 git 歷史、這棵沒有（完整 SHA 寫錯，或歷史被截斷）" % t for t in missing]
+            rc = git("cat-file", "-e", TREE_SHA.get(tree, tree) + "^{commit}").returncode
+        except FileNotFoundError as e:   # 沒有 git 可執行檔
+            nogit.append((tree, e))
+            continue
+        except (OSError, subprocess.SubprocessError, UnicodeDecodeError) as e:
+            failed.append((tree, type(e).__name__))
+            continue
+        (present if rc == 0 else missing).append(tree)   # git 能用（上面確認過），各棵的失敗就是沒有這個 commit（缺物件時 rc=128）
+    if len(nogit) == len(CLOSED_TREES):
+        return False, ["沒有可用的 git（%s）" % nogit[0][1]]
+    if not present and not failed and not nogit:
+        return False, ["九棵樹都沒有 git 歷史（淺層 clone）"]
+    probs = ["`%s`：探測 git 歷史失敗（%s）" % (t, e) for t, e in failed] + ["`%s`：探測 git 歷史失敗（%s）" % (t, type(e).__name__) for t, e in nogit]
+    probs += ["`%s`：其他樹有 git 歷史、這棵沒有（完整 SHA 寫錯，或歷史被截斷）" % t for t in missing] if present else \
+        ["`%s`：探測失敗的樹之外，其餘都沒有 git 歷史" % t for t in missing]
     for tree in present:
         try:
             r = git("show", "%s:%s" % (TREE_SHA.get(tree, tree), ORACLE_REL))
@@ -198,12 +257,15 @@ def payload_history_regen_problems(repo_root, git=None):
 
 def _regen_one(tree, source):
     """一棵樹：從它的 `oracle.py` 原始碼重抽 payload、正規化後與凍結表那一列逐組比對（獨立成函式，`--selftest-matcher` 不需要 git 就能測它）。"""
+    idx = HISTORICAL_PAYLOADS.get(tree, ())
+    if any(not 0 <= i < len(PAYLOAD_UNION) for i in idx):   # R68 宣稱查核（程式審查 #4）：前一版在這裡丟 IndexError，凍結表比對已算好的「超出」訊息跟著丟掉
+        return ["`%s`：凍結表的索引超出 PAYLOAD_UNION" % tree]
     pays = extract_payloads(source)[2]
     if not pays:
         return ["`%s`：抽不到 INJECT_PAYLOADS" % tree]
     # R66（R65 Codex）：前一版用全域字串替換把標記換成凍結的寫法，分不出字面文字與標記，標記改了也照樣過。九棵樹的標記與路徑記號都是同一個值（R65 logic 實測），所以直接比對字串，不正規化；標記不同時下面的比對就會報。
     got = tuple(pays)
-    want = tuple(PAYLOAD_UNION[i] for i in HISTORICAL_PAYLOADS.get(tree, ()))
+    want = tuple(PAYLOAD_UNION[i] for i in idx)
     if got != want:
         return ["`%s`：凍結表與 git 歷史不符（凍結 %d 組、歷史 %d 組）" % (tree, len(want), len(got))]
     return []
