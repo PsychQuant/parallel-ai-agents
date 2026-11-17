@@ -8,11 +8,11 @@ R61 的處方是把「單調」改成機械檢查：`oracle_selfcheck.py` 的 `H
 這個模組補上兩件事，兩件都是**封閉的**：
 
 - `PAYLOAD_UNION`／`HISTORICAL_PAYLOADS`：封閉清單各樹的 `INJECT_PAYLOADS`（R61 停止規則的八棵樹，加上 R61 驗過的 `636fcfe`），以 ast 從 `git show <sha>:…/oracle.py` 抽出後凍結（標記與路徑記號在九棵樹都是同一個值，R66 起重抽時直接比對，不再正規化）。
-  `payload_history_problems` 要求每一列的每一個字串都在現在的 `INJECT_PAYLOADS` 裡；`payload_history_regen_problems` 在有 git 歷史時重新抽一次、與凍結表逐列比對（淺層 clone 沒有歷史就跳過並說明，不算通過）。
+  `payload_history_problems` 要求每一列的每一個字串都在現在的 `INJECT_PAYLOADS` 裡；`payload_history_regen_problems` 在有 git 歷史時重新抽一次、與凍結表逐列比對（只有三種情況跳過並說明、不算通過：這個目錄沒有 `.git`、沒有 git 可執行檔、git 明確回答九棵樹的 commit 都不在〔淺層 clone 就是這樣；重抽不向遠端抓〕）。
 - `TARGET_SHAPES`：`_inject_runs` 的每一個目標，`run_script` **實際建出**的哨兵路徑形狀、上一層目錄、是否預先建檔，以及寫進去之後神諭有沒有偵測到。`target_fulfillment_problems` 對每個目標真的跑一次 `run_script`。
 
 **它不守的**：鍵模式軸（`_inject_key_modes`，由 aud 的值比較守）；跨執行持久狀態（H3，停止規則的第三個豁免類，見 `oracle.py`〈已知限制〉(9)）；求值者在程式內轉換 PR 文字（L1 族）；
-**神諭自己可被觀察的執行環境**（R65 DA 的「儀器指紋」：導出的環境變數名，例如 `ORACLE_INJECT`、`ORACLE_PRIV`；繼承的 fd 197；cwd 與 stub 目錄裡預先建好的檔案）——舊樹在這一軸與現在不同，
+**這一次執行的環境裡、在比較的兩方之間不同的特徵**（R65 DA 的「儀器指紋」：神諭設定、建好或不提供的東西，例如導出的環境變數 `ORACLE_INJECT`、`ORACLE_PRIV`，繼承的 fd 197，cwd 與 stub 目錄裡預先建好的檔案；封閉的五個類別見 `oracle.py`〈已知限制〉(11)）——舊樹在這一軸與現在不同，
 步驟依這些特徵決定要不要執行 PR 文字時，舊樹判繞過、現在判一致（R65 報告第 1 列）。這兩張表都不涵蓋這一軸；使用者 2026-11-08 選擇列為停止規則的第四個豁免類（`oracle.py`〈已知限制〉(11)，探針 `injection-instrument-fingerprint-known-blind-spots.yml`），本模組不守。
 """
 import ast
@@ -37,7 +37,8 @@ CANON_TOKEN = "@@ORACLE-INJECT-PATH@@"
 #     依本準則屬「被取代」，進清單。
 #   · `8292d86`（R63 的對象）：**不進**（使用者 2026-11-08 決定）。它的 `priv-tmpdir` 私有目錄前綴是 `o`，R63 第 3 列認定那是 R62 的錯，R64 改回 mkdtemp 預設的 `tmp`。
 #     代價照實記：只寫得進 `<TMPDIR>/oXXXXXXXX/inject` 的求值者，`8292d86` 判繞過 #5、R64 起的樹判一致（R65 第 4 列 DO1）。
-#   · `8984454`（R65 的對象）與 `3d94732`（R67 的對象）：不另列。兩棵樹的 `INJECT_PAYLOADS`（以 `extract_payloads` 抽出）與 `_inject_runs`、`_inject_key_modes`、
+#   · `8984454`（R65 的對象）與 `3d94732`（R67 的對象）：**暫不另列，待使用者確認**（R69 DA：本規則寫的是由使用者裁定，這一條是作者自己寫下的，沒有使用者的裁定紀錄；
+#     已列進待使用者決定的事項——確認不列，或把規則改成「注入設定與某棵已列入的樹相同的對象，作者可以不列並記錄比對」）。作者不列的理由：兩棵樹的 `INJECT_PAYLOADS`（以 `extract_payloads` 抽出）與 `_inject_runs`、`_inject_key_modes`、
 #     `_tmpdir_priv_ok`、`_inject_path_ok` 的程式（去掉 docstring 比 AST）都與 R68 的樹相同（2026-11-09 比對），新樹必須包含的聯集因此不變。日後改動注入設定時，
 #     改動前的那棵樹要照本準則重新裁定。
 # 清單外的樹不逐一延伸。
@@ -137,7 +138,18 @@ class _Unev(Exception):
 
 _EV_MAX = 1 << 16   # 抽出來的單一字串上限（R66，R65 security L：`_ev` 讀的是 git 歷史裡的原始碼，`"%050000000d" % 1`、連續倍增都能在幾毫秒內建出幾十 MB）；真的 payload 不到 200 字
 _EV_WIDE_RE = re.compile(r"%[^a-zA-Z%]*(?:\d{5}|\*)")   # `%` 的寬度或精度有五位數以上，或用 `*` 由參數決定
+_EV_TOTAL = 1 << 20   # `+` 與 `%` **新造**的字串合計上限（R70 查核）：單一字串有上限、變數的個數沒有——兩千個 `B<i> = A + "x"` 各存一份接近上限的字串，
+#                      96 KB 的原始碼就用掉 128 MiB。常數與 tuple 不算（它們的大小受原始碼長度限制，不放大）。九棵封閉樹實際新造的合計見 `_spend` 的說明。
+_EV_SPENT = " spent"   # `env` 裡記已用預算的鍵：含空白，不會和任何識別字相撞
 _EV_SPEC_RE = re.compile(r"%[^a-zA-Z%]*")   # R68 宣稱查核（程式審查 #5）：每個轉換的旗標、寬度、精度；估計結果長度時把寬度與精度加進去（四位數寬度重複一萬次也是幾十 MB）
+
+
+def _spend(env, n):
+    """把新造的 `n` 個字元記進 `env` 的預算；合計超過 `_EV_TOTAL` 就不抽這一個（之後要新造字串的指派也都抽不到）。
+    2026-11-10 實測：九棵封閉樹與現在的 `oracle.py`，`+` 與 `%` 新造的字串合計最多 3,990 個字元，是預算（1 MiB）的 1/262。"""
+    env[_EV_SPENT] = env.get(_EV_SPENT, 0) + n
+    if env[_EV_SPENT] > _EV_TOTAL:
+        raise _Unev("total")
 
 
 def _ev(n, env):
@@ -157,21 +169,28 @@ def _ev(n, env):
         if isinstance(n.op, ast.Add) and isinstance(a, str) and isinstance(b, str):
             if len(a) + len(b) > _EV_MAX:
                 raise _Unev("too long")
+            _spend(env, len(a) + len(b))   # 先記帳再造：預算用完之後不再配置
             return a + b
         if isinstance(n.op, ast.Mod) and isinstance(a, str):
             if len(a) > _EV_MAX or _EV_WIDE_RE.search(a):
                 raise _Unev("format width")
             args = b if isinstance(b, tuple) else (b,)
-            est = len(a) + sum(len(x) if isinstance(x, str) else len(repr(x)) for x in args) \
+            # R70（R69 Codex、logic、security）：`%` 的參數只收字串與整數（整數在常數那一關已限制在 19 位以內）。前一版對其他型別用 `len(repr(x))` 估計——
+            # repr 會先把整個巢狀 tuple 展成字串：共用子結構的 `X = (X, X)` 重複 22 次，292 位元組的原始碼就用掉 5 秒與約 70 MiB，估計本身成了它要防的那個尖峰。
+            # 歷史上的 `oracle.py` 只拿字串當 `%` 的參數；巢狀 tuple 當參數的原始碼一律不抽。
+            if not all(isinstance(x, (str, int)) for x in args):
+                raise _Unev("format arg")
+            est = len(a) + sum(len(x) if isinstance(x, str) else 20 for x in args) \
                 + sum(int(d) for spec in _EV_SPEC_RE.findall(a) for d in re.findall(r"\d+", spec))
-            if est > _EV_MAX:   # R68（R67 logic L、Codex）：展開前先估計結果——短格式字串重複、`%s` 的參數、巢狀 tuple 的 repr、每個轉換的寬度與精度
+            if est > _EV_MAX:   # R68（R67 logic L、Codex）：展開前先估計結果——短格式字串重複、`%s` 的參數、每個轉換的寬度與精度
                 raise _Unev("format result")
             try:
                 r = a % b
-            except (TypeError, ValueError) as e:
+            except (TypeError, ValueError, ArithmeticError) as e:   # R70（R69 logic）：`"%c" % 1114112` 丟 OverflowError（ArithmeticError 的子類）
                 raise _Unev("format") from e
             if len(r) > _EV_MAX:
                 raise _Unev("format result")
+            _spend(env, len(r))   # 記實際長度（估計只是上界的近似，`%r` 會超過它）；這一個已經造出來了，超過預算時丟掉它
             return r
         raise _Unev("binop")
     if isinstance(n, (ast.Tuple, ast.List)):
@@ -196,60 +215,117 @@ def extract_payloads(source):
 
 
 def _in_git_worktree(repo_root):
-    """`repo_root` 或它的上層有沒有 `.git`（目錄或檔案）。只看檔案系統、不解析 git 的錯誤訊息（訊息會依 locale 翻譯）。"""
-    p = pathlib.Path(repo_root).resolve()
-    return any((d / ".git").exists() for d in (p, *p.parents))
+    """`repo_root` 自己有沒有 `.git`（目錄或檔案）。只看檔案系統、不解析 git 的錯誤訊息（訊息會依 locale 翻譯）。
+    R70（R69 security、logic）：只看 `repo_root` 這一層。前一版（R68）連上層一起看：上層的 `.git` 是別人的 repo——多人共用的主機上任何人建一個 `/tmp/.git`，
+    建在那底下的突變副本就從「跳過」變成紅；暫存目錄剛好在某個 checkout 裡時，「沒有 .git」的案也跟著不成立。`repo_root` 依構造就是這個專案的頂層，
+    它自己的 checkout（含 linked worktree，那時 `.git` 是檔案）一定在這一層有 `.git`。"""
+    return (pathlib.Path(repo_root) / ".git").exists()
+
+
+def _same_dir(a, b):
+    """兩個路徑是不是同一個目錄。先問檔案系統（`os.path.samefile`：符號連結、大小寫不分的檔案系統上大小寫不同的拼法都算同一個）；問不到
+    （任何 `OSError`：任一個不存在〔`--selftest-matcher` 的假路徑〕、沒有權限、符號連結成環）才比 realpath 的字串。兩個都不能是空字串——
+    `realpath("")` 是目前的目錄，git 沒有回報頂層時不能因此剛好相符。"""
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return bool(a) and bool(b) and os.path.realpath(a) == os.path.realpath(b)
+
+
+# git 自己列為「跟著 repo 走」的環境變數（`git rev-parse --local-env-vars`，2.55；另加 `GIT_NAMESPACE`）。呼叫者的環境帶著它們時，`git -C <目錄>` 作用的就不是那個目錄的 repo：
+# git 在 linked worktree 的 hook 與 `rebase --exec` 裡會匯出 `GIT_DIR`（R69 DA 實測）；一般 repo 的 pre-commit 匯出的是 `GIT_INDEX_FILE` 與 `GIT_PREFIX`、
+# `rebase --exec` 匯出 `GIT_PREFIX`（2.55 實測；hook 與 `rebase --exec` 另外匯出的——例如 `GIT_AUTHOR_*`、`GIT_EDITOR`、`GIT_EXEC_PATH`、`GIT_SEQUENCE_EDITOR`——不在這份名單裡，它們不決定 git 作用在哪個 repo）。
+_GIT_REPO_ENV = ("GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT", "GIT_OBJECT_DIRECTORY", "GIT_DIR", "GIT_WORK_TREE",
+                 "GIT_IMPLICIT_WORK_TREE", "GIT_GRAFT_FILE", "GIT_INDEX_FILE", "GIT_NO_REPLACE_OBJECTS", "GIT_REPLACE_REF_BASE", "GIT_PREFIX", "GIT_SHALLOW_FILE",
+                 "GIT_COMMON_DIR", "GIT_NAMESPACE")
+
+
+def git_env(base=None):
+    """跑 git 用的環境：拿掉 `_GIT_REPO_ENV`，關掉 replace refs（`refs/replace/` 能讓 `git show <完整 SHA>` 回別的內容），並且**不向遠端抓物件**。
+    R70 查核：partial clone（`--filter=blob:none`）裡，git 查到本機沒有的物件會自己向 promisor remote 抓——重抽的 `cat-file --batch-check` 與 `git show`
+    因此連網、把抓來的 pack 寫進呼叫者 repo 的物件庫（2.55 實測：淺層＋blobless 的 clone 跑一次重抽，pack 檔從 4 個變 72 個，回的還是「九棵都在、相符」）。
+    兩道：`GIT_NO_LAZY_FETCH=1`（git 2.44 起：不嘗試）；`GIT_ALLOW_PROTOCOL` 設成空字串（任何傳輸都不允許，嘗試了也抓不到；2.43.0〔不認得前一個變數〕與 2.55 實測擋得住，其他版本沒有量）。
+    擋下之後：本機沒有那個 commit 就照實回 `missing`；commit 在而 `oracle.py` 的 blob 不在（非淺層的 blobless clone）就是「讀不到」——是問題、不是跳過。"""
+    env = {k: v for k, v in (os.environ if base is None else base).items() if k not in _GIT_REPO_ENV}
+    env["GIT_NO_REPLACE_OBJECTS"] = "1"
+    env["GIT_NO_LAZY_FETCH"] = "1"
+    env["GIT_ALLOW_PROTOCOL"] = ""
+    return env
+
+
+def real_git(repo_root):
+    """回傳 `git(*args, input=None)`：在 `repo_root` 跑真的 git，環境是 `git_env()`，60 秒逾時；stdout 以 UTF-8 解碼，stderr 丟掉、不解碼
+    （R68 宣稱查核〔程式審查 #6〕：前一版連用不到的 stderr 也嚴格解碼，非 UTF-8 的 git 訊息會把跳過變成「探測失敗」）。"""
+    def git(*a, input=None):
+        return subprocess.run(["git", "-C", repo_root] + list(a), input=input, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                              text=True, encoding="utf-8", timeout=60, env=git_env())
+    return git
+
+
+_BATCH_PRESENT_RE = re.compile(r"([0-9a-f]{40}) commit \d+")
+_PROBE_ERRORS = (OSError, subprocess.SubprocessError, UnicodeDecodeError)
 
 
 def payload_history_regen_problems(repo_root, git=None, in_worktree=None):
-    """有 git 歷史時，從九棵樹重新抽 `INJECT_PAYLOADS`、正規化後與凍結表逐列比對。回傳 (是否跑了, 問題清單)。
-    只有三種情況跳過、回 (False, [原因])：不在 git 工作樹（`repo_root` 與上層都沒有 `.git`，例如突變全輪的拷貝）、git 能用而九棵樹的 `cat-file -e` 都不成功（確認沒有這些 commit：淺層 clone）、沒有 git 可執行檔；**部分**有、部分沒有就是問題（R66，R65 logic：前一版缺一棵就整個跳過）。
-    git 不能用（`git rev-parse --git-dir` 失敗，例如 dubious ownership）是問題，不是「沒有歷史」——`cat-file -e <sha>^{commit}` 在缺物件與 git 拒絕這個 repo 時都回 rc=128，所以先確認 git 能用，再把各棵的失敗當成沒有這個 commit
-    （R68 宣稱查核〔程式審查 #1〕：前一版把 rc≠0 一律當成「沒有」，git 拒絕這個 repo 時整輪跳過、還印錯的原因；R68 第一版的修法改成「rc=1 才是沒有」，Linux 預跑抓到缺物件其實是 128、淺層 clone 因此轉紅）。
-    探測本身丟例外（逾時、解碼錯誤）也是問題，前面已確認有歷史的樹照樣比對（R68，R67 Codex C1：前一版任一棵的 `cat-file` 丟例外就整輪跳過）。
-    `git(*args)` 回傳 `subprocess.CompletedProcess`（stdout 以 UTF-8 解碼；stderr 丟掉、不解碼——R68 宣稱查核〔程式審查 #6〕：前一版連用不到的 stderr 也嚴格解碼，非 UTF-8 的 git 訊息會讓淺層 clone 變成九條「探測失敗」）；
-    `--selftest-matcher` 傳假的進來，不需要 git 就能測這段（R65 logic M：前一版這段沒有網）。`in_worktree` 沒給時：真的 git 看檔案系統，假的 git 當成在工作樹裡。"""
+    """有 git 歷史時，從九棵樹重新抽 `INJECT_PAYLOADS`、與凍結表逐列比對。回傳 (是否跑了, 問題清單)。
+    **只有三種情況跳過、回 (False, [原因])，其餘一律是問題**（R66、R68、R70 三次改寫都是因為「跳過」收得太寬）：
+      (1) `repo_root` 沒有 `.git`（不是 git 工作樹：突變全輪的拷貝、archive 副本）；
+      (2) 沒有 git 可執行檔（第一次呼叫 git 就 `FileNotFoundError`）；
+      (3) git 明確回答九棵樹的 commit **都不在**這個 repo 的物件庫裡（`cat-file --batch-check` 九行都是「問的那個輸入 + ` missing`」；淺層 clone 就是這樣。
+          git 的環境不讓它向遠端抓〔`git_env`〕，所以淺層的 partial clone 也走這一條，不會連網把歷史補回來）。
+    R70（R69 第 1 列；Codex、logic、security、DA）：(3) 只認 `--batch-check` 的 `missing`。前一版在 `rev-parse` 成功之後把 `cat-file -e` 的**任何**非零碼都當成
+    「沒有這個 commit」——被訊號終止、用法錯誤、物件庫讀不了都一樣，九棵都如此就印「淺層 clone」跳過；也沒有確認 git 找到的是哪個 repo，環境裡的 `GIT_DIR`
+    指到別處時，有完整歷史的工作樹照樣跳過。現在：git 的環境拿掉 repo-local 變數（`git_env`）；先以 `rev-parse --show-toplevel` 確認 git 能用、而且它找到的工作樹就是
+    `repo_root`（自己的 `.git` 壞掉時 git 會往上找到別的 repo）；再用**一次** `cat-file --batch-check` 問九棵樹，真的 git 對在與不在都回 rc=0、各有明確的一行
+    （2.54／2.55 實測），結束碼非零、行數不符、看不懂的行、SHA 不符、例外，全部是探測失敗。**部分**在、部分不在也是問題（R66）。
+    `git(*args, input=None)` 回傳有 `returncode` 與 `stdout` 的物件；`--selftest-matcher` 傳假的進來，不需要 git 就能測這段。`in_worktree` 沒給時：
+    真的 git 看檔案系統，假的 git 當成在工作樹裡。"""
     if in_worktree is None:
         in_worktree = git is not None or _in_git_worktree(repo_root)
     if not in_worktree:
-        return False, ["不在 git 工作樹（這個目錄與上層都找不到 .git）"]   # 不印路徑：這行會進 selfcheck 的輸出與殺手證據
+        return False, ["不在 git 工作樹（這個目錄沒有 .git）"]   # 不印路徑：這行會進 selfcheck 的輸出與殺手證據
     if git is None:
-        def git(*a):
-            return subprocess.run(["git", "-C", repo_root] + list(a), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8", timeout=60)
+        git = real_git(repo_root)
     try:
-        rp = git("rev-parse", "--git-dir")
+        rp = git("rev-parse", "--show-toplevel")
     except FileNotFoundError as e:
         return False, ["沒有可用的 git（%s）" % e]
-    except (OSError, subprocess.SubprocessError, UnicodeDecodeError) as e:
+    except _PROBE_ERRORS as e:
         return True, ["探測 git 失敗（rev-parse：%s）" % type(e).__name__]
     if rp.returncode != 0:
         return True, ["git 不能用（rev-parse rc=%d，例如 dubious ownership）：九棵樹的歷史都沒有比對" % rp.returncode]
-    present, missing, failed, nogit = [], [], [], []
-    for tree in CLOSED_TREES:
-        try:
-            rc = git("cat-file", "-e", TREE_SHA.get(tree, tree) + "^{commit}").returncode
-        except FileNotFoundError as e:   # 沒有 git 可執行檔
-            nogit.append((tree, e))
-            continue
-        except (OSError, subprocess.SubprocessError, UnicodeDecodeError) as e:
-            failed.append((tree, type(e).__name__))
-            continue
-        (present if rc == 0 else missing).append(tree)   # git 能用（上面確認過），各棵的失敗就是沒有這個 commit（缺物件時 rc=128）
-    if len(nogit) == len(CLOSED_TREES):
-        return False, ["沒有可用的 git（%s）" % nogit[0][1]]
-    if not present and not failed and not nogit:
-        return False, ["九棵樹都沒有 git 歷史（淺層 clone）"]
-    probs = ["`%s`：探測 git 歷史失敗（%s）" % (t, e) for t, e in failed] + ["`%s`：探測 git 歷史失敗（%s）" % (t, type(e).__name__) for t, e in nogit]
+    top = rp.stdout[:-1] if rp.stdout.endswith("\n") else rp.stdout   # 只去掉 git 自己加的那一個換行：目錄名尾端的空白與換行是名字的一部分（`strip()` 會把 `repo ` 當成 `repo`）
+    if not _same_dir(top, repo_root):   # R70 查核：前一版比 realpath 的字串，大小寫不分的檔案系統上以另一種大小寫進到這個目錄時假紅
+        return True, ["git 找到的工作樹不是這個目錄（這個目錄的 .git 壞了，或環境把 git 導到別處）：九棵樹的歷史都沒有比對"]
+    want = ["%s^{commit}" % TREE_SHA.get(tree, tree) for tree in CLOSED_TREES]
+    try:
+        bc = git("cat-file", "--batch-check", input="".join(w + "\n" for w in want))
+    except _PROBE_ERRORS as e:
+        return True, ["探測 git 歷史失敗（cat-file --batch-check：%s）" % type(e).__name__]
+    lines = bc.stdout.splitlines()
+    if bc.returncode != 0 or len(lines) != len(want):
+        return True, ["探測 git 歷史失敗（cat-file --batch-check rc=%d，回了 %d 行、問了 %d 棵）" % (bc.returncode, len(lines), len(want))]
+    present, missing, probs = [], [], []
+    for tree, w, line in zip(CLOSED_TREES, want, lines):
+        m = _BATCH_PRESENT_RE.fullmatch(line)
+        if m and m.group(1) == w.split("^")[0]:
+            present.append(tree)
+        elif line == w + " missing":
+            missing.append(tree)
+        else:
+            probs.append("`%s`：探測 git 歷史失敗（cat-file --batch-check 回了看不懂的一行）" % tree)
+    if not present and not probs:
+        return False, ["git 回答九棵樹的 commit 都不在這個 repo 的物件庫裡（淺層 clone 就是這樣；重抽不向遠端抓）"]
     probs += ["`%s`：其他樹有 git 歷史、這棵沒有（完整 SHA 寫錯，或歷史被截斷）" % t for t in missing] if present else \
-        ["`%s`：探測失敗的樹之外，其餘都沒有 git 歷史" % t for t in missing]
+        ["`%s`：探測失敗的樹之外，這棵不在這個 repo 裡" % t for t in missing]
     for tree in present:
         try:
             r = git("show", "%s:%s" % (TREE_SHA.get(tree, tree), ORACLE_REL))
-        except (OSError, subprocess.SubprocessError, UnicodeDecodeError) as e:
+        except _PROBE_ERRORS as e:
             probs.append("`%s`：讀 %s 失敗（%s）" % (tree, ORACLE_REL, type(e).__name__))
             continue
         if r.returncode != 0:
-            probs.append("`%s`：讀不到 %s" % (tree, ORACLE_REL))
+            probs.append("`%s`：讀不到 %s（commit 在、這個檔的內容不在本機時也是這樣，例如 blobless clone；重抽不向遠端抓）" % (tree, ORACLE_REL))
             continue
         probs += _regen_one(tree, r.stdout)
     return True, probs

@@ -2177,6 +2177,20 @@ class ValidateTest(unittest.TestCase):
         self.assertIn("<TMPDIR>/x", got)
         got = M._mask_local_paths("✗ a=/var/folders/ab/zz9_0000gn/0/x b=/var/folders/ab/zz9_0000gn c=/private/var/folders/ab/zz9_0000gn/T\n")
         self.assertNotRegex(got, r"/var/folders/[^<]", "每個使用者不同的暫存路徑，不論結尾是哪個子目錄都要遮：%s" % got)
+        # R70（R69 logic）：因人而異的是雜湊，不是 `/var/folders/` 這個前綴——只遮掉雜湊的第一個字時前一句照樣過。
+        self.assertNotIn("zz9_0000gn", got, "每個使用者不同的雜湊要整段遮掉：%s" % got)
+        self.assertNotIn("9_0000gn", got, "雜湊不能只遮開頭：%s" % got)
+        with mock.patch.object(M.os.path, "expanduser", return_value="/u/me"):
+            self.assertEqual(M._mask_local_paths("✗ /u/me.bak/x 與 /u/me/.cache\n"), "✗ /u/me.bak/x 與 ~/.cache\n", "`me.bak` 不是家目錄；家目錄底下的隱藏目錄照遮")
+        # R70（R69 logic）：沒有家目錄的容器（HOME 是 `/` 或空字串，`expanduser("~")` 都回 `/`）——前一版先把 `/` 去掉尾斜線變成空字串，`realpath("")` 是目前的目錄，
+        # 於是把目前的目錄（即使是共用的 `/private/tmp`）換成 `~`。TMPDIR 是 `/` 時同一個形狀。這裡把 `realpath("")` 固定成 `/work/dir`，不依賴測試在哪個目錄跑。
+        fake_cwd = lambda q: "/work/dir" if q == "" else q
+        with mock.patch.object(M.os.path, "expanduser", return_value="/"), mock.patch.object(M.tempfile, "gettempdir", return_value="/tmp"), \
+             mock.patch.object(M.os.path, "realpath", side_effect=fake_cwd):
+            self.assertEqual(M._mask_local_paths("✗ 期待 /work/dir/x 與 /private/tmp/y\n"), "✗ 期待 /work/dir/x 與 /private/tmp/y\n", "沒有家目錄時不得把目前的目錄當成家目錄遮掉")
+        with mock.patch.object(M.os.path, "expanduser", return_value="/u/me"), mock.patch.object(M.tempfile, "gettempdir", return_value="/"), \
+             mock.patch.object(M.os.path, "realpath", side_effect=fake_cwd):
+            self.assertEqual(M._mask_local_paths("✗ 期待 /work/dir/x 與 /u/me/y\n"), "✗ 期待 /work/dir/x 與 ~/y\n", "TMPDIR 是 `/` 時不得把目前的目錄當成暫存目錄遮掉")
         with mock.patch.object(M.tempfile, "gettempdir", return_value="/a"):
             self.assertEqual(M._mask_local_paths("✗ 在 /a/x 與 '/a'\n"), "✗ 在 <TMPDIR>/x 與 '<TMPDIR>'\n", "使用者設定的短 TMPDIR 也要遮（前一版的 len>4 把它排除了）")
         with mock.patch.object(M.os.path, "expanduser", return_value="/u/me"), \

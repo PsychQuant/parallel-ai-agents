@@ -15,8 +15,8 @@ R37 時有兩件事它驗不到——要驗它們，未突變的神諭在 fixtur
 
 批次與編號（編號＝下面 `CHECKS` 的順序；每一項的內容在它自己的說明欄，這裡不再複述一份會過期的描述——R43 第 21 列：
 前一版的 docstring 逐批列舉、數字加起來少一項，而且寫著「二十六項」「三十項」卻沒有一個地方真的數過）：
-  R37 1–2；R39 3–8；R40 9–10；R42 11–15；R42 WP7 16–19；R42 WP8 20–26；R44 27–31；R46 32–38；R48 39–45；R50 46–72；R52 73–95；R54 96–99；R56 100–102；R58 103–105；R60 106–107；R62 108–110；R64 111–112；R66 113–116。
-共 116 項。守衛：`main()` 開頭比對這一行的總數與批次區間的終點是否等於 `len(CHECKS)`，不等就 rc=1——數字與清單不是兩份各自維護的東西。
+  R37 1–2；R39 3–8；R40 9–10；R42 11–15；R42 WP7 16–19；R42 WP8 20–26；R44 27–31；R46 32–38；R48 39–45；R50 46–72；R52 73–95；R54 96–99；R56 100–102；R58 103–105；R60 106–107；R62 108–110；R64 111–112；R66 113–116；R70 117–117。
+共 117 項。守衛：`main()` 開頭比對這一行的總數與批次區間的終點是否等於 `len(CHECKS)`，不等就 rc=1——數字與清單不是兩份各自維護的東西。
 
 用法：test/oracle_selfcheck.py      rc=0：每一項都照預期；rc=1：至少一項沒有（或上面的數字與 `CHECKS` 不符）。
 """
@@ -33,9 +33,31 @@ import oracle_history   # noqa: E402  R64：歷史注入設定的凍結表與逐
 ORACLE = HERE / "oracle.py"
 PROBES = HERE / "oracle-probes"
 LINT = HERE / "lint-ci-log-filter.sh"
+REPO_ROOT = HERE.parents[2]   # R70：repo 根目錄只在這裡寫一次；`regen_wiring_problems` 檢查它底下的 `ORACLE_REL` 就是這份 `oracle.py`
+
+# R68（R67 requirements L）：封閉清單的第二份。oracle_history.py 裡的 CLOSED_TREES、HISTORICAL_PAYLOADS、HISTORICAL_DIGEST、TREE_SHA 互相比對，
+# 一起拿掉一棵樹時它們仍然自洽；這一份在別的檔案，改封閉清單必須兩處一起改，並在 oracle_history.py 的納入準則旁寫理由。
+_CLOSED_TREES_PIN = ("5b5a46d", "8b45659", "32d45ff", "b86bc53", "6490b57", "ecb77d9", "bf0c8a7", "28ec8c3", "636fcfe")
+# R70（R69 logic、Codex）：九個完整 SHA 的第二份（2026-11-10 由 `git rev-parse --verify <樹名>^{commit}` 取得，不是從 `TREE_SHA` 抄來）。前一版 `TREE_SHA` 只檢查
+# 「40 位十六進位、以樹名開頭」，尾碼寫錯的值通過所有檢查——假 git 的接受清單又由 `TREE_SHA` 自己反建，CI 與突變副本沒有歷史、不會真的去查。假 git 現在由這一份建接受清單。
+_TREE_SHA_PIN = {
+    "5b5a46d": "5b5a46d914b8d5862a9fa17a37ef7855a0aa4942", "8b45659": "8b45659f581e124732ff99153250a1dfde2277b1",
+    "32d45ff": "32d45ffb0d22b2ec383b80e966deecc61302a3ad", "b86bc53": "b86bc53ef7827985111c10c2d50855caae917254",
+    "6490b57": "6490b5705e1258e9f4fdf41d92c3b54fe4967775", "ecb77d9": "ecb77d91297cfa58f923e6e9e2d2cd864de2213e",
+    "bf0c8a7": "bf0c8a7155bbe834d429229cfc352e14e016c329", "28ec8c3": "28ec8c34b88866ff16cb6f2e04bad072d246895a",
+    "636fcfe": "636fcfe327164d9fc55924293fbf843a40f4429b",
+}
+# R70（發 commit 前的查核）：跑 git 時要從環境拿掉的名字，第二份——git 2.55 的 `git rev-parse --local-env-vars` 列出的 15 個，加上 `GIT_NAMESPACE`。
+# 這一輪查核前的單元檢查只放了其中 10 個當輸入：從受測的名單拿掉 `GIT_PREFIX`（一般 repo 的 hook 與 `rebase --exec` 真的會匯出它）、`GIT_CONFIG`、`GIT_CONFIG_COUNT`、
+# `GIT_IMPLICIT_WORK_TREE`、`GIT_REPLACE_REF_BASE` 任一個都不會紅。
+_GIT_REPO_ENV_PIN = ("GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR", "GIT_CONFIG", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS", "GIT_DIR", "GIT_GRAFT_FILE",
+                     "GIT_IMPLICIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_NAMESPACE", "GIT_NO_REPLACE_OBJECTS", "GIT_OBJECT_DIRECTORY", "GIT_PREFIX", "GIT_REPLACE_REF_BASE",
+                     "GIT_SHALLOW_FILE", "GIT_WORK_TREE")
 
 SPACED_TMPDIR = "<含空白的暫存目錄>"   # `extra` 裡 `TMPDIR` 的這個值：`run_check` 在自己的暫存目錄底下建一個名字含空白的目錄並設成 `TMPDIR`（R60 G2）
-SAFE_TMPDIR = "<非 /tmp 的暫存目錄>"   # `extra` 裡 `TMPDIR` 的這個值：`run_check` 在自己的暫存目錄底下建一個子目錄（`safe-tmp`）並設成 `TMPDIR`，所以 `tempfile.gettempdir()` 不是 `/tmp`、`oracle.py` 的 `"priv-tmpdir"` 目標在這裡是 macOS 預設的形狀（R62 H1；`TMPDIR=/tmp` 時它也存在，但那時 PA1、PA2 的 `chmod` 辨認法〔私有目錄路徑長 14〕分不出兩個私有目錄，所以這張探針要在 `/tmp` 之外的 `TMPDIR` 跑）
+SAFE_TMPDIR = "<非 /tmp 的暫存目錄>"   # `extra` 裡 `TMPDIR` 的這個值：`run_check` 在自己的暫存目錄底下建一個子目錄（`safe-tmp`）並設成 `TMPDIR`，所以 `tempfile.gettempdir()` 不是 `/tmp`、`oracle.py` 的 `"priv-tmpdir"` 目標在這裡是 macOS 預設的形狀（R62 H1；`TMPDIR=/tmp` 時它也存在，但那時 PA1、PA2 的 `chmod` 辨認法〔私有目錄路徑長 14〕分不出兩個私有目錄，所以這張探針要在 `/tmp` 之外的 `TMPDIR` 跑）。
+#   **它只保證不是 `/tmp` 本身**：這個子目錄建在呼叫者的 `TMPDIR` 底下，呼叫者自己用 `TMPDIR=/tmp` 時它仍在 `/tmp` 底下。第 108 項（不是沙箱項）那時照樣通過；
+#   沙箱版的第 109 項（沙箱拒寫 `/private/tmp`）那時會紅——2026-11-10 實測：這棵樹一致 5、不一致 7；R62 的樹 `8292d86` 同條件也紅（一致 7、不一致 5；SP5、SP6 在 R66 改寫過）；前提寫在它的探針檔頭。第 114 項同理，見該項。
 
 
 def INJ(n):
@@ -345,8 +367,12 @@ CHECKS = [
     # R66（R61 Follow-up 指定收進 repo，R62、R64 沒做；R63／R65 requirements）：G1／G2 點名的輸入。只收點名的格子：selfcheck 是突變全輪每個 `oracle-inverted` 靶都要跑的，R61 探針全收（25 格）太貴。
     ("**`git check-ref-format` 閘門（可攜）**（R66，R60 G1 點名）：求值前驗 `head_ref` 是合法分支名，真 lint `--strict` 放行，神諭要判『不一致：繞過（注入）』", {},
      [PROBES / "injection-named-git-refgate.yml"], 1, INJ(1)),
-    ("**點名的 shell（沙箱版，只在 macOS）**（R66，R60 G2 點名）：`/bin/sh`、`/bin/dash`、`/bin/ksh` 先 `cd` 到別處再求值，判『不一致：繞過（注入）』；`/bin/zsh` 的算術脈絡判『一致』（〈已知限制〉(8) 的棘輪）", {},
-     [PROBES / "injection-named-shells-sandbox.yml"], 1, ["一致 1、不一致 3", ("不一致：繞過（注入", 3)]
+    ("**點名的 shell（沙箱版，只在 macOS）**（R66，R60 G2 點名）：`/bin/sh`、`/bin/dash`、`/bin/ksh` 先 `cd` 到別處再求值，判『不一致：繞過（注入）』；`/bin/zsh` 的算術脈絡判『一致』（〈已知限制〉(8) 的棘輪）",
+     # **前提：`TMPDIR` 不在 `/tmp`（`/private/tmp`）底下**（R69 regression；R66 加這一項時就如此——2026-11-10 在 `3d94732`、`075ebbc` 以 `TMPDIR=/tmp` 各跑一次，都是四格全判『一致』、rc=0）。
+     # 這張探針的沙箱拒寫 `/private/tmp`；`TMPDIR=/tmp` 時每個哨兵都落在那裡，三個該繞過的格子全判『一致』、這一項轉紅（會報錯，不是假綠）。macOS 預設的 `TMPDIR` 在 `/var/folders` 底下；
+     # 沒有任何 CI job 會跑這一項（見下面 `REQUIRES` 的說明）。R70 試過釘到 `SAFE_TMPDIR`：那個目錄建在呼叫者的 `TMPDIR` 底下，呼叫者用 `/tmp` 時仍在 `/tmp` 裡，2026-11-10 實測照樣紅，
+     # 所以撤回、只寫明前提。沙箱版的第 109 項有同樣的前提（它用 `SAFE_TMPDIR`，`TMPDIR=/tmp` 下一樣紅）；第 108 項不是沙箱項，不受影響。要真的解掉得讓 `run_check` 在 `/tmp` 之外另找位置，這一輪不做。
+     {}, [PROBES / "injection-named-shells-sandbox.yml"], 1, ["一致 1、不一致 3", ("不一致：繞過（注入", 3)]
      # R68（R67 logic L）：逐格釘死——前一版只比總數，對照格與棘輪格對調時仍綠。
      + [re.compile(r"\b%s\b[^\n]*oracle=\S+\s+不一致：繞過（注入" % c, re.M) for c in ("QA2", "QA3", "C1")] + [re.compile(r"\bC2\b[^\n]*oracle=\S+\s+一致$", re.M)]),
     ("**`PS4`、`PATH` 入口（已知盲點，棘輪）**（R66，R60 G1 點名、〈已知限制〉(7)）：`_OWN_ENV` 裡的鍵帶 PR 文字時神諭不注入，判『一致』；日後涵蓋了，這一項會紅", {},
@@ -357,6 +383,11 @@ CHECKS = [
      [PROBES / "injection-instrument-fingerprint-known-blind-spots.yml"], 1, ["一致 3、不一致 1", ("不一致：繞過（注入", 1)]
      # R68（R67 logic L）：逐格釘死，同上。
      + [re.compile(r"\b%s\b[^\n]*oracle=\S+\s+一致$" % c, re.M) for c in ("FP1", "FP2", "FP3")] + [re.compile(r"\bFP0\b[^\n]*oracle=\S+\s+不一致：繞過（注入", re.M)]),
+    # R70（R69 security 的 SN 格、DA 的 LG 格；〈已知限制〉(8)）：依 PR 文字的內容把關的求值者。不是豁免類——所有樹判定相同、不是退步；這一項釘住現況。
+    ("**依內容把關的求值者（已知盲點，棘輪）**（R70，R69 security／DA、〈已知限制〉(8)）：求值者先看標題的內容再決定要不要執行——CG1 含神諭的標記就不執行、CG2 含 `>` 就不執行、CG3 超過 30 字就不執行，"
+     "每一組 payload 都過不了關，判『一致』（漏報）；對照的 CG0 判『不一致：繞過（注入）』。九棵封閉樹與 R68 的樹判定相同（R69 DA 實跑），不是退步；日後有一組 payload 過得了其中一道關，這一項會紅", {},
+     [PROBES / "injection-payload-content-gate-known-blind-spots.yml"], 1, ["一致 3、不一致 1", ("不一致：繞過（注入", 1)]
+     + [re.compile(r"\b%s\b[^\n]*oracle=\S+\s+一致$" % c, re.M) for c in ("CG1", "CG2", "CG3")] + [re.compile(r"\bCG0\b[^\n]*oracle=\S+\s+不一致：繞過（注入", re.M)]),
 ]
 
 # 需要平台工具才跑得了的項目（探針檔名 → 必須存在的執行檔）：沒有就在 `main()` 印『跳過』，不算通過也不算失敗（Linux 上沒有 `sandbox-exec`）。
@@ -547,9 +578,18 @@ def matcher_problems():
     saved_v = oracle_history.TREE_SHA["8b45659"]
     try:
         oracle_history.TREE_SHA["8b45659"] = "8b45659"
-        ran, got = oracle_history.payload_history_regen_problems("/nonexistent", git=_fake_git())
+        ran, got = oracle_history.payload_history_regen_problems(FAKE_ROOT, git=_fake_git())
         if not (ran and got):
             problems.append("歷史重抽（假 git）：TREE_SHA 退回 7 碼縮寫時假 git 照收（接受清單要獨立於受測的 TREE_SHA）")
+        # R70（R69 logic 的 X7、Codex）：40 位十六進位、前 7 碼對、只有尾碼錯的值——格式檢查看不出來，要靠本檔的第二份（`_TREE_SHA_PIN`）與由它建的假 git。
+        oracle_history.TREE_SHA["8b45659"] = saved_v[:-1] + ("0" if saved_v[-1] != "0" else "1")
+        if oracle_history.payload_history_problems(full, "M", "T") and not closed_trees_pin_problems():
+            problems.append("TREE_SHA 的固定份：這一案要量的是「格式檢查看不出來、只有固定份看得出來」，格式檢查卻先報了")
+        if not closed_trees_pin_problems():
+            problems.append("TREE_SHA 的固定份：`8b45659` 的完整 SHA 尾碼寫錯沒有被抓到")
+        ran, got = oracle_history.payload_history_regen_problems(FAKE_ROOT, git=_fake_git())
+        if not (ran and got):
+            problems.append("歷史重抽（假 git）：TREE_SHA 尾碼寫錯時假 git 照收（接受清單要由固定份建，不由受測的 TREE_SHA 反建）")
     finally:
         oracle_history.TREE_SHA["8b45659"] = saved_v
     # R68（R67 logic L）：凍結表索引超出 PAYLOAD_UNION 時要報「超出」，不能讓摘要計算先丟 IndexError（那一支曾是死碼）。
@@ -574,6 +614,15 @@ def matcher_problems():
             problems.append("封閉清單的固定份：封閉清單少了 `28ec8c3`（連同凍結列一起拿掉）沒有被抓到")
     finally:
         oracle_history.CLOSED_TREES = saved_ct
+    # R70 增量宣稱查核（R69 Codex 的候選）：固定份是逐項、有序的比對。只差順序、或同一棵列了兩次，涵蓋的樹沒有變，但封閉清單已經不是固定份那一份——也要報
+    # （比對換成集合時，上面「少一棵」那一案照樣抓得到，這兩案才分得出來）。
+    for what, changed in (("前兩棵對調", (saved_ct[1], saved_ct[0]) + tuple(saved_ct[2:])), ("`28ec8c3` 列了兩次", tuple(saved_ct) + ("28ec8c3",))):
+        try:
+            oracle_history.CLOSED_TREES = changed
+            if not closed_trees_pin_problems():
+                problems.append("封閉清單的固定份：封閉清單%s沒有被抓到" % what)
+        finally:
+            oracle_history.CLOSED_TREES = saved_ct
     if closed_trees_pin_problems():
         problems.append("封閉清單的固定份：現在的封閉清單與固定份不一致：%s" % "；".join(closed_trees_pin_problems()))
     for what, tree, src, want_bad in REGEN_CASES:
@@ -588,7 +637,11 @@ def matcher_problems():
             problems.append("逐目標履行（假 oracle）：%s：每個目標要各跑一次 run_script，實際跑了 %s" % (what, sorted(fake.calls)))
     for what, kw, want_ran, want_bad in REGEN_GIT_CASES:
         kw = dict(kw); iw = kw.pop("in_worktree", None)
-        ran, got = oracle_history.payload_history_regen_problems("/nonexistent", git=_fake_git(**kw), in_worktree=iw)
+        try:
+            ran, got = oracle_history.payload_history_regen_problems(FAKE_ROOT, git=_fake_git(**kw), in_worktree=iw)
+        except Exception as e:   # 一案丟例外（含假 git 的 AssertionError：重抽對 git 的呼叫換了樣子）不讓其餘的案跟著不跑
+            problems.append("歷史重抽（假 git）：%s：例外逃出 payload_history_regen_problems（%s：%s）" % (what, type(e).__name__, str(e)[:100]))
+            continue
         if ran != want_ran or bool(got) != want_bad:
             problems.append("歷史重抽（假 git）：%s：期待%s、%s；實際%s、%s（%s）" % (what, "跑了" if want_ran else "跳過", "有問題" if want_bad else "通過",
                                                                      "跑了" if ran else "跳過", "有問題" if got else "通過", "；".join(got)[:120]))
@@ -599,6 +652,21 @@ def matcher_problems():
                 problems.append("抽常數：%s：抽到 %r" % (what, (pays[0][:20] if pays else pays)))
         except BaseException as e:   # 真的逃出來才算壞；SystemExit／KeyboardInterrupt 不會從這裡來
             problems.append("抽常數：%s：例外逃出 extract_payloads（%s）" % (what, type(e).__name__))
+    # R70 增量宣稱查核（R69 Codex 的候選）：`MemoryError` 的兩個接點原本沒有確定性的案（真的把記憶體用完不能當測試）。用替身讓它在那兩個位置丟出來：
+    # 解析原始碼時、求值時都要當成「抽不到」，不逃出去。同一份原始碼沒有替身時抽得出來（對照：替身真的在執行的路上）。
+    from unittest import mock
+    mem_src = 'A = "a"\nINJECT_PAYLOADS = (A + "x",)\n'
+    if oracle_history.extract_payloads(mem_src)[2] != ("ax",):
+        problems.append("抽常數：MemoryError 兩案的原始碼在沒有替身時抽不出 ('ax',)（對照壞了）")
+    for what, where, name in (("解析原始碼時", oracle_history.ast, "parse"), ("求值時", oracle_history, "_spend")):
+        try:
+            with mock.patch.object(where, name, side_effect=MemoryError()):
+                got = oracle_history.extract_payloads(mem_src)
+        except MemoryError:
+            problems.append("抽常數：%s丟 MemoryError：例外逃出 extract_payloads" % what)
+        else:
+            if got != (None, None, None):
+                problems.append("抽常數：%s丟 MemoryError：要當成抽不到，實際 %r" % (what, got))
     for what, fmod, freg, want_bad in REAL_HISTORY_CASES():
         try:
             with contextlib.redirect_stdout(io.StringIO()):
@@ -609,52 +677,190 @@ def matcher_problems():
         if got is not None and bool(got) != want_bad:
             problems.append("凍結表組裝（假 oracle、假重抽）：%s：期待%s、實際%s" % (what, "有問題" if want_bad else "通過", "有問題" if got else "通過"))
     # R68（R67 Codex）：展開前的估計是記憶體守衛——拿掉它時判定不變（展開後的檢查照樣擋），差別只在先配出幾十 MB 才擋，所以量峰值記憶體。
+    # R70 查核：量法自己要有正對照——`_peak_alloc` 恆回 0 時下面每一案都綠。先量一個一定會配出 32 MiB 的東西，量不到 16 MiB 就是量法壞了。
+    if _peak_alloc(lambda: bytearray(32 << 20)) < 16 << 20:
+        problems.append("峰值記憶體的量法：配 32 MiB 的對照量不到 16 MiB（量法壞了，下面的峰值案都是空的）")
+    # R70 增量查核：「呼叫者已經在追蹤」那一支也要有反向的案（不重設峰值、不減開始時的用量、一律關掉追蹤，原本都綠）。
+    # 追蹤開著的時候先配一塊再放掉（從開始追蹤算起的峰值到 64 MiB）、另外一直握著 24 MiB，然後量一個什麼都不做的函式：
+    # 不重設峰值會量到約 40 MiB，不減掉開始時的用量會量到約 24 MiB；量完追蹤要還開著。
     import tracemalloc
+    mine = not tracemalloc.is_tracing()
+    if mine:
+        tracemalloc.start()
+    try:
+        held = bytearray(24 << 20)
+        bytearray(40 << 20)   # 配了就放
+        got = _peak_alloc(lambda: None)
+        still = tracemalloc.is_tracing()
+        del held
+    finally:
+        if mine and tracemalloc.is_tracing():
+            tracemalloc.stop()
+    if got > 1 << 20:
+        problems.append("峰值記憶體的量法：呼叫者已經在追蹤時，量到的不是這一段的增量（%d MiB）" % (got >> 20))
+    if not still:
+        problems.append("峰值記憶體的量法：把呼叫者的追蹤關掉了")
     # 寬度檢查同理（R68 的展開後檢查讓「% 的寬度上億」那一案即使沒有寬度檢查也回 None，突變第 663 靶因此存活——#597 形狀，推送前的靶掃描抓到）。
     for what, src in (("`%` 展開前沒有估計結果大小", 'X = "' + "a" * 60000 + '"\nY = "' + "%s" * 1000 + '" % (' + "X, " * 1000 + ')\nINJECT_PAYLOADS = (Y,)\n'),
                       ("`%` 的大寬度沒有在展開前擋下", 'X = "%050000000d" % 1\nINJECT_PAYLOADS = (X,)\n'),
                       # R68（matcher 靶的突變確認抓到，#597 形狀）：估計加進寬度之後，「%050000000d」改由估計擋下，寬度檢查（`_EV_WIDE_RE`）只剩 `*` 寬度一處不可替代——
                       # 拿掉它時 `%*d` 照樣回 None（展開後的檢查擋），差別只在先配出 50 MB，所以量這一案的峰值。
                       ("`%` 的 `*` 寬度沒有在展開前擋下", 'X = "%*d" % (50000000, 1)\nINJECT_PAYLOADS = (X,)\n'),
-                      ("`%` 的四位數寬度重複，展開前的估計沒有算寬度", 'Y = "' + "%9999s" * 10922 + '" % (' + '"", ' * 10922 + ')\nINJECT_PAYLOADS = (Y,)\n')):
-        tracemalloc.start()
-        try:
-            oracle_history.extract_payloads(src)
-            peak = tracemalloc.get_traced_memory()[1]
-        finally:
-            tracemalloc.stop()
+                      ("`%` 的四位數寬度重複，展開前的估計沒有算寬度", 'Y = "' + "%9999s" * 10922 + '" % (' + '"", ' * 10922 + ')\nINJECT_PAYLOADS = (Y,)\n'),
+                      # R70（R69 Codex 第 3 項；logic、security）：共用子結構的巢狀 tuple 當 `%` 的參數——前一版的估計用 repr，22 層就是約 70 MiB（每多一層加倍）。
+                      ("`%` 的參數是共用子結構的巢狀 tuple，估計時就展開了", 'X = ("a",)\n' + "X = (X, X)\n" * 22 + 'Y = "%s" % (X,)\nINJECT_PAYLOADS = (Y,)\n'),
+                      ("`%` 的參數是一千個指向同一個 64 KiB 字串的 tuple，估計時就展開了", 'X = "' + "a" * 65536 + '"\nT = (' + "X, " * 1000 + ')\nY = "%s" % (T,)\nINJECT_PAYLOADS = (Y,)\n'),
+                      # R70 查核：單一字串有上限、變數的個數沒有——新造的字串合計要有上限（判定上另有抽常數的那一案；這裡量記憶體）。
+                      ("一千個變數各存一份接近上限的字串，新造的字串合計沒有上限", _SRC_MANY_VARS),
+                      ("一千個變數各用 `%` 造一份接近上限的字串，`%` 的結果沒有記進預算", _SRC_MANY_VARS_PCT)):
+        peak = _peak_alloc(lambda: oracle_history.extract_payloads(src))
         if peak > 16 << 20:
-            problems.append("抽常數：%s，峰值記憶體 %d MB" % (what, peak >> 20))
-    # R68 增量查核（#1、#3）：真的目錄與真的 git——假 git 的案都傳 `in_worktree`，`_in_git_worktree` 與「真的 git 時預設看檔案系統」沒有任何案；
-    # 也沒有一案讓真的 git 對一個沒有九棵樹的 repo 跑（R68 第一版的 rc 分類就是在這裡錯的：缺物件的 `cat-file -e <sha>^{commit}` 回 128）。
-    import shutil
-    with tempfile.TemporaryDirectory(prefix="oracle-selfcheck-git-") as d:
-        dp = pathlib.Path(d).resolve()
-        base_in_git = oracle_history._in_git_worktree(str(dp))   # 暫存目錄本身若在某個 git 工作樹裡，「沒有 .git」的案不成立，跳過
-        (dp / "plain").mkdir(); (dp / "wt").mkdir(); (dp / "wt" / ".git").write_text("gitdir: /nonexistent\n")
-        (dp / "parent" / ".git").mkdir(parents=True); (dp / "parent" / "sub").mkdir()
-        for what, path, want in (("沒有 .git", dp / "plain", False), (".git 是檔案（連結的工作樹）", dp / "wt", True), (".git 在上一層", dp / "parent" / "sub", True)):
-            if base_in_git and not want:
-                continue
-            if oracle_history._in_git_worktree(str(path)) != want:
-                problems.append("git 工作樹判定：%s：期待%s" % (what, "在" if want else "不在"))
-        if shutil.which("git"):
-            if not base_in_git:
-                ran, got = oracle_history.payload_history_regen_problems(str(dp / "plain"))
-                if ran or not any("不在 git 工作樹" in g for g in got):
-                    problems.append("歷史重抽（真的 git）：沒有 .git 的目錄要跳過（不在 git 工作樹），實際%s：%s" % ("跑了" if ran else "跳過", "；".join(got)[:120]))
-            repo = dp / "repo"
-            ok = subprocess.run(["git", "init", "-q", str(repo)], capture_output=True).returncode == 0 and subprocess.run(
-                ["git", "-C", str(repo), "-c", "user.email=s@c", "-c", "user.name=s", "commit", "-q", "--allow-empty", "-m", "x"], capture_output=True).returncode == 0
-            if ok:
-                ran, got = oracle_history.payload_history_regen_problems(str(repo))
-                if ran or not any("沒有 git 歷史" in g for g in got):
-                    problems.append("歷史重抽（真的 git）：沒有九棵樹的 repo（淺層 clone）要跳過，實際%s：%s" % ("跑了" if ran else "跳過", "；".join(got)[:120]))
-            else:
-                problems.append("歷史重抽（真的 git）：建不出暫存 repo（git init／commit 失敗）")
+            problems.append("抽常數：%s，峰值記憶體 %d MiB" % (what, peak >> 20))
+    problems += real_git_problems()
+    problems += regen_wiring_problems()
     for fn in ("payload_history_problems_real()", "target_fulfillment_problems_real()"):
         if fn not in inspect.getsource(main):
             problems.append("main() 沒有呼叫 %s" % fn)
+    return problems
+
+
+def _peak_alloc(fn):
+    """`fn()` 執行期間配置的記憶體峰值（位元組）：`tracemalloc` 在 `reset_peak` 之後的峰值，減掉開始時的用量。
+    R70（R69 logic）：呼叫者已經在追蹤時（`PYTHONTRACEMALLOC=1`）不重開——那時 `start()` 不做事，不重設的峰值是整個行程開機以來的最大值（R68 的寫法因此假紅）；
+    也只關自己開的追蹤（R68 的寫法結束時把呼叫者的追蹤關掉）。"""
+    import tracemalloc
+    was_tracing = tracemalloc.is_tracing()
+    if not was_tracing:
+        tracemalloc.start()
+    try:
+        tracemalloc.reset_peak()
+        base = tracemalloc.get_traced_memory()[0]
+        fn()
+        return tracemalloc.get_traced_memory()[1] - base
+    finally:
+        if not was_tracing:
+            tracemalloc.stop()
+
+
+def real_git_problems():
+    """真的目錄與真的 git 的案（R68 增量查核起有；R70 依 R69 第 2 列重寫）。
+    R68 的寫法用呼叫者的環境跑 `git init` 與 `git commit`：git 在 linked worktree 的 hook 與 `rebase --exec` 會匯出 `GIT_DIR`，那時這兩個命令作用在呼叫者的 repo 上——
+    主 repo 的 `core.bare` 被改成 true、分支多一筆空 commit（R69 logic、regression、DA；協調者重現）。R70：不做 commit（還沒有 commit 的 repo 就足以量「九棵都不在」），
+    `git init` 與重抽都走 `oracle_history` 的 runner（拿掉 repo-local 的 `GIT_*`、有逾時），並在「呼叫者匯出了 `GIT_DIR`」的環境裡跑一次，斷言那個 repo 沒有被動到。
+    `_in_git_worktree` 只看 `repo_root/.git`，所以這些案不再取決於暫存目錄在不在某個 git 工作樹裡（R69 logic：前一版在那種環境把負向案靜默跳過）。"""
+    import shutil
+    from unittest import mock
+    problems = []
+    # git 的環境：會把 git 導到別的 repo 的變數要拿掉（名單是本檔的固定份 `_GIT_REPO_ENV_PIN`，不從受測的 `_GIT_REPO_ENV` 取），replace refs 要關，
+    # 而且不向遠端抓物件（R70 查核：partial clone 裡 git 會自己連網補缺的物件、寫進呼叫者 repo 的物件庫）；其餘變數原樣留著。不需要 git 就能驗。
+    got = oracle_history.git_env(dict({n: "x" for n in _GIT_REPO_ENV_PIN}, KEEP="1", GIT_NO_REPLACE_OBJECTS="0", GIT_NO_LAZY_FETCH="0", GIT_ALLOW_PROTOCOL="file:https"))
+    if got != {"KEEP": "1", "GIT_NO_REPLACE_OBJECTS": "1", "GIT_NO_LAZY_FETCH": "1", "GIT_ALLOW_PROTOCOL": ""}:
+        problems.append("git 的環境：repo-local 的 GIT_* 沒有拿乾淨、replace refs 沒有關、或沒有擋住向遠端抓物件：%s" % sorted(got.items()))
+    # 「是不是同一個目錄」（R70 查核：頂層比對原本比 realpath 的字串，大小寫不分的檔案系統上拼法不同就假紅）。先問檔案系統（`os.path.samefile`），路徑不存在時才比
+    # realpath 的字串；空字串不等於任何目錄（`realpath("")` 是目前的目錄）。用替身驗「有問檔案系統」，所以這幾案不取決於這台的檔案系統分不分大小寫。
+    with mock.patch("os.path.samefile", return_value=True):
+        if not oracle_history._same_dir("/a/Repo", "/a/repo"):
+            problems.append("同一個目錄的比法：檔案系統說是同一個（samefile）時要算同一個")
+    for exc in (FileNotFoundError(2, "No such file or directory"), PermissionError(13, "Permission denied")):   # 增量查核：只接 FileNotFoundError 時，沒有權限的目錄會讓例外逃出去
+        with mock.patch("os.path.samefile", side_effect=exc):
+            # 訊息印案名、不印路徑：後兩案用到目前的目錄，印出來就是每台機器不同的絕對路徑（增量宣稱查核的觀察）。
+            for case, a, b, want in (("同一個不存在的路徑", "/nonexistent", "/nonexistent", True), ("只差尾斜線", "/nonexistent/", "/nonexistent", True),
+                                     ("兩個不同的路徑", "/somewhere/else", "/nonexistent", False), ("空字串對目前的目錄", "", os.getcwd(), False), ("目前的目錄對空字串", os.getcwd(), "", False)):
+                try:
+                    got = oracle_history._same_dir(a, b)
+                except OSError as e:
+                    got = "丟 %s" % type(e).__name__
+                if got != want:
+                    problems.append("同一個目錄的比法：問不到檔案系統（%s）時，%s：期待%s、實際 %s" % (type(exc).__name__, case, "相同" if want else "不同", got))
+    with tempfile.TemporaryDirectory(prefix="oracle-selfcheck-git-") as d:
+        dp = pathlib.Path(d).resolve()
+        (dp / "plain").mkdir(); (dp / "wt").mkdir(); (dp / "wt" / ".git").write_text("gitdir: /nonexistent\n")
+        (dp / "parent" / ".git").mkdir(parents=True); (dp / "parent" / "sub").mkdir()
+        for what, path, want in (("沒有 .git", dp / "plain", False), (".git 是檔案（連結的工作樹）", dp / "wt", True), (".git 是目錄", dp / "parent", True),
+                                 (".git 只在上一層（那是別人的 repo，不算）", dp / "parent" / "sub", False)):
+            if oracle_history._in_git_worktree(str(path)) != want:
+                problems.append("git 工作樹判定：%s：期待%s" % (what, "在" if want else "不在"))
+        if oracle_history._same_dir(str(dp / "plain"), str(dp / "wt")) or not oracle_history._same_dir(str(dp / "plain") + "/", str(dp / "plain")):
+            problems.append("同一個目錄的比法：真的目錄——兩個不同的目錄要算不同、同一個目錄（多一個尾斜線）要算相同")
+        ran, got = oracle_history.payload_history_regen_problems(str(dp / "plain"))   # 不會呼叫 git：有沒有 git 都要成立
+        if ran or not any("不在 git 工作樹" in g for g in got):
+            problems.append("歷史重抽（真的目錄）：沒有 .git 的目錄要跳過（不在 git 工作樹），實際%s：%s" % ("跑了" if ran else "跳過", "；".join(got)[:120]))
+        if not shutil.which("git"):
+            print("↷ matcher：真的 git 的案跳過（PATH 上沒有 git）")
+            return problems
+
+        def init(path):
+            try:
+                return oracle_history.real_git(str(dp))("init", "-q", str(path)).returncode == 0 and (path / ".git").is_dir()
+            except (OSError, subprocess.SubprocessError, UnicodeDecodeError):
+                return False
+
+        def snapshot(root):
+            return sorted((str(p.relative_to(root)), p.read_bytes() if p.is_file() else None) for p in root.rglob("*"))
+
+        other, repo = dp / "other", dp / "repo"
+        if not init(other):
+            print("↷ matcher：真的 git 的案跳過（git init 建不出暫存 repo）")
+            return problems
+        before = snapshot(other)
+        # 模擬 git 在 linked worktree 的 hook／`rebase --exec` 裡匯出的環境：`GIT_DIR` 指到呼叫者的 repo。
+        with mock.patch.dict(os.environ, {"GIT_DIR": str(other / ".git"), "GIT_WORK_TREE": str(other), "GIT_INDEX_FILE": str(other / ".git" / "index")}):
+            if not init(repo):
+                problems.append("歷史重抽（真的 git）：環境裡有 GIT_DIR 時，暫存 repo 沒有建在指定的目錄（git init 被 GIT_DIR 帶走）")
+            else:
+                try:
+                    gd = oracle_history.real_git(str(repo))("rev-parse", "--absolute-git-dir")
+                    if gd.returncode != 0 or os.path.realpath(gd.stdout.strip()) != os.path.realpath(str(repo / ".git")):
+                        problems.append("歷史重抽（真的 git）：環境裡有 GIT_DIR 時，runner 用的不是 repo_root 自己的 .git（rc=%d）" % gd.returncode)
+                except (OSError, subprocess.SubprocessError, UnicodeDecodeError) as e:
+                    problems.append("歷史重抽（真的 git）：runner 丟例外（%s）" % type(e).__name__)
+                ran, got = oracle_history.payload_history_regen_problems(str(repo))
+                if ran or not any("都不在這個 repo" in g for g in got):
+                    problems.append("歷史重抽（真的 git）：沒有九棵樹的 repo 要跳過（九棵都回 missing），實際%s：%s" % ("跑了" if ran else "跳過", "；".join(got)[:120]))
+        if snapshot(other) != before:
+            problems.append("歷史重抽（真的 git）：環境裡的 GIT_DIR 指到的 repo 被改動了（selfcheck 不得寫進呼叫者的 repo）")
+    return problems
+
+
+def regen_wiring_problems():
+    """R70（R69 第 1 列 (c)；logic 的 X1／X2、DA）：真的重抽怎麼接到 `payload_history_problems_real`。組裝案一律注入 `regen`、突變副本與 CI 沒有 git 歷史，
+    前一版沒有任何自動檢查跑到真的呼叫——repo 根目錄的層數寫錯、或整個呼叫換成「永遠跳過」，全部檢查都綠。三道：repo 根目錄指到的就是這份 `oracle.py`；
+    `default_regen` 用這個根目錄呼叫 `oracle_history.payload_history_regen_problems` 並原樣回傳；`regen` 沒給時 `payload_history_problems_real` 用的就是 `default_regen`。"""
+    import contextlib
+    import io
+    problems = []
+    if (REPO_ROOT / oracle_history.ORACLE_REL).resolve() != (HERE / "oracle.py").resolve():
+        problems.append("重抽的接線：REPO_ROOT 底下的 %s 不是這份 oracle.py（repo 根目錄的層數錯了）" % oracle_history.ORACLE_REL)
+    calls = []
+    saved = oracle_history.payload_history_regen_problems
+    oracle_history.payload_history_regen_problems = lambda *a, **kw: (calls.append((a, kw)) or (True, ["假的：記錄器回的問題"]))
+    try:
+        got = default_regen()
+    finally:
+        oracle_history.payload_history_regen_problems = saved
+    if got != (True, ["假的：記錄器回的問題"]) or calls != [((str(REPO_ROOT),), {})]:
+        problems.append("重抽的接線：default_regen 要以 REPO_ROOT 呼叫 payload_history_regen_problems 並原樣回傳，實際呼叫 %r、回傳 %r" % (calls, got))
+    ok = REAL_HISTORY_CASES()[0][1]   # 記號是凍結的寫法、payload 齊全的假 oracle 模組：凍結表比對自己沒有問題
+    saved_dr = globals()["default_regen"]
+    globals()["default_regen"] = lambda: (True, ["假的：預設重抽回的問題"])
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            got = payload_history_problems_real(mod=ok)
+    finally:
+        globals()["default_regen"] = saved_dr
+    if "假的：預設重抽回的問題" not in got:
+        problems.append("重抽的接線：沒給 regen 時 payload_history_problems_real 要用 default_regen，實際問題清單 %r" % (got,))
+    # R70 查核：固定份（`closed_trees_pin_problems`）也是組裝進真檢查的一道，同樣沒有案跑到那一行——matcher 只直接呼叫它，真檢查裡少了這一行時，
+    # 完整 SHA 尾碼寫錯就只剩 matcher 自己會報、`main()` 跑的那一項照綠。尾碼寫錯的 40 位值過得了格式檢查，所以這一案只有固定份會報。
+    saved_v = oracle_history.TREE_SHA["8b45659"]
+    oracle_history.TREE_SHA["8b45659"] = saved_v[:-1] + ("0" if saved_v[-1] != "0" else "1")
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            got = payload_history_problems_real(mod=ok, regen=lambda: (False, ["假的：沒有歷史"]))
+    finally:
+        oracle_history.TREE_SHA["8b45659"] = saved_v
+    if not any("固定份不一致" in g for g in got):
+        problems.append("固定份的接線：TREE_SHA 尾碼寫錯時 payload_history_problems_real 要把固定份的問題算進去，實際問題清單 %r" % (got,))
     return problems
 
 
@@ -779,13 +985,28 @@ def FULFIL_CASES():
     return cases
 
 
-def _fake_git(missing=(), unreadable=(), boom=(), pct=False, other_marker=(), catboom=(), catdecode=(), nogit=False, refuse=False, showdecode=()):
-    """假的 git：`cat-file -e` 對 `missing` 以外的樹成功；`show` 回傳依凍結表合成的 `oracle.py`（`pct=True` 時 `8b45659` 那一份用 `%` 拼字串，量 `_ev` 的 `%`）。
-    R68（R67 Codex C1）：`catboom`／`catdecode` 讓那幾棵的 `cat-file` 丟逾時／解碼錯誤，`nogit` 讓每一次呼叫都丟 `FileNotFoundError`（沒有 git 可執行檔）。
-    R68（R67 Codex C2）：只接受 40 位十六進位的完整 SHA——接受清單不能只由受測的 `TREE_SHA` 反建，否則 `TREE_SHA` 退回縮寫時假 git 也照收。
-    R68 宣稱查核：`refuse` 讓 `rev-parse` 與每一次 `cat-file` 都回 rc=128（git 拒絕這個 repo，例如 dubious ownership；缺物件的 `cat-file` 也回 128，分不開），`showdecode` 讓那幾棵的 `show` 丟解碼錯誤。"""
+FAKE_ROOT = "/nonexistent"   # 假 git 的案傳給重抽的 repo_root；假 git 的 `rev-parse --show-toplevel` 預設回同一個路徑
+
+
+def _fake_git(missing=(), unreadable=(), boom=(), pct=False, other_marker=(), nogit=False, refuse=False, showdecode=(),
+              rpboom=None, elsewhere=None, batchboom=None, batchrc=0, batchshort=False, batchgarble=(), batchwrong=(),
+              batchothermissing=(), batchtype=(), batchprefix=(), batchsuffix=(), batchtrail=(), batchextra=False):
+    """假的 git，照 R70 的三種呼叫：`rev-parse --show-toplevel`、`cat-file --batch-check`（stdin 每行一個 `<sha>^{commit}`）、`show <sha>:<path>`。
+    `batch-check` 對 `missing` 以外的樹回 `<sha> commit <n>`，其餘回 `<輸入> missing`（真的 git 的協定：兩種都是 rc=0，R70 實測 2.54／2.55）；
+    `show` 回傳依凍結表合成的 `oracle.py`（`pct=True` 時 `8b45659` 那一份用 `%` 拼字串，量 `_ev` 的 `%`）。
+    `nogit` 讓每一次呼叫都丟 `FileNotFoundError`（沒有 git 可執行檔）；`refuse` 讓 `rev-parse` 回 rc=128（git 拒絕這個 repo，例如 dubious ownership）；
+    `showdecode`／`boom` 讓那幾棵的 `show` 丟解碼錯誤／逾時。
+    R70（R69 第 1 列）：`rpboom`（`"timeout"`／`"decode"`）讓 `rev-parse` 自己丟例外；`elsewhere` 讓 git 回報的頂層是別的目錄；
+    `batchboom` 讓 `batch-check` 丟例外；`batchrc` 是它的結束碼（128、被訊號終止的 -9）；`batchshort` 少回一行；`batchgarble` 的樹回看不懂的一行；`batchwrong` 的樹回別的 SHA。
+    R70 查核（每一個判斷都要有反向的案）：`batchothermissing` 的樹回**別的輸入**的 `missing`（形狀對、不是問的那一棵）；`batchtype` 的樹回 `<sha> tree 0`（在、但不是 commit）；
+    `batchprefix` 的樹回前面多一個字的 `x<sha> commit 250`（整行不符、子字串相符）。真的 git 2.55 不會回這三種（實測：tree 加 `^{commit}` 回 missing），它們量的是判讀寫得夠不夠嚴。
+    R70 增量查核（同一類，上一批只擋住三種放寬）：`batchsuffix` 的樹回「問的輸入＋別的字」（`<輸入> ambiguous`，開頭對、不是 missing）；`batchtrail` 的樹回行尾多一個空白的
+    `<sha> commit 250 `（行尾多字、每行先去掉空白再比、大小欄放寬都會把它收下）；`batchextra` 在最後多回一行。
+    接受清單由本檔的 `_TREE_SHA_PIN` 建，不由受測的 `TREE_SHA` 反建（R69 logic：前一版只過濾格式，尾碼寫錯的 40 位值照收）；只認 40 位十六進位的完整 SHA。"""
     import types
-    by_sha = {oracle_history.TREE_SHA[t]: t for t in oracle_history.CLOSED_TREES if re.fullmatch(r"[0-9a-f]{40}", oracle_history.TREE_SHA.get(t, ""))}
+    by_sha = {sha: t for t, sha in _TREE_SHA_PIN.items()}
+    boomers = {"timeout": lambda: subprocess.TimeoutExpired("git", 60), "decode": lambda: UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte"),
+               "oserror": lambda: PermissionError(13, "Permission denied", "git")}
 
     def src(tree):
         if pct and tree == "8b45659":
@@ -794,20 +1015,47 @@ def _fake_git(missing=(), unreadable=(), boom=(), pct=False, other_marker=(), ca
         pays = tuple(oracle_history._canon(oracle_history.PAYLOAD_UNION[i], m, k) for i in oracle_history.HISTORICAL_PAYLOADS[tree])
         return 'INJECT_MARKER = %r\nINJECT_PATH_TOKEN = %r\nINJECT_PAYLOADS = %r\n' % (m, k, pays)
 
-    def git(*a):
+    def git(*a, input=None):
         if nogit:
             raise FileNotFoundError(2, "No such file or directory", "git")
-        if a[0] == "rev-parse":
-            return types.SimpleNamespace(returncode=128 if refuse else 0, stdout=".git\n")
-        if a[0] == "cat-file":
-            t = by_sha.get(a[2].split("^")[0])
-            if t in catboom:
-                raise subprocess.TimeoutExpired("git", 60)
-            if t in catdecode:
-                raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
-            if refuse:
-                return types.SimpleNamespace(returncode=128, stdout="")
-            return types.SimpleNamespace(returncode=128 if t is None or t in missing else 0, stdout="")   # 真的 git：`cat-file -e <sha>^{commit}` 缺物件時 rc=128（R68 Linux 預跑抓到）
+        if a == ("rev-parse", "--show-toplevel"):
+            if rpboom:
+                raise boomers[rpboom]()
+            return types.SimpleNamespace(returncode=128 if refuse else 0, stdout=(elsewhere or FAKE_ROOT) + "\n")
+        if a == ("cat-file", "--batch-check"):
+            if batchboom:
+                raise boomers[batchboom]()
+            out = []
+            for line in (input or "").splitlines():
+                sha = line.split("^")[0]
+                t = by_sha.get(sha) if line.endswith("^{commit}") else None
+                if t is None or t in missing:
+                    out.append(line + " missing")
+                elif t in batchgarble:
+                    out.append("fatal: unable to read " + sha)
+                elif t in batchwrong:
+                    out.append("0" * 40 + " commit 250")
+                elif t in batchothermissing:
+                    out.append("0" * 40 + "^{commit} missing")
+                elif t in batchtype:
+                    out.append(sha + " tree 0")
+                elif t in batchprefix:
+                    out.append("x" + sha + " commit 250")
+                elif t in batchsuffix:
+                    out.append(line + " ambiguous")
+                elif t in batchtrail:
+                    out.append(sha + " commit 250 ")
+                else:
+                    out.append(sha + " commit 250")
+            if batchshort:
+                out = out[:-1]
+            if batchextra:
+                out.append("0" * 40 + "^{commit} missing")
+            if batchrc == 128:
+                out = []   # 真的 git 以 fatal 結束時 stdout 沒有東西
+            return types.SimpleNamespace(returncode=batchrc, stdout="".join(x + "\n" for x in out))
+        if not (len(a) == 2 and a[0] == "show" and a[1].endswith(":" + oracle_history.ORACLE_REL)):
+            raise AssertionError("假 git 不認得的呼叫：%r" % (a,))   # 接線漂移（多一種呼叫、參數換了）要在這裡現形，不能掉進 show
         t = by_sha.get(a[1].split(":")[0])
         if t in boom:
             raise subprocess.TimeoutExpired("git", 60)
@@ -823,22 +1071,47 @@ _SRC8B_PCT = 'INJECT_MARKER = "ORACLE-INJECT-MARKER"\n_S = "$(echo${IFS}%s>&197)
 REGEN_GIT_CASES = (   # (說明, 假 git 的參數, 期待「跑了」, 期待有問題)
     ("九棵樹都在、內容相符", {}, True, False),
     ("九棵樹都在、8b45659 用 % 拼字串（_ev 要認得 %）", {"pct": True}, True, False),
-    ("九棵都沒有（淺層 clone）：跳過，不算問題", {"missing": tuple(oracle_history.CLOSED_TREES)}, False, True),
+    ("九棵都回 missing（例如淺層 clone）：跳過，不算問題", {"missing": tuple(_CLOSED_TREES_PIN)}, False, True),
     ("只缺一棵：是問題，不是整個跳過", {"missing": ("32d45ff",)}, True, True),
+    ("只有一棵在：是問題，不是整個跳過", {"missing": tuple(t for t in _CLOSED_TREES_PIN if t != "636fcfe")}, True, True),
     ("一棵讀不到 oracle.py", {"unreadable": ("6490b57",)}, True, True),
     ("一棵 git show 逾時：報問題，不讓 selfcheck 當掉", {"boom": ("636fcfe",)}, True, True),
     ("一棵的標記不是凍結的寫法：不能逕自正規化（R65 Codex：全域字串替換分不出字面與標記）", {"other_marker": ("b86bc53",)}, True, True),
-    # R68（R67 Codex C1、logic L）：探測本身失敗是問題，不是「沒有歷史」——前一版任一棵的 `cat-file` 丟例外就整輪回 (False, …)。
-    ("第一棵的 cat-file 逾時：是問題，不是整個跳過", {"catboom": ("5b5a46d",)}, True, True),
-    ("中途一棵的 cat-file 逾時：前面確認有歷史的樹不作廢", {"catboom": ("b86bc53",)}, True, True),
-    ("一棵的 cat-file 輸出解碼失敗：是問題", {"catdecode": ("6490b57",)}, True, True),
-    ("每一棵的 cat-file 都逾時：是問題，不能當成「九棵都沒有歷史」跳過", {"catboom": tuple(oracle_history.CLOSED_TREES)}, True, True),
     ("沒有 git 可執行檔：跳過，不算問題", {"nogit": True}, False, True),
-    # R68 宣稱查核（程式審查 #1、#7）：`cat-file -e` 的 rc=1 才是「沒有這個 commit」；rc=128（不是 git 工作樹、git 拒絕這個 repo）不能當成沒有歷史。
-    ("git 拒絕這個 repo（每一棵的 cat-file 都 rc=128，例如 dubious ownership）：是問題，不能當成「九棵都沒有歷史」跳過", {"refuse": True}, True, True),
-    ("不在 git 工作樹（找不到 .git）：跳過，不算問題", {"in_worktree": False}, False, True),
+    ("git 拒絕這個 repo（rev-parse rc=128，例如 dubious ownership）：是問題，不能當成「沒有歷史」跳過", {"refuse": True}, True, True),
+    ("不在 git 工作樹（repo_root 沒有 .git）：跳過，不算問題", {"in_worktree": False}, False, True),
     ("一棵的 git show 輸出解碼失敗：是問題", {"showdecode": ("ecb77d9",)}, True, True),
+    # R70（R69 第 1 列；Codex、logic、security、DA）：「九棵都不在」只認 `cat-file --batch-check` 明確回的 `missing`。前一版（R68）在 `rev-parse` 成功之後把
+    # `cat-file -e` 的任何非零碼都當成「沒有這個 commit」（訊號終止、129 也算），`rev-parse` 自己丟例外那一支沒有案（改成跳過也沒有人會紅）。
+    ("rev-parse 逾時：是問題，不是跳過", {"rpboom": "timeout"}, True, True),
+    ("rev-parse 的輸出解碼失敗：是問題，不是跳過", {"rpboom": "decode"}, True, True),
+    ("rev-parse 丟 PermissionError（git 在、但不能執行）：是問題，不是「沒有 git」", {"rpboom": "oserror"}, True, True),
+    ("git 回報的頂層不是這個目錄（自己的 .git 壞了、git 往上找到別的 repo）：是問題", {"elsewhere": "/somewhere/else"}, True, True),
+    ("batch-check 逾時：是問題，不能當成「九棵都不在」跳過", {"batchboom": "timeout"}, True, True),
+    ("batch-check 的輸出解碼失敗：是問題", {"batchboom": "decode"}, True, True),
+    ("batch-check 丟 PermissionError：是問題", {"batchboom": "oserror"}, True, True),
+    ("batch-check rc=128 而且沒有輸出（git 讀不了物件庫）：是問題，不能當成「九棵都不在」跳過", {"batchrc": 128, "missing": tuple(_CLOSED_TREES_PIN)}, True, True),
+    ("batch-check 被訊號終止（rc=-9）、輸出看起來九棵都 missing：是問題", {"batchrc": -9, "missing": tuple(_CLOSED_TREES_PIN)}, True, True),
+    ("batch-check 被訊號終止（rc=-9）、輸出看起來九棵都在：也是問題，結束碼先看", {"batchrc": -9}, True, True),
+    ("batch-check 少回一行：是問題", {"batchshort": True}, True, True),
+    ("batch-check 少回一行、其餘都 missing：是問題，不能當成「九棵都不在」跳過", {"batchshort": True, "missing": tuple(_CLOSED_TREES_PIN)}, True, True),
+    ("batch-check 有一行看不懂：是問題", {"batchgarble": ("b86bc53",)}, True, True),
+    ("batch-check 有一行看不懂、其餘都 missing：是問題，不能跳過", {"batchgarble": ("b86bc53",), "missing": tuple(t for t in _CLOSED_TREES_PIN if t != "b86bc53")}, True, True),
+    ("batch-check 回的 SHA 不是問的那一個：是問題", {"batchwrong": ("ecb77d9",)}, True, True),
+    # R70 查核：「九棵都不在就跳過」是唯一留下的、由 git 的回答決定的跳過；它認的那一行要整行等於「問的那一個輸入 + missing」，在的那一行要整行是「問的 SHA + commit + 大小」。
+    ("batch-check 九行都是 missing、但都不是問的那個輸入：是問題，不能跳過", {"batchothermissing": tuple(_CLOSED_TREES_PIN)}, True, True),
+    ("batch-check 說一棵在、型別是 tree 不是 commit：是問題", {"batchtype": ("6490b57",)}, True, True),
+    ("batch-check 有一行前面多一個字（子字串相符、整行不符）：是問題", {"batchprefix": ("28ec8c3",)}, True, True),
+    # R70 增量查核：上一批的三案只擋住三種放寬（行尾、型別、子字串）；`missing` 的判定改成「開頭是問的那個輸入」或「開頭是那個 SHA」仍然沒有人會紅——
+    # 那兩種放寬下，九行都不是 missing 的回答會被當成「九棵都不在」而跳過。另補行尾多一個空白與多回一行（放寬之後仍會照常比對，不是跳過，但判讀該守住）。
+    ("batch-check 九行都是「問的輸入＋別的字」（不是 missing）：是問題，不能跳過", {"batchsuffix": tuple(_CLOSED_TREES_PIN)}, True, True),
+    ("batch-check 九行都說型別是 tree：是問題，不能跳過", {"batchtype": tuple(_CLOSED_TREES_PIN)}, True, True),
+    ("batch-check 有一行行尾多一個空白：是問題", {"batchtrail": ("32d45ff",)}, True, True),
+    ("batch-check 多回一行：是問題", {"batchextra": True}, True, True),
+    ("git 回報的頂層尾端多一個空白（那是另一個目錄）：是問題", {"elsewhere": FAKE_ROOT + " "}, True, True),
 )
+_SRC_MANY_VARS = 'A = "' + "a" * 65000 + '"\n' + "".join('B%d = A + "x"\n' % i for i in range(1000)) + "INJECT_PAYLOADS = (B999,)\n"
+_SRC_MANY_VARS_PCT = 'A = "' + "a" * 65000 + '"\n' + "".join('B%d = "%%sx" %% A\n' % i for i in range(1000)) + "INJECT_PAYLOADS = (B999,)\n"   # `"%s" % A` 不造新字串（CPython 直接回 A），所以多一個字
 # R66（R65 security L）：`_ev` 抽的是舊樹原始碼的常數，資源要有上限，例外不能逃出去。(說明, 原始碼, 抽到的 payload 檢查)
 EV_CASES = (
     ("3000 項的 + 鏈：RecursionError 不逃出去", 'M = "a"\nINJECT_PAYLOADS = (M' + " + M" * 3000 + ",)\n", lambda pays: pays is None),
@@ -856,6 +1129,19 @@ EV_CASES = (
     ("`%r` 把不可印字元展開成跳脫序列：估計之內、結果超過上限就不收（只有展開後的檢查擋得到）", 'X = "' + "\\x00" * 20000 + '"\nY = "%r" % (X,)\nINJECT_PAYLOADS = (Y,)\n', lambda pays: pays is None),
     ("四位數寬度重複：估計超過上限就不展開", 'Y = "' + "%9999s" * 10 + '" % (' + '"a", ' * 10 + ')\nINJECT_PAYLOADS = (Y,)\n', lambda pays: pays is None),
     ("短格式字串重複：結果估計超過上限就不展開", 'X = "' + "a" * 1000 + '"\nY = "' + "%s" * 100 + '" % (' + "X, " * 100 + ')\nINJECT_PAYLOADS = (Y,)\n', lambda pays: pays is None),
+    # R70（R69 logic、Codex、security）：`%` 的參數不是字串或整數就不抽（巢狀 tuple 的 repr 會在估計時就展開）；`%c` 超出範圍丟的是 OverflowError。
+    ("`%` 的參數是巢狀 tuple：不抽（估計不得呼叫 repr）", 'X = ("a",)\n' + "X = (X, X)\n" * 4 + 'Y = "%s" % (X,)\nINJECT_PAYLOADS = (Y,)\n', lambda pays: pays is None),
+    ("`%c` 的整數超出範圍：OverflowError 不逃出去", 'X = "%c" % 1114112\nINJECT_PAYLOADS = (X,)\n', lambda pays: pays is None),
+    ("`%` 的參數是字串與小整數：照常抽出", 'X = "%s-%d" % ("a", 7)\nINJECT_PAYLOADS = (X,)\n', lambda pays: pays == ("a-7",)),
+    # R70 查核：單一字串有上限、變數的個數沒有——查核者的例子是兩千個變數各存一份接近上限的字串，96 KB 的原始碼用掉 128 MiB。`+` 與 `%` 新造的字串合計有總量預算，
+    # 用完之後的指派不抽。這一案用一千個變數（80 KB 的原始碼；2026-11-10 實測沒有預算時峰值 63 MiB，有預算時約 4 MiB，幾乎全是 `ast.parse` 自己的）：最後一個變數在預算用完之後才指派，所以抽不到。
+    ("一千個變數各存一份接近上限的字串：新造的字串合計有上限，預算用完之後的那一個抽不到", _SRC_MANY_VARS, lambda pays: pays is None),
+    # R70 增量查核：上一案只用 `+`，`%` 那一半的記帳拿掉也沒有人會紅；預算的值兩頭也沒有釘住（放大八倍、縮到 1 KiB 都綠）。
+    ("一千個變數各用 `%` 造一份接近上限的字串：`%` 的結果也記進預算", _SRC_MANY_VARS_PCT, lambda pays: pays is None),
+    ("四十個變數各存 65 KB（合計 2.6 MB）：超過預算，最後一個抽不到（預算不能放大到幾 MiB）",
+     'A = "' + "a" * 65000 + '"\n' + "".join('B%d = A + "x"\n' % i for i in range(40)) + "INJECT_PAYLOADS = (B39,)\n", lambda pays: pays is None),
+    ("四十個變數各存 1 KB（合計 40 KB，現在的 `oracle.py` 實際用量的十倍）：在預算內，照常抽出（預算不能縮到幾 KiB）",
+     'A = "' + "a" * 1000 + '"\n' + "".join('B%d = A + "x"\n' % i for i in range(40)) + "INJECT_PAYLOADS = (B39,)\n", lambda pays: pays == ("a" * 1000 + "x",)),
 )
 
 
@@ -950,15 +1236,20 @@ def sentinel_manifest_problems_real():
     return sentinel_manifest_problems(mod.INJECT_PAYLOADS, mod.INJECT_PATH_TOKEN, mod._inject_runs)
 
 
-# R68（R67 requirements L）：封閉清單的第二份。oracle_history.py 裡的 CLOSED_TREES、HISTORICAL_PAYLOADS、HISTORICAL_DIGEST、TREE_SHA 互相比對，
-# 一起拿掉一棵樹時它們仍然自洽；這一份在別的檔案，改封閉清單必須兩處一起改，並在 oracle_history.py 的納入準則旁寫理由。
-_CLOSED_TREES_PIN = ("5b5a46d", "8b45659", "32d45ff", "b86bc53", "6490b57", "ecb77d9", "bf0c8a7", "28ec8c3", "636fcfe")
-
-
 def closed_trees_pin_problems():
+    """封閉清單與九個完整 SHA 各自對照本檔檔頭的固定份（`_CLOSED_TREES_PIN`、`_TREE_SHA_PIN`）。"""
+    probs = []
     if tuple(oracle_history.CLOSED_TREES) != _CLOSED_TREES_PIN:
-        return ["封閉清單與 oracle_selfcheck.py 的固定份不一致：%s 對 %s（改封閉清單要兩處一起改，理由寫在納入準則旁）" % (list(oracle_history.CLOSED_TREES), list(_CLOSED_TREES_PIN))]
-    return []
+        probs.append("封閉清單與 oracle_selfcheck.py 的固定份不一致：%s 對 %s（改封閉清單要兩處一起改，理由寫在納入準則旁）" % (list(oracle_history.CLOSED_TREES), list(_CLOSED_TREES_PIN)))
+    if dict(oracle_history.TREE_SHA) != _TREE_SHA_PIN:
+        bad = sorted(t for t in set(oracle_history.TREE_SHA) | set(_TREE_SHA_PIN) if oracle_history.TREE_SHA.get(t) != _TREE_SHA_PIN.get(t))
+        probs.append("TREE_SHA 與 oracle_selfcheck.py 的固定份不一致：%s（完整 SHA 要兩處一起改）" % "、".join(bad))
+    return probs
+
+
+def default_regen():
+    """沒有注入 `regen` 時用的重抽：對這個 repo 的根目錄跑 `oracle_history.payload_history_regen_problems`（R70：抽成具名函式，`regen_wiring_problems` 才驗得到這條接線）。"""
+    return oracle_history.payload_history_regen_problems(str(REPO_ROOT))
 
 
 def payload_history_problems_real(mod=None, regen=None):
@@ -969,7 +1260,7 @@ def payload_history_problems_real(mod=None, regen=None):
     if (mod.INJECT_MARKER, mod.INJECT_PATH_TOKEN) != (oracle_history.CANON_MARKER, oracle_history.CANON_TOKEN):   # R66（R65 Codex）：凍結表的比對會把記號換成現在的值，記號本身要另外守
         probs.append("INJECT_MARKER／INJECT_PATH_TOKEN 與凍結的寫法不同：%r、%r" % (mod.INJECT_MARKER, mod.INJECT_PATH_TOKEN))
     probs += closed_trees_pin_problems()
-    ran, rprobs = regen() if regen is not None else oracle_history.payload_history_regen_problems(str(HERE.parents[2]))
+    ran, rprobs = (regen if regen is not None else default_regen)()
     if ran:
         probs += rprobs
     else:

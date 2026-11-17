@@ -1,0 +1,42 @@
+# R70（#33 verify R69：security 的 SN 格、DA 的 LG 格）：**依 PR 文字的內容把關的求值者**——求值者先看標題的內容，再決定要不要執行它，而神諭的每一組 payload 都過不了這道關。
+# CG1 標題含神諭的標記（`ORACLE-INJECT-MARKER`）就不執行；CG2 含 `>` 就不執行；CG3 長度超過 30 就不執行（最短的 payload 是 31 字）；CG0 是對照（不把關，判繞過，證明這個求值者真的會執行標題）。
+# 真 lint `--strict` 四格都放行。真 runner 上，攻擊者的標題不帶這些特徵就會被執行——CG1～CG3 判『一致』是**漏報**（`oracle.py`〈已知限制〉(8)）。
+# 它**不是**停止規則的豁免類，也不需要是：每一棵樹的每一組 payload 都過不了關，所有樹判定相同，不是退步；凍結表保證新樹的 payload 包含每一棵封閉樹的 payload，
+# 所以「放得過某一組歷史 payload 的閘門」新樹同樣命中（那種是一般格子，見 `injection-payload-string-axis.yml` 的 PL1～PL3）。
+# 這一項是**現況的棘輪**：日後加進一組過得了其中一道關的 payload（不含標記、不含 `>`、或 30 字以內），那一格會從『一致』變成繞過，這一項會紅，那時要更新這裡與 (8)。
+# 負對照見 selfcheck 該項的說明與 CHANGELOG 的 R70 條目。可攜（`/usr/bin/python3` 在 macOS 與 Ubuntu 都有）。
+# LINT-ARGS: --strict
+name: t
+on: pull_request
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: CG1 evaluates the title only when it does not contain the oracle marker
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import sys, subprocess; "ORACLE-INJECT-MARKER" in sys.argv[1] or subprocess.run(["/bin/bash", "-c", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: CG2 evaluates the title only when it has no redirection character
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import sys, subprocess; ">" in sys.argv[1] or subprocess.run(["/bin/bash", "-c", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: CG3 evaluates the title only when it is at most 30 characters long
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import sys, subprocess; len(sys.argv[1]) > 30 or subprocess.run(["/bin/bash", "-c", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py
+      - name: CG0 control evaluates the title unconditionally
+        shell: bash
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -o pipefail
+          { /usr/bin/python3 -c 'import sys, subprocess; subprocess.run(["/bin/bash", "-c", sys.argv[1]])' "$PR_TITLE"; } 2>&1 | python3 scripts/neutralise.py

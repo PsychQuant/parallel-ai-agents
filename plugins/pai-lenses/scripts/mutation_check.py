@@ -1953,13 +1953,13 @@ MUTATIONS += [
     ('selfcheck: `main()` 不呼叫對真的 `oracle.py` 的 manifest 檢查（R62 H2 → --selftest-matcher 的原始碼檢查）',
      '    for x in sentinel_manifest_problems_real():\n        print("✗ 歷史哨兵位置 manifest：" + x)\n        bad += 1\n', '', 'selfcheck-matcher'),
     # R62 量測後：第 110 項的 XR 探針原本讀時鐘（30 秒過期）、用固定檔名，判定會隨環境翻，讓 `oracle-inverted` 靶的『殺掉』不可信；`xrun_probe_problems` 守住修法（封閉的固定寫法），這五個靶守它自己。
-    ('selfcheck: XR 探針的結構檢查不擋時間、stat 與動態 import 的寫法（R62 量測後、Codex 第三次核對 1 → --selftest-matcher 的「讀時鐘」兩案）',
+    ('selfcheck: XR 探針的結構檢查不擋時間、stat 與動態 import 的寫法（R62 量測後、Codex 第三次核對 1 → --selftest-matcher 的「只讀 stat」案；R69 regression：「讀時鐘」兩案在這個突變下仍被 import 白名單擋住、不區分它，`os` 在白名單裡，所以只有 stat 那一案靠這道文字檢查）',
      '        hit = _XRUN_FORBIDDEN_RE.search(code)', '        hit = None', 'selfcheck-matcher'),
-    ('selfcheck: XR 探針的結構檢查不限制 import 的模組（R62 量測後 → --selftest-matcher 的「import time」案）',
+    ('selfcheck: XR 探針的結構檢查不限制 import 的模組（R62 量測後 → --selftest-matcher 的「import uuid」案；R69 regression：「import time」在這個突變下仍被禁用文字檢查擋住、不區分它）',
      '        if bad_imports:', '        if False:', 'selfcheck-matcher'),
     ('selfcheck: XR 探針的結構檢查不要求狀態檔名照固定的鍵運算式（R62 量測後、Codex 第三次核對 2 → --selftest-matcher 的「寫死」「常數尾碼」「沒有用 PATH」三案）',
      '        elif n_keyed != n_state:', '        elif False:', 'selfcheck-matcher'),
-    ('selfcheck: XR 探針的結構檢查把 bash 註解也當行為（Codex 第三次核對 3 → --selftest-matcher 的「註解提到 time.time()」案）',
+    ('selfcheck: XR 探針的結構檢查把 bash 註解也當行為（Codex 第三次核對 3 → --selftest-matcher 的「加一行提到 time.time() 的 bash 註解」案）',
      'if not l.lstrip().startswith("#"))   # 註解行', 'if True)   # 註解行', 'selfcheck-matcher'),
     ('selfcheck: `main()` 不呼叫對真的 XR 探針的結構檢查（R62 量測後 → --selftest-matcher 的原始碼檢查）',
      '    for x in xrun_probe_problems_real():\n        print("✗ XR 探針（第 110 項）的結構：" + x)\n        bad += 1\n', '', 'selfcheck-matcher'),
@@ -1976,7 +1976,7 @@ MUTATIONS += [
      '                   "PWD[" + _INJECT_L + "]",\n', '', 'oracle-inverted'),
     ('history: 凍結表的字串不在 `INJECT_PAYLOADS` 也不報（R64 → --selftest-matcher 的「缺 `32d45ff` 的第 4 組」等案）',
      '            if s not in have:', '            if False:', 'history-matcher'),
-    ('history: 凍結表的樹與封閉清單不一致也不報（R64 → --selftest-matcher 的「封閉清單多一棵樹」案）',
+    ('history: 凍結表的樹與封閉清單不一致也不報（R64 → --selftest-matcher 的「封閉清單少一棵樹（凍結表還有那一列）」案；R69 regression：「多一棵樹」那一案 R66 起也被逐樹的摘要與完整 SHA 檢查抓到、不區分它）',
      '    if tuple(sorted(HISTORICAL_PAYLOADS)) != tuple(sorted(CLOSED_TREES)):', '    if False:', 'history-matcher'),
     ('history: 重抽比對不比較內容（R64 → --selftest-matcher 的「少一組」案）',
      '    if got != want:\n        return [', '    if False:\n        return [', 'history-matcher'),
@@ -2006,20 +2006,20 @@ MUTATIONS += [
     ('history: 逐目標履行忽略 tmpdir 參數（R66 → 假 oracle「六個目標都正確」）',
      '    tmpdir = tmpdir or tempfile.gettempdir()', '    tmpdir = tempfile.gettempdir()', 'history-matcher'),
     ('history: 重抽一律回報沒有歷史（R65 logic 突變 (6) → 假 git「九棵樹都在」）',
-     '    if not present and not failed and not nogit:\n', '    if True:\n', 'history-matcher'),
+     '    if not present and not probs:\n', '    if True:\n', 'history-matcher'),
     ('history: 重抽時其他樹有歷史、這棵沒有也不報（R66，前一版缺一棵就整個跳過 → 假 git「只缺一棵」）',
      '    probs += ["`%s`：其他樹有 git 歷史、這棵沒有（完整 SHA 寫錯，或歷史被截斷）" % t for t in missing] if present else \\\n', '    probs += [] if present else \\\n', 'history-matcher'),
     ('history: 重抽讀不到某棵樹的 oracle.py 也不報（R65 logic 突變 (7) → 假 git「一棵讀不到」）',
-     '            probs.append("`%s`：讀不到 %s" % (tree, ORACLE_REL))\n', '            pass\n', 'history-matcher'),
-    ('history: 重抽的 git show 例外不接（R65 logic L：TimeoutExpired 讓 selfcheck 當掉 → 假 git「一棵逾時」）',
-     '        except (OSError, subprocess.SubprocessError, UnicodeDecodeError) as e:\n            probs.append(', '        except ZeroDivisionError as e:\n            probs.append(', 'history-matcher'),
+     '            probs.append("`%s`：讀不到 %s（commit 在、這個檔的內容不在本機時也是這樣，例如 blobless clone；重抽不向遠端抓）" % (tree, ORACLE_REL))\n', '            pass\n', 'history-matcher'),
+    ('history: 重抽的 git show 例外不接（R65 logic L：TimeoutExpired 讓 selfcheck 當掉 → 假 git「一棵 git show 逾時」）',
+     '        except _PROBE_ERRORS as e:\n            probs.append(', '        except ZeroDivisionError as e:\n            probs.append(', 'history-matcher'),
     ('history: 抽 payload 的求值器不認 `%`（R65 logic → 假 git「8b45659 用 % 拼字串」）',
      '        if isinstance(n.op, ast.Mod) and isinstance(a, str):', '        if False:', 'history-matcher'),
-    ('history: 凍結表的摘要不比對（R66；前一版凍結表少一組只有 git 重抽看得到 → --selftest-matcher 的「摘要對不上」案）',
+    ('history: 凍結表的摘要不比對（R66；前一版凍結表少一組只有 git 重抽看得到 → --selftest-matcher 的「HISTORICAL_DIGEST 的 `5b5a46d` 對不上」案）',
      '        if HISTORICAL_DIGEST.get(tree) != digest:', '        if False:', 'history-matcher'),
     ('history: 凍結表 `5b5a46d` 那一列少第 4 組（R65 logic 突變 (9)，前一版在 CI 與突變全輪都看不到 → 摘要）',
      "    '5b5a46d': (0, 1, 2, 3),", "    '5b5a46d': (0, 1, 2),", 'history-matcher'),
-    ('history: 完整 SHA 不檢查（R66 → --selftest-matcher 的「TREE_SHA 對不上」案）',
+    ('history: 完整 SHA 不檢查（R66 → --selftest-matcher 的「TREE_SHA 的 `8b45659` 對不上」案）',
      '        if not (re.fullmatch(r"[0-9a-f]{40}", sha) and sha.startswith(tree)):', '        if False:', 'history-matcher'),
     ('history: `cwd` 的形狀放寬成任何字串（R65 logic 突變 (8)、requirements L → 假 oracle「cwd 的輸出差一點」）',
      '"cwd":         {"oi": r"<TMP>/\\.orc-" + _RND + r"/inject"}', '"cwd":         {"oi": r".*"}', 'history-matcher'),
@@ -2029,10 +2029,10 @@ MUTATIONS += [
      '"pb": r"o" + _RND,   "parent": "short"}', '"pass": ""}', 'history-matcher'),
     ('history: 抽常數的串接沒有長度上限（R65 security → --selftest-matcher 的「倍增串接」）',
      '            if len(a) + len(b) > _EV_MAX:', '            if False:', 'history-matcher'),
-    ('history: 抽常數的 `%` 不擋大寬度（R65 security → --selftest-matcher 的「% 的寬度上億」「% 的 * 寬度」；R68：估計加進寬度之後「% 的寬度上億」改由估計擋下、兩案都不再區分這個突變——#597 形狀，matcher 靶的突變確認抓到；現在由 `%*d` 的峰值記憶體檢查殺）',
+    ('history: 抽常數的 `%` 不擋大寬度（R65 security → --selftest-matcher 的「% 的寬度上億」「% 的 * 寬度」；R68：估計加進寬度之後「% 的寬度上億」改由估計擋下、兩案都不再區分這個突變——#597 形狀，matcher 靶的突變確認抓到；現在由 `%*d` 的峰值記憶體檢查殺 → 「`%` 的 `*` 寬度沒有在展開前擋下」）',
      '            if len(a) > _EV_MAX or _EV_WIDE_RE.search(a):', '            if False:', 'history-matcher'),
     ('history: 抽常數的 `%` 例外逃出去（R66 → --selftest-matcher 的「% 參數不對」）',
-     '            except (TypeError, ValueError) as e:', '            except ZeroDivisionError as e:', 'history-matcher'),
+     '            except (TypeError, ValueError, ArithmeticError) as e:', '            except ZeroDivisionError as e:', 'history-matcher'),
     ('history: 抽常數的 RecursionError 逃出去（R65 security → --selftest-matcher 的「3000 項的 + 鏈」）',
      '            except (_Unev, RecursionError, MemoryError):', '            except (_Unev, MemoryError):', 'history-matcher'),
     ('history: 語法錯誤的舊原始碼讓抽常數當掉（R66 → --selftest-matcher 的「語法錯誤」）',
@@ -2046,16 +2046,16 @@ MUTATIONS += [
      '    if (mod.INJECT_MARKER, mod.INJECT_PATH_TOKEN) != (oracle_history.CANON_MARKER, oracle_history.CANON_TOKEN):', '    if False:', 'selfcheck-matcher'),
     ('selfcheck: 重抽回報的問題沒有算進去（R67 logic／DA → --selftest-matcher 的「重抽回報一個問題」）',
      '        probs += rprobs\n', '        pass\n', 'selfcheck-matcher'),
-    ('selfcheck: 假 git 的接受清單由受測的 TREE_SHA 反建（R67 Codex C2 → --selftest-matcher 的「TREE_SHA 退回 7 碼縮寫時假 git 照收」）',
-     ' if re.fullmatch(r"[0-9a-f]{40}", oracle_history.TREE_SHA.get(t, ""))}', '}', 'selfcheck-matcher'),
+    ('selfcheck: 假 git 的接受清單由受測的 TREE_SHA 反建（R67 Codex C2；R70 改由固定份建 → --selftest-matcher 的「TREE_SHA 尾碼寫錯時假 git 照收」；7 碼縮寫那一案現在由重抽自己的 40 位比對擋下，不區分這個突變）',
+     '    by_sha = {sha: t for t, sha in _TREE_SHA_PIN.items()}', '    by_sha = {sha: t for t, sha in oracle_history.TREE_SHA.items()}', 'selfcheck-matcher'),
     ('history: 完整 SHA 只看 startswith（R67 Codex C2 → --selftest-matcher 的 TREE_SHA 縮寫案）',
      '        if not (re.fullmatch(r"[0-9a-f]{40}", sha) and sha.startswith(tree)):', '        if not sha.startswith(tree):', 'history-matcher'),
-    ('history: 一棵的 cat-file 丟例外就整輪跳過（R67 Codex C1 → --selftest-matcher 的「第一棵／中途 cat-file 逾時」）',
-     '            failed.append((tree, type(e).__name__))\n            continue\n', '            return False, ["沒有可用的 git（%s）" % e]\n', 'history-matcher'),
-    ('history: cat-file 的解碼錯誤沒接（R67 Codex C1 → --selftest-matcher 的「cat-file 輸出解碼失敗」）',
-     '        except (OSError, subprocess.SubprocessError, UnicodeDecodeError) as e:\n            failed.append', '        except (OSError, subprocess.SubprocessError) as e:\n            failed.append', 'history-matcher'),
-    ('history: 探測失敗、其餘都沒有歷史時整輪跳過（R67 Codex C1 → --selftest-matcher 的「第一棵 cat-file 逾時」以外的組合）',
-     '    if not present and not failed and not nogit:', '    if not present:', 'history-matcher'),
+    ('history: cat-file --batch-check 丟例外就整輪跳過（R67 Codex C1；R70 改成一次 batch-check → --selftest-matcher 的「batch-check 逾時」「batch-check 丟 PermissionError」）',
+     '        return True, ["探測 git 歷史失敗（cat-file --batch-check：%s）" % type(e).__name__]', '        return False, ["探測 git 歷史失敗（cat-file --batch-check：%s）" % type(e).__name__]', 'history-matcher'),
+    ('history: git 輸出的解碼錯誤沒接（R67 Codex C1；R70 三處探測共用一組例外 → --selftest-matcher 的「rev-parse 的輸出解碼失敗」「batch-check 的輸出解碼失敗」「git show 輸出解碼失敗」，例外逃出重抽）',
+     '_PROBE_ERRORS = (OSError, subprocess.SubprocessError, UnicodeDecodeError)', '_PROBE_ERRORS = (OSError, subprocess.SubprocessError)', 'history-matcher'),
+    ('history: 探測失敗、其餘都不在時整輪跳過（R67 Codex C1 → --selftest-matcher 的「batch-check 有一行看不懂、其餘都 missing」）',
+     '    if not present and not probs:', '    if not present:', 'history-matcher'),
     # R68（#33 verify R67 LOW）：抽常數的上限、摘要與索引檢查的順序、封閉清單的固定份。
     ('history: 常數本身不設上限（R67 logic L、Codex → --selftest-matcher 的「單一常數超過上限」）',
      '        if isinstance(n.value, str) and len(n.value) > _EV_MAX:', '        if False:', 'history-matcher'),
@@ -2067,7 +2067,7 @@ MUTATIONS += [
      '            if len(r) > _EV_MAX:\n', '            if False:\n', 'history-matcher'),
     ('history: 摘要計算讓索引超出範圍丟 IndexError（R67 logic L → --selftest-matcher 的索引超出案）',
      '        try:\n            digest = _row_digest(tree)\n        except IndexError:', '        try:\n            digest = _row_digest(tree)\n        except ZeroDivisionError:', 'history-matcher'),
-    ('selfcheck: 封閉清單的固定份不比對（R67 requirements L → --selftest-matcher 的「少了 28ec8c3」）',
+    ('selfcheck: 封閉清單的固定份不比對（R67 requirements L → --selftest-matcher 的「封閉清單少了 `28ec8c3`」）',
      '    if tuple(oracle_history.CLOSED_TREES) != _CLOSED_TREES_PIN:', '    if False:', 'selfcheck-matcher'),
     # R68 宣稱查核（獨立的程式審查）：重抽的 rc 分類、工作樹判定、重抽比對的索引守衛、`%` 估計的寬度；凍結表組裝的另外三道接線。
     ('history: 不先確認 git 能用就把各棵的 cat-file 失敗當成沒有歷史（程式審查 #1；缺物件與 git 拒絕這個 repo 都回 rc=128 → --selftest-matcher 的「git 拒絕這個 repo」）',
@@ -2080,9 +2080,9 @@ MUTATIONS += [
      '                + sum(int(d) for spec in _EV_SPEC_RE.findall(a) for d in re.findall(r"\\d+", spec))\n', '                + 0\n', 'history-matcher'),
     # R68 增量查核：`_in_git_worktree` 與真的 git 時的預設值、`_EV_WIDE_RE` 的數字分支，前一版都沒有案。
     ('history: .git 是檔案（連結的工作樹）時判成不在工作樹（增量查核 #3 → --selftest-matcher 的「.git 是檔案」）',
-     '    return any((d / ".git").exists() for d in (p, *p.parents))', '    return any((d / ".git").is_dir() for d in (p, *p.parents))', 'history-matcher'),
-    ('history: 只看這一層、不看上層的 .git（增量查核 #3 → --selftest-matcher 的「.git 在上一層」）',
-     '    return any((d / ".git").exists() for d in (p, *p.parents))', '    return any((d / ".git").exists() for d in (p,))', 'history-matcher'),
+     '    return (pathlib.Path(repo_root) / ".git").exists()', '    return (pathlib.Path(repo_root) / ".git").is_dir()', 'history-matcher'),
+    ('history: 連上層的 .git 也算（R70 反過來：只看這一層，上層的是別人的 repo；R69 security、logic → --selftest-matcher 的「.git 只在上一層」）',
+     '    return (pathlib.Path(repo_root) / ".git").exists()', '    return any((d / ".git").exists() for d in (pathlib.Path(repo_root), *pathlib.Path(repo_root).parents))', 'history-matcher'),
     ('history: 真的 git 時也不看檔案系統、一律當成在工作樹裡（增量查核 #3 → --selftest-matcher 的「沒有 .git 的目錄要跳過」）',
      '        in_worktree = git is not None or _in_git_worktree(repo_root)\n', '        in_worktree = True\n', 'history-matcher'),
     ('history: `%` 的寬度檢查只擋九位數以上（增量查核 #2 → --selftest-matcher 的「五位數寬度」）',
@@ -2093,6 +2093,99 @@ MUTATIONS += [
      '    probs = oracle_history.payload_history_problems(mod.INJECT_PAYLOADS, mod.INJECT_MARKER, mod.INJECT_PATH_TOKEN)\n', '    probs = []\n', 'selfcheck-matcher'),
     ('selfcheck: 記號守衛只看 INJECT_MARKER（程式審查 #2 → --selftest-matcher 的「路徑記號被改」）',
      '    if (mod.INJECT_MARKER, mod.INJECT_PATH_TOKEN) != (oracle_history.CANON_MARKER, oracle_history.CANON_TOKEN):', '    if mod.INJECT_MARKER != oracle_history.CANON_MARKER:', 'selfcheck-matcher'),
+    # R70（#33 verify R69 第 1、2 列）：重抽的 git 環境、頂層確認、`cat-file --batch-check` 的判讀、真的重抽的接線、完整 SHA 的固定份。
+    # 每個靶在這一輪的實作上逐一確認過被 `--selftest-matcher` 殺掉（R69 的負對照：X5、X1、X2 與「GIT_DIR 指到別的 repo」在 `075ebbc` 都安靜通過）。
+    ('history: git 的環境不拿掉 repo-local 變數（R69 第 2 列 → --selftest-matcher 的「git 的環境」單元檢查；有 git 時另有「環境裡有 GIT_DIR」的真 git 案）',
+     '    env = {k: v for k, v in (os.environ if base is None else base).items() if k not in _GIT_REPO_ENV}', '    env = dict(os.environ if base is None else base)', 'history-matcher'),
+    ('history: git 的環境名單漏了 GIT_DIR（R69 第 2 列 → 同上兩案）',
+     '"GIT_OBJECT_DIRECTORY", "GIT_DIR", "GIT_WORK_TREE",', '"GIT_OBJECT_DIRECTORY", "GIT_WORK_TREE",', 'history-matcher'),
+    ('history: git 的環境不關 replace refs（R69 security L → --selftest-matcher 的「git 的環境」單元檢查）',
+     '    env["GIT_NO_REPLACE_OBJECTS"] = "1"\n', '    pass\n', 'history-matcher'),
+    ('history: 真的 git 沿用呼叫者的環境（R69 第 2 列：runner 不帶 git_env → --selftest-matcher 的「環境裡有 GIT_DIR 時，暫存 repo 沒有建在指定的目錄」；這一案要 PATH 上有 git）',
+     'text=True, encoding="utf-8", timeout=60, env=git_env())', 'text=True, encoding="utf-8", timeout=60)', 'history-matcher'),
+    ('history: 沒有 git 可執行檔當成問題（→ --selftest-matcher 的「沒有 git 可執行檔：跳過」）',
+     '        return False, ["沒有可用的 git（%s）" % e]', '        return True, ["沒有可用的 git（%s）" % e]', 'history-matcher'),
+    ('history: rev-parse 丟例外時安靜跳過（R69 logic 的 X5、DA → --selftest-matcher 的「rev-parse 逾時」「rev-parse 的輸出解碼失敗」「rev-parse 丟 PermissionError」）',
+     '        return True, ["探測 git 失敗（rev-parse：%s）" % type(e).__name__]', '        return False, ["探測 git 失敗（rev-parse：%s）" % type(e).__name__]', 'history-matcher'),
+    ('history: 不確認 git 找到的工作樹就是 repo_root（R69 Codex、security → --selftest-matcher 的「git 回報的頂層不是這個目錄」）',
+     '    if not _same_dir(top, repo_root):', '    if False:', 'history-matcher'),
+    ('history: batch-check 不看結束碼（R69 Codex：被訊號終止也當成正常回答 → --selftest-matcher 的兩個「batch-check 被訊號終止（rc=-9）」案）',
+     '    if bc.returncode != 0 or len(lines) != len(want):', '    if len(lines) != len(want):', 'history-matcher'),
+    ('history: batch-check 不看行數（→ --selftest-matcher 的「batch-check 少回一行」兩案）',
+     '    if bc.returncode != 0 or len(lines) != len(want):', '    if bc.returncode != 0:', 'history-matcher'),
+    ('history: batch-check 回的 SHA 不比對（→ --selftest-matcher 的「batch-check 回的 SHA 不是問的那一個」）',
+     '        if m and m.group(1) == w.split("^")[0]:', '        if m:', 'history-matcher'),
+    ('history: batch-check 看不懂的行當成「不在」（R69 Codex：只有明確的 missing 才算不在 → --selftest-matcher 的「batch-check 有一行看不懂、其餘都 missing」）',
+     '            probs.append("`%s`：探測 git 歷史失敗（cat-file --batch-check 回了看不懂的一行）" % tree)', '            missing.append(tree)', 'history-matcher'),
+    ('selfcheck: 預設的重抽不呼叫 oracle_history（R69 logic 的 X2、DA：真的重抽從 main() 斷開 → --selftest-matcher 的「default_regen 要以 REPO_ROOT 呼叫」）',
+     '    return oracle_history.payload_history_regen_problems(str(REPO_ROOT))', '    return False, ["x"]', 'selfcheck-matcher'),
+    ('selfcheck: 沒給 regen 時不用 default_regen（R69 logic 的 X2 → --selftest-matcher 的「沒給 regen 時 payload_history_problems_real 要用 default_regen」）',
+     '    ran, rprobs = (regen if regen is not None else default_regen)()', '    ran, rprobs = regen() if regen is not None else (False, ["x"])', 'selfcheck-matcher'),
+    ('selfcheck: repo 根目錄的層數寫錯（R69 logic 的 X1 → --selftest-matcher 的「REPO_ROOT 底下的 plugins/parallel-ai-agents/test/oracle.py 不是這份 oracle.py」）',
+     'REPO_ROOT = HERE.parents[2]', 'REPO_ROOT = HERE.parents[3]', 'selfcheck-matcher'),
+    ('selfcheck: TREE_SHA 不比對固定份（R69 logic 的 X7、Codex → --selftest-matcher 的「完整 SHA 尾碼寫錯沒有被抓到」）',
+     '    if dict(oracle_history.TREE_SHA) != _TREE_SHA_PIN:', '    if False:', 'selfcheck-matcher'),
+    ('history: `%` 的參數不限型別（R69 Codex 第 3 項、logic、security：巢狀 tuple 的 repr 在估計時就展開 → --selftest-matcher 的「`%` 的參數是巢狀 tuple：不抽」與兩個峰值案）',
+     '            if not all(isinstance(x, (str, int)) for x in args):', '            if False:', 'history-matcher'),
+    ('history: `%` 的 ArithmeticError 不接（R69 logic：`%c` 超出範圍丟 OverflowError → --selftest-matcher 的「`%c` 的整數超出範圍」）',
+     '            except (TypeError, ValueError, ArithmeticError) as e:', '            except (TypeError, ValueError) as e:', 'history-matcher'),
+    # R70 發 commit 前的查核（程式 F1～F7、宣稱 F2）：查核者自寫的突變裡存活的那幾個，各補一個反向的案與一個靶。
+    ('history: git 的環境不設 GIT_NO_LAZY_FETCH（R70 查核：partial clone 裡 git 會自己向遠端抓缺的物件、寫進呼叫者 repo 的物件庫 → --selftest-matcher 的「git 的環境」單元檢查）',
+     '    env["GIT_NO_LAZY_FETCH"] = "1"\n', '    pass\n', 'history-matcher'),
+    ('history: git 的環境不清空 GIT_ALLOW_PROTOCOL（R70 查核：2.44 以前的 git 不認得 GIT_NO_LAZY_FETCH，靠這一道讓傳輸一律不被允許 → --selftest-matcher 的「git 的環境」單元檢查）',
+     '    env["GIT_ALLOW_PROTOCOL"] = ""\n', '    pass\n', 'history-matcher'),
+    ('history: git 的環境名單漏了 GIT_PREFIX（R70 查核：一般 repo 的 hook 與 rebase --exec 會匯出它；第一版的單元檢查只放了 10 個名字，拿掉它不會紅 → --selftest-matcher 的「git 的環境」單元檢查）',
+     '"GIT_REPLACE_REF_BASE", "GIT_PREFIX", "GIT_SHALLOW_FILE",', '"GIT_REPLACE_REF_BASE", "GIT_SHALLOW_FILE",', 'history-matcher'),
+    ('history: missing 的判定只看行尾（R70 查核：別的輸入的 missing 也當成「不在」，九行都如此就跳過 → --selftest-matcher 的「batch-check 九行都是 missing、但都不是問的那個輸入」）',
+     '        elif line == w + " missing":', '        elif line.endswith(" missing"):', 'history-matcher'),
+    ('history: 「在」的判定不看型別（R70 查核 → --selftest-matcher 的「batch-check 說一棵在、型別是 tree 不是 commit」）',
+     '_BATCH_PRESENT_RE = re.compile(r"([0-9a-f]{40}) commit \\d+")', '_BATCH_PRESENT_RE = re.compile(r"([0-9a-f]{40}) \\w+ \\d+")', 'history-matcher'),
+    ('history: 「在」的判定不比整行（R70 查核 → --selftest-matcher 的「batch-check 有一行前面多一個字（子字串相符、整行不符）」）',
+     '        m = _BATCH_PRESENT_RE.fullmatch(line)', '        m = _BATCH_PRESENT_RE.search(line)', 'history-matcher'),
+    ('history: 新造的字串沒有總量上限（R70 查核：兩千個變數各存一份接近上限的字串，96 KB 的原始碼用掉 128 MiB → --selftest-matcher 的「一千個變數各存一份接近上限的字串」抽常數案與峰值案）',
+     '    if env[_EV_SPENT] > _EV_TOTAL:', '    if False:', 'history-matcher'),
+    ('history: 頂層的比對不問檔案系統（R70 查核：比 realpath 的字串，大小寫不分的檔案系統上拼法不同就假紅 → --selftest-matcher 的「檔案系統說是同一個（samefile）時要算同一個」）',
+     '        return os.path.samefile(a, b)', '        return os.path.realpath(a) == os.path.realpath(b)', 'history-matcher'),
+    ('history: 空的頂層當成目前的目錄（R70 查核：`realpath("")` 是目前的目錄 → --selftest-matcher 的「空字串對目前的目錄」「目前的目錄對空字串」兩案）',
+     '        return bool(a) and bool(b) and os.path.realpath(a) == os.path.realpath(b)', '        return os.path.realpath(a) == os.path.realpath(b)', 'history-matcher'),
+    ('selfcheck: 真檢查不把固定份的問題算進去（R70 查核：matcher 只直接呼叫 closed_trees_pin_problems，真檢查裡少了這一行不會紅 → --selftest-matcher 的「固定份的接線」）',
+     '    probs += closed_trees_pin_problems()\n', '    pass\n', 'selfcheck-matcher'),
+    ('selfcheck: 峰值記憶體的量法恆回 0（R70 查核：量法沒有正對照，恆回 0 時每個峰值案都綠 → --selftest-matcher 的「峰值記憶體的量法：配 32 MiB 的對照」）',
+     '        return tracemalloc.get_traced_memory()[1] - base', '        return 0', 'selfcheck-matcher'),
+    # R70 增量查核（上一批修法自己的網）：上一批只擋住三種放寬，同類的放寬與幾條新分支仍然沒有人會紅。
+    ('history: missing 的判定只看開頭是問的那個輸入（R70 增量查核 M1：九行都是「輸入＋別的字」也當成「不在」而跳過 → --selftest-matcher 的「batch-check 九行都是「問的輸入＋別的字」（不是 missing）」）',
+     '        elif line == w + " missing":', '        elif line.startswith(w):', 'history-matcher'),
+    ('history: missing 的判定只看開頭是那個 SHA（R70 增量查核 M1：九行都說型別是 tree 也當成「不在」而跳過 → --selftest-matcher 的「batch-check 九行都說型別是 tree」）',
+     '        elif line == w + " missing":', '        elif line.startswith(w.split("^")[0]):', 'history-matcher'),
+    ('history: `%` 新造的字串不記進總量預算（R70 增量查核 M2 → --selftest-matcher 的「一千個變數各用 `%` 造一份接近上限的字串」抽常數案與峰值案）',
+     '            _spend(env, len(r))', '            pass', 'history-matcher'),
+    ('history: 「在」的那一行行尾多了字也收（R70 增量查核 L1 → --selftest-matcher 的「batch-check 有一行行尾多一個空白」）',
+     '        m = _BATCH_PRESENT_RE.fullmatch(line)', '        m = _BATCH_PRESENT_RE.match(line)', 'history-matcher'),
+    ('history: batch-check 多回的行不看（R70 增量查核 L1 → --selftest-matcher 的「batch-check 多回一行」）',
+     '    if bc.returncode != 0 or len(lines) != len(want):', '    if bc.returncode != 0 or len(lines) < len(want):', 'history-matcher'),
+    ('history: 總量預算放大成 8 MiB（R70 增量查核 L2 → --selftest-matcher 的「四十個變數各存 65 KB（合計 2.6 MB）」）',
+     '_EV_TOTAL = 1 << 20   #', '_EV_TOTAL = 1 << 23   #', 'history-matcher'),
+    ('history: 總量預算縮成 1 KiB（R70 增量查核 L2 → --selftest-matcher 的「四十個變數各存 1 KB」案）',
+     '_EV_TOTAL = 1 << 20   #', '_EV_TOTAL = 1 << 10   #', 'history-matcher'),
+    ('history: git 回報的頂層整個 strip（R70 增量查核 L4：目錄名尾端的空白也被去掉 → --selftest-matcher 的「git 回報的頂層尾端多一個空白（那是另一個目錄）」）',
+     '    top = rp.stdout[:-1] if rp.stdout.endswith("\\n") else rp.stdout', '    top = rp.stdout.strip()', 'history-matcher'),
+    ('history: 同一個目錄的比法只接 FileNotFoundError（R70 增量查核 L1 → --selftest-matcher 的「同一個目錄的比法：問不到檔案系統（PermissionError）時」）',
+     '    except OSError:\n        return bool(a)', '    except FileNotFoundError:\n        return bool(a)', 'history-matcher'),
+    ('history: 同一個目錄的比法不檢查第二個路徑是空的（R70 增量查核 L1 → --selftest-matcher 的「同一個目錄的比法」目前目錄對空字串那一組）',
+     '        return bool(a) and bool(b) and os.path.realpath(a) == os.path.realpath(b)', '        return bool(a) and os.path.realpath(a) == os.path.realpath(b)', 'history-matcher'),
+    ('selfcheck: 峰值記憶體的量法不重設峰值（R70 增量查核 L3 → --selftest-matcher 的「峰值記憶體的量法：呼叫者已經在追蹤時」）',
+     '        tracemalloc.reset_peak()\n', '        pass\n', 'selfcheck-matcher'),
+    ('selfcheck: 峰值記憶體的量法不減開始時的用量（R70 增量查核 L3 → 同上）',
+     '        return tracemalloc.get_traced_memory()[1] - base', '        return tracemalloc.get_traced_memory()[1]', 'selfcheck-matcher'),
+    ('selfcheck: 峰值記憶體的量法一律關掉追蹤（R70 增量查核 L3 → --selftest-matcher 的「峰值記憶體的量法：把呼叫者的追蹤關掉了」）',
+     '    finally:\n        if not was_tracing:\n            tracemalloc.stop()', '    finally:\n        if True:\n            tracemalloc.stop()', 'selfcheck-matcher'),
+    # R70 增量宣稱查核（R69 Codex 的候選突變）：`MemoryError` 的兩個接點、封閉清單固定份的有序比對。
+    ('history: 解析原始碼時的 MemoryError 逃出去（R69 Codex 的候選；R70 增量宣稱查核 → --selftest-matcher 的「解析原始碼時丟 MemoryError」）',
+     '    except (SyntaxError, ValueError, RecursionError, MemoryError):', '    except (SyntaxError, ValueError, RecursionError):', 'history-matcher'),
+    ('history: 求值時的 MemoryError 逃出去（R69 Codex 的候選；R70 增量宣稱查核 → --selftest-matcher 的「求值時丟 MemoryError」）',
+     '            except (_Unev, RecursionError, MemoryError):', '            except (_Unev, RecursionError):', 'history-matcher'),
+    ('selfcheck: 封閉清單的固定份改成集合比對（R69 Codex 的候選；R70 增量宣稱查核 → --selftest-matcher 的「封閉清單前兩棵對調沒有被抓到」「封閉清單`28ec8c3` 列了兩次沒有被抓到」）',
+     '    if tuple(oracle_history.CLOSED_TREES) != _CLOSED_TREES_PIN:', '    if set(oracle_history.CLOSED_TREES) != set(_CLOSED_TREES_PIN):', 'selfcheck-matcher'),
 ]
 
 EXPECTED_SURVIVE = {
@@ -2317,6 +2410,8 @@ def _killer_evidence(out, err):
     return " ‖ ".join(h[:160] for h in hits).replace("\t", " ")
 
 
+# 已知限制（R69 logic、Codex；R70 沒有改）：這個字元類只認 ASCII。家目錄是 `/u/me` 時，另一個目錄 `/u/me甲/file`、`/u/meé/file` 的前綴也會被換成 `~`（變成 `~甲/file`、`~é/file`）——
+# 多遮了別的路徑，不是漏遮自己的；家目錄本身含非 ASCII 字元時遮得對（2026-11-10 實測）。
 _PATH_CH = r"A-Za-z0-9_+~\-"   # 字元類的內容；`-` 跳脫，後面再接 `.` 也不會變成範圍
 _PER_USER_TMP_RE = re.compile(r"(?:/private)?/var/folders/[A-Za-z0-9_+-]{2}/[A-Za-z0-9_+-]+(?:/[A-Za-z0-9](?![%s.]))?" % _PATH_CH)
 _SHARED_TMP = frozenset({"/tmp", "/private/tmp", "/var/tmp", "/private/var/tmp"})
@@ -2331,19 +2426,21 @@ def _sub_path(s, p, repl):
 def _mask_local_paths(s):
     """R66：殺手證據不得帶每個使用者不同的路徑。換掉：這次的暫存目錄（`tempfile.gettempdir()` 與它的 realpath）→ `<TMPDIR>`；
     macOS 每個使用者的 `/var/folders/<兩碼>/<雜湊>`（含其下一層的單字元子目錄 `T`／`C`／`X`／`0`）→ `<TMPDIR>`；家目錄（與它的 realpath）→ `~`。
-    只為了不外流：證據欄不進快取鍵，不影響沿用。
+    只為了不外流：證據欄不進快取鍵，不影響沿用。遮的是**執行者自己**的家目錄與暫存目錄（各兩個拼法：原樣與 realpath）；別人的家目錄、同一個目錄的其他別名不在這裡遮，
+    由 `test_validate.py` 的 `test_committed_mutation_cache_has_no_per_user_paths` 在提交前擋（R69 Codex：前一版的說明讀起來像「任何使用者的路徑」）。
     R68（R67 logic／security／requirements／Codex L）：比對要有路徑邊界（`_sub_path`）；沒有尾斜線的家目錄也遮；共用的系統暫存目錄
     （`_SHARED_TMP`）不遮，前一版在 `TMPDIR=/tmp` 時把訊息裡的 `/private/tmp` 換掉；使用者設定的短 TMPDIR（例如 `/a`）照遮，前一版的
     `len > 4` 把它排除了；`/var/folders/…/0` 與沒有子目錄的 `/var/folders/<兩碼>/<雜湊>` 也遮。"""
-    tmp = tempfile.gettempdir().rstrip("/")
-    for p in sorted({tmp, os.path.realpath(tmp)}, key=len, reverse=True):
-        if len(p) > 1 and p not in _SHARED_TMP:
+    def spellings(path):
+        # R70（R69 logic）：realpath 要在去掉尾斜線**之前**取——路徑是 `/`（沒有家目錄的容器、`TMPDIR=/`）時，去掉尾斜線剩空字串，`realpath("")` 是目前的目錄，
+        # 前一版因此把目前的目錄當成家目錄遮成 `~`。去掉尾斜線後是空字串或單一字元的拼法不遮。
+        return sorted({q.rstrip("/") for q in (path, os.path.realpath(path)) if len(q.rstrip("/")) > 1}, key=len, reverse=True)
+    for p in spellings(tempfile.gettempdir()):
+        if p not in _SHARED_TMP:
             s = _sub_path(s, p, "<TMPDIR>")
     s = _PER_USER_TMP_RE.sub("<TMPDIR>", s)
-    home = os.path.expanduser("~").rstrip("/")
-    for p in sorted({home, os.path.realpath(home)}, key=len, reverse=True):
-        if len(p) > 1:
-            s = _sub_path(s, p, "~")
+    for p in spellings(os.path.expanduser("~")):
+        s = _sub_path(s, p, "~")
     return s
 
 
@@ -2449,14 +2546,14 @@ def run_parallel(sel, jobs):
 
 def report(killed, survived, broken, elapsed, jobs, n_rerun=None):
     # R17 DA-H：耗時別再手填。散文裡的區間會漂（R14→R17 連四輪被抓到低估），所以這一輪起
-    # **由程式自己量並印出**；文件只保留粗估並指向這一行。`--jobs` 時印的是牆鐘時間。
+    # **由程式自己量並印出**；文件只保留粗估並指向這一行。`--jobs` 時印的也是這個行程自己量的時間：`time.monotonic()` 的差，機器睡眠期間不計（R69 DA：前一版在輸出裡把它標成「牆鐘」，R68 的量測中途睡了約 97 分鐘，兩者差了 90 分鐘）。
     # 分母只算真的重跑的靶（R39 verify 第 17 列）：沿用快取的靶沒有耗時，除進去的每靶秒數沒有意義。
     n_run = len(killed) + len(survived) + len(broken) if n_rerun is None else n_rerun
     if n_rerun == 0:
         print("\n本輪沒有重跑任何靶（全部沿用快取），不印每靶耗時。")
     elif n_run:
         print(f"\n本輪實測耗時：{elapsed/60:.1f} 分鐘 / {n_run} 靶 = 每靶 {elapsed/n_run:.1f} s"
-              + (f"（--jobs {jobs}，牆鐘）" if jobs > 1 else "")
+              + (f"（--jobs {jobs}，單調時鐘，機器睡眠期間不計）" if jobs > 1 else "")
               + "（把這個數字填回 CHANGELOG 的量測段，不要沿用舊區間；不要填進 test_validate.py 檔頭——R50 起檔頭不抄量測數字）")
     expected = [n for n in survived if n in EXPECTED_SURVIVE]
     survived = [n for n in survived if n not in EXPECTED_SURVIVE]
